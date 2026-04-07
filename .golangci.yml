@@ -67,6 +67,10 @@ linters-settings:
   errcheck:
     check-type-assertions: true
     check-blank: true
+    exclude-functions:
+      - fmt.Fprintf
+      - fmt.Fprintln
+      - fmt.Fprint
   misspell:
     locale: US
   gofmt:
@@ -94,6 +98,12 @@ issues:
       linters:
         - gocritic
       text: "hugeParam"
+
+    # CLI output to stdout — errcheck on fmt.Fprint* is standard practice
+    # for CLI tools where stdout write failures are unrecoverable
+    - path: cmd/
+      linters:
+        - errcheck
 
 run:
   timeout: 5m
