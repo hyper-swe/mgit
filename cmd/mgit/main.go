@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/astutic/mgit/internal/docs"
+	"github.com/astutic/mgit/internal/model"
 	"github.com/astutic/mgit/internal/service"
 	gitstore "github.com/astutic/mgit/internal/store/git"
 	"github.com/astutic/mgit/internal/store/index"
@@ -59,6 +60,7 @@ func rootCmd() *cobra.Command {
 		gcCmd(),
 		importCmd(),
 		docsCmd(),
+		worktreeCmd(),
 	)
 
 	return root
@@ -914,6 +916,103 @@ func importCmd() *cobra.Command {
 }
 
 // docsCmd implements mgit docs generate. Refs: FR-15, MGIT-7.3.1
+// worktreeCmd implements mgit worktree. Refs: FR-16, MGIT-8.3.1
+func worktreeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "worktree",
+		Short: "Manage linked worktrees for multi-agent development",
+	}
+
+	// mgit worktree add
+	var taskID, agentID string
+	addCmd := &cobra.Command{
+		Use:   "add [path]",
+		Short: "Add a linked worktree bound to a task",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if taskID == "" {
+				return fmt.Errorf("--task is required")
+			}
+			app, err := openAppFromCwd()
+			if err != nil {
+				return err
+			}
+			defer app.Close()
+
+			ctx := context.Background()
+			wtSvc := service.NewWorktreeService(app.Index, app.Branch, func() time.Time { return time.Now().UTC() })
+
+			wt, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
+				Path: args[0], TaskID: taskID, AgentID: agentID,
+			})
+			if err != nil {
+				return fmt.Errorf("worktree add: %w", err)
+			}
+			_, _ = fmt.Fprintf(os.Stdout, "Created worktree %s -> task %s (branch %s)\n", wt.Path, wt.TaskID, wt.Branch)
+			return nil
+		},
+	}
+	addCmd.Flags().StringVar(&taskID, "task", "", "Task ID to bind (required)")
+	addCmd.Flags().StringVar(&agentID, "agent-id", "", "Agent ID")
+
+	// mgit worktree list
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List linked worktrees",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			app, err := openAppFromCwd()
+			if err != nil {
+				return err
+			}
+			defer app.Close()
+
+			ctx := context.Background()
+			wtSvc := service.NewWorktreeService(app.Index, app.Branch, func() time.Time { return time.Now().UTC() })
+
+			wts, err := wtSvc.List(ctx)
+			if err != nil {
+				return err
+			}
+			if len(wts) == 0 {
+				_, _ = fmt.Fprintln(os.Stdout, "No linked worktrees")
+				return nil
+			}
+			for _, wt := range wts {
+				_, _ = fmt.Fprintf(os.Stdout, "%-30s %s\t%s\n", wt.Path, wt.TaskID, wt.Branch)
+			}
+			return nil
+		},
+	}
+
+	// mgit worktree remove
+	var force bool
+	removeCmd := &cobra.Command{
+		Use:   "remove [path]",
+		Short: "Remove a linked worktree",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			app, err := openAppFromCwd()
+			if err != nil {
+				return err
+			}
+			defer app.Close()
+
+			ctx := context.Background()
+			wtSvc := service.NewWorktreeService(app.Index, app.Branch, func() time.Time { return time.Now().UTC() })
+
+			if err := wtSvc.Remove(ctx, args[0], force); err != nil {
+				return fmt.Errorf("worktree remove: %w", err)
+			}
+			_, _ = fmt.Fprintf(os.Stdout, "Removed worktree %s\n", args[0])
+			return nil
+		},
+	}
+	removeCmd.Flags().BoolVar(&force, "force", false, "Force remove even with uncommitted changes")
+
+	cmd.AddCommand(addCmd, listCmd, removeCmd)
+	return cmd
+}
+
 func docsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "docs",
