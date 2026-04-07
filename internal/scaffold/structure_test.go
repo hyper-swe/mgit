@@ -102,6 +102,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		"mtix":     true,
 		"testutil": true,
 		"scaffold": true, // our test package
+		"docs":     true, // documentation generator
 	}
 
 	entries, err := os.ReadDir(filepath.Join(root, "internal"))
