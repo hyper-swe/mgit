@@ -100,10 +100,14 @@ issues:
       text: "hugeParam"
 
     # CLI output to stdout — errcheck on fmt.Fprint* is standard practice
-    # for CLI tools where stdout write failures are unrecoverable
     - path: cmd/
       linters:
         - errcheck
+
+    # httptest.NewRequest is fine in tests (noctx only matters for production)
+    - path: _test\.go
+      linters:
+        - noctx
 
 run:
   timeout: 5m
