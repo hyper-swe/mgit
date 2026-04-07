@@ -78,9 +78,13 @@ func TestProjectStructure_GitkeepFiles(t *testing.T) {
 	root := projectRoot(t)
 	for _, dir := range requiredDirs() {
 		t.Run(dir, func(t *testing.T) {
-			gitkeepPath := filepath.Join(root, dir, ".gitkeep")
-			_, err := os.Stat(gitkeepPath)
-			assert.NoError(t, err, "%s must contain .gitkeep file", dir)
+			fullPath := filepath.Join(root, dir)
+			// Directory must exist and contain at least one file
+			// (.gitkeep or real source files)
+			entries, err := os.ReadDir(fullPath)
+			require.NoError(t, err, "%s must be readable", dir)
+			assert.Greater(t, len(entries), 0,
+				"%s must contain at least one file (.gitkeep or source)", dir)
 		})
 	}
 }
