@@ -1,0 +1,17 @@
+Copyright 2025-2026 HyperSWE
+
+This product includes software developed by HyperSWE.
+
+Licensed under the Apache License, Version 2.0.
+
+Third-party dependencies and their licenses:
+
+  go-git/go-git/v5       Apache-2.0
+  modernc.org/sqlite      BSD-3-Clause
+  spf13/cobra             Apache-2.0
+  labstack/echo/v4        MIT
+  oklog/ulid/v2           Apache-2.0
+  stretchr/testify        MIT
+  mark3labs/mcp-go        MIT
+  golang.org/x/sync       BSD-3-Clause
+  golang.org/x/crypto     BSD-3-Clause
