@@ -21,8 +21,15 @@ import (
 	"github.com/astutic/mgit/internal/store/index"
 )
 
-// Version is set at build time.
-var Version = "dev"
+// Build-time variables injected via ldflags.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
+// Version returns the formatted version string.
+var Version = version
 
 func main() {
 	if err := rootCmd().Execute(); err != nil {
@@ -36,7 +43,7 @@ func rootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:     "mgit",
 		Short:   "micro git — safety-critical version control for LLM agents",
-		Version: Version,
+		Version: fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
 	}
 
 	root.AddCommand(

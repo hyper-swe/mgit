@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  preflight:
+    name: Preflight Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Verify Go modules
+        run: go mod verify
+
+      - name: Run tests with race detector
+        run: go test ./... -race -count=1
+
+      - name: Run linter
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.11.3
+
+      - name: Run vulnerability check
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Test coverage
+        run: make test-cover
+
+      - name: Anti-stub check
+        run: |
+          if grep -rn '"not yet implemented"\|"not implemented"\|"integration pending"' \
+            --include='*.go' --exclude='*_test.go' .; then
+            echo "FAIL: stubs found"
+            exit 1
+          fi
+
+  release:
+    name: Release
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign checksums
+        run: cosign sign-blob --yes --bundle checksums.txt.bundle dist/checksums.txt
+        env:
+          COSIGN_EXPERIMENTAL: 1
+
+      - name: Upload signature
+        uses: softprops/action-gh-release@v2
+        with:
+          files: checksums.txt.bundle
+
+      - name: Generate build environment
+        run: |
+          cat > dist/BUILD-ENVIRONMENT.json <<ENVEOF
+          {
+            "go_version": "$(go version | awk '{print $3}')",
+            "tag": "${{ github.ref_name }}",
+            "commit": "${{ github.sha }}",
+            "runner_os": "${{ runner.os }}",
+            "runner_arch": "${{ runner.arch }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          ENVEOF
+
+      - name: Upload build environment
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/BUILD-ENVIRONMENT.json
