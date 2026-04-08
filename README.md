@@ -228,7 +228,7 @@ mgit commit --task-id=PROJ-4.2.1 --message="implement feature"
 
 - **Layered architecture** &mdash; CLI/API/MCP call services; services call stores; stores manage go-git and SQLite. No layer skipping.
 - **Append-only** &mdash; The `task_commits` table and audit log are insert-only. Rollbacks create new commits, never delete.
-- **Dual-hash integrity** &mdash; SHA-1 for git protocol compatibility, SHA-256 for content verification (per [ADR-002](ADR-002-DUAL-HASH-MODEL.md)).
+- **Dual-hash integrity** &mdash; SHA-1 for git protocol compatibility, SHA-256 for content verification and tamper detection.
 - **Clock injection** &mdash; All timestamps come from injected clocks, enabling deterministic testing.
 - **Pure Go** &mdash; No CGO, no external git binary. Single static binary. Cross-compiles to 6 platforms.
 
@@ -276,15 +276,18 @@ Benchmarked on Apple M5:
 | Squash (10 commits) | 0.63ms | <500ms |
 | Verify (50 commits) | 0.61ms | <1s |
 
-## Standards Alignment
+## Safety-Critical Design
 
-mgit is designed with safety-critical standards in mind:
+mgit is built for environments where audit compliance and code provenance are non-negotiable. Its design aligns with the principles of:
 
-- **DO-178C** &mdash; Avionics software integrity (audit trail, traceability)
-- **IEC 62304** &mdash; Medical device software lifecycle (append-only history)
-- **NASA-STD-8739.8** &mdash; Software assurance (verification, provenance)
+| Standard | Domain | What mgit provides |
+|----------|--------|-------------------|
+| **DO-178C** | Avionics | Immutable audit trail linking every code change to a task |
+| **IEC 62304** | Medical devices | Append-only history that cannot be rewritten or deleted |
+| **NASA-STD-8739.8** | Spaceflight | Integrity verification with dual-hash chain validation |
+| **MIL-STD-498** | Defense acquisition | Full traceability from requirement to commit to test |
 
-See [ADR-003](ADR-003-DO178C-SCOPE.md) for the scope of applicability.
+mgit is a **development tool**, not embedded software. It does not require certification itself, but it produces the artifacts (audit logs, traceability records, integrity proofs) that certified systems need. When a regulator asks *"what code changed for this patient safety task?"*, mgit provides the answer with cryptographic certainty.
 
 ## License
 
