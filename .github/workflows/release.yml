@@ -102,3 +102,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/BUILD-ENVIRONMENT.json
+
+  homebrew:
+    name: Update Homebrew Tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger homebrew-tap update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          repository: hyper-swe/homebrew-tap
+          event-type: mgit-release-published
+          client-payload: '{"tag": "${{ github.ref_name }}", "project": "mgit"}'
