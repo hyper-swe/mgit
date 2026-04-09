@@ -10,6 +10,7 @@ import (
 	"github.com/astutic/mgit/internal/service"
 	gitstore "github.com/astutic/mgit/internal/store/git"
 	"github.com/astutic/mgit/internal/store/index"
+	"github.com/astutic/mgit/internal/store/lock"
 )
 
 // App holds all initialized services for the CLI.
@@ -26,35 +27,51 @@ type App struct {
 	Audit    *service.AuditService
 	Config   *service.ConfigService
 	Diff     *service.DiffService
+
+	fileLock *lock.FileLock
 }
 
 // OpenApp opens an existing mgit repository and initializes all services.
-// Returns an error if no .mgit/ directory exists.
+// Acquires a process-level file lock to serialize concurrent CLI access.
+// Returns an error if no .mgit/ directory exists or if another mgit process
+// holds the lock for longer than the timeout.
 func OpenApp(path string) (*App, error) {
 	clock := func() time.Time { return time.Now().UTC() }
 
+	mgitDir := filepath.Join(path, ".mgit")
+
+	// Acquire process-level lock before opening any stores.
+	// This prevents races between concurrent CLI processes on the same repo.
+	fileLock, err := lock.Acquire(mgitDir, lock.DefaultTimeout)
+	if err != nil {
+		return nil, err
+	}
+
 	repo, err := gitstore.Open(path, clock)
 	if err != nil {
+		_ = fileLock.Release()
 		return nil, fmt.Errorf("open repository: %w", err)
 	}
 
-	dbPath := filepath.Join(path, ".mgit", "index.db")
+	dbPath := filepath.Join(mgitDir, "index.db")
 	idx, err := index.New(dbPath, clock)
 	if err != nil {
 		_ = repo.Close()
+		_ = fileLock.Release()
 		return nil, fmt.Errorf("open index: %w", err)
 	}
 
 	cs := gitstore.NewCommitStore(repo)
 	bs := gitstore.NewBranchStore(repo)
 	ds := gitstore.NewDiffStore(repo)
-	auditPath := filepath.Join(path, ".mgit", "audit.log")
-	configPath := filepath.Join(path, ".mgit", "config.json")
+	auditPath := filepath.Join(mgitDir, "audit.log")
+	configPath := filepath.Join(mgitDir, "config.json")
 
 	cfgSvc, err := service.NewConfigService(configPath)
 	if err != nil {
 		_ = idx.Close()
 		_ = repo.Close()
+		_ = fileLock.Release()
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
@@ -69,15 +86,19 @@ func OpenApp(path string) (*App, error) {
 		Audit:    service.NewAuditService(auditPath, clock),
 		Config:   cfgSvc,
 		Diff:     service.NewDiffService(ds, cs, idx),
+		fileLock: fileLock,
 	}, nil
 }
 
-// Close shuts down all stores.
+// Close shuts down all stores and releases the process-level lock.
 func (a *App) Close() {
 	if a.Index != nil {
 		_ = a.Index.Close()
 	}
 	if a.Repo != nil {
 		_ = a.Repo.Close()
+	}
+	if a.fileLock != nil {
+		_ = a.fileLock.Release()
 	}
 }

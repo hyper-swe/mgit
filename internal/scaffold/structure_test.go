@@ -119,6 +119,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 	expectedStoreSubs := map[string]bool{
 		"git":   true,
 		"index": true,
+		"lock":  true,
 	}
 
 	storeEntries, err := os.ReadDir(filepath.Join(root, "internal", "store"))
