@@ -178,19 +178,45 @@ GET  /api/v1/verify           Verify integrity
 
 All endpoints return JSON. Authentication via Bearer token (`mgit token generate`).
 
-## mtix Integration
+## mgit + mtix: The Closed Loop
 
-mgit integrates with [mtix](https://github.com/hyper-swe/mtix) for task management. Task IDs are shared between both systems:
+mgit pairs with [mtix](https://github.com/hyper-swe/mtix), an AI-native micro issue manager, to form a complete LLM development pipeline. Together they answer two questions that matter most in regulated environments:
+
+- **mtix** &mdash; *what was supposed to happen?* (the requirement, the task, the acceptance criteria)
+- **mgit** &mdash; *what actually happened?* (the commits, the diffs, the agent, the timestamps)
+
+Task IDs flow seamlessly between both systems. An LLM agent picks up an mtix task, makes mgit commits tagged with that task ID, and when mtix marks the task done, mgit auto-squashes the work into a single reviewable commit. Every step is recorded in both systems' audit trails.
 
 ```bash
-# In mtix: find a task
+# 1. Find work in mtix
 mtix ready
 
-# In mgit: commit against it
-mgit commit --task-id=PROJ-4.2.1 --message="implement feature"
+# 2. Claim a task
+mtix claim PROJ-4.2.1 --agent=claude-01
 
-# When task is done in mtix, mgit can auto-squash
+# 3. Make tagged commits in mgit
+mgit commit --task-id=PROJ-4.2.1 --agent-id=claude-01 --message="add validation"
+mgit commit --task-id=PROJ-4.2.1 --agent-id=claude-01 --message="add tests"
+
+# 4. Mark done in mtix — triggers mgit auto-squash
+mtix done PROJ-4.2.1
 ```
+
+**The combination delivers:**
+
+| Capability | mtix alone | mgit alone | mgit + mtix |
+|------------|-----------|------------|-------------|
+| Track what to build | Yes | No | Yes |
+| Track what was built | No | Yes | Yes |
+| Link requirements to commits | No | No | Yes |
+| Multi-agent task assignment | Yes | No | Yes |
+| Multi-agent code isolation | No | Yes | Yes |
+| Audit trail of decisions | Yes | No | Yes |
+| Audit trail of code changes | No | Yes | Yes |
+| Auto-squash on completion | No | Yes | Yes (event-driven) |
+| Regulatory traceability | Partial | Partial | Complete |
+
+For LLM-driven development in regulated environments, this combination is the difference between *"the AI did some work"* and *"agent claude-01 implemented requirement PROJ-4.2.1 across these 7 commits, squashed at this timestamp, verified by chain hash X."*
 
 ## Architecture
 
