@@ -1,6 +1,6 @@
 module github.com/astutic/mgit
 
-go 1.26.1
+go 1.25.0
 
 require (
 	github.com/go-git/go-billy/v5 v5.8.0
