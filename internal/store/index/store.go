@@ -67,14 +67,12 @@ func New(dbPath string, clock func() time.Time) (*Store, error) {
 
 // Close gracefully shuts down both connection pools.
 func (s *Store) Close() error {
-	var firstErr error
-	if err := s.writeDB.Close(); err != nil && firstErr == nil {
-		firstErr = err
+	writeErr := s.writeDB.Close()
+	readErr := s.readDB.Close()
+	if writeErr != nil {
+		return writeErr
 	}
-	if err := s.readDB.Close(); err != nil && firstErr == nil {
-		firstErr = err
-	}
-	return firstErr
+	return readErr
 }
 
 // Path returns the database file path.

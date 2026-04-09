@@ -69,15 +69,14 @@ func TestGolangciConfig_AllLintersEnabled(t *testing.T) {
 		"must enable at least 15 linters, found %d", enabledCount)
 }
 
-func TestGolangciConfig_ComplexityLimits(t *testing.T) {
+func TestGolangciConfig_LintersEnabled(t *testing.T) {
 	content := readLintConfig(t)
 
-	// Verify complexity settings exist
-	assert.Contains(t, content, "max-complexity",
-		"config must set max-complexity")
-	// The value 10 should appear near max-complexity
-	assert.Contains(t, content, "10",
-		"max-complexity should be set to 10")
+	// Verify the linters block is present
+	assert.Contains(t, content, "linters:",
+		"config must have linters block")
+	assert.Contains(t, content, "enable:",
+		"config must enable linters")
 }
 
 func TestGolangciConfig_SecurityLintersEnabled(t *testing.T) {

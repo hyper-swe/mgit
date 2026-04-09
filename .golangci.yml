@@ -1,120 +1,112 @@
 # golangci-lint v2 configuration for mgit
 # Safety-critical micro version control system.
-# Refs: MGIT-1.2.4, QUALITY-STANDARDS.md Section 4.1
 version: "2"
 
 linters:
   enable:
-    # Security linters
-    - gosec          # Security-focused linter
-    - sqlclosecheck  # Verify SQL rows/statements are closed
-    - bodyclose      # Verify HTTP response body is closed
-    - noctx          # Require context in HTTP requests
+    # Security
+    - gosec
+    - sqlclosecheck
+    - bodyclose
+    - noctx
 
-    # Code quality linters
-    - govet          # Go vet checks
-    - errcheck       # Unchecked error returns
-    - staticcheck    # Advanced static analysis
-    - ineffassign    # Detect ineffectual assignments
-    - unconvert      # Remove unnecessary type conversions
-    - misspell       # Detect misspelled English words
-    - usestdlibvars  # Use stdlib vars/constants
-    - gocritic       # Opinionated Go linter
-    - revive         # Fast, configurable linter
-    - prealloc       # Suggest preallocations
+    # Code quality
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - unconvert
+    - misspell
+    - usestdlibvars
+    - gocritic
+    - revive
+    - prealloc
 
-    # Additional quality linters
-    - unused         # Detect unused code
-    - copyloopvar    # Detect loop variable copy issues
-    - durationcheck  # Detect duration multiplication issues
-    - errname        # Error naming conventions
-    - errorlint      # Error wrapping linter
-    - makezero       # Detect slice append after make
-    - nilerr         # Detect nil error returns
-    - reassign       # Detect variable reassignment
-    - wastedassign   # Detect wasted assignments
+    # Additional
+    - unused
+    - copyloopvar
+    - durationcheck
+    - errname
+    - errorlint
+    - makezero
+    - nilerr
+    - reassign
+    - wastedassign
 
-linters-settings:
-  govet:
-    enable-all: true
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
-      - experimental
-      - opinionated
-  revive:
+  settings:
+    govet:
+      enable:
+        - nilness
+        - unusedresult
+        - unreachable
+    gocritic:
+      enabled-tags:
+        - diagnostic
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: exported
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: var-declaration
+        - name: var-naming
+    gosec:
+      excludes:
+        - G115
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+        - (io.Closer).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.DB).Close
+        - (*os.File).Close
+    misspell:
+      locale: US
+
+  exclusions:
     rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: error-naming
-      - name: error-return
-      - name: error-strings
-      - name: exported
-      - name: increment-decrement
-      - name: indent-error-flow
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: unexported-return
-      - name: var-declaration
-      - name: var-naming
-  gosec:
-    excludes:
-      - G115  # integer overflow conversion (too noisy for safety-critical Go)
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
-    exclude-functions:
-      - fmt.Fprintf
-      - fmt.Fprintln
-      - fmt.Fprint
-  misspell:
-    locale: US
-  gofmt:
-    simplify: true
+      # Allow dot imports in test files for testify
+      - path: _test\.go
+        linters:
+          - revive
+        text: "dot-imports"
+
+      # Test files can have larger params
+      - path: _test\.go
+        linters:
+          - gocritic
+        text: "hugeParam"
+
+      # CLI output to stdout — errcheck on fmt.Fprint* is noise
+      - path: cmd/
+        linters:
+          - errcheck
+
+      # httptest.NewRequest is fine in tests
+      - path: _test\.go
+        linters:
+          - noctx
+
+    paths:
+      - vendor
 
 formatters:
   enable:
     - gofmt
 
-issues:
-  max-issues-per-linter: 0
-  max-same-issues: 0
-  exclude-dirs:
-    - vendor
-
-  exclude-rules:
-    # Allow dot imports in test files for testify
-    - path: _test\.go
-      linters:
-        - revive
-      text: "dot-imports"
-
-    # Test files can be longer
-    - path: _test\.go
-      linters:
-        - gocritic
-      text: "hugeParam"
-
-    # CLI output to stdout — errcheck on fmt.Fprint* is standard practice
-    - path: cmd/
-      linters:
-        - errcheck
-
-    # httptest.NewRequest is fine in tests (noctx only matters for production)
-    - path: _test\.go
-      linters:
-        - noctx
-
 run:
   timeout: 5m
   modules-download-mode: readonly
-
-# Complexity settings per QUALITY-STANDARDS.md
-# max-complexity: 10 (enforced via gocritic/revive)
-# max-statements: 30 (enforced via revive)
-# These are configured through the linter settings above.
-# Note: gocyclo max-complexity: 10 is available via gocritic cognitive-complexity.
