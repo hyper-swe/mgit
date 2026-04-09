@@ -1,9 +1,13 @@
 <p align="center">
   <h1 align="center">mgit</h1>
   <p align="center">
-    <strong>Safety-critical micro version control for LLM coding agents</strong>
+    <strong>Surgical rollback for LLM coding agents</strong>
   </p>
   <p align="center">
+    Stop wasting tokens rewriting working code. Roll back the wrong decision, keep everything else.
+  </p>
+  <p align="center">
+    <a href="#the-problem-mgit-solves">The Problem</a> &middot;
     <a href="#installation">Install</a> &middot;
     <a href="#quick-start">Quick Start</a> &middot;
     <a href="#commands">Commands</a> &middot;
@@ -14,18 +18,54 @@
 
 ---
 
-mgit (micro git) is a task-tagged version control system purpose-built for LLM coding agents. Every commit is bound to a task ID, creating an immutable audit trail that traces exactly which code changes were made for which task, by which agent, and when.
+## The Problem mgit Solves
 
-Built for environments where provenance matters: regulated industries, safety-critical systems, and any team that needs to answer *"what changed and why?"* with certainty.
+When an LLM coding agent works on a task without version control, a single bad decision &mdash; the wrong library, the wrong data structure, the wrong abstraction &mdash; cascades into wasted work:
+
+> *"Use the React Context API for this state management."*
+>
+> &mdash; *the agent writes 800 lines of code, 12 components, 6 tests*
+>
+> *"Actually, use Zustand instead."*
+>
+> &mdash; *the agent rewrites all 800 lines from scratch, burning tokens, time, and your patience*
+
+The problem isn't the agent. It's that a fresh prompt is the only tool the agent has to "fix" its previous work. There's no way to say *"keep the components, keep the tests, just swap out the state management layer."*
+
+**mgit fixes this with surgical rollback.** When you instruct the agent to make micro-commits via mgit during the task, every step of its work is preserved as an addressable, task-tagged commit. When something goes wrong, you don't restart &mdash; you rewind to the exact decision point, branch from there, and continue.
+
+### Without mgit
+
+```
+prompt -> 800 lines of code -> wrong choice -> reprompt -> 800 lines rewritten
+                                                            (wasted time + tokens)
+```
+
+### With mgit
+
+```
+prompt -> commit -> commit -> commit -> wrong choice -> commit -> commit
+                              ^                                  ^
+                              |                                  |
+                              +-- rollback to here ---------------+
+                                     |
+                                     +-- branch and continue from this point
+                                         (zero wasted work below the rollback point)
+```
+
+The agent's correct decisions are preserved. Only the wrong branch is undone. Work resumes from a known-good state with full context intact.
+
+This is what makes AI-driven development viable for enterprise codebases: **the cost of an agent's mistake is bounded by the cost of the wrong decision, not the cost of the entire task.**
 
 ## Why mgit?
 
-When LLM agents write code, you need more than git:
+mgit is purpose-built for LLM coding agents working on real codebases:
 
-- **Task traceability** &mdash; Every commit is tagged with a task ID. Query any task to see exactly which commits it produced.
-- **Append-only audit trail** &mdash; Commits are never deleted. Rollbacks create revert commits. History is immutable.
-- **Squash workflow** &mdash; Consolidate dozens of micro-commits into a single reviewable commit when a task is done.
-- **Multi-agent isolation** &mdash; Linked worktrees let multiple agents work on different tasks in parallel without interference.
+- **Surgical rollback** &mdash; Roll back a single task while preserving every other commit on the branch. Continue from the rollback point as a new branch with full context intact.
+- **Task traceability** &mdash; Every commit is bound to a task ID. Query any task to see exactly which commits it produced.
+- **Append-only audit trail** &mdash; Commits are never deleted. Rollbacks create revert commits. The history of *every* attempt is preserved for review.
+- **Squash workflow** &mdash; Consolidate dozens of micro-commits into a single reviewable commit when a task is verified correct.
+- **Multi-agent isolation** &mdash; Linked worktrees let multiple agents work on different tasks in parallel without stepping on each other.
 - **Integrity verification** &mdash; Dual-hash model (SHA-1 for git compatibility, SHA-256 for tamper detection) with chain verification.
 - **Three integration modes** &mdash; CLI for humans, REST API for services, MCP tools for AI agents.
 
@@ -178,14 +218,26 @@ GET  /api/v1/verify           Verify integrity
 
 All endpoints return JSON. Authentication via Bearer token (`mgit token generate`).
 
-## mgit + mtix: The Closed Loop
+## mgit + mtix: Enterprise-Grade AI Coding
 
-mgit pairs with [mtix](https://github.com/hyper-swe/mtix), an AI-native micro issue manager, to form a complete LLM development pipeline. Together they answer two questions that matter most in regulated environments:
+mgit pairs with [mtix](https://github.com/hyper-swe/mtix), an AI-native micro issue manager, to form a closed loop that makes LLM-driven development viable for enterprise codebases.
 
-- **mtix** &mdash; *what was supposed to happen?* (the requirement, the task, the acceptance criteria)
+The two tools answer the questions that matter most:
+
+- **mtix** &mdash; *what was supposed to happen?* (the task, the acceptance criteria, who claimed it)
 - **mgit** &mdash; *what actually happened?* (the commits, the diffs, the agent, the timestamps)
 
-Task IDs flow seamlessly between both systems. An LLM agent picks up an mtix task, makes mgit commits tagged with that task ID, and when mtix marks the task done, mgit auto-squashes the work into a single reviewable commit. Every step is recorded in both systems' audit trails.
+Task IDs flow seamlessly between both systems. The combined workflow looks like this:
+
+1. **mtix** decomposes a feature into micro-tasks with clear acceptance criteria
+2. **An LLM agent** claims a task in mtix
+3. **mgit** records every step of the agent's work as task-tagged micro-commits
+4. **When something goes wrong** &mdash; wrong library, wrong abstraction, regression introduced &mdash; you rollback that single task in mgit, branch from the rollback point, and reprompt the agent with refined instructions
+5. **Other tasks on the same branch keep their work intact**, even if their commits came after the rolled-back task
+6. **When mtix marks the task done**, mgit auto-squashes the (now-correct) work into a single reviewable commit
+7. **The full history** &mdash; including the rolled-back attempts &mdash; remains in the audit trail for review
+
+This is how AI-driven development scales beyond toy projects: **the unit of failure is a task, not a session.** Bad decisions are bounded, recoverable, and surgically replaceable.
 
 ```bash
 # 1. Find work in mtix
