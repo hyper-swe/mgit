@@ -61,3 +61,44 @@ release:
   draft: false
   prerelease: auto
   name_template: "mgit {{.Tag}}"
+  header: |
+    ## mgit — Surgical Rollback for LLM Coding Agents
+
+    Stop wasting tokens rewriting working code. Roll back the wrong decision, keep everything else.
+
+    ### Highlights
+
+    - **22 CLI commands** with full flag parity to the specification — commit, log, squash, rollback, merge, diff, restore, gc, import/export, worktree, and more
+    - **15 MCP tools** for direct LLM agent integration via stdio transport
+    - **10 REST API endpoints** for service and CI/CD integration
+    - **Multi-agent worktree isolation** — parallel agents work on different tasks without interference
+    - **Merge with conflict detection** — fast-forward, squash, and no-ff strategies with file-level conflict reporting
+    - **Bundle import/export** with SHA-256 manifest verification for portable task archives
+    - **Garbage collection** with loose object packing via go-git's RepackObjects
+    - **Dual-hash integrity** — SHA-1 for git compatibility, SHA-256 for tamper detection
+    - **Append-only audit trail** — every commit, rollback, and squash is recorded and never deleted
+    - **Pure Go, zero CGO** — single static binary, cross-compiles to Linux, macOS, and Windows (amd64 + arm64)
+
+    ### Quality
+
+    - 530+ automated tests across 69 test files
+    - 85%+ code coverage on all packages
+    - Race-detector clean under `-race`
+    - Zero lint warnings
+
+    ### Install
+
+    ```bash
+    # Homebrew
+    brew install hyper-swe/tap/mgit
+
+    # Go
+    go install github.com/hyper-swe/mgit-dev/cmd/mgit@latest
+
+    # Binary
+    # Download from the assets below for your platform
+    ```
+
+    ### Pairs with [mtix](https://github.com/hyper-swe/mtix)
+
+    mgit + mtix form a closed loop for enterprise AI-driven development: mtix tracks *what to build*, mgit tracks *what was built*. Task IDs flow between both systems. The unit of failure is a task, not a session.
