@@ -113,5 +113,5 @@ jobs:
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           repository: hyper-swe/homebrew-tap
-          event-type: mgit-release-published
+          event-type: release-published
           client-payload: '{"tag": "${{ github.ref_name }}", "project": "mgit"}'
