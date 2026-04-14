@@ -64,4 +64,3 @@ func TestRepository_Open_NotADirectory(t *testing.T) {
 	assert.Error(t, err, "Open should fail when .mgit is a file")
 	assert.ErrorIs(t, err, model.ErrStorageError)
 }
-

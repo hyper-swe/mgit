@@ -47,12 +47,12 @@ type FileLock struct {
 //
 // Refs: NFR-5 (security), NFR-3 (reliability), MGIT-10.1
 func Acquire(mgitDir string, timeout time.Duration) (*FileLock, error) {
-	locksDir := filepath.Join(mgitDir, "locks")
+	locksDir := filepath.Clean(filepath.Join(mgitDir, "locks"))
 	if err := os.MkdirAll(locksDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create locks dir: %w", err)
 	}
 
-	lockPath := filepath.Join(locksDir, "mgit.lock")
+	lockPath := filepath.Clean(filepath.Join(locksDir, "mgit.lock"))
 
 	// Reject the lockfile if it is a symlink (symlink attack defense).
 	// Use Lstat which does not follow symlinks.

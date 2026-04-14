@@ -119,12 +119,13 @@ func TestCommitStore_GetFileFromCommit_TableDriven(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			data, err := cs.GetFileFromCommit(ctx, tt.hash, tt.path)
-			if tt.wantErr != nil {
+			switch {
+			case tt.wantErr != nil:
 				assert.ErrorIs(t, err, tt.wantErr)
 				assert.Nil(t, data)
-			} else if tt.path == "" {
+			case tt.path == "":
 				assert.Error(t, err, "empty path must error")
-			} else {
+			default:
 				require.NoError(t, err)
 				assert.NotEmpty(t, data)
 			}

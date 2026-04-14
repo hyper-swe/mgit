@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -48,7 +49,7 @@ func TestWorktreeStore_IsClean_MgitFilesIgnored(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, clean, "mgit internal files must not count as dirty")
 	for _, p := range dirty {
-		assert.False(t, filepath.HasPrefix(p, ".mgit/"), "dirty list must not include .mgit/ paths")
+		assert.False(t, strings.HasPrefix(p, ".mgit/"), "dirty list must not include .mgit/ paths")
 	}
 }
 

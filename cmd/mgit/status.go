@@ -47,7 +47,7 @@ func statusCmd() *cobra.Command {
 
 			if formatJSON {
 				type statusJSON struct {
-					Branch string              `json:"branch"`
+					Branch string                `json:"branch"`
 					Files  []gitstore.FileStatus `json:"files"`
 				}
 				return json.NewEncoder(os.Stdout).Encode(statusJSON{

@@ -38,10 +38,10 @@ const (
 // Bundle is the on-wire representation of an mgit bundle archive.
 // Refs: FR-12.4, FR-12.5, MGIT-4.2.12
 type Bundle struct {
-	Version     string              `json:"version"`
-	Format      string              `json:"format"`
-	CreatedAt   string              `json:"created_at"`
-	Manifest    BundleManifest      `json:"manifest"`
+	Version     string               `json:"version"`
+	Format      string               `json:"format"`
+	CreatedAt   string               `json:"created_at"`
+	Manifest    BundleManifest       `json:"manifest"`
 	TaskCommits []index.CommitRecord `json:"task_commits"`
 }
 
@@ -56,11 +56,11 @@ type BundleManifest struct {
 // output to CLI consumers.
 // Refs: MGIT-4.2.12
 type ImportResult struct {
-	Mode      ImportMode `json:"mode"`
-	Imported  int        `json:"imported"`
-	Skipped   int        `json:"skipped"`
-	Total     int        `json:"total"`
-	Status    string     `json:"status"`
+	Mode     ImportMode `json:"mode"`
+	Imported int        `json:"imported"`
+	Skipped  int        `json:"skipped"`
+	Total    int        `json:"total"`
+	Status   string     `json:"status"`
 }
 
 // BundleService exports and imports mgit bundle archives, verifying
@@ -130,7 +130,7 @@ func (s *BundleService) Import(ctx context.Context, data []byte, mode ImportMode
 
 	var bundle Bundle
 	if err := json.Unmarshal(data, &bundle); err != nil {
-		return nil, fmt.Errorf("bundle import: %w: parse: %v", model.ErrVerificationFailed, err)
+		return nil, fmt.Errorf("bundle import: %w: parse: %w", model.ErrVerificationFailed, err)
 	}
 	if bundle.Format != BundleFormat {
 		return nil, fmt.Errorf("bundle import: %w: not an mgit bundle (format=%q)",

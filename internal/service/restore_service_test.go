@@ -50,7 +50,7 @@ func TestRestoreService_RestoreFile_Valid(t *testing.T) {
 	assert.Equal(t, "restored", result.Status)
 
 	// Verify the file was actually restored.
-	contents, err := os.ReadFile(filepath.Join(repoRoot, "hello.txt"))
+	contents, err := os.ReadFile(filepath.Join(repoRoot, "hello.txt")) //nolint:gosec // test reads a known file from a temp directory
 	require.NoError(t, err)
 	assert.Equal(t, "hello world", string(contents))
 }

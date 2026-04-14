@@ -15,9 +15,9 @@ const DefaultGCPackThreshold = 1000
 // GCRequest holds the parameters for a garbage-collection run.
 // Refs: MGIT-4.2.11
 type GCRequest struct {
-	Aggressive     bool
-	PackThreshold  int
-	AutoTriggered  bool
+	Aggressive    bool
+	PackThreshold int
+	AutoTriggered bool
 }
 
 // GCResult reports the outcome of a gc run, suitable for JSON output.

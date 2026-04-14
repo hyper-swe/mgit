@@ -91,7 +91,7 @@ func TestHelperProcess_HoldLock(t *testing.T) {
 func startLockHolder(t *testing.T, mgitDir string) *exec.Cmd {
 	t.Helper()
 	// Re-exec the test binary with just the helper test.
-	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcess_HoldLock$")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcess_HoldLock$") //nolint:gosec // standard Go subprocess test pattern using os.Args[0]
 	cmd.Env = append(os.Environ(), "MGIT_LOCK_DIR="+mgitDir)
 	cmd.Stderr = os.Stderr
 
@@ -256,10 +256,10 @@ func TestAcquire_OpenFileFails_ReturnsError(t *testing.T) {
 	require.NoError(t, os.MkdirAll(locksDir, 0o700))
 
 	// Remove write permission on the locks directory so OpenFile fails.
-	require.NoError(t, os.Chmod(locksDir, 0o500))
+	require.NoError(t, os.Chmod(locksDir, 0o500)) //nolint:gosec // intentionally restrictive permissions for test
 	t.Cleanup(func() {
 		// Restore permissions for cleanup.
-		_ = os.Chmod(locksDir, 0o700)
+		_ = os.Chmod(locksDir, 0o700) //nolint:gosec // restoring permissions after test
 	})
 
 	_, err := Acquire(mgitDir, time.Second)
