@@ -10,7 +10,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
-	"github.com/astutic/mgit/internal/model"
+	"github.com/hyper-swe/mgit-dev/internal/model"
 )
 
 // CommitStore manages commit objects in the go-git store.
@@ -127,6 +127,41 @@ func (cs *CommitStore) ListCommits(_ context.Context) ([]*model.Commit, error) {
 // Refs: FR-12
 func (cs *CommitStore) DeleteCommit(_ context.Context, _ string) error {
 	return fmt.Errorf("%w: commits are immutable", model.ErrAppendOnlyViolation)
+}
+
+// GetFileFromCommit reads the contents of a single file from the tree
+// of the given commit. Returns model.ErrCommitNotFound if the commit
+// hash does not exist, or model.ErrFileNotFound if the path is absent
+// from the commit tree.
+// Refs: FR-6.7, MGIT-4.2.8
+func (cs *CommitStore) GetFileFromCommit(_ context.Context, hash, path string) ([]byte, error) {
+	if path == "" {
+		return nil, fmt.Errorf("get file: path must not be empty")
+	}
+
+	goRepo := cs.repo.repo
+
+	commitObj, err := goRepo.CommitObject(plumbing.NewHash(hash))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", model.ErrCommitNotFound, hash)
+	}
+
+	tree, err := commitObj.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("get tree for commit %s: %w", hash, err)
+	}
+
+	file, err := tree.File(path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s in commit %s", model.ErrFileNotFound, path, hash)
+	}
+
+	contents, err := file.Contents()
+	if err != nil {
+		return nil, fmt.Errorf("read file %s in commit %s: %w", path, hash, err)
+	}
+
+	return []byte(contents), nil
 }
 
 // commitFromGitObject converts a go-git commit object to a model.Commit.

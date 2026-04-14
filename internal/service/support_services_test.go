@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/astutic/mgit/internal/model"
-	gitstore "github.com/astutic/mgit/internal/store/git"
+	"github.com/hyper-swe/mgit-dev/internal/model"
+	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
 )
 
 // --- DiffService Tests ---

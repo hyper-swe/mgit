@@ -32,5 +32,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pure Go, zero CGO dependencies
 - go-git v5 for embedded git engine (no external git binary)
 - modernc.org/sqlite for pure Go SQLite (WAL mode, SYNCHRONOUS=FULL)
-- 228+ tests, zero race conditions, zero lint warnings
-- 85% overall code coverage
+- 530+ tests, zero race conditions, zero lint warnings
+- 85%+ code coverage across all packages

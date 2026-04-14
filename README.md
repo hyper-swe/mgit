@@ -136,29 +136,33 @@ mgit verify
 
 | Command | Description |
 |---------|-------------|
-| `mgit squash --task-id=ID` | Consolidate micro-commits into one |
-| `mgit rollback --task-id=ID` | Revert task changes (append-only) |
-| `mgit verify [--task-id=ID]` | Verify commit chain and index integrity |
-| `mgit audit [--task-id=ID]` | View the audit trail |
-| `mgit export --task-id=ID` | Export task commits as JSON |
+| `mgit squash --task-id=ID [--to-git \| --to-main]` | Consolidate micro-commits into one |
+| `mgit rollback --task-id=ID [--commit=HASH]` | Revert task or specific commit (append-only) |
+| `mgit verify [--task-id=ID] [--fix]` | Verify commit chain and index integrity |
+| `mgit audit [--task-id=ID] [--since --until]` | View the audit trail |
+| `mgit export --task-id=ID --format=json\|git\|audit-log` | Export task data in multiple formats |
 
 ### Multi-Agent
 
 | Command | Description |
 |---------|-------------|
-| `mgit worktree add PATH --task=ID` | Create isolated worktree for an agent |
-| `mgit worktree list` | List active worktrees |
-| `mgit worktree remove PATH` | Remove a worktree |
+| `mgit worktree add PATH --task=ID [--branch]` | Create isolated worktree for an agent |
+| `mgit worktree list [--porcelain]` | List active worktrees |
+| `mgit worktree remove PATH [--force]` | Remove a worktree |
+| `mgit worktree prune [--dry-run]` | Remove stale worktree metadata |
 
 ### Additional
 
 | Command | Description |
 |---------|-------------|
 | `mgit add [files...] [--all]` | Stage files |
-| `mgit checkout BRANCH` | Switch branches |
-| `mgit merge BRANCH` | Merge a branch |
-| `mgit cherry-pick HASH` | Apply a commit to current branch |
-| `mgit restore FILE --commit=HASH` | Restore a file from a commit |
+| `mgit diff [--from --to \| --task-id \| --staged]` | Show differences between commits, tasks, or staged files |
+| `mgit checkout BRANCH` | Switch branches (blocks on uncommitted changes) |
+| `mgit merge BRANCH [--squash \| --no-ff]` | Merge with fast-forward, squash, or no-ff strategy |
+| `mgit cherry-pick HASH [--no-commit \| --onto]` | Apply a commit to current or target branch |
+| `mgit restore FILE --commit=HASH` | Restore a single file from a commit |
+| `mgit gc [--aggressive]` | Pack loose objects and report space saved |
+| `mgit import --file=BUNDLE [--mode=merge\|replace]` | Import a bundle with SHA-256 manifest verification |
 | `mgit docs generate` | Generate agent-facing documentation |
 
 All commands support `--json` for structured output.
@@ -288,7 +292,7 @@ For LLM-driven development in regulated environments, this combination is the di
                           |
                  +--------+--------+
                  |  Service Layer  |
-                 |  (8 services)   |
+                 | (13 services)   |
                  +--------+--------+
                           |
               +-----------+-----------+

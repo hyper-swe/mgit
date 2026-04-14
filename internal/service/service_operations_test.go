@@ -4,12 +4,13 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/astutic/mgit/internal/model"
-	gitstore "github.com/astutic/mgit/internal/store/git"
+	"github.com/hyper-swe/mgit-dev/internal/model"
+	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
 )
 
 // --- CommitService gaps ---
@@ -194,6 +195,80 @@ func TestWorktreeService_Add_InvalidTaskID(t *testing.T) {
 		Path: "/tmp/wt-bad", TaskID: "invalid",
 	})
 	assert.Error(t, err)
+}
+
+// --- WorktreeService: Prune ---
+
+func TestWorktreeService_Prune_NonexistentPath(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	clock := fixedClock()
+
+	wtSvc := NewWorktreeService(env.idx, env.branch, clock)
+
+	// Add a worktree with a path that does not exist on disk.
+	_, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
+		Path: "/tmp/nonexistent-wt-prune-test", TaskID: "MGIT-15.1", AgentID: "a1",
+	})
+	require.NoError(t, err)
+
+	// Prune should detect the stale worktree.
+	stale, err := wtSvc.Prune(ctx, true, 0) // dryRun
+	require.NoError(t, err)
+	assert.Len(t, stale, 1)
+	assert.Equal(t, "/tmp/nonexistent-wt-prune-test", stale[0])
+
+	// Actual prune (not dry run).
+	stale, err = wtSvc.Prune(ctx, false, 0)
+	require.NoError(t, err)
+	assert.Len(t, stale, 1)
+
+	// After pruning, list should be empty.
+	wts, err := wtSvc.List(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, wts)
+}
+
+func TestWorktreeService_Prune_NoStale(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	clock := fixedClock()
+
+	wtSvc := NewWorktreeService(env.idx, env.branch, clock)
+
+	// No worktrees registered, so prune should return empty.
+	stale, err := wtSvc.Prune(ctx, false, 0)
+	require.NoError(t, err)
+	assert.Empty(t, stale)
+}
+
+func TestWorktreeService_Prune_StaleAfterDuration(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	// Use a clock that returns a time far in the future so the worktree
+	// will be older than any staleAfter duration.
+	fixedTime := fixedClock()()
+	futureClock := func() time.Time {
+		return fixedTime.Add(48 * time.Hour)
+	}
+
+	wtSvc := NewWorktreeService(env.idx, env.branch, fixedClock())
+
+	// Create a temp directory that actually exists.
+	tmpPath := t.TempDir()
+	_, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
+		Path: tmpPath, TaskID: "MGIT-15.2", AgentID: "a1",
+	})
+	require.NoError(t, err)
+
+	// Switch to future clock for pruning.
+	wtSvcFuture := NewWorktreeService(env.idx, env.branch, futureClock)
+
+	// Prune with a staleAfter of 1 hour — worktree was created 48 hours ago.
+	stale, err := wtSvcFuture.Prune(ctx, true, 1*time.Hour)
+	require.NoError(t, err)
+	assert.Len(t, stale, 1)
 }
 
 // --- ConfigService gaps ---

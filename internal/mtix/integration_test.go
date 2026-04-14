@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/astutic/mgit/internal/model"
-	"github.com/astutic/mgit/internal/service"
-	gitstore "github.com/astutic/mgit/internal/store/git"
-	"github.com/astutic/mgit/internal/store/index"
+	"github.com/hyper-swe/mgit-dev/internal/model"
+	"github.com/hyper-swe/mgit-dev/internal/service"
+	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
+	"github.com/hyper-swe/mgit-dev/internal/store/index"
 )
 
 func setupIntegration(t *testing.T, mtixSrv *httptest.Server) *Integration {

@@ -20,7 +20,7 @@ import (
 
 	"github.com/go-git/go-billy/v5/osfs"
 
-	"github.com/astutic/mgit/internal/model"
+	"github.com/hyper-swe/mgit-dev/internal/model"
 )
 
 const mgitDirName = ".mgit"
@@ -149,6 +149,20 @@ func (r *Repository) Head() (string, error) {
 		return "", fmt.Errorf("resolve HEAD: %w", err)
 	}
 	return ref.Hash().String(), nil
+}
+
+// CurrentBranch returns the short name of the branch HEAD currently
+// points at. Returns an error if HEAD is detached.
+// Refs: FR-1.4, FR-8.4
+func (r *Repository) CurrentBranch() (string, error) {
+	ref, err := r.repo.Head()
+	if err != nil {
+		return "", fmt.Errorf("resolve HEAD: %w", err)
+	}
+	if !ref.Name().IsBranch() {
+		return "", fmt.Errorf("HEAD is detached")
+	}
+	return ref.Name().Short(), nil
 }
 
 // createInitialCommit creates an empty initial commit so HEAD is valid.

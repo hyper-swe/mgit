@@ -6,7 +6,7 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing/object"
 
-	"github.com/astutic/mgit/internal/model"
+	"github.com/hyper-swe/mgit-dev/internal/model"
 )
 
 // DiffStore computes file diffs between commits.

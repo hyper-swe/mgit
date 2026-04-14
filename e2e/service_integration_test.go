@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/astutic/mgit/internal/model"
-	"github.com/astutic/mgit/internal/service"
-	gitstore "github.com/astutic/mgit/internal/store/git"
-	"github.com/astutic/mgit/internal/store/index"
+	"github.com/hyper-swe/mgit-dev/internal/model"
+	"github.com/hyper-swe/mgit-dev/internal/service"
+	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
+	"github.com/hyper-swe/mgit-dev/internal/store/index"
 )
 
 type serviceEnv struct {
@@ -28,6 +28,14 @@ type serviceEnv struct {
 	branch   *service.BranchService
 	verify   *service.VerifyService
 	audit    *service.AuditService
+	diff     *service.DiffService
+	checkout *service.CheckoutService
+	worktree *gitstore.WorktreeStore
+	merge    *service.MergeService
+	gc       *service.GCService
+	bundle   *service.BundleService
+	wtSvc    *service.WorktreeService
+	clock    func() time.Time
 }
 
 func setupServiceEnv(t *testing.T) *serviceEnv {
@@ -46,6 +54,10 @@ func setupServiceEnv(t *testing.T) *serviceEnv {
 
 	cs := gitstore.NewCommitStore(repo)
 	bs := gitstore.NewBranchStore(repo)
+	ds := gitstore.NewDiffStore(repo)
+	ws := gitstore.NewWorktreeStore(repo)
+	ms := gitstore.NewMergeStore(repo)
+	gcs := gitstore.NewGCStore(repo)
 	auditPath := filepath.Join(tmpDir, ".mgit", "audit.log")
 
 	return &serviceEnv{
@@ -57,6 +69,14 @@ func setupServiceEnv(t *testing.T) *serviceEnv {
 		branch:   service.NewBranchService(repo, bs, idx),
 		verify:   service.NewVerifyService(cs, idx),
 		audit:    service.NewAuditService(auditPath, clock),
+		diff:     service.NewDiffService(ds, cs, idx),
+		checkout: service.NewCheckoutService(bs, ws),
+		worktree: ws,
+		merge:    service.NewMergeService(repo, bs, ms, cs),
+		gc:       service.NewGCService(gcs),
+		bundle:   service.NewBundleService(idx, clock),
+		wtSvc:    service.NewWorktreeService(idx, service.NewBranchService(repo, bs, idx), clock),
+		clock:    clock,
 	}
 }
 

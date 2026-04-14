@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
-	"github.com/astutic/mgit/internal/model"
-	gitstore "github.com/astutic/mgit/internal/store/git"
-	"github.com/astutic/mgit/internal/store/index"
+	"github.com/hyper-swe/mgit-dev/internal/model"
+	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
+	"github.com/hyper-swe/mgit-dev/internal/store/index"
 )
 
 // SquashRequest holds parameters for squashing task commits.
@@ -116,6 +117,105 @@ func (s *SquashService) SquashTask(ctx context.Context, req SquashRequest) (*mod
 	}
 
 	return squashCommit, nil
+}
+
+// ExportToGitPatch renders a squash commit as a standard git format-patch
+// (mbox) text. The first line of the message is prefixed with "[squashed]"
+// per FR-7 / MGIT-4.2.2 so downstream git tooling can recognize the patch
+// as originating from an mgit squash operation. The output is consumable by
+// "git am" in any standard git repository.
+// Refs: FR-7, MGIT-4.2.2
+func (s *SquashService) ExportToGitPatch(c *model.Commit) string {
+	if c == nil {
+		return ""
+	}
+
+	// Split message into subject + body, prefix subject with [squashed].
+	subject, body := splitMessage(c.Message)
+	if !strings.HasPrefix(subject, "[squashed]") {
+		subject = "[squashed] " + subject
+	}
+
+	author := c.AgentID
+	if author == "" {
+		author = "mgit-squash"
+	}
+	email := author + "@mgit.local"
+	createdAt := c.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	dateRFC := createdAt.UTC().Format(time.RFC1123Z)
+	hash := c.CommitID
+	if hash == "" {
+		hash = c.ContentHash
+	}
+
+	var b strings.Builder
+	// mbox From line — git format-patch uses commit hash + epoch.
+	fmt.Fprintf(&b, "From %s %s\n", hash, createdAt.UTC().Format("Mon Jan 2 15:04:05 2006"))
+	fmt.Fprintf(&b, "From: %s <%s>\n", author, email)
+	fmt.Fprintf(&b, "Date: %s\n", dateRFC)
+	fmt.Fprintf(&b, "Subject: [PATCH] %s\n", subject)
+	b.WriteString("\n")
+	if body != "" {
+		b.WriteString(body)
+		if !strings.HasSuffix(body, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("---\n")
+
+	// Per-file diff section. Each file gets a "diff --git" header so the
+	// output is recognizable to git am / git apply.
+	for _, d := range c.FileDiffs {
+		fmt.Fprintf(&b, "diff --git a/%s b/%s\n", d.Path, d.Path)
+		switch d.Operation {
+		case model.DiffAdded:
+			fmt.Fprintf(&b, "new file mode 100644\n")
+		case model.DiffDeleted:
+			fmt.Fprintf(&b, "deleted file mode 100644\n")
+		}
+		if d.OldHash != "" || d.NewHash != "" {
+			fmt.Fprintf(&b, "index %s..%s\n", shortPatchHash(d.OldHash), shortPatchHash(d.NewHash))
+		}
+		fmt.Fprintf(&b, "--- a/%s\n", d.Path)
+		fmt.Fprintf(&b, "+++ b/%s\n", d.Path)
+		for _, h := range d.Hunks {
+			fmt.Fprintf(&b, "@@ -%d,%d +%d,%d @@\n",
+				h.LineStart, h.LinesRemoved, h.LineStart, h.LinesAdded)
+			if h.Content != "" {
+				b.WriteString(h.Content)
+				if !strings.HasSuffix(h.Content, "\n") {
+					b.WriteString("\n")
+				}
+			}
+		}
+	}
+
+	b.WriteString("-- \nmgit\n")
+	return b.String()
+}
+
+// splitMessage splits a commit message into its first-line subject and body.
+func splitMessage(msg string) (subject, body string) {
+	idx := strings.Index(msg, "\n")
+	if idx < 0 {
+		return strings.TrimSpace(msg), ""
+	}
+	return strings.TrimSpace(msg[:idx]), strings.TrimLeft(msg[idx+1:], "\n")
+}
+
+// shortPatchHash returns an 8-char prefix or "00000000" if empty.
+func shortPatchHash(h string) string {
+	if h == "" {
+		return "00000000"
+	}
+	if len(h) <= 8 {
+		return h
+	}
+	return h[:8]
 }
 
 // mergeDiffs consolidates file diffs, keeping the last operation per path.

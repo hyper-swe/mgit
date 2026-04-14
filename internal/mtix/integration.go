@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/astutic/mgit/internal/model"
-	"github.com/astutic/mgit/internal/service"
-	"github.com/astutic/mgit/internal/store/index"
+	"github.com/hyper-swe/mgit-dev/internal/model"
+	"github.com/hyper-swe/mgit-dev/internal/service"
+	"github.com/hyper-swe/mgit-dev/internal/store/index"
 )
 
 // Integration orchestrates bidirectional sync between mgit and mtix.

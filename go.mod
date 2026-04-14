@@ -1,4 +1,4 @@
-module github.com/astutic/mgit
+module github.com/hyper-swe/mgit-dev
 
 go 1.25.0
 

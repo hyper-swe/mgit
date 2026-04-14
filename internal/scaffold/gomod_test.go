@@ -52,8 +52,8 @@ func TestGoMod_Exists(t *testing.T) {
 
 func TestGoMod_CorrectModulePath(t *testing.T) {
 	content := readGoMod(t)
-	assert.Contains(t, content, "module github.com/astutic/mgit",
-		"go.mod must declare module path as github.com/astutic/mgit")
+	assert.Contains(t, content, "module github.com/hyper-swe/mgit-dev",
+		"go.mod must declare module path as github.com/hyper-swe/mgit-dev")
 }
 
 func TestGoMod_GoVersionDirective(t *testing.T) {
@@ -151,6 +151,6 @@ func TestGoMod_CleanDependencyTree(t *testing.T) {
 		"go list -m all must succeed; output: %s", string(output))
 
 	// Verify the module itself is listed
-	assert.Contains(t, string(output), "github.com/astutic/mgit",
+	assert.Contains(t, string(output), "github.com/hyper-swe/mgit-dev",
 		"dependency tree must include the module itself")
 }

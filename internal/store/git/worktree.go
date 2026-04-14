@@ -3,11 +3,12 @@ package git
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 
-	"github.com/astutic/mgit/internal/model"
+	"github.com/hyper-swe/mgit-dev/internal/model"
 )
 
 // FileStatus represents the status of a file in the worktree.
@@ -27,6 +28,30 @@ type WorktreeStore struct {
 // NewWorktreeStore creates a WorktreeStore backed by the given Repository.
 func NewWorktreeStore(repo *Repository) *WorktreeStore {
 	return &WorktreeStore{repo: repo}
+}
+
+// IsClean reports whether the user-visible portion of the worktree has
+// no uncommitted changes. Files under the .mgit/ directory are excluded
+// because they hold mgit's own object store and SQLite index, which are
+// not user content. When the second return value is non-empty, it lists
+// the dirty user-visible paths that are blocking a clean state.
+// Refs: FR-5.5a, MGIT-4.2.9
+func (ws *WorktreeStore) IsClean(ctx context.Context) (bool, []string, error) {
+	files, err := ws.Status(ctx)
+	if err != nil {
+		return false, nil, err
+	}
+	var dirty []string
+	for _, f := range files {
+		if strings.HasPrefix(f.Path, mgitDirName+"/") || f.Path == mgitDirName {
+			continue
+		}
+		// Any non-unmodified flag in either staging or worktree counts as dirty.
+		if f.Staging != " " && f.Staging != "" || f.Worktree != " " && f.Worktree != "" {
+			dirty = append(dirty, f.Path)
+		}
+	}
+	return len(dirty) == 0, dirty, nil
 }
 
 // Status returns the status of all files in the worktree.

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/astutic/mgit/internal/model"
+	"github.com/hyper-swe/mgit-dev/internal/model"
 )
 
 // InsertWorktree adds a worktree record to the index.

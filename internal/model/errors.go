@@ -80,6 +80,10 @@ var (
 
 	// ErrWorktreeNotFound indicates a worktree does not exist.
 	ErrWorktreeNotFound = errors.New("worktree not found")
+
+	// ErrFileNotFound indicates a path is absent from a commit's tree.
+	// Refs: FR-6.7
+	ErrFileNotFound = errors.New("file not found in commit")
 )
 
 // ValidationError provides structured context for validation failures.

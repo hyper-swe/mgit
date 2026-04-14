@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/astutic/mgit/internal/model"
-	gitstore "github.com/astutic/mgit/internal/store/git"
-	"github.com/astutic/mgit/internal/store/index"
+	"github.com/hyper-swe/mgit-dev/internal/model"
+	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
+	"github.com/hyper-swe/mgit-dev/internal/store/index"
 )
 
 // VerifyService performs integrity checks on commits and indexes.

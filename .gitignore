@@ -1,10 +1,20 @@
 cmd/mgit/mgit
+mgit
 
 CONCURRENCY-ANALYSIS.md
 SECURITY-AUDIT-LOCK.md
 AUDIT-*.md
+FR-MTIX-*.md
 
 cover.out
 coverage.out
 
 dist/
+
+# mtix runtime artifacts (not portable)
+.mtix/data/*.db
+.mtix/data/*.db-shm
+.mtix/data/*.db-wal
+.mtix/data/*.lock
+.mtix/data/*.sha256
+.mtix/logs/

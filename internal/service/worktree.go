@@ -3,10 +3,11 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
-	"github.com/astutic/mgit/internal/model"
-	"github.com/astutic/mgit/internal/store/index"
+	"github.com/hyper-swe/mgit-dev/internal/model"
+	"github.com/hyper-swe/mgit-dev/internal/store/index"
 )
 
 // WorktreeService orchestrates worktree lifecycle with task binding.
@@ -83,4 +84,47 @@ func (s *WorktreeService) Remove(ctx context.Context, path string, _ bool) error
 // Refs: FR-16
 func (s *WorktreeService) Resolve(ctx context.Context, path string) (*model.WorktreeInfo, error) {
 	return s.indexStore.GetWorktree(ctx, path)
+}
+
+// Prune removes worktree registrations that are stale. A worktree is
+// considered stale when:
+//   - its filesystem path no longer exists, OR
+//   - its created_at is older than `staleAfter` (when staleAfter > 0).
+//
+// When dryRun is true, the matching paths are returned without being
+// deleted from the registry.
+// Refs: FR-16, MGIT-8.2.2
+func (s *WorktreeService) Prune(ctx context.Context, dryRun bool, staleAfter time.Duration) ([]string, error) {
+	all, err := s.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("worktree prune: list: %w", err)
+	}
+
+	now := s.clock()
+	var stale []string
+	for _, wt := range all {
+		isStale := false
+		if _, statErr := os.Stat(wt.Path); statErr != nil && os.IsNotExist(statErr) {
+			isStale = true
+		}
+		if !isStale && staleAfter > 0 && !wt.CreatedAt.IsZero() {
+			if now.Sub(wt.CreatedAt) > staleAfter {
+				isStale = true
+			}
+		}
+		if isStale {
+			stale = append(stale, wt.Path)
+		}
+	}
+
+	if dryRun {
+		return stale, nil
+	}
+
+	for _, path := range stale {
+		if err := s.indexStore.DeleteWorktree(ctx, path); err != nil {
+			return nil, fmt.Errorf("worktree prune: delete %s: %w", path, err)
+		}
+	}
+	return stale, nil
 }

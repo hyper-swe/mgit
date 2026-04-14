@@ -11,9 +11,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/astutic/mgit/internal/service"
-	gitstore "github.com/astutic/mgit/internal/store/git"
-	"github.com/astutic/mgit/internal/store/index"
+	"github.com/hyper-swe/mgit-dev/internal/service"
+	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
+	"github.com/hyper-swe/mgit-dev/internal/store/index"
 )
 
 // Server wraps the MCP server with mgit services.

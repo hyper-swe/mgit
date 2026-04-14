@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/astutic/mgit/internal/service"
-	gitstore "github.com/astutic/mgit/internal/store/git"
-	"github.com/astutic/mgit/internal/store/index"
-	"github.com/astutic/mgit/internal/store/lock"
+	"github.com/hyper-swe/mgit-dev/internal/service"
+	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
+	"github.com/hyper-swe/mgit-dev/internal/store/index"
+	"github.com/hyper-swe/mgit-dev/internal/store/lock"
 )
 
 // App holds all initialized services for the CLI.
@@ -27,6 +27,11 @@ type App struct {
 	Audit    *service.AuditService
 	Config   *service.ConfigService
 	Diff     *service.DiffService
+	Restore  *service.RestoreService
+	Checkout *service.CheckoutService
+	Merge    *service.MergeService
+	GC       *service.GCService
+	Bundle   *service.BundleService
 
 	fileLock *lock.FileLock
 }
@@ -64,6 +69,9 @@ func OpenApp(path string) (*App, error) {
 	cs := gitstore.NewCommitStore(repo)
 	bs := gitstore.NewBranchStore(repo)
 	ds := gitstore.NewDiffStore(repo)
+	ws := gitstore.NewWorktreeStore(repo)
+	ms := gitstore.NewMergeStore(repo)
+	gcs := gitstore.NewGCStore(repo)
 	auditPath := filepath.Join(mgitDir, "audit.log")
 	configPath := filepath.Join(mgitDir, "config.json")
 
@@ -86,6 +94,11 @@ func OpenApp(path string) (*App, error) {
 		Audit:    service.NewAuditService(auditPath, clock),
 		Config:   cfgSvc,
 		Diff:     service.NewDiffService(ds, cs, idx),
+		Restore:  service.NewRestoreService(cs, path),
+		Checkout: service.NewCheckoutService(bs, ws),
+		Merge:    service.NewMergeService(repo, bs, ms, cs),
+		GC:       service.NewGCService(gcs),
+		Bundle:   service.NewBundleService(idx, clock),
 		fileLock: fileLock,
 	}, nil
 }

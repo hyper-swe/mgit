@@ -13,9 +13,9 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/oklog/ulid/v2"
 
-	"github.com/astutic/mgit/internal/service"
-	gitstore "github.com/astutic/mgit/internal/store/git"
-	"github.com/astutic/mgit/internal/store/index"
+	"github.com/hyper-swe/mgit-dev/internal/service"
+	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
+	"github.com/hyper-swe/mgit-dev/internal/store/index"
 )
 
 // Server holds the Echo instance and all services.
