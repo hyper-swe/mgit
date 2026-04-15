@@ -358,19 +358,6 @@ Benchmarked on Apple M5:
 | Squash (10 commits) | 0.63ms | <500ms |
 | Verify (50 commits) | 0.61ms | <1s |
 
-## Safety-Critical Design
-
-mgit is built for environments where audit compliance and code provenance are non-negotiable. Its design aligns with the principles of:
-
-| Standard | Domain | What mgit provides |
-|----------|--------|-------------------|
-| **DO-178C** | Avionics | Immutable audit trail linking every code change to a task |
-| **IEC 62304** | Medical devices | Append-only history that cannot be rewritten or deleted |
-| **NASA-STD-8739.8** | Spaceflight | Integrity verification with dual-hash chain validation |
-| **MIL-STD-498** | Defense acquisition | Full traceability from requirement to commit to test |
-
-mgit is a **development tool**, not embedded software. It does not require certification itself, but it produces the artifacts (audit logs, traceability records, integrity proofs) that certified systems need. When a regulator asks *"what code changed for this patient safety task?"*, mgit provides the answer with cryptographic certainty.
-
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) for details.
