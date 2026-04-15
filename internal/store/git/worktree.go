@@ -8,7 +8,7 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 
-	"github.com/hyper-swe/mgit-dev/internal/model"
+	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // FileStatus represents the status of a file in the worktree.

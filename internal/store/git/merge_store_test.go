@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hyper-swe/mgit-dev/internal/model"
+	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // createCommitWithFile creates a commit that adds or modifies a file in the

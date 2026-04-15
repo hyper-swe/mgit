@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hyper-swe/mgit-dev/internal/service"
+	"github.com/hyper-swe/mgit/internal/service"
 )
 
 // auditCmd implements mgit audit. Refs: FR-8.14, MGIT-4.2.5

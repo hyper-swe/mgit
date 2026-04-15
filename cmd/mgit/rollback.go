@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hyper-swe/mgit-dev/internal/service"
+	"github.com/hyper-swe/mgit/internal/service"
 )
 
 // rollbackCmd implements mgit rollback. Refs: FR-8.10, MGIT-4.2.1

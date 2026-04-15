@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hyper-swe/mgit-dev/internal/service"
+	"github.com/hyper-swe/mgit/internal/service"
 )
 
 // squashCmd implements mgit squash. Refs: FR-8.11, MGIT-4.2.2

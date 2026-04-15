@@ -57,7 +57,7 @@ changelog:
 release:
   github:
     owner: hyper-swe
-    name: mgit-dev
+    name: mgit
   draft: false
   prerelease: auto
   name_template: "mgit {{.Tag}}"
@@ -93,7 +93,7 @@ release:
     brew install hyper-swe/tap/mgit
 
     # Go
-    go install github.com/hyper-swe/mgit-dev/cmd/mgit@latest
+    go install github.com/hyper-swe/mgit/cmd/mgit@latest
 
     # Binary
     # Download from the assets below for your platform

@@ -7,7 +7,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/storer"
 
-	"github.com/hyper-swe/mgit-dev/internal/model"
+	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // BranchStore manages branch references in the go-git store.

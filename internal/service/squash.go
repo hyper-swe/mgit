@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hyper-swe/mgit-dev/internal/model"
-	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
-	"github.com/hyper-swe/mgit-dev/internal/store/index"
+	"github.com/hyper-swe/mgit/internal/model"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
+	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
 // SquashRequest holds parameters for squashing task commits.

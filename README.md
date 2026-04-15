@@ -80,21 +80,21 @@ brew install hyper-swe/tap/mgit
 ### Go Install
 
 ```bash
-go install github.com/hyper-swe/mgit-dev/cmd/mgit@latest
+go install github.com/hyper-swe/mgit/cmd/mgit@latest
 ```
 
 ### From Source
 
 ```bash
-git clone https://github.com/hyper-swe/mgit-dev.git
-cd mgit-dev
+git clone https://github.com/hyper-swe/mgit.git
+cd mgit
 make build
 ./cmd/mgit/mgit --version
 ```
 
 ### Binary Releases
 
-Download pre-built binaries from [GitHub Releases](https://github.com/hyper-swe/mgit-dev/releases). Available for Linux, macOS, and Windows on amd64 and arm64.
+Download pre-built binaries from [GitHub Releases](https://github.com/hyper-swe/mgit/releases). Available for Linux, macOS, and Windows on amd64 and arm64.
 
 ## Quick Start
 

@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hyper-swe/mgit-dev/internal/service"
+	"github.com/hyper-swe/mgit/internal/service"
 )
 
 // cherryPickCmd implements mgit cherry-pick. Refs: FR-8.16, MGIT-4.2.7

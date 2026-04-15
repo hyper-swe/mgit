@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hyper-swe/mgit-dev/internal/service"
+	"github.com/hyper-swe/mgit/internal/service"
 )
 
 // importCmd implements mgit import. Refs: FR-12.5, MGIT-4.2.12

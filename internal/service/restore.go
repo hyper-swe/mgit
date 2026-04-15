@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // RestoreService restores a single file from a specific commit without

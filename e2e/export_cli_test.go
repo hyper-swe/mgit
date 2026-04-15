@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hyper-swe/mgit-dev/internal/service"
-	"github.com/hyper-swe/mgit-dev/internal/store/index"
+	"github.com/hyper-swe/mgit/internal/service"
+	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
 // seedTaskCommits creates n commits and one audit entry for the given task.

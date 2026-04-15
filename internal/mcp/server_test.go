@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
-	"github.com/hyper-swe/mgit-dev/internal/store/index"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
+	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
 func fixedClock() func() time.Time {

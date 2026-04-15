@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hyper-swe/mgit-dev/internal/model"
+	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // CommitRecord represents a row from the task_commits table.

@@ -11,9 +11,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/hyper-swe/mgit-dev/internal/service"
-	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
-	"github.com/hyper-swe/mgit-dev/internal/store/index"
+	"github.com/hyper-swe/mgit/internal/service"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
+	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
 // BenchmarkCommit measures commit creation time. Target: <5ms.

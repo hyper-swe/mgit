@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/hyper-swe/mgit-dev/internal/service"
-	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
-	"github.com/hyper-swe/mgit-dev/internal/store/index"
-	"github.com/hyper-swe/mgit-dev/internal/store/lock"
+	"github.com/hyper-swe/mgit/internal/service"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
+	"github.com/hyper-swe/mgit/internal/store/index"
+	"github.com/hyper-swe/mgit/internal/store/lock"
 )
 
 // App holds all initialized services for the CLI.

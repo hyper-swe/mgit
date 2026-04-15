@@ -10,7 +10,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
-	"github.com/hyper-swe/mgit-dev/internal/model"
+	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // CommitStore manages commit objects in the go-git store.

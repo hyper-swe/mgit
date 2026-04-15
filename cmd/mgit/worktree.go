@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hyper-swe/mgit-dev/internal/model"
-	"github.com/hyper-swe/mgit-dev/internal/service"
+	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/service"
 )
 
 // worktreeCmd implements mgit worktree. Refs: FR-16, MGIT-8.3.1

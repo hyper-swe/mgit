@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // --- RestoreService Tests ---

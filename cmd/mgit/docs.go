@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hyper-swe/mgit-dev/internal/docs"
+	"github.com/hyper-swe/mgit/internal/docs"
 )
 
 // docsCmd implements mgit docs generate. Refs: FR-15, MGIT-7.3.1

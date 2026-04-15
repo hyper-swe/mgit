@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hyper-swe/mgit-dev/internal/model"
-	"github.com/hyper-swe/mgit-dev/internal/service"
+	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/service"
 )
 
 // makeWorktreePath returns an existing temp directory the test can pass

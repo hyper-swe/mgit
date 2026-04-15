@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // DefaultGCPackThreshold is the loose-object count above which a normal

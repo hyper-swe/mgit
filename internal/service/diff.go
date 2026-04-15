@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hyper-swe/mgit-dev/internal/model"
-	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
-	"github.com/hyper-swe/mgit-dev/internal/store/index"
+	"github.com/hyper-swe/mgit/internal/model"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
+	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
 // DiffService computes diffs between commits and across tasks.

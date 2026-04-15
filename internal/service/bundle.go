@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hyper-swe/mgit-dev/internal/model"
-	"github.com/hyper-swe/mgit-dev/internal/store/index"
+	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
 // BundleVersion is the on-disk format version emitted by Export and

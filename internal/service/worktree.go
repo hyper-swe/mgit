@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/hyper-swe/mgit-dev/internal/model"
-	"github.com/hyper-swe/mgit-dev/internal/store/index"
+	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
 // WorktreeService orchestrates worktree lifecycle with task binding.

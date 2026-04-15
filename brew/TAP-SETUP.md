@@ -26,7 +26,7 @@ event-type: mgit-release-published
 client-payload: {"tag": "v0.1.0", "project": "mgit"}
 ```
 
-This requires the `HOMEBREW_TAP_TOKEN` secret to be set in the mgit-dev repository with write access to `hyper-swe/homebrew-tap`.
+This requires the `HOMEBREW_TAP_TOKEN` secret to be set in the mgit repository with write access to `hyper-swe/homebrew-tap`.
 
 ### 4. Install command (after setup)
 

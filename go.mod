@@ -1,4 +1,4 @@
-module github.com/hyper-swe/mgit-dev
+module github.com/hyper-swe/mgit
 
 go 1.25.0
 

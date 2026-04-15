@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // addCmd implements mgit add. Refs: FR-8.15, MGIT-4.2.6

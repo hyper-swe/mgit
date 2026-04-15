@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	gitstore "github.com/hyper-swe/mgit-dev/internal/store/git"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // statusCmd implements mgit status. Refs: FR-8.6, MGIT-4.1.5

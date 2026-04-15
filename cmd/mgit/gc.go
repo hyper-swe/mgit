@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hyper-swe/mgit-dev/internal/service"
+	"github.com/hyper-swe/mgit/internal/service"
 )
 
 // gcCmd implements mgit gc. Refs: FR-8.4, FR-13.2, MGIT-4.2.11
