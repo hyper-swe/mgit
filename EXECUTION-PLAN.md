@@ -18,7 +18,7 @@ If you are an LLM agent starting work on mgit for the first time, follow these s
 brew install hyper-swe/tap/mtix    # or: go install github.com/hyper-swe/mtix/cmd/mtix@latest
 
 # Configure mtix MCP server for your coding agent (Claude Code example)
-claude mcp add mtix -- mtix mcp --project /Users/vimal/workspace/swe/microissue/mgit-dev
+claude mcp add mtix -- mtix mcp --project /path/to/your/project
 
 # See CLAUDE.md "TASK MANAGEMENT PREREQUISITES" for other client configs
 ```

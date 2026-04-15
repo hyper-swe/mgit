@@ -1,7 +1,6 @@
 # mgit — Requirements Specification
 
 **Version:** 1.0
-**Author:** Vimal Menon
 **Date:** March 9, 2026
 **Status:** Draft
 **Classification:** Safety-Critical Software Specification
