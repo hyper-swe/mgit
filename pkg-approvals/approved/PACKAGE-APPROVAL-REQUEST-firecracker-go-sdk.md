@@ -45,6 +45,19 @@ itself is COTS, digest-pinned, and assessed per FR-17.30/FR-17.31.
 - [x] **No Overlap** — no approved package provides VMM lifecycle control.
 - [x] **Implementation Necessity** — a correct VMM API client + jailer integration is well over 100 lines (estimate 1,500+).
 
+## Known Conflicts (documented exceptions)
+
+1. **Maintenance cadence.** The SDK's release cadence is slow (v1.0.0 era);
+   activity is sparse relative to the other §2a approvals. Mitigations: pin
+   exact version at first import, re-baseline under FR-17.36 change control,
+   and re-evaluate against Cloud Hypervisor bindings at the MGIT-11.13.2 spike.
+2. **logrus API surface.** The SDK's public API accepts `*logrus.Entry`;
+   `sirupsen/logrus` is in mgit's Explicitly Rejected table (archived, prefer
+   slog). Exception: `mgit-sandboxd` MAY depend on logrus **solely as the
+   SDK's logging adapter** (an slog→logrus bridge confined to the sandboxd
+   binary). logrus remains forbidden in core mgit and must not be used for
+   sandboxd's own logging.
+
 ## Detailed Justification
 
 ADR-005 selects hardware-virtualized microVMs as the only acceptable isolation

@@ -435,7 +435,7 @@ Same logic as ADR-004: hypervisor APIs and the microVM ecosystem are evolving qu
 
 | # | Criterion | Disposition |
 |---|-----------|-------------|
-| 1 | FR-17 requirements in REQUIREMENTS.md with numbered acceptance criteria | **Met** — FR-17.1–17.37, NFR-17.1–17.7 (MGIT-11.1.1, MGIT-11.1.2) |
+| 1 | FR-17 requirements in REQUIREMENTS.md with numbered acceptance criteria | **Met** — FR-17.1–17.38, NFR-17.1–17.7 (MGIT-11.1.1, MGIT-11.1.2) |
 | 2 | Backend dependency proposals approved | **Met** — APPROVED-PACKAGES.md §2a + `pkg-approvals/approved/` (MGIT-11.1.4) |
 | 3 | Cross-platform latency/throughput spike | **Converted to requirement** — NFR-17.1–17.2 gates; benchmarked in MGIT-11.13.2 before any backend ships |
 | 4 | Land-path security review vs OWASP ASVS L2 | **Converted to requirement** — security audit V2 + land-parser fuzzing in MGIT-11.13.3, gated on FR-17.35 protocol spec |

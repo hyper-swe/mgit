@@ -943,7 +943,7 @@ mgit confines agent command execution (builds, tests, dependency installs — wh
 
 **FR-17.5** Quarantine-then-land. `mgit sandbox land` MUST: (1) pull commit objects over vsock; (2) re-verify the dual hash per ADR-002 — recompute SHA-1 (git object) and SHA-256 (`content_hash`) — on the host; (3) verify the task ID binding on every commit (`ErrTaskMismatch`); (4) append to `task_commits` (append-only, NFR-3.1); (5) fast-forward the task branch, never rewrite. Land MUST be atomic: all commits verify and import, or none do (same all-or-nothing semantics as squash, FR-2.x). Verification failure MUST return `ErrLandVerificationFailed` and import nothing.
 
-**FR-17.6** Host-anchored commit attestation (SEC-01). Commit attestations MUST be issued host-side by `mgit-sandboxd` as commit objects cross vsock, keyed by host-held material the guest never sees. The guest agent (`mgit-guest`) is transport only: it MUST NOT hold signing material and MUST NOT be able to mint attestations. With `require_sandbox = true` (the default in safety-critical profiles), `land` MUST refuse any commit lacking a valid host-issued attestation (`ErrUnattestedCommit`). Commits landed with the policy off MUST carry `sandbox_id = NULL`, permanently visible in the audit trail.
+**FR-17.6** Host-anchored commit attestation (SEC-01). Commit attestations MUST be issued host-side by `mgit-sandboxd` as commit objects cross vsock, keyed by host-held material the guest never sees. The guest agent (`mgit-guest`) is transport only: it MUST NOT hold signing material and MUST NOT be able to mint attestations. `require_sandbox` defaults to **true**; it MAY be disabled only by explicit host-side policy (FR-17.13), and the disablement event is itself appended to the audit log. With `require_sandbox = true`, `land` MUST refuse any commit lacking a valid host-issued attestation (`ErrUnattestedCommit`). Commits landed with the policy off MUST carry `sandbox_id = NULL`, permanently visible in the audit trail.
 
 **FR-17.7** Per-sandbox network policy. Network policy is declared at launch, recorded immutably in the audit record, and enforced host-side — the guest MUST NOT be able to weaken it:
 
@@ -959,9 +959,9 @@ mgit confines agent command execution (builds, tests, dependency installs — wh
 
 **FR-17.10** Lazy provisioning. Claiming a task registers the sandbox but MUST NOT boot the VM; the VM boots on the first command that needs it. A task that never executes a command MUST cost no VM resources.
 
-**FR-17.11** Transparent exec routing. Inside a bound worktree, command execution MUST be routable into the guest without agent code changes (PATH shim, harness hook, or `mgit run -- <cmd>` as default executor). Routing MUST be whole-command (one guest shell per invocation — pipelines, globs, subshells, and `&&` chains behave exactly as locally; no per-binary classifier to bypass). stdout, stderr, and exit codes MUST pass through unchanged. The routing hook MUST fail closed: if the sandbox is unavailable, the harness's normal permission prompting resumes.
+**FR-17.11** Transparent exec routing. Inside a bound worktree, command execution MUST be routable into the guest without agent code changes (PATH shim, harness hook, or `mgit run -- <cmd>` as default executor). Routing MUST be whole-command (one guest shell per invocation — pipelines, globs, subshells, and `&&` chains behave exactly as locally; no per-binary classifier to bypass). stdout, stderr, and exit codes MUST pass through unchanged. If the sandbox is unavailable, the routing hook MUST NOT silently auto-approve: execution falls back to host commands gated by the harness's normal permission prompting, and the results of such unconfined work remain refusable at land per FR-17.6 (`require_sandbox`).
 
-**FR-17.12** Capability escalation (per-capability, not per-command). Boundary-crossing capabilities (extra egress hosts, `open` network, ssh-agent forwarding, additional mounts) MUST be requested explicitly via `mgit sandbox policy request`, producing one host-side user prompt per capability per sandbox lifetime. The grant request MUST be derived solely from the host-observed denied connection (real destination IP/port), never from guest-supplied text (SEC-05); the prompt MUST always display the real destination and requesting task; no "allow all" option may exist. Grants MUST be recorded append-only and die with the sandbox. Denials MUST be machine-readable (`MGIT-EGRESS-DENIED host=<dest> remedy=<cmd>`) so agents self-correct. ssh-agent forwarding proxies the host agent socket over vsock; private keys MUST never enter the guest.
+**FR-17.12** Capability escalation (per-capability, not per-command). Boundary-crossing capabilities (extra egress hosts, `open` network, ssh-agent forwarding, additional mounts) MUST be requested explicitly via `mgit sandbox policy request`, producing one host-side user prompt per capability per sandbox lifetime. The grant request MUST be derived solely from the host-observed denied connection (real destination IP/port), never from guest-supplied text (SEC-05); the prompt MUST always display the real destination and requesting task; no "allow all" option may exist. Grants MUST be recorded append-only and die with the sandbox. Denials MUST be machine-readable (`MGIT-EGRESS-DENIED host=<dest> remedy=<cmd>`); the denial string, including the remedy text, is composed entirely host-side by the egress proxy — guest output MUST never be incorporated into it (SEC-05). ssh-agent forwarding proxies the host agent socket over vsock; private keys MUST never enter the guest.
 
 **FR-17.13** Host-only policy store (SEC-02). All enforcement inputs — `require_sandbox`, network policy, image lock, sensitive-path list, resource caps — MUST live under a host config root (`~/.mgit/host/<repo-id>/`), MUST never be mounted into guests, and MUST NOT be committable repo files. A repo MAY ship suggested defaults that take effect only after explicit host-side adoption. The effective policy MUST be recorded in the audit log.
 
@@ -1006,7 +1006,7 @@ CREATE TABLE sandbox_events (
 );
 ```
 
-Sandbox state MUST be derived from the latest event per `sandbox_id`; transitions append, never mutate. `task_commits` gains a nullable `sandbox_id` column written at append time only, making every landed commit traceable to the exact sandbox, image digest, and network policy that produced it. Egress decisions in `allowlist` mode append to `sandbox_egress_log`. Guest-sourced strings MUST be sanitized and length-capped before insertion (AUDIT F-09) — append-only tables make corrupted entries permanent.
+Sandbox state MUST be derived from the latest event per `sandbox_id`; transitions append, never mutate. `task_commits` gains a nullable `sandbox_id` column written at append time only, making every landed commit traceable to the exact sandbox, image digest, and network policy that produced it. Egress decisions in `allowlist` mode append to `sandbox_egress_log`, which is subject to the same append-only law as `sandbox_events` and `task_commits`: no UPDATE, no DELETE, no retention pruning, ever. Guest-sourced strings MUST be sanitized and length-capped before insertion (AUDIT F-09) — append-only tables make corrupted entries permanent.
 
 **FR-17.19** Disposability. Destroying a sandbox MUST NOT lose landed work and MUST NOT leave host residue outside the worktree. `mgit sandbox remove` MUST refuse if unlanded commits exist (`ErrUnlandedCommits`) unless `--force` is given; unlanded work is then discarded by design.
 
@@ -1056,7 +1056,7 @@ var (
 
 **FR-17.26** One-way port publish and global resource ceiling (SEC-09). Guest→host port publishing MUST be strictly one-way: the guest MUST NOT be able to reach host loopback services (e.g. a host database on `127.0.0.1:5432`). `mgit-sandboxd` MUST enforce a global concurrency cap (default **8** concurrent sandboxes) and a global memory ceiling (default **50%** of host physical memory across all sandboxes); exceeding either fails sandbox launch with a machine-readable error rather than degrading the host.
 
-**FR-17.27** vsock peer binding (SEC-10). Each guest's control and land channel MUST be bound at launch to its hypervisor-level peer identity — the vsock CID on AF_VSOCK backends (KVM, Virtualization.framework) and the VM identity GUID on Hyper-V sockets (AF_HYPERV). `mgit-sandboxd` MUST reject messages arriving from a peer identity other than the one bound to the addressed sandbox — one guest can never address another guest's land or attestation channel.
+**FR-17.27** vsock peer binding (SEC-10). Each guest's control and land channel MUST be bound at launch to its hypervisor-level peer identity — the vsock CID on AF_VSOCK backends (KVM, Virtualization.framework) and the VM identity GUID on Hyper-V sockets (AF_HYPERV). `mgit-sandboxd` MUST reject messages arriving from a peer identity other than the one bound to the addressed sandbox — one guest can never address another guest's land or attestation channel. The binding MUST be invalidated at sandbox teardown: a recycled CID assigned to a successor VM MUST NOT inherit a destroyed sandbox's channel binding (specified in the FR-17.35 protocol document).
 
 **FR-17.28** Guest metadata is advisory (SEC-11). Guest-supplied commit author and timestamp are recorded but advisory. The host MUST record its own receive-time alongside the guest timestamp on every landed commit; audit queries MUST expose both. Task-ID binding remains authoritative per FR-17.5.
 
@@ -1076,11 +1076,13 @@ var (
 
 **FR-17.36** Image change control (F-12). Rootfs images are configuration items (DO-178C §7.1). Any `images.lock` change MUST follow a documented review and re-baseline procedure: proposed digest, register update (FR-17.31), reviewer sign-off, and an append-only audit record of the change. Lock edits are host-side only (FR-17.13).
 
+**FR-17.38** Key management for host trust anchors. The attestation key (FR-17.6) and the image-signing trust root (FR-17.29) MUST be generated host-side and stored under the host config root (FR-17.13) with `0600` permissions, in files **separate from** `images.lock` and the policy store — a writer who can poison the lock must not be able to substitute the verification key. The trust-root public-key fingerprint MUST be pinned in the SANDBOX-IMAGES.md register (FR-17.31) under FR-17.36 change control, and the independent verifier (FR-17.32) MUST obtain the trust root from that register, never from the policy store it is auditing. Key rotation MUST append an audit event recording old and new fingerprints; signing keys MUST never enter a guest or an image.
+
 **FR-17.37** Security-finding traceability. Every audit finding maps to requirement criteria:
 
 | Finding | Resolution | Requirement(s) |
 |---|---|---|
-| SEC-01 — guest-rooted attestation forgeable | Host-anchored attestation | FR-17.6 |
+| SEC-01 — guest-rooted attestation forgeable | Host-anchored attestation + key management | FR-17.6, FR-17.38 |
 | SEC-02 — self-weakening config | Host-only policy store | FR-17.13, FR-17.14 |
 | SEC-03 — shared object store leaks into guest | Private sandbox-local object store | FR-17.3, FR-17.4 |
 | SEC-04 — SNI allowlist defeatable | IP/flow-layer default-deny egress | FR-17.8 |
@@ -1091,7 +1093,7 @@ var (
 | SEC-09 — host loopback exposure + DoS | One-way publish + global ceiling | FR-17.26 |
 | SEC-10 — vsock cross-guest addressing | CID peer binding | FR-17.27 |
 | SEC-11 — author/timestamp forgery | Host receive-time, advisory guest metadata | FR-17.28 |
-| SEC-12 — poisoned image lock | Signature verification at boot | FR-17.29 |
+| SEC-12 — poisoned image lock | Signature verification at boot + trust-root separation | FR-17.29, FR-17.38 |
 | F-01 — append-only law violation | Event-sourced sandbox_events | FR-17.18 |
 | F-02 — silent unsandboxed execution | require_sandbox attestation + fail-closed routing | FR-17.6, FR-17.11 |
 | F-03 — land path parses hostile input | Bounded, schema-validated land protocol | FR-17.24, FR-17.35 |
