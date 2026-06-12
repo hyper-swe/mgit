@@ -1,15 +1,19 @@
 // Command mgit-sandboxd is the per-platform sandbox helper daemon
 // (FR-17.16): it owns VMM control (and any CGO) so core mgit stays
-// pure-Go, serves a local unix socket, and exits when no sandboxes
-// remain. Backends are wired in per platform (MGIT-11.5.x); a build
-// without one refuses launches with ErrSandboxBackendUnavailable.
-// Refs: FR-17.16, NFR-17.6, MGIT-11.4.1
+// pure-Go, serves an authenticated local unix socket, and exits when
+// no sandboxes remain. Backends are wired in per platform
+// (MGIT-11.5.x); a build without one refuses launches with
+// ErrSandboxBackendUnavailable. Every manager is wrapped in the
+// FR-17.26 global ceiling — there is no un-ceilinged launch path.
+// Refs: FR-17.16, FR-17.26, NFR-17.6, MGIT-11.4.1
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -26,11 +30,17 @@ func main() {
 
 // run wires flags into the daemon and blocks until exit. Split from
 // main for testability (DI; no globals).
-func run(args []string, logSink *os.File) int {
+func run(args []string, logSink io.Writer) int {
 	flags := flag.NewFlagSet("mgit-sandboxd", flag.ContinueOnError)
+	flags.SetOutput(logSink)
 	socket := flags.String("socket", "", "unix socket path to serve (required)")
 	idleGrace := flags.Duration("idle-grace", 30*time.Second, "zero-sandbox linger before exit")
+	maxSandboxes := flags.Int("max-sandboxes", 8, "global concurrent-sandbox ceiling (FR-17.26)")
+	maxMemoryMB := flags.Int("max-memory-mb", 0, "global sandbox memory ceiling in MB (0 until policy wiring resolves the FR-17.26 50% host default)")
 	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 
@@ -40,9 +50,16 @@ func run(args []string, logSink *os.File) int {
 		return 2
 	}
 
+	// The ceiling wraps whichever backend this build carries: launches
+	// never reach a backend unadmitted (SEC-09).
+	manager := sandboxd.NewCeilingManager(
+		sandboxd.NewUnavailableManager(runtime.GOOS),
+		*maxSandboxes, *maxMemoryMB, 0,
+	)
+
 	daemon, err := sandboxd.New(sandboxd.Config{
 		SocketPath: *socket,
-		Manager:    sandboxd.NewUnavailableManager(runtime.GOOS),
+		Manager:    manager,
 		Logger:     logger,
 		Clock:      func() time.Time { return time.Now().UTC() },
 		IdleGrace:  *idleGrace,

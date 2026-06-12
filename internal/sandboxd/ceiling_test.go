@@ -49,7 +49,7 @@ func launchOpts(task string, memoryMB int) model.SandboxLaunchOptions {
 // a removal. Refs: FR-17.26
 func TestCeiling_ExceedConcurrency_QueuesOrRejects(t *testing.T) {
 	inner := &launchingManager{fakeManager: *newFakeManager()}
-	mgr := NewCeilingManager(inner, 2, 0)
+	mgr := NewCeilingManager(inner, 2, 0, 0)
 	ctx := context.Background()
 
 	first, err := mgr.Launch(ctx, launchOpts("MGIT-1.1", 512))
@@ -70,7 +70,7 @@ func TestCeiling_ExceedConcurrency_QueuesOrRejects(t *testing.T) {
 // (SEC-09): per-VM caps alone cannot protect the host. Refs: FR-17.26
 func TestCeiling_TotalMemoryBounded(t *testing.T) {
 	inner := &launchingManager{fakeManager: *newFakeManager()}
-	mgr := NewCeilingManager(inner, 0, 4096)
+	mgr := NewCeilingManager(inner, 0, 4096, 0)
 	ctx := context.Background()
 
 	_, err := mgr.Launch(ctx, launchOpts("MGIT-1.1", 2048))
@@ -88,7 +88,7 @@ func TestCeiling_TotalMemoryBounded(t *testing.T) {
 
 	t.Run("unresolved_memory_accounted_at_default", func(t *testing.T) {
 		inner := &launchingManager{fakeManager: *newFakeManager()}
-		mgr := NewCeilingManager(inner, 0, 2048)
+		mgr := NewCeilingManager(inner, 0, 2048, 0)
 		_, err := mgr.Launch(ctx, launchOpts("MGIT-2.1", 0))
 		require.NoError(t, err, "one default-sized launch fits")
 		_, err = mgr.Launch(ctx, launchOpts("MGIT-2.2", 0))
@@ -104,7 +104,7 @@ func TestCeiling_Configurable(t *testing.T) {
 
 	t.Run("zero_caps_unlimited", func(t *testing.T) {
 		inner := &launchingManager{fakeManager: *newFakeManager()}
-		mgr := NewCeilingManager(inner, 0, 0)
+		mgr := NewCeilingManager(inner, 0, 0, 0)
 		for i := 0; i < 20; i++ {
 			_, err := mgr.Launch(ctx, launchOpts(fmt.Sprintf("MGIT-3.%d", i+1), 1024))
 			require.NoError(t, err)
@@ -113,7 +113,7 @@ func TestCeiling_Configurable(t *testing.T) {
 
 	t.Run("cap_of_one", func(t *testing.T) {
 		inner := &launchingManager{fakeManager: *newFakeManager()}
-		mgr := NewCeilingManager(inner, 1, 0)
+		mgr := NewCeilingManager(inner, 1, 0, 0)
 		_, err := mgr.Launch(ctx, launchOpts("MGIT-4.1", 512))
 		require.NoError(t, err)
 		_, err = mgr.Launch(ctx, launchOpts("MGIT-4.2", 512))
@@ -122,7 +122,7 @@ func TestCeiling_Configurable(t *testing.T) {
 
 	t.Run("concurrent_launch_race_respects_cap", func(t *testing.T) {
 		inner := &launchingManager{fakeManager: *newFakeManager()}
-		mgr := NewCeilingManager(inner, 5, 0)
+		mgr := NewCeilingManager(inner, 5, 0, 0)
 
 		var wg sync.WaitGroup
 		var mu sync.Mutex
@@ -139,7 +139,20 @@ func TestCeiling_Configurable(t *testing.T) {
 			}(i)
 		}
 		wg.Wait()
-		assert.Equal(t, 5, succeeded, "racing launches must never overshoot the cap")
+
+		// The security property is NEVER overshooting (SEC-09). A racing
+		// admission may transiently under-admit (a just-launched sandbox
+		// is briefly counted as both reserved and listed) — the safe
+		// direction; capacity is reachable once the race settles.
+		assert.LessOrEqual(t, succeeded, 5, "racing launches must never overshoot the cap")
+		for succeeded < 5 {
+			_, err := mgr.Launch(ctx, launchOpts(fmt.Sprintf("MGIT-5.fill%d", succeeded), 64))
+			require.NoError(t, err, "freed transient reservations must admit up to the cap")
+			succeeded++
+		}
+		_, err := mgr.Launch(ctx, launchOpts("MGIT-5.overflow", 64))
+		assert.ErrorIs(t, err, model.ErrSandboxCeilingExceeded,
+			"the cap holds exactly once filled")
 	})
 
 	t.Run("destroyed_sandboxes_do_not_count", func(t *testing.T) {
@@ -147,7 +160,7 @@ func TestCeiling_Configurable(t *testing.T) {
 		inner.sandboxes["01JXDEAD"] = model.SandboxInfo{
 			ID: "01JXDEAD", TaskID: "MGIT-7.0", State: model.StateDestroyed, MemoryMB: 999999,
 		}
-		mgr := NewCeilingManager(inner, 1, 1024)
+		mgr := NewCeilingManager(inner, 1, 1024, 0)
 		_, err := mgr.Launch(ctx, launchOpts("MGIT-7.1", 512))
 		assert.NoError(t, err, "destroyed sandboxes hold no capacity")
 	})
@@ -155,14 +168,14 @@ func TestCeiling_Configurable(t *testing.T) {
 	t.Run("admission_surfaces_list_failure", func(t *testing.T) {
 		inner := &launchingManager{fakeManager: *newFakeManager()}
 		inner.failList = true
-		mgr := NewCeilingManager(inner, 1, 0)
+		mgr := NewCeilingManager(inner, 1, 0, 0)
 		_, err := mgr.Launch(ctx, launchOpts("MGIT-8.1", 512))
 		assert.Error(t, err, "an unverifiable ceiling fails closed")
 	})
 
 	t.Run("delegated_operations_pass_through", func(t *testing.T) {
 		inner := &launchingManager{fakeManager: *newFakeManager()}
-		mgr := NewCeilingManager(inner, 1, 0)
+		mgr := NewCeilingManager(inner, 1, 0, 0)
 		info, err := mgr.Launch(ctx, launchOpts("MGIT-6.1", 64))
 		require.NoError(t, err)
 

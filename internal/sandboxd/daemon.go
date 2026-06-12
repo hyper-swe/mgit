@@ -3,18 +3,20 @@
 // unix socket, idling at zero cost, and exiting once no sandboxes
 // remain (NFR-17.6). Platform VMM backends plug in behind
 // model.SandboxManager; any CGO lives in those backends, never in core
-// mgit (FR-17.16, ADR-005 CGO containment). The IPC protocol and its
-// same-UID peer authentication are layered on in MGIT-11.4.2.
-// Refs: FR-17.16, NFR-17.6, MGIT-11.4.1
+// mgit (FR-17.16, ADR-005 CGO containment).
+// Refs: FR-17.16, FR-17.34, NFR-17.6, MGIT-11.4.1, MGIT-11.4.2
 package sandboxd
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -45,13 +47,14 @@ const (
 )
 
 // greeting is the liveness line an authenticated peer receives; the
-// activation health check and the IPC protocol key off its "ok" prefix.
+// activation health check keys off its "ok " prefix — a squatter
+// socket that cannot greet is not the daemon (FR-17.34).
 const greeting = "ok mgit-sandboxd\n"
 
 // Daemon supervises sandboxes and owns the local IPC socket.
 type Daemon struct {
 	cfg     Config
-	selfUID uint32 // daemon's own UID, cached at startup (FR-17.34)
+	selfUID uint32 // daemon's own effective UID, cached at startup (FR-17.34)
 }
 
 // New validates the configuration and returns a Daemon.
@@ -77,28 +80,36 @@ func New(cfg Config) (*Daemon, error) {
 	}
 	return &Daemon{
 		cfg:     cfg,
-		selfUID: uint32(os.Getuid()), //nolint:gosec // OK: Getuid is non-negative on unix platforms where this runs
+		selfUID: uint32(os.Geteuid()), //nolint:gosec // OK: Geteuid is non-negative on unix platforms where this runs
 	}, nil
 }
 
 // Run serves the socket until the context is canceled (clean shutdown
 // drains and destroys all sandboxes) or the daemon has had zero
-// sandboxes for IdleGrace (idle exit — zero footprint when mgit is not
-// in use). The socket file is removed on exit; a stale file from a
-// crashed predecessor is replaced at startup (restart safety).
-// Refs: FR-17.16, NFR-17.6
+// sandboxes — and no authenticated connections — for IdleGrace (idle
+// exit: zero footprint when mgit is not in use, and unauthenticated
+// peers cannot keep the daemon alive). The socket path is claimed via
+// an exclusive flock so two daemons can never fight over it; stale
+// files from crashed predecessors are replaced (restart safety).
+// Refs: FR-17.16, FR-17.34, NFR-17.6
 func (d *Daemon) Run(ctx context.Context) error {
-	listener, err := d.listen(ctx)
+	listener, lock, err := d.listen(ctx)
 	if err != nil {
 		return err
 	}
-	defer d.cleanupSocket(listener)
+	defer d.cleanupSocket(listener, lock)
 
 	d.cfg.Logger.Info("sandboxd started", "event", "started", "socket", d.cfg.SocketPath)
 
 	connections := make(chan net.Conn)
 	acceptDone := make(chan error, 1)
-	go d.acceptLoop(listener, connections, acceptDone)
+	stop := make(chan struct{})
+	defer close(stop)
+	// authed receives one tick per AUTHENTICATED connection: only
+	// legitimate peers reset the idle clock (an unauthorized dialer
+	// must not control daemon lifetime).
+	authed := make(chan struct{}, 16)
+	go d.acceptLoop(listener, connections, acceptDone, stop)
 
 	idleSince := d.cfg.Clock()
 	ticker := time.NewTicker(d.cfg.PollInterval)
@@ -108,21 +119,21 @@ func (d *Daemon) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			d.cfg.Logger.Info("sandboxd shutting down", "event", "shutdown", "reason", "signal")
-			// Drain on a detached, bounded context: shutdown must finish
-			// even if the parent is canceled or a backend hangs.
-			drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), drainTimeout)
-			drainErr := d.drain(drainCtx)
-			cancel()
-			return drainErr
+			return d.drainBounded(ctx)
 
 		case conn := <-connections:
-			idleSince = d.cfg.Clock()
 			// Per-connection goroutine: a slow or hung client must never
 			// block idle checks or shutdown responsiveness.
-			go d.handleConn(ctx, conn)
+			go d.handleConn(ctx, conn, authed)
+
+		case <-authed:
+			idleSince = d.cfg.Clock()
 
 		case err := <-acceptDone:
-			return fmt.Errorf("sandboxd accept loop: %w", err)
+			// Accept failure (e.g. fd exhaustion) is fatal — but VMs are
+			// NEVER left running unsupervised: drain before exiting.
+			d.cfg.Logger.Error("sandboxd accept failed", "event", "accept_error", "error", err)
+			return errors.Join(fmt.Errorf("sandboxd accept loop: %w", err), d.drainBounded(ctx))
 
 		case <-ticker.C:
 			busy, err := d.hasSandboxes(ctx)
@@ -143,41 +154,68 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 }
 
-// listen binds the unix socket, replacing a stale file left behind by
-// a crashed predecessor (restart safety). The socket file is tightened
-// to owner-only before the listener is returned (F-08).
-func (d *Daemon) listen(ctx context.Context) (net.Listener, error) {
-	var lc net.ListenConfig
-	listener, err := lc.Listen(ctx, "unix", d.cfg.SocketPath)
-	if err == nil {
-		return listener, d.tightenSocket()
-	}
-
-	// A live daemon answers dials; a stale file refuses them.
-	if dialOK(ctx, d.cfg.SocketPath) {
-		return nil, fmt.Errorf("sandboxd: another daemon is serving %s", d.cfg.SocketPath)
-	}
-	if rmErr := os.Remove(d.cfg.SocketPath); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
-		return nil, fmt.Errorf("sandboxd: replace stale socket: %w", rmErr)
-	}
-	listener, err = lc.Listen(ctx, "unix", d.cfg.SocketPath)
-	if err != nil {
-		return nil, fmt.Errorf("sandboxd: bind %s: %w", d.cfg.SocketPath, err)
-	}
-	return listener, d.tightenSocket()
+// drainBounded drains on a detached, bounded context: shutdown must
+// finish even if the parent is canceled or a backend hangs.
+func (d *Daemon) drainBounded(ctx context.Context) error {
+	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), drainTimeout)
+	defer cancel()
+	return d.drain(drainCtx)
 }
 
-// tightenSocket sets the socket file to owner-only (F-08). Peer-UID
-// authentication is the primary control; the mode is defense in depth.
-func (d *Daemon) tightenSocket() error {
+// listen claims the socket path (exclusive flock — losers see "another
+// daemon"), replaces any stale socket file, binds, and tightens the
+// directory and socket modes (0700/0600, F-08). The flock closes the
+// check-remove-rebind race: only the lock holder ever removes or binds
+// the path.
+func (d *Daemon) listen(ctx context.Context) (net.Listener, *socketLock, error) {
+	if err := d.ensureSocketDir(); err != nil {
+		return nil, nil, err
+	}
+
+	lock, err := acquireSocketLock(d.cfg.SocketPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sandboxd: another daemon is serving %s: %w", d.cfg.SocketPath, err)
+	}
+
+	// We hold the claim: any existing file at the path is stale.
+	if err := os.Remove(d.cfg.SocketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		lock.release()
+		return nil, nil, fmt.Errorf("sandboxd: replace stale socket: %w", err)
+	}
+
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "unix", d.cfg.SocketPath)
+	if err != nil {
+		lock.release()
+		return nil, nil, fmt.Errorf("sandboxd: bind %s: %w", d.cfg.SocketPath, err)
+	}
 	if err := os.Chmod(d.cfg.SocketPath, 0o600); err != nil {
-		return fmt.Errorf("sandboxd: tighten socket mode: %w", err)
+		_ = listener.Close()
+		lock.release()
+		return nil, nil, fmt.Errorf("sandboxd: tighten socket mode: %w", err)
+	}
+	return listener, lock, nil
+}
+
+// ensureSocketDir creates (or tightens) the socket's parent directory
+// to owner-only — sockets must never live in shared world-writable
+// directories where squatting and symlink interposition are possible
+// (FR-17.34). A directory we cannot chmod is not ours: fail closed.
+func (d *Daemon) ensureSocketDir() error {
+	dir := filepath.Dir(d.cfg.SocketPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("sandboxd: create socket dir: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // OK: 0700 is the minimum traversable owner-only DIRECTORY mode
+		return fmt.Errorf("sandboxd: tighten socket dir (not owned by this user?): %w", err)
 	}
 	return nil
 }
 
-// acceptLoop feeds accepted connections to Run's select loop.
-func (d *Daemon) acceptLoop(listener net.Listener, connections chan<- net.Conn, done chan<- error) {
+// acceptLoop feeds accepted connections to Run's select loop. The stop
+// channel prevents a blocked hand-off from stranding a late client (or
+// leaking this goroutine) when Run exits.
+func (d *Daemon) acceptLoop(listener net.Listener, connections chan<- net.Conn, done chan<- error, stop <-chan struct{}) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -188,23 +226,33 @@ func (d *Daemon) acceptLoop(listener net.Listener, connections chan<- net.Conn, 
 			done <- err
 			return
 		}
-		connections <- conn
+		select {
+		case connections <- conn:
+		case <-stop:
+			_ = conn.Close()
+			return
+		}
 	}
 }
 
 // handleConn services one IPC connection. Authentication comes FIRST:
 // the kernel-asserted peer UID must equal the daemon's own UID before
 // any byte of control protocol is processed — there is no
-// unauthenticated path (F-08, ASVS V4). Authenticated peers receive
-// the liveness greeting; the full request protocol arrives with the
-// backends. Refs: FR-17.34
-func (d *Daemon) handleConn(_ context.Context, conn net.Conn) {
+// unauthenticated path (F-08, ASVS V4). Authenticated peers tick the
+// idle clock and receive the liveness greeting; the full request
+// protocol arrives with the backends. Refs: FR-17.34
+func (d *Daemon) handleConn(_ context.Context, conn net.Conn, authed chan<- struct{}) {
 	defer func() { _ = conn.Close() }()
 
 	if !d.authenticate(conn) {
 		return // rejected and audited; nothing was processed
 	}
+	select {
+	case authed <- struct{}{}:
+	default: // Run is busy or exiting; the tick is best-effort.
+	}
 	// Liveness greeting for activation health checks.
+	_ = conn.SetWriteDeadline(d.cfg.Clock().Add(time.Second))
 	_, _ = conn.Write([]byte(greeting))
 }
 
@@ -260,19 +308,24 @@ func (d *Daemon) drain(ctx context.Context) error {
 	return nil
 }
 
-// cleanupSocket closes the listener and removes the socket file.
-func (d *Daemon) cleanupSocket(listener net.Listener) {
+// cleanupSocket closes the listener, removes the socket file, and
+// releases the path claim. The lock file itself is deliberately never
+// unlinked (unlink-while-locked races a successor's open).
+func (d *Daemon) cleanupSocket(listener net.Listener, lock *socketLock) {
 	_ = listener.Close()
 	if err := os.Remove(d.cfg.SocketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		d.cfg.Logger.Error("sandboxd socket cleanup failed", "event", "cleanup_error", "error", err)
 	}
+	lock.release()
 }
 
-// EnsureRunning is the activation door used by core mgit: if the
-// daemon's socket answers, nothing happens; otherwise spawn is invoked
-// once and the socket awaited. Concurrent callers racing a slow boot
-// converge on the same daemon because the socket bind is exclusive.
-// Refs: NFR-17.6 (socket activation)
+// EnsureRunning is the activation door used by core mgit: if a daemon
+// answers the socket WITH the authenticated greeting, nothing happens;
+// otherwise spawn is invoked once and the socket awaited. A socket
+// that accepts but cannot greet is a squatter, not the daemon.
+// Concurrent callers racing a slow boot converge on the same daemon
+// because the path claim is exclusive — a losing spawn exits with
+// "another daemon is serving", which is benign. Refs: NFR-17.6, FR-17.34
 func EnsureRunning(ctx context.Context, socketPath string, spawn func() error) error {
 	return ensureRunning(ctx, socketPath, spawn, defaultActivationWait)
 }
@@ -283,6 +336,10 @@ const defaultActivationWait = 5 * time.Second
 
 // ensureRunning implements EnsureRunning with an injectable wait bound.
 func ensureRunning(ctx context.Context, socketPath string, spawn func() error, wait time.Duration) error {
+	// A canceled context means "stop", never "daemon is down — spawn".
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("sandboxd activation: %w", err)
+	}
 	if dialOK(ctx, socketPath) {
 		return nil
 	}
@@ -303,13 +360,20 @@ func ensureRunning(ctx context.Context, socketPath string, spawn func() error, w
 	return fmt.Errorf("sandboxd activation: %s not dialable after spawn", socketPath)
 }
 
-// dialOK reports whether the daemon socket accepts connections.
+// dialOK reports whether a live, authenticated daemon serves the
+// socket: the connection must yield the greeting, not merely accept.
 func dialOK(ctx context.Context, socketPath string) bool {
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "unix", socketPath)
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
-	return true
+	defer func() { _ = conn.Close() }()
+
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 3)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		return false
+	}
+	return strings.HasPrefix(greeting, string(buf))
 }

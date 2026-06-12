@@ -96,6 +96,49 @@ func TestIPC_DifferentUID_Rejected(t *testing.T) {
 	})
 }
 
+// TestIPC_UnauthenticatedPeers_CannotKeepDaemonAlive verifies the
+// NFR-17.6 lifecycle is auth-gated: a foreign-UID dialer hammering the
+// socket must not reset the idle clock — unauthorized peers do not
+// control daemon lifetime. Refs: FR-17.34, NFR-17.6
+func TestIPC_UnauthenticatedPeers_CannotKeepDaemonAlive(t *testing.T) {
+	manager := newFakeManager() // zero sandboxes => idle-exit eligible
+	cfg, _ := testConfig(t, manager)
+	cfg.PeerUID = func(*net.UnixConn) (uint32, error) {
+		return uint32(os.Getuid()) + 1, nil // every peer is foreign
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := runDaemon(ctx, t, cfg)
+	_ = waitForSocket(t, cfg.SocketPath).Close()
+
+	// Hammer the socket more often than the idle grace period.
+	hammerDone := make(chan struct{})
+	go func() {
+		defer close(hammerDone)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			if conn, err := net.Dial("unix", cfg.SocketPath); err == nil {
+				_ = conn.Close()
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err, "the daemon must idle-exit despite unauthenticated dials")
+	case <-time.After(3 * time.Second):
+		t.Fatal("unauthenticated dials kept the daemon alive (NFR-17.6 violated)")
+	}
+	cancel()
+	<-hammerDone
+}
+
 // TestIPC_NonUnixPeer_Rejected covers the defensive branch: a
 // connection that is not a unix socket can never authenticate.
 // Refs: FR-17.34
