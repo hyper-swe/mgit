@@ -916,6 +916,142 @@ CREATE TABLE worktrees (
 
 ---
 
+### FR-17: Sandboxed Agent Execution (MicroVM Sandbox)
+
+mgit confines agent command execution (builds, tests, dependency installs — where third-party code actually runs) to a hardware-virtualized microVM bound to the task's worktree. The guest is the hostile party in this design: it is the thing that runs the npm postinstall script. The host is the trust anchor. Design rationale and threat model (T1–T9): ADR-005. Standards audit: AUDIT-FR17-SANDBOX-V1.md (F-01..F-12). Security audit: AUDIT-FR17-SANDBOX-SECURITY-V1.md (SEC-01..SEC-12). Cross-references: ADR-002 (dual-hash verification at the land boundary), ADR-004 / FR-16 (worktree binding and the object-store sharing tension resolved by FR-17.4).
+
+**FR-17.1** Sandbox ⇄ worktree ⇄ task binding. Every sandbox MUST be bound to exactly one mtix task ID and exactly one worktree (`mgit sandbox add --task <ID>` creates both). No two sandboxes may share a worktree, a branch, or a task ID — FR-16.6 exclusivity applies and `ErrTaskAlreadyBound` is returned on violation. Commits created inside the sandbox auto-inherit the bound task ID exactly as in a host worktree (FR-16.3); a mismatched task ID MUST return `ErrTaskMismatch`.
+
+**FR-17.2** CLI surface. The sandbox commands MUST mirror worktree verb semantics so agents trained on git/mgit need no new mental model. These commands are escape hatches; the happy path is the zero-touch lifecycle (FR-17.9):
+
+| Command | Description | Key Flags |
+|---------|-------------|-----------|
+| `mgit sandbox add` | Create sandbox bound to a task | `--task <ID>` (required), `--net <mode>`, `--image <ref>`, `--cpus`, `--mem`, `--ttl` |
+| `mgit sandbox list` | List sandboxes with state | `--porcelain` |
+| `mgit sandbox status` | Health/state of one sandbox | `<id\|task>` |
+| `mgit sandbox exec` | Run one command in the guest | `<id\|task> -- <cmd>` |
+| `mgit sandbox shell` | Interactive shell in the guest | `<id\|task>` |
+| `mgit sandbox land` | Verify + import guest commits | `<id\|task>`, `--squash` |
+| `mgit sandbox stop` | Stop the VM (worktree intact) | `--force` |
+| `mgit sandbox remove` | Destroy sandbox | `--force` (required if unlanded commits) |
+| `mgit sandbox prune` | Reap stale/TTL-expired sandboxes | `--dry-run` |
+| `mgit sandbox policy` | Request/show capability grants | `request --egress <host:port>`, `--forward-ssh-agent`, `show` |
+
+**FR-17.3** Guest filesystem confinement. The guest MUST see only the bound worktree's working-tree files, mounted at the identical absolute path as on the host (no path translation). The parent repository, shared `.mgit/objects/`, `.mgit/refs/`, `index.db`, host `$HOME`, and host environment variables MUST NOT be mounted into, forwarded to, or resolvable from the guest.
+
+**FR-17.4** Private sandbox-local object store (quarantine; resolves the ADR-004 sharing tension, SEC-03). ADR-004 shares the object store across host worktrees; the sandbox MUST NOT inherit that sharing. The guest's `.git` MUST be rebound to a private, sandbox-local object store. `mgit sandbox land` is the only path from the private store to the shared host store.
+
+**FR-17.5** Quarantine-then-land. `mgit sandbox land` MUST: (1) pull commit objects over vsock; (2) re-verify the dual hash per ADR-002 — recompute SHA-1 (git object) and SHA-256 (`content_hash`) — on the host; (3) verify the task ID binding on every commit (`ErrTaskMismatch`); (4) append to `task_commits` (append-only, NFR-3.1); (5) fast-forward the task branch, never rewrite. Land MUST be atomic: all commits verify and import, or none do (same all-or-nothing semantics as squash, FR-2.x). Verification failure MUST return `ErrLandVerificationFailed` and import nothing.
+
+**FR-17.6** Host-anchored commit attestation (SEC-01). Commit attestations MUST be issued host-side by `mgit-sandboxd` as commit objects cross vsock, keyed by host-held material the guest never sees. The guest agent (`mgit-guest`) is transport only: it MUST NOT hold signing material and MUST NOT be able to mint attestations. With `require_sandbox = true` (the default in safety-critical profiles), `land` MUST refuse any commit lacking a valid host-issued attestation (`ErrUnattestedCommit`). Commits landed with the policy off MUST carry `sandbox_id = NULL`, permanently visible in the audit trail.
+
+**FR-17.7** Per-sandbox network policy. Network policy is declared at launch, recorded immutably in the audit record, and enforced host-side — the guest MUST NOT be able to weaken it:
+
+| Mode | Mechanism | Use case |
+|------|-----------|----------|
+| `none` | No NIC attached; vsock control plane only | Pure refactor/test tasks; maximum safety |
+| `allowlist` | No direct route; host proxy permits only flows to allowlisted resolved IPs (FR-17.8) | Default. Package registries plus per-project additions |
+| `open` | NAT to host network. Explicitly disables exfiltration/lateral-movement defenses (T3, T9) — user-accepted risk | Opt-in only; never a default |
+
+**FR-17.8** Allowlist egress is enforced at the IP/flow layer, not SNI parsing (SEC-04). In `allowlist` mode the guest MUST have no direct route. The host proxy MUST: resolve DNS host-side and only for allowlisted names (IP-pinned); permit TCP only to allowlisted resolved IPs; drop all UDP except DNS to the host resolver; block QUIC; treat ECH or unresolvable SNI as deny; unconditionally deny RFC1918, link-local, and metadata IPs (e.g. `169.254.169.254`); and rate-limit and log DNS queries to throttle label-encoding exfiltration (SEC-07). Every allow/deny decision MUST be appended to the egress log (FR-17.18).
+
+**FR-17.9** Zero-touch lifecycle. The sandbox is implied by the task; no human or agent ever has to ask for one. `mtix_claim` MUST register worktree + sandbox (lazily, FR-17.10); `mtix_done` MUST trigger auto-land followed by auto-teardown. Land verification failure MUST block the done transition (honest-blocked over dishonest-done). Landed sandboxes are destroyed immediately; abandoned sandboxes MUST be reaped by TTL and `mgit sandbox prune`; removing the worktree removes the sandbox.
+
+**FR-17.10** Lazy provisioning. Claiming a task registers the sandbox but MUST NOT boot the VM; the VM boots on the first command that needs it. A task that never executes a command MUST cost no VM resources.
+
+**FR-17.11** Transparent exec routing. Inside a bound worktree, command execution MUST be routable into the guest without agent code changes (PATH shim, harness hook, or `mgit run -- <cmd>` as default executor). Routing MUST be whole-command (one guest shell per invocation — pipelines, globs, subshells, and `&&` chains behave exactly as locally; no per-binary classifier to bypass). stdout, stderr, and exit codes MUST pass through unchanged. The routing hook MUST fail closed: if the sandbox is unavailable, the harness's normal permission prompting resumes.
+
+**FR-17.12** Capability escalation (per-capability, not per-command). Boundary-crossing capabilities (extra egress hosts, `open` network, ssh-agent forwarding, additional mounts) MUST be requested explicitly via `mgit sandbox policy request`, producing one host-side user prompt per capability per sandbox lifetime. The grant request MUST be derived solely from the host-observed denied connection (real destination IP/port), never from guest-supplied text (SEC-05); the prompt MUST always display the real destination and requesting task; no "allow all" option may exist. Grants MUST be recorded append-only and die with the sandbox. Denials MUST be machine-readable (`MGIT-EGRESS-DENIED host=<dest> remedy=<cmd>`) so agents self-correct. ssh-agent forwarding proxies the host agent socket over vsock; private keys MUST never enter the guest.
+
+**FR-17.13** Host-only policy store (SEC-02). All enforcement inputs — `require_sandbox`, network policy, image lock, sensitive-path list, resource caps — MUST live under a host config root (`~/.mgit/host/<repo-id>/`), MUST never be mounted into guests, and MUST NOT be committable repo files. A repo MAY ship suggested defaults that take effect only after explicit host-side adoption. The effective policy MUST be recorded in the audit log.
+
+**FR-17.14** Host-trusted path protection (T8). Paths the host auto-executes or auto-trusts (`.claude/**`, `.envrc`, `.git/hooks/**`, `.vscode/**`, agent rules files — a configurable list stored per FR-17.13) MUST be mounted read-only into the guest. `land` MUST flag and refuse guest modifications to listed paths with `ErrSensitivePathModified`.
+
+**FR-17.15** Pluggable sandbox backend. The sandbox subsystem MUST be implemented behind an interface mirroring `WorktreeManager` (FR-16.10, ADR-004):
+
+```go
+// SandboxManager abstracts microVM lifecycle per platform backend.
+// Mirrors WorktreeManager (ADR-004). Refs: FR-17.
+type SandboxManager interface {
+    Launch(ctx context.Context, opts SandboxLaunchOptions) (*SandboxInfo, error)
+    List(ctx context.Context) ([]SandboxInfo, error)
+    Exec(ctx context.Context, id string, req ExecRequest) (*ExecResult, error)
+    Stop(ctx context.Context, id string, force bool) error
+    Remove(ctx context.Context, id string, force bool) error
+    Resolve(ctx context.Context, id string) (*SandboxInfo, error)
+}
+```
+
+v1 backends are native microVMs per platform: KVM (Linux), Virtualization.framework (macOS), Hyper-V/WHP (Windows). If no hypervisor backend is available, `ErrSandboxBackendUnavailable` is returned; an OS-container fallback is permitted only with explicit `--backend container --acknowledge-reduced-isolation`, recorded in the audit trail.
+
+**FR-17.16** `mgit-sandboxd` helper daemon. Platform backends (which may require CGO) MUST live in a separate `mgit-sandboxd` helper binary spoken to over authenticated local IPC; core `mgit` stays pure-Go and CGO-free. The daemon MUST be socket-activated and MUST exit when no sandboxes exist.
+
+**FR-17.17** Guest image discipline. Rootfs images MUST be content-addressed and digest-pinned in an `images.lock` stored host-side (FR-17.13). Images are read-only; each guest gets a copy-on-write overlay discarded at teardown. A minimal `mgit-guest` agent runs as PID 1 (exec supervision over vsock, no-host-env enforcement, resource reporting) and is transport-only per FR-17.6. No secrets may be baked into images and no host environment is passed through; credentials a task legitimately needs MUST be injected explicitly per-exec and flagged in the audit trail.
+
+**FR-17.18** Sandbox audit trail (extends FR-12, NFR-3.1). Sandbox lifecycle MUST be recorded in an event-sourced, append-only `sandbox_events` table — same laws as `task_commits`: no UPDATE, no DELETE, ever (AUDIT F-01):
+
+```sql
+CREATE TABLE sandbox_events (
+    id            TEXT PRIMARY KEY,   -- ULID (sortable: event order)
+    sandbox_id    TEXT NOT NULL,      -- ULID of the sandbox
+    task_id       TEXT NOT NULL,
+    event_type    TEXT NOT NULL,      -- created | suspended | resumed |
+                                      -- policy_granted | landed | destroyed |
+                                      -- ttl_expired | killed
+    backend       TEXT,               -- kvm | vzf | hyperv | container
+    image_digest  TEXT,               -- sha256 of rootfs image
+    network_mode  TEXT,               -- none | allowlist | open
+    detail        TEXT,               -- JSON; guest strings sanitized + capped
+    created_at    TEXT NOT NULL       -- ISO-8601 UTC
+);
+```
+
+Sandbox state MUST be derived from the latest event per `sandbox_id`; transitions append, never mutate. `task_commits` gains a nullable `sandbox_id` column written at append time only, making every landed commit traceable to the exact sandbox, image digest, and network policy that produced it. Egress decisions in `allowlist` mode append to `sandbox_egress_log`. Guest-sourced strings MUST be sanitized and length-capped before insertion (AUDIT F-09) — append-only tables make corrupted entries permanent.
+
+**FR-17.19** Disposability. Destroying a sandbox MUST NOT lose landed work and MUST NOT leave host residue outside the worktree. `mgit sandbox remove` MUST refuse if unlanded commits exist (`ErrUnlandedCommits`) unless `--force` is given; unlanded work is then discarded by design.
+
+**FR-17.20** Sentinel errors (in `model/errors.go`):
+
+```go
+var (
+    ErrSandboxNotFound           = errors.New("sandbox not found")
+    ErrSandboxBackendUnavailable = errors.New("no sandbox backend available on this platform")
+    ErrLandVerificationFailed    = errors.New("sandbox land: commit verification failed")
+    ErrUnlandedCommits           = errors.New("sandbox has unlanded commits")
+    ErrNetworkPolicyViolation    = errors.New("network policy violation")
+    ErrUnattestedCommit          = errors.New("commit lacks sandbox attestation")
+    ErrSensitivePathModified     = errors.New("guest modified a protected host-trusted path")
+)
+```
+
+**FR-17.21** MCP tools for sandbox management:
+
+| Tool | Parameters | Returns |
+|------|-----------|---------|
+| `mgit_sandbox_add` | `task_id` (required), `net`, `image`, `cpus`, `mem`, `ttl` | `{sandbox_id, task_id, backend, network_mode, created_at}` |
+| `mgit_sandbox_list` | None | `[{sandbox_id, task_id, state, backend, network_mode}]` |
+| `mgit_sandbox_exec` | `id` (required), `command` (required) | `{stdout, stderr, exit_code}` |
+| `mgit_sandbox_land` | `id` (required), `squash` | `{landed_commits, task_id}` |
+| `mgit_sandbox_remove` | `id` (required), `force` | `{removed: true}` |
+| `mgit_sandbox_policy_request` | `id` (required), `egress`, `forward_ssh_agent` | `{granted, capability}` |
+
+**FR-17.22** Agent integration topologies. T1 (default): the agent harness runs on the host; only execution is confined. Routing is injected at worktree creation (Claude Code `PreToolUse` hook + settings, Codex `AGENTS.md` directive, Cursor rules file, generic PATH shim) — cooperative adapters, acceptable because the threat is third-party code, not the harness; unattested work is caught by FR-17.6. T2 (opt-in, `sandbox.confine_agent = true`): the agent CLI itself runs inside the guest; credentials are injected per-session, never baked into images, and flagged in the audit trail.
+
+**FR-17.23** Traceability to ADR-005 goals. Every ADR-005 Goal maps to requirement criteria:
+
+| ADR-005 Goal | Requirement(s) |
+|---|---|
+| 1 — no per-command permission prompts | FR-17.9, FR-17.11, FR-17.12 |
+| 2 — host OS/filesystem unreachable from sandboxed code | FR-17.3, FR-17.4, FR-17.14, FR-17.15 |
+| 3 — platform agnostic, one CLI surface | FR-17.2, FR-17.15, FR-17.16 |
+| 4 — per-sandbox network policy | FR-17.7, FR-17.8, FR-17.13 |
+| 5 — full provenance, append-only audit | FR-17.5, FR-17.6, FR-17.18 |
+| 6 — disposable without losing landed work | FR-17.19, FR-17.9 |
+| 7 — seamless, zero-touch lifecycle | FR-17.9, FR-17.10, FR-17.11, FR-17.22 |
+| 8 — lightweight, near-zero idle footprint | FR-17.10, FR-17.16, NFR-17.2, NFR-17.4, NFR-17.6 |
+
+---
+
 ## 3. Non-Functional Requirements
 
 ### NFR-1: Performance
@@ -1065,6 +1201,26 @@ The `content_hash` (SHA-256) is the authoritative integrity field for mgit opera
 - Token revocation: `mgit token revoke` invalidates the current token immediately
 - Token listing: `mgit token list` shows active tokens with masked values (e.g., `****...abcd`) and expiry dates
 - Token storage: tokens stored in a **separate file** `.mgit/tokens.json` with file permissions `0600`. Tokens MUST NOT be stored in `config.yaml` to prevent accidental exposure through config sharing, logging, or `mgit config` output. The `tokens.json` file contains: `{"tokens": [{"hash": "sha256-of-token", "created_at": "ISO8601", "expires_at": "ISO8601", "revoked": false}]}`. Only the token hash is stored; the plaintext token is displayed once at generation time
+
+---
+
+### NFR-17: Sandbox Performance & Footprint
+
+*Numbered NFR-17 (not NFR-6) so the identifier aligns with FR-17 for traceability; NFR-6 through NFR-16 are reserved. Targets from ADR-005 "Resource Budget"; verified by benchmarks in MGIT-11.13.2.*
+
+**NFR-17.1** Warm exec round-trip overhead: **< 50 ms** added per command versus host execution, measured on a warm (running or suspended-resumable) VM.
+
+**NFR-17.2** Start latency: warm start from a clean base-image snapshot **< 200 ms**; cold boot **< 1 s**; first-command add-to-prompt latency (lazy provision, warm pool available) **< 500 ms**.
+
+**NFR-17.3** Idle suspend: a VM with no exec activity for a configurable idle period (default **5 minutes**) MUST be paused, consuming **0%** host CPU while suspended.
+
+**NFR-17.4** Memory footprint: idle resident memory **≤ 100 MB** per active VM (memory ballooning + free-page reporting return unused pages to the host); a host with 5 idle sandboxes MUST show **< 500 MB** total attributable RSS.
+
+**NFR-17.5** Default resource caps (overridable per task, stored per FR-17.13): **2** vCPU (shared, not pinned), **2048 MB** ballooned memory, **4096 MB** disk quota, TTL default **4 h**. Caps are enforced by the VMM, not the guest.
+
+**NFR-17.6** Zero idle footprint: `mgit-sandboxd` is socket-activated and MUST exit when **0** sandboxes exist — no resident daemon when mgit is not in use.
+
+**NFR-17.7** Disk efficiency: one shared read-only rootfs image on disk regardless of sandbox count (target base image **≤ 1 GB**); per-sandbox copy-on-write overlay grows only with what the task installs and is discarded at teardown.
 
 ---
 
