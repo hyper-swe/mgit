@@ -42,7 +42,35 @@ mgit supports LLM coding agents in critical workflows. Dependencies are vetted f
 | `golang.org/x/sync` | Additional synchronization primitives | Latest | **Goroutine lifecycle management.** `errgroup.Group` used for background worker coordination, error collection, and graceful cancellation. Ensures all goroutines complete before shutdown. |
 | `golang.org/x/crypto` | Extended cryptography library | Latest | **Ed25519 commit signing (optional feature).** Only imported if signing is enabled. For hashing operations, prefer `crypto/sha256` from stdlib. |
 | `github.com/mark3labs/mcp-go` | Model Context Protocol (MCP) SDK | Latest | **MCP server implementation.** Same library as mtix (NFR-4.6). Provides JSON-RPC stdio and SSE transports for LLM agent integration. Pure Go, no CGO. |
+| `github.com/go-git/go-billy/v5` | Filesystem abstraction used by go-git | 5.8.0 | **go-git companion.** Required by the fsync-aware storage wrapper (MGIT-2.2.7) and worktree filesystem plumbing. Same org and supply-chain posture as go-git itself. Pure Go. |
+| `golang.org/x/sys` | Low-level OS primitives | Latest | **Process-level file locking** (flock/LockFileEx, MGIT-10.1) and syscall-level primitives the stdlib does not expose. Maintained by the Go team; already a transitive dependency of approved packages. |
 | `log/slog` | Structured logging (stdlib) | Go 1.22+ | **PREFERRED production logger.** Zero-allocation structured logging with JSON and text output modes. Composable handlers. Supports log levels and context propagation. |
+
+---
+
+## 2a. Approved for `mgit-sandboxd` Only (Sandbox Helper Scope)
+
+The FR-17 sandbox backends live in the separate `mgit-sandboxd` helper binary
+(FR-17.16, ADR-005 "CGO containment"). The packages below are approved
+**exclusively** for that binary — importing any of them from core `mgit`
+(`cmd/mgit`, `internal/**` outside the sandboxd tree) is a policy violation.
+Core `mgit` remains pure-Go and CGO-free; CI enforces `CGO_ENABLED=0` core
+builds. Full evaluations: `pkg-approvals/approved/`. Refs: MGIT-11.1.4.
+
+| Package | Purpose | Min Version | Platform / Constraint | Justification |
+|---------|---------|-------------|----------------------|---------------|
+| `github.com/firecracker-microvm/firecracker-go-sdk` | Linux KVM microVM control (Firecracker-class VMM) | 1.0.0 | linux only; pure Go (VMM binary is COTS, assessed per FR-17.30/31) | **Linux backend (FR-17.15).** Battle-tested lineage (AWS Lambda, E2B) for running untrusted code. Rejected alternatives: libkrun (CGO in control path, immature Go bindings), hand-rolled Cloud Hypervisor client (~1,500 lines), QEMU/libvirt (surface + boot latency vs NFR-17.2). |
+| `github.com/Code-Hex/vz/v3` | macOS Virtualization.framework bindings | 3.1.0 | darwin only; **CGO — confined to mgit-sandboxd, never core** | **macOS backend (FR-17.15).** Native hypervisor API, no kext, Apple-silicon + Intel; provides virtio-fs, vsock, ballooning (NFR-17.4). CGO is unavoidable for any Virtualization.framework binding — this is the documented FR-17.16 exception. Rejected: CLI shell-outs (non-deterministic), custom ObjC bridge (unauditable), Docker Desktop/Lima (shared VM violates FR-17.1). |
+| `github.com/Microsoft/hcsshim` | Windows Hyper-V utility-VM control (HCS) | 0.12.0 | windows only; pure Go | **Windows backend (FR-17.15).** Microsoft's own Go interface to HCS — the Docker/containerd Hyper-V isolation code path. Rejected: raw WHP via x/sys (in-house VMM, multi-thousand lines), PowerShell/WMI shell-out, WSL2 shared VM (violates FR-17.1, SEC-08). |
+| `github.com/mdlayher/vsock` | AF_VSOCK transport (control plane + land protocol) | 1.2.1 | linux host/guest; pure Go; tiny dep tree | **Land/control channel (FR-17.5, FR-17.27, FR-17.35).** Network-independent host↔guest transport — required for `none`-mode sandboxes; exposes connection CID for SEC-10 peer binding. Rejected: raw AF_VSOCK via x/sys (~400 error-prone lines), TCP-over-NIC (destroys `none` mode), serial transport (no framing). |
+
+**Image signature verification (FR-17.29): no new dependency.** Signatures use
+stdlib `crypto/ed25519` (+ approved `golang.org/x/crypto` if needed for key
+formats) as detached signatures over image digests in `images.lock`.
+`sigstore/cosign`-class tooling was evaluated and **rejected** for v1: its
+transitive dependency tree (>40 modules) fails criterion 2.5 by an order of
+magnitude. Cosign interop may be re-proposed separately if registry-based
+distribution is ever adopted.
 
 ---
 
@@ -217,6 +245,8 @@ Package approvals decided by:
 |------|--------|-----------|
 | 2026-03-09 | Initial registry created | mgit project launch |
 | 2026-03-12 | Noted go-git v6 upgrade path (ADR-004) | Pluggable worktree strategy; v6 not yet approved for use |
+| 2026-06-12 | Added §2a sandbox-helper scope: firecracker-go-sdk, Code-Hex/vz/v3 (CGO exception), Microsoft/hcsshim, mdlayher/vsock; recorded stdlib-Ed25519 decision for FR-17.29 (sigstore rejected) | FR-17 backend dependencies per ADR-005 adoption criterion 2 (MGIT-11.1.4) |
+| 2026-06-12 | Registered already-in-use direct deps go-billy/v5 and golang.org/x/sys in core table | Registry was stale vs go.mod; caught by TestGoMod_NoUnapprovedDeps |
 
 ---
 
