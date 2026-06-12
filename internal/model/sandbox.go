@@ -204,6 +204,7 @@ type SandboxInfo struct {
 	NetworkMode      string    `json:"network_mode"`                // NetworkModeNone | NetworkModeAllowlist | NetworkModeOpen
 	NetworkAllowlist []string  `json:"network_allowlist,omitempty"` // immutable launch-time allowlist (FR-17.7)
 	State            string    `json:"state"`                       // derived (StateCreated..StateDestroyed)
+	MemoryMB         int       `json:"memory_mb,omitempty"`         // effective memory cap; feeds the FR-17.26 ceiling
 	CreatedAt        time.Time `json:"created_at"`                  // ISO-8601 UTC
 	ExpiresAt        time.Time `json:"expires_at,omitempty"`        // TTL deadline; zero = no TTL
 }

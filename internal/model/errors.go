@@ -116,6 +116,11 @@ var (
 	// host-trusted path (e.g. .claude/**, .git/hooks/**); land refuses.
 	// Refs: FR-17.14, FR-17.20
 	ErrSensitivePathModified = errors.New("guest modified a protected host-trusted path")
+
+	// ErrSandboxCeilingExceeded indicates a launch would exceed the
+	// host-wide concurrency or memory ceiling; the launch fails fast
+	// rather than degrading the host (SEC-09). Refs: FR-17.26
+	ErrSandboxCeilingExceeded = errors.New("global sandbox ceiling exceeded")
 )
 
 // ValidationError provides structured context for validation failures.
