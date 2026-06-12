@@ -103,6 +103,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		"testutil": true,
 		"scaffold": true, // our test package
 		"docs":     true, // documentation generator
+		"sandboxd": true, // sandbox helper daemon library (FR-17.16, MGIT-11.4.1)
 	}
 
 	entries, err := os.ReadDir(filepath.Join(root, "internal"))
@@ -133,14 +134,18 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		}
 	}
 
-	// Check cmd/ only has mgit
+	// Check cmd/ only has the two product binaries
+	expectedCmds := map[string]bool{
+		"mgit":          true,
+		"mgit-sandboxd": true, // sandbox helper daemon (FR-17.16, MGIT-11.4.1)
+	}
 	cmdEntries, err := os.ReadDir(filepath.Join(root, "cmd"))
 	require.NoError(t, err, "must be able to read cmd/")
 
 	for _, entry := range cmdEntries {
 		if entry.IsDir() {
-			assert.Equal(t, "mgit", entry.Name(),
-				"cmd/ should only contain mgit, found %s", entry.Name())
+			assert.True(t, expectedCmds[entry.Name()],
+				"unexpected directory cmd/%s", entry.Name())
 		}
 	}
 

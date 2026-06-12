@@ -1,6 +1,9 @@
 package scaffold
 
 import (
+	"fmt"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -89,6 +92,72 @@ func TestGoMod_NoUnapprovedDeps(t *testing.T) {
 				"direct dependency %s must have an approved-registry table row", dep)
 		})
 	}
+}
+
+// sandboxOnlyPrefixes are the source trees permitted to import the
+// APPROVED-PACKAGES.md §2a packages (the mgit-sandboxd helper scope).
+var sandboxOnlyPrefixes = []string{
+	filepath.Join("cmd", "mgit-sandboxd"),
+	filepath.Join("internal", "sandboxd"),
+}
+
+// TestImports_SandboxDepsConfinedToSandboxd enforces the §2a scope
+// mechanically: CGO_ENABLED=0 builds only catch the vz binding, so the
+// pure-Go sandbox backends (firecracker-go-sdk, hcsshim, mdlayher/vsock)
+// — and logrus, rejected except as the firecracker SDK's logging
+// adapter — must be absent from every core import graph by inspection.
+// Refs: FR-17.16, MGIT-11.1.4, MGIT-11.4.1
+func TestImports_SandboxDepsConfinedToSandboxd(t *testing.T) {
+	root := projectRoot(t)
+	forbidden := []string{
+		"github.com/firecracker-microvm/firecracker-go-sdk",
+		"github.com/Code-Hex/vz",
+		"github.com/Microsoft/hcsshim",
+		"github.com/mdlayher/vsock",
+		"github.com/sirupsen/logrus",
+	}
+
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == ".git" || name == "dist" || name == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		for _, allowed := range sandboxOnlyPrefixes {
+			if strings.HasPrefix(rel, allowed) {
+				return nil // sandboxd tree: §2a imports permitted
+			}
+		}
+
+		// Parse real import declarations: string literals elsewhere in a
+		// file (e.g. this test's own data tables) are not imports.
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", rel, err)
+		}
+		for _, imp := range file.Imports {
+			importPath := strings.Trim(imp.Path.Value, `"`)
+			for _, pkg := range forbidden {
+				assert.False(t, importPath == pkg || strings.HasPrefix(importPath, pkg+"/"),
+					"%s must not import sandboxd-only package %s (§2a confinement)", rel, importPath)
+			}
+		}
+		return nil
+	})
+	require.NoError(t, err)
 }
 
 // approvedSections returns the registry content preceding the
