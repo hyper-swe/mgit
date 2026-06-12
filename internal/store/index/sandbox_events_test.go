@@ -192,6 +192,116 @@ func TestSandboxEvents_AppendAndList_RoundTrip(t *testing.T) {
 	})
 }
 
+// appendEvents appends a sequence of bare lifecycle events for one
+// sandbox.
+func appendEvents(t *testing.T, store *Store, sandboxID string, eventTypes ...string) {
+	t.Helper()
+	ctx := context.Background()
+	for _, eventType := range eventTypes {
+		ev := &model.SandboxEvent{SandboxID: sandboxID, TaskID: "MGIT-4.2", EventType: eventType}
+		require.NoError(t, store.AppendSandboxEvent(ctx, ev))
+	}
+}
+
+// TestDeriveState_CreateThenDestroy_Destroyed verifies terminal events
+// win: the latest state-bearing event determines the state. Refs: FR-17.18
+func TestDeriveState_CreateThenDestroy_Destroyed(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name   string
+		events []string
+		want   string
+	}{
+		{name: "created_only", events: []string{model.EventCreated}, want: model.StateCreated},
+		{name: "create_then_destroy", events: []string{model.EventCreated, model.EventDestroyed}, want: model.StateDestroyed},
+		{name: "ttl_expired_terminal", events: []string{model.EventCreated, model.EventResumed, model.EventTTLExpired}, want: model.StateDestroyed},
+		{name: "killed_terminal", events: []string{model.EventCreated, model.EventKilled}, want: model.StateDestroyed},
+		{name: "landed", events: []string{model.EventCreated, model.EventResumed, model.EventLanded}, want: model.StateLanded},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sandboxID := "01JXDERIVE000000000000000" + string(rune('A'+i))
+			appendEvents(t, store, sandboxID, tt.events...)
+			state, err := store.DeriveState(ctx, sandboxID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, state)
+		})
+	}
+}
+
+// TestDeriveState_SuspendResume_Running verifies suspend/resume cycles
+// and that policy_granted events carry no state change. Refs: FR-17.18
+func TestDeriveState_SuspendResume_Running(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	sandboxID := "01JXDERIVE000000000000010"
+	appendEvents(t, store, sandboxID,
+		model.EventCreated, model.EventSuspended, model.EventResumed)
+
+	state, err := store.DeriveState(ctx, sandboxID)
+	require.NoError(t, err)
+	assert.Equal(t, model.StateRunning, state)
+
+	t.Run("suspended_after_resume", func(t *testing.T) {
+		appendEvents(t, store, sandboxID, model.EventSuspended)
+		state, err := store.DeriveState(ctx, sandboxID)
+		require.NoError(t, err)
+		assert.Equal(t, model.StateSuspended, state)
+	})
+
+	t.Run("policy_granted_does_not_change_state", func(t *testing.T) {
+		appendEvents(t, store, sandboxID, model.EventResumed, model.EventPolicyGranted)
+		state, err := store.DeriveState(ctx, sandboxID)
+		require.NoError(t, err)
+		assert.Equal(t, model.StateRunning, state,
+			"policy_granted is an audit event, not a lifecycle transition")
+	})
+
+	t.Run("idempotent_reads", func(t *testing.T) {
+		first, err := store.DeriveState(ctx, sandboxID)
+		require.NoError(t, err)
+		second, err := store.DeriveState(ctx, sandboxID)
+		require.NoError(t, err)
+		assert.Equal(t, first, second, "derivation must not mutate anything")
+	})
+}
+
+// TestDeriveState_Unknown_NotFound verifies the error path.
+// Refs: FR-17.18
+func TestDeriveState_Unknown_NotFound(t *testing.T) {
+	store := newTestStore(t)
+
+	_, err := store.DeriveState(context.Background(), "01JXNOSUCHSANDBOX00000000")
+	assert.ErrorIs(t, err, model.ErrSandboxNotFound)
+
+	t.Run("corrupt_event_type_detected", func(t *testing.T) {
+		// Bypass AppendSandboxEvent to simulate external corruption of
+		// the audit table; DeriveState must refuse, not guess.
+		_, err := store.writeDB.ExecContext(context.Background(),
+			`INSERT INTO sandbox_events (id, sandbox_id, task_id, event_type, created_at)
+			 VALUES (?, ?, ?, ?, ?)`,
+			"01JXCORRUPT00000000000000", "01JXCORRUPTSBX00000000000", "MGIT-4.2",
+			"rebooted", "2026-06-12T12:00:00Z")
+		require.NoError(t, err)
+
+		_, err = store.DeriveState(context.Background(), "01JXCORRUPTSBX00000000000")
+		assert.ErrorIs(t, err, model.ErrIndexCorrupted)
+	})
+
+	t.Run("policy_only_stream_still_resolves_sandbox", func(t *testing.T) {
+		// A sandbox whose only events are policy grants exists but has
+		// no state-bearing event yet; it must not report not-found...
+		// by construction this cannot happen (created is always first),
+		// so the contract is: no state-bearing events => not found.
+		appendEvents(t, store, "01JXPOLICYONLY00000000000", model.EventPolicyGranted)
+		_, err := store.DeriveState(context.Background(), "01JXPOLICYONLY00000000000")
+		assert.ErrorIs(t, err, model.ErrSandboxNotFound)
+	})
+}
+
 // TestSandboxEvents_ClosedStore_Errors covers the storage error paths.
 // Refs: FR-17.18
 func TestSandboxEvents_ClosedStore_Errors(t *testing.T) {

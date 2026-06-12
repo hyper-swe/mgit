@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -84,6 +85,39 @@ func (s *Store) ListSandboxEvents(ctx context.Context, sandboxID string) ([]mode
 		return nil, fmt.Errorf("list sandbox events: %w", err)
 	}
 	return events, nil
+}
+
+// DeriveState computes a sandbox's current lifecycle state from its
+// latest state-bearing event — there is no mutable session row (F-01).
+// policy_granted events are skipped: they are audit records, not
+// transitions. Returns ErrSandboxNotFound when no state-bearing event
+// exists for the id. Refs: FR-17.18, MGIT-11.3.2
+func (s *Store) DeriveState(ctx context.Context, sandboxID string) (string, error) {
+	// Latest state-bearing event for the sandbox (O(log n) via the
+	// sandbox_id index; ULID ids sort in append order).
+	const querySQL = `SELECT event_type FROM sandbox_events
+		WHERE sandbox_id = ? AND event_type <> ?
+		ORDER BY id DESC LIMIT 1`
+
+	var eventType string
+	err := s.ReadTx(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, querySQL,
+			sandboxID, model.EventPolicyGranted).Scan(&eventType)
+	})
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return "", fmt.Errorf("%w: %s", model.ErrSandboxNotFound, sandboxID)
+	case err != nil:
+		return "", fmt.Errorf("derive state: %w", err)
+	}
+
+	state, ok := model.StateForEvent(eventType)
+	if !ok {
+		// Unreachable for rows written through AppendSandboxEvent
+		// (closed vocabulary); guards against external corruption.
+		return "", fmt.Errorf("%w: corrupt event type %q", model.ErrIndexCorrupted, eventType)
+	}
+	return state, nil
 }
 
 // sanitizeAuditDetail strips control characters and caps the length of

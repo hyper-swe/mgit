@@ -28,12 +28,33 @@ const (
 	EventKilled = "killed"
 )
 
-// validEventTypes closes the vocabulary so audit writers cannot fork
-// it with typos.
-var validEventTypes = map[string]bool{
-	EventCreated: true, EventSuspended: true, EventResumed: true,
-	EventPolicyGranted: true, EventLanded: true, EventDestroyed: true,
-	EventTTLExpired: true, EventKilled: true,
+// isValidEventType closes the vocabulary so audit writers cannot fork
+// it with typos. Every state-bearing event (eventStates key) is valid,
+// plus the one audit-only event, policy_granted.
+func isValidEventType(eventType string) bool {
+	_, stateBearing := eventStates[eventType]
+	return stateBearing || eventType == EventPolicyGranted
+}
+
+// eventStates maps each state-bearing event type to the sandbox state
+// it produces. policy_granted is deliberately absent: capability
+// grants are audit events, not lifecycle transitions.
+var eventStates = map[string]string{
+	EventCreated:    StateCreated,
+	EventSuspended:  StateSuspended,
+	EventResumed:    StateRunning,
+	EventLanded:     StateLanded,
+	EventDestroyed:  StateDestroyed,
+	EventTTLExpired: StateDestroyed,
+	EventKilled:     StateDestroyed,
+}
+
+// StateForEvent maps a lifecycle event type to the sandbox state it
+// produces. ok is false for event types that carry no state change
+// (policy_granted) or are unknown. Refs: FR-17.18
+func StateForEvent(eventType string) (string, bool) {
+	state, ok := eventStates[eventType]
+	return state, ok
 }
 
 // SandboxEvent is one append-only sandbox lifecycle record. ID and
@@ -63,7 +84,7 @@ func (e SandboxEvent) Validate() error {
 	if err := validateTaskIDField(e.TaskID); err != nil {
 		return err
 	}
-	if !validEventTypes[e.EventType] {
+	if !isValidEventType(e.EventType) {
 		return &ValidationError{Field: "event_type", Message: fmt.Sprintf("unknown event type %q", e.EventType)}
 	}
 	if e.Backend != "" && !validBackends[e.Backend] {

@@ -9,6 +9,33 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestStateForEvent_Mapping covers the event->state derivation map.
+// Refs: FR-17.18
+func TestStateForEvent_Mapping(t *testing.T) {
+	tests := []struct {
+		eventType string
+		wantState string
+		wantOK    bool
+	}{
+		{eventType: EventCreated, wantState: StateCreated, wantOK: true},
+		{eventType: EventSuspended, wantState: StateSuspended, wantOK: true},
+		{eventType: EventResumed, wantState: StateRunning, wantOK: true},
+		{eventType: EventLanded, wantState: StateLanded, wantOK: true},
+		{eventType: EventDestroyed, wantState: StateDestroyed, wantOK: true},
+		{eventType: EventTTLExpired, wantState: StateDestroyed, wantOK: true},
+		{eventType: EventKilled, wantState: StateDestroyed, wantOK: true},
+		{eventType: EventPolicyGranted, wantState: "", wantOK: false},
+		{eventType: "rebooted", wantState: "", wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.eventType, func(t *testing.T) {
+			state, ok := StateForEvent(tt.eventType)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantState, state)
+		})
+	}
+}
+
 // TestSandboxEvent_Validate covers the closed event-type vocabulary
 // and optional-field validation. Refs: FR-17.18
 func TestSandboxEvent_Validate(t *testing.T) {
