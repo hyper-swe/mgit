@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"time"
@@ -110,4 +111,106 @@ func (s SandboxInfo) Validate() error {
 		return &ValidationError{Field: "task_id", Message: "must not be empty"}
 	}
 	return NetworkPolicy{Mode: s.NetworkMode}.Validate()
+}
+
+// ExecRequest is one whole command routed into the guest over vsock.
+// Env entries are explicit per-exec injections only — the host
+// environment is never passed through (FR-17.3, FR-17.17).
+// Refs: FR-17.11
+type ExecRequest struct {
+	Command []string      `json:"command"`           // argv; whole-command routing, no per-binary shimming
+	Dir     string        `json:"dir,omitempty"`     // cwd inside the guest (identical-path mount)
+	Env     []string      `json:"env,omitempty"`     // explicit injections, flagged in audit
+	Timeout time.Duration `json:"timeout,omitempty"` // zero means the sandbox TTL governs
+}
+
+// Validate checks the exec request shape. Refs: FR-17.11
+func (r ExecRequest) Validate() error {
+	if len(r.Command) == 0 {
+		return &ValidationError{Field: "command", Message: "must contain at least one argument"}
+	}
+	if r.Timeout < 0 {
+		return &ValidationError{Field: "timeout", Message: "must be non-negative (zero = sandbox TTL governs)"}
+	}
+	return nil
+}
+
+// ExecResult carries the guest command outcome back unchanged.
+// Refs: FR-17.11
+type ExecResult struct {
+	Stdout   []byte `json:"stdout"`
+	Stderr   []byte `json:"stderr"`
+	ExitCode int    `json:"exit_code"`
+}
+
+// SandboxManager abstracts microVM lifecycle per platform backend.
+// Mirrors WorktreeManager (ADR-004); backends live in mgit-sandboxd.
+// Refs: FR-17.15, FR-17.16, ADR-005
+type SandboxManager interface {
+	Launch(ctx context.Context, opts SandboxLaunchOptions) (*SandboxInfo, error)
+	List(ctx context.Context) ([]SandboxInfo, error)
+	Exec(ctx context.Context, id string, req ExecRequest) (*ExecResult, error)
+	Stop(ctx context.Context, id string, force bool) error
+	Remove(ctx context.Context, id string, force bool) error
+	Resolve(ctx context.Context, id string) (*SandboxInfo, error)
+}
+
+// Attestation is a host-issued binding of one commit to the sandbox
+// that produced it, recorded at land time. Both hashes of the ADR-002
+// dual-hash model are bound. Refs: FR-17.6, FR-17.38
+type Attestation struct {
+	SandboxID     string    `json:"sandbox_id"`
+	CommitHash    string    `json:"commit_hash"`    // git SHA-1 object ID
+	ContentHash   string    `json:"content_hash"`   // mgit SHA-256 (ADR-002)
+	HostSignature []byte    `json:"host_signature"` // issued by mgit-sandboxd
+	IssuedAt      time.Time `json:"issued_at"`      // host receive-time, UTC (SEC-11, FR-17.28)
+}
+
+// Attestor issues and verifies commit attestations. HOST-SIDE ONLY
+// (SEC-01): attestations are host-issued by mgit-sandboxd as commit
+// objects cross vsock, keyed by host-held material the guest never
+// sees. Guest code (mgit-guest) MUST NOT implement this interface and
+// holds no signing key — an attestation minted by the thing being
+// attested would be forgeable and worthless. Refs: FR-17.6, FR-17.38
+type Attestor interface {
+	Attest(ctx context.Context, sandboxID, commitHash, contentHash string) (*Attestation, error)
+	Verify(ctx context.Context, att *Attestation) error
+}
+
+// Boundary-crossing capabilities a sandbox may request. Refs: FR-17.12
+const (
+	// CapabilityEgress requests one additional egress destination.
+	CapabilityEgress = "egress"
+	// CapabilitySSHAgent requests host ssh-agent socket forwarding.
+	CapabilitySSHAgent = "ssh_agent"
+	// CapabilityOpenNetwork requests open-network mode (user-accepted risk).
+	CapabilityOpenNetwork = "open_network"
+	// CapabilityMount requests an additional read-only mount.
+	CapabilityMount = "mount"
+)
+
+// CapabilityRequest is one boundary-crossing capability ask (extra
+// egress, ssh-agent forwarding, open network, additional mount). It is
+// derived solely from the host-observed denied connection — never from
+// guest-supplied text (SEC-05) — so the grant prompt always shows the
+// real destination and requesting task. Refs: FR-17.12
+type CapabilityRequest struct {
+	SandboxID        string `json:"sandbox_id"`
+	TaskID           string `json:"task_id"`
+	Capability       string `json:"capability"` // CapabilityEgress | CapabilitySSHAgent | CapabilityOpenNetwork | CapabilityMount
+	ObservedDestIP   string `json:"observed_dest_ip,omitempty"`
+	ObservedDestPort int    `json:"observed_dest_port,omitempty"`
+}
+
+// Validate checks the capability request shape. Refs: FR-17.12
+func (c CapabilityRequest) Validate() error {
+	if c.SandboxID == "" {
+		return &ValidationError{Field: "sandbox_id", Message: "must not be empty"}
+	}
+	switch c.Capability {
+	case CapabilityEgress, CapabilitySSHAgent, CapabilityOpenNetwork, CapabilityMount:
+		return nil
+	default:
+		return &ValidationError{Field: "capability", Message: fmt.Sprintf("unknown capability %q", c.Capability)}
+	}
 }
