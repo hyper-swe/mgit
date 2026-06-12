@@ -2,10 +2,13 @@ package index
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"fmt"
+	"sync"
 	"time"
 
+	"github.com/oklog/ulid/v2"
 	_ "modernc.org/sqlite" // Pure Go SQLite driver (CGO-free per NFR-4)
 )
 
@@ -18,6 +21,12 @@ type Store struct {
 	writeDB *sql.DB
 	dbPath  string
 	clock   func() time.Time
+
+	// ulidMu guards ulidEntropy: monotonic entropy keeps ULIDs strictly
+	// increasing within one millisecond (and under a frozen test clock),
+	// so append-ordered audit ids sort correctly. Refs: FR-17.18
+	ulidMu      sync.Mutex
+	ulidEntropy *ulid.MonotonicEntropy
 }
 
 // New creates or opens a Store at the given database path.
@@ -44,10 +53,11 @@ func New(dbPath string, clock func() time.Time) (*Store, error) {
 	readDB.SetMaxOpenConns(5)
 
 	store := &Store{
-		readDB:  readDB,
-		writeDB: writeDB,
-		dbPath:  dbPath,
-		clock:   clock,
+		readDB:      readDB,
+		writeDB:     writeDB,
+		dbPath:      dbPath,
+		clock:       clock,
+		ulidEntropy: ulid.Monotonic(rand.Reader, 0),
 	}
 
 	// Apply safety-critical PRAGMAs
@@ -83,6 +93,17 @@ func (s *Store) Path() string {
 // Now returns the current time from the injected clock.
 func (s *Store) Now() time.Time {
 	return s.clock()
+}
+
+// newULID returns a monotonically increasing ULID for audit-row ids.
+func (s *Store) newULID() (string, error) {
+	s.ulidMu.Lock()
+	defer s.ulidMu.Unlock()
+	id, err := ulid.New(ulid.Timestamp(s.clock().UTC()), s.ulidEntropy)
+	if err != nil {
+		return "", fmt.Errorf("new ulid: %w", err)
+	}
+	return id.String(), nil
 }
 
 // WriteTx executes fn within a serialized write transaction.

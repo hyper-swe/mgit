@@ -78,4 +78,27 @@ CREATE TABLE IF NOT EXISTS worktrees (
     UNIQUE(branch_name),
     UNIQUE(task_id)
 );
+
+-- Sandbox lifecycle audit (APPEND-ONLY, event-sourced per F-01:
+-- state is derived from the latest event; no ended_at column exists
+-- because populating one would require UPDATE on an audit table).
+-- Refs: FR-17.18
+CREATE TABLE IF NOT EXISTS sandbox_events (
+    id            TEXT PRIMARY KEY,   -- ULID (sortable: event order)
+    sandbox_id    TEXT NOT NULL,      -- ULID of the sandbox
+    task_id       TEXT NOT NULL,
+    event_type    TEXT NOT NULL,      -- created | suspended | resumed |
+                                      -- policy_granted | landed | destroyed |
+                                      -- ttl_expired | killed
+    backend       TEXT NOT NULL DEFAULT '',      -- kvm | vzf | hyperv | container
+    image_digest  TEXT NOT NULL DEFAULT '',      -- sha256 of rootfs image
+    network_mode  TEXT NOT NULL DEFAULT '',      -- none | allowlist | open
+    detail        TEXT NOT NULL DEFAULT '',      -- JSON; sanitized + length-capped (F-09)
+    created_at    TEXT NOT NULL       -- ISO-8601 UTC
+);
+
+-- Index for per-sandbox event streams (state derivation, FR-17.18)
+CREATE INDEX IF NOT EXISTS idx_sandbox_events_sandbox_id ON sandbox_events(sandbox_id);
+-- Index for per-task audit queries
+CREATE INDEX IF NOT EXISTS idx_sandbox_events_task_id ON sandbox_events(task_id);
 `
