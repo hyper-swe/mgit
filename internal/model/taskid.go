@@ -44,7 +44,7 @@ func validateTaskIDField(id string) error {
 		return &ValidationError{Field: "task_id", Message: "must not be empty"}
 	}
 	if _, err := ParseTaskID(id); err != nil {
-		return &ValidationError{Field: "task_id", Message: fmt.Sprintf("invalid format: %s", id)}
+		return &ValidationError{Field: "task_id", Message: fmt.Sprintf("invalid format: %q", id)}
 	}
 	return nil
 }

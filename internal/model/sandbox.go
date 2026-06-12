@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"regexp"
 	"strings"
 	"time"
@@ -65,7 +66,19 @@ var (
 	imageNameComponentRe = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`)
 	registryPortRe       = regexp.MustCompile(`^[0-9]+$`)
 	sha256DigestRe       = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	// allowlistEntryRe matches one egress allowlist entry: lowercase
+	// hostname (optionally wildcarded), IP, host:port, or CIDR. Control
+	// characters and uppercase are rejected — entries are written
+	// verbatim into the append-only audit record (F-09).
+	allowlistEntryRe = regexp.MustCompile(`^[a-z0-9*][a-z0-9.*:-]{0,252}(?:/[0-9]{1,3})?$`)
+	// hexHashRe matches a bare lowercase hex hash of the given length.
+	sha1HexRe   = regexp.MustCompile(`^[a-f0-9]{40}$`)
+	sha256HexRe = regexp.MustCompile(`^[a-f0-9]{64}$`)
 )
+
+// maxImageRefLen bounds image references before any parsing work (OCI
+// caps repository names well below this; oversized refs are hostile).
+const maxImageRefLen = 512
 
 // ValidateImageRef checks that an image reference is digest-pinned per
 // FR-17.17: <name>@sha256:<64 hex>, where <name> is one or more
@@ -73,6 +86,9 @@ var (
 // carry a registry port (host:5000/...). Exported so images.lock
 // handling (FR-17.31, FR-17.36) validates with the same grammar.
 func ValidateImageRef(ref string) error {
+	if len(ref) > maxImageRefLen {
+		return &ValidationError{Field: "image_ref", Message: fmt.Sprintf("exceeds %d bytes", maxImageRefLen)}
+	}
 	name, digest, found := strings.Cut(ref, "@")
 	if !found || !sha256DigestRe.MatchString(digest) {
 		return &ValidationError{Field: "image_ref", Message: "must be digest-pinned (<name>@sha256:<64 hex>)"}
@@ -107,7 +123,13 @@ func (p NetworkPolicy) Validate() error {
 		}
 	case NetworkModeAllowlist:
 		// Allowlist may be empty: the host policy store supplies defaults
-		// (registry hosts) per FR-17.13.
+		// (registry hosts) per FR-17.13. Entries are audit-record bytes
+		// (F-09): enforce the grammar at the validation boundary.
+		for _, entry := range p.Allowlist {
+			if !allowlistEntryRe.MatchString(entry) {
+				return &ValidationError{Field: "allowlist", Message: fmt.Sprintf("invalid entry %q", entry)}
+			}
+		}
 	default:
 		return &ValidationError{Field: "mode", Message: fmt.Sprintf("unknown network mode %q", p.Mode)}
 	}
@@ -187,8 +209,11 @@ type SandboxInfo struct {
 }
 
 // Validate checks that the SandboxInfo has required, well-formed
-// fields and a closed-vocabulary backend/state.
-// Refs: FR-17.1, FR-17.7, FR-17.15
+// fields and a closed-vocabulary backend/state. An empty State is
+// permitted (state is derived from sandbox_events after registration);
+// an empty or malformed ImageDigest is not — the digest is the
+// FR-17.17 pinning guarantee in the audit record.
+// Refs: FR-17.1, FR-17.7, FR-17.15, FR-17.17
 func (s SandboxInfo) Validate() error {
 	if s.ID == "" {
 		return &ValidationError{Field: "id", Message: "must not be empty"}
@@ -196,8 +221,14 @@ func (s SandboxInfo) Validate() error {
 	if err := validateTaskIDField(s.TaskID); err != nil {
 		return err
 	}
+	if s.WorktreePath == "" {
+		return &ValidationError{Field: "worktree_path", Message: "must not be empty"}
+	}
 	if !validBackends[s.Backend] {
 		return &ValidationError{Field: "backend", Message: fmt.Sprintf("unknown backend %q", s.Backend)}
+	}
+	if !sha256DigestRe.MatchString(s.ImageDigest) {
+		return &ValidationError{Field: "image_digest", Message: "must be sha256:<64 hex>"}
 	}
 	if s.State != "" && !validStates[s.State] {
 		return &ValidationError{Field: "state", Message: fmt.Sprintf("unknown state %q", s.State)}
@@ -249,15 +280,48 @@ type SandboxManager interface {
 	Resolve(ctx context.Context, id string) (*SandboxInfo, error)
 }
 
+// AlgEd25519 is the v1 attestation signature algorithm (FR-17.29,
+// stdlib crypto/ed25519 per the APPROVED-PACKAGES §2a decision).
+const AlgEd25519 = "ed25519"
+
 // Attestation is a host-issued binding of one commit to the sandbox
 // that produced it, recorded at land time. Both hashes of the ADR-002
-// dual-hash model are bound. Refs: FR-17.6, FR-17.38
+// dual-hash model are bound. Alg and KeyID make the signature
+// verifiable across key rotations (FR-17.38) and rule out
+// algorithm-confusion. Refs: FR-17.6, FR-17.38
 type Attestation struct {
 	SandboxID     string    `json:"sandbox_id"`
-	CommitHash    string    `json:"commit_hash"`    // git SHA-1 object ID
-	ContentHash   string    `json:"content_hash"`   // mgit SHA-256 (ADR-002)
+	CommitHash    string    `json:"commit_hash"`    // git SHA-1 object ID (40 hex)
+	ContentHash   string    `json:"content_hash"`   // mgit SHA-256, 64 hex (ADR-002)
+	Alg           string    `json:"alg"`            // signature algorithm (AlgEd25519)
+	KeyID         string    `json:"key_id"`         // host trust-anchor fingerprint (FR-17.38)
 	HostSignature []byte    `json:"host_signature"` // issued by mgit-sandboxd
 	IssuedAt      time.Time `json:"issued_at"`      // host receive-time, UTC (SEC-11, FR-17.28)
+}
+
+// Validate checks the attestation shape. Signature *verification* is
+// the Attestor's job; this rejects structurally hollow attestations
+// before they reach a verifier. Refs: FR-17.6
+func (a Attestation) Validate() error {
+	if a.SandboxID == "" {
+		return &ValidationError{Field: "sandbox_id", Message: "must not be empty"}
+	}
+	if !sha1HexRe.MatchString(a.CommitHash) {
+		return &ValidationError{Field: "commit_hash", Message: "must be 40 lowercase hex (git SHA-1)"}
+	}
+	if !sha256HexRe.MatchString(a.ContentHash) {
+		return &ValidationError{Field: "content_hash", Message: "must be 64 lowercase hex (SHA-256)"}
+	}
+	if a.Alg == "" || a.KeyID == "" {
+		return &ValidationError{Field: "alg", Message: "alg and key_id must identify the signing scheme"}
+	}
+	if len(a.HostSignature) == 0 {
+		return &ValidationError{Field: "host_signature", Message: "must not be empty"}
+	}
+	if a.IssuedAt.IsZero() {
+		return &ValidationError{Field: "issued_at", Message: "must carry the host receive-time"}
+	}
+	return nil
 }
 
 // Attestor issues and verifies commit attestations. HOST-SIDE ONLY
@@ -267,6 +331,10 @@ type Attestation struct {
 // holds no signing key — an attestation minted by the thing being
 // attested would be forgeable and worthless. Refs: FR-17.6, FR-17.38
 type Attestor interface {
+	// Attest issues an attestation for one commit. Implementations MUST
+	// refuse any (sandboxID, hash) pair the daemon did not itself
+	// observe crossing that sandbox's vsock channel — Attest is not an
+	// attest-anything signing oracle (SEC-01).
 	Attest(ctx context.Context, sandboxID, commitHash, contentHash string) (*Attestation, error)
 	Verify(ctx context.Context, att *Attestation) error
 }
@@ -309,8 +377,11 @@ func (c CapabilityRequest) Validate() error {
 	}
 	switch c.Capability {
 	case CapabilityEgress:
-		if c.ObservedDestIP == "" {
-			return &ValidationError{Field: "observed_dest_ip", Message: "egress requests must carry the host-observed destination (SEC-05)"}
+		// The destination must parse as a real IP address: this string
+		// is rendered in the human grant prompt and written to the
+		// audit record — free text here IS the SEC-05 attack.
+		if _, err := netip.ParseAddr(c.ObservedDestIP); err != nil {
+			return &ValidationError{Field: "observed_dest_ip", Message: "must be the host-observed destination IP address (SEC-05)"}
 		}
 		if c.ObservedDestPort < 1 || c.ObservedDestPort > 65535 {
 			return &ValidationError{Field: "observed_dest_port", Message: "must be a valid port (1-65535)"}

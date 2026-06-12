@@ -165,6 +165,9 @@ func TestCapabilityRequest_Validate(t *testing.T) {
 		{name: "open_network", req: plain(CapabilityOpenNetwork), wantErr: false},
 		{name: "mount", req: plain(CapabilityMount), wantErr: false},
 		{name: "egress_missing_observed_ip", req: plain(CapabilityEgress), wantErr: true},
+		{name: "egress_hostname_not_ip", req: mutate(egress, func(r *CapabilityRequest) { r.ObservedDestIP = "github.com" }), wantErr: true},
+		{name: "egress_injection_string", req: mutate(egress, func(r *CapabilityRequest) { r.ObservedDestIP = "140.82.112.22<script>" }), wantErr: true},
+		{name: "egress_ipv6_ok", req: mutate(egress, func(r *CapabilityRequest) { r.ObservedDestIP = "2606:50c0:8000::153" }), wantErr: false},
 		{name: "egress_invalid_port", req: mutate(egress, func(r *CapabilityRequest) { r.ObservedDestPort = 0 }), wantErr: true},
 		{name: "egress_port_too_large", req: mutate(egress, func(r *CapabilityRequest) { r.ObservedDestPort = 70000 }), wantErr: true},
 		{name: "unknown_capability", req: plain("allow_all"), wantErr: true},
@@ -181,6 +184,41 @@ func TestCapabilityRequest_Validate(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
+		})
+	}
+}
+
+// TestAttestation_Validate_Shape rejects structurally hollow
+// attestations before they reach a verifier. Refs: FR-17.6
+func TestAttestation_Validate_Shape(t *testing.T) {
+	valid := Attestation{
+		SandboxID:     "01JX",
+		CommitHash:    strings.Repeat("a", 40),
+		ContentHash:   strings.Repeat("b", 64),
+		Alg:           AlgEd25519,
+		KeyID:         "sha256:" + strings.Repeat("c", 64),
+		HostSignature: []byte{0x01},
+		IssuedAt:      time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC),
+	}
+	assert.NoError(t, valid.Validate())
+
+	tests := []struct {
+		name   string
+		mutate func(*Attestation)
+	}{
+		{name: "empty_sandbox_id", mutate: func(a *Attestation) { a.SandboxID = "" }},
+		{name: "short_commit_hash", mutate: func(a *Attestation) { a.CommitHash = "abc" }},
+		{name: "short_content_hash", mutate: func(a *Attestation) { a.ContentHash = "abc" }},
+		{name: "missing_alg", mutate: func(a *Attestation) { a.Alg = "" }},
+		{name: "missing_key_id", mutate: func(a *Attestation) { a.KeyID = "" }},
+		{name: "empty_signature", mutate: func(a *Attestation) { a.HostSignature = nil }},
+		{name: "zero_issued_at", mutate: func(a *Attestation) { a.IssuedAt = time.Time{} }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			att := valid
+			tt.mutate(&att)
+			assert.Error(t, att.Validate())
 		})
 	}
 }

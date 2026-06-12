@@ -43,6 +43,10 @@ func TestNetworkPolicy_UnknownMode_Invalid(t *testing.T) {
 		{name: "mode_unknown", policy: NetworkPolicy{Mode: "bridge"}, wantErr: true},
 		{name: "mode_case_sensitive", policy: NetworkPolicy{Mode: "OPEN"}, wantErr: true},
 		{name: "allowlist_outside_allowlist_mode", policy: NetworkPolicy{Mode: NetworkModeNone, Allowlist: []string{"pypi.org"}}, wantErr: true},
+		{name: "allowlist_wildcard_and_cidr_and_port", policy: NetworkPolicy{Mode: NetworkModeAllowlist, Allowlist: []string{"*.npmjs.org", "10.0.0.0/8", "staging.corp:22"}}, wantErr: false},
+		{name: "allowlist_entry_control_char", policy: NetworkPolicy{Mode: NetworkModeAllowlist, Allowlist: []string{"evil\nFAKE AUDIT ROW"}}, wantErr: true},
+		{name: "allowlist_entry_empty", policy: NetworkPolicy{Mode: NetworkModeAllowlist, Allowlist: []string{""}}, wantErr: true},
+		{name: "allowlist_entry_uppercase", policy: NetworkPolicy{Mode: NetworkModeAllowlist, Allowlist: []string{"Registry.NPMJS.org"}}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -78,6 +82,8 @@ func TestLaunchOptions_NonDigestImage_Invalid(t *testing.T) {
 		{name: "uppercase_hex", imageRef: "go-node@sha256:" + strings.Repeat("A", 64), wantErr: true},
 		{name: "uppercase_name", imageRef: "go-Node@sha256:" + strings.Repeat("a", 64), wantErr: true},
 		{name: "port_on_non_first_component", imageRef: "go/node:5000/x@sha256:" + strings.Repeat("a", 64), wantErr: true},
+		{name: "oversized_ref", imageRef: strings.Repeat("a", 4096) + "@sha256:" + strings.Repeat("a", 64), wantErr: true},
+		{name: "empty_path_component", imageRef: "a//b@sha256:" + strings.Repeat("a", 64), wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -200,7 +206,12 @@ func TestSandboxInfo_JSONRoundTrip_SnakeCase(t *testing.T) {
 // TestSandboxInfo_Validate_RequiredFields covers the error paths for
 // the info type itself. Refs: FR-17.1
 func TestSandboxInfo_Validate_RequiredFields(t *testing.T) {
-	valid := SandboxInfo{ID: "01JX", TaskID: "MGIT-4.2", WorktreePath: "/w", Backend: BackendKVM, NetworkMode: NetworkModeNone}
+	valid := SandboxInfo{
+		ID: "01JX", TaskID: "MGIT-4.2", WorktreePath: "/w",
+		Backend:     BackendKVM,
+		ImageDigest: "sha256:" + strings.Repeat("c", 64),
+		NetworkMode: NetworkModeNone,
+	}
 	assert.NoError(t, valid.Validate())
 
 	tests := []struct {
@@ -210,6 +221,9 @@ func TestSandboxInfo_Validate_RequiredFields(t *testing.T) {
 		{name: "empty_id", mutate: func(s *SandboxInfo) { s.ID = "" }},
 		{name: "empty_task", mutate: func(s *SandboxInfo) { s.TaskID = "" }},
 		{name: "malformed_task", mutate: func(s *SandboxInfo) { s.TaskID = "not a task!" }},
+		{name: "empty_worktree_path", mutate: func(s *SandboxInfo) { s.WorktreePath = "" }},
+		{name: "empty_image_digest", mutate: func(s *SandboxInfo) { s.ImageDigest = "" }},
+		{name: "malformed_image_digest", mutate: func(s *SandboxInfo) { s.ImageDigest = "sha256:short" }},
 		{name: "unknown_network_mode", mutate: func(s *SandboxInfo) { s.NetworkMode = "nat" }},
 		{name: "unknown_backend", mutate: func(s *SandboxInfo) { s.Backend = "hyper-v" }},
 		{name: "empty_backend", mutate: func(s *SandboxInfo) { s.Backend = "" }},
