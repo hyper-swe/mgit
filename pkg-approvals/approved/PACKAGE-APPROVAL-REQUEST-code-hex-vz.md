@@ -67,6 +67,14 @@ architecture exists.
 **Security surface:** platform framework bindings; VMM is Apple COTS, assessed per FR-17.30.
 **Maintenance burden:** Medium (tracks macOS releases; pinned + re-baselined per FR-17.36).
 
+
+## Known-Vulnerability Check (2026-06-12, pre-import)
+
+GitHub Advisory Database (ecosystem:Go) and OSV: **no advisories** for
+`github.com/Code-Hex/vz`. Latest upstream release at check time: v3.7.1.
+Pinned for import: **v3.7.1**. Re-run govulncheck at every release
+(PACKAGE-APPROVAL-PROCESS.md §2.4).
+
 ## Sign-off
 
 Evaluated against all PACKAGE-APPROVAL-PROCESS.md criteria; approved for the

@@ -74,6 +74,21 @@ maintained, auditable control plane for it. Confinement: imported **only** by
 **Security surface:** VMM control plane; mitigated by FR-17.34 IPC auth + FR-17.30 COTS assessment.
 **Maintenance burden:** Medium (tracks Firecracker releases; pinned + re-baselined per FR-17.36).
 
+
+## Known-Vulnerability Check (2026-06-12, pre-import)
+
+GitHub Advisory Database (ecosystem:Go) and OSV: **no advisories** for
+`github.com/firecracker-microvm/firecracker-go-sdk`.
+
+**COTS VMM note (binding for MGIT-11.5.1 / SANDBOX-IMAGES.md):** the
+Firecracker VMM binary itself carries CVE-2026-1386 (jailer symlink ->
+arbitrary host file overwrite; fixed v1.14.1 / v1.13.2) and
+CVE-2026-5747 (virtio-pci out-of-bounds write reachable from a root
+guest, CVSS 8.7; fixed in the current release). The images.lock /
+SANDBOX-IMAGES.md register MUST pin Firecracker >= v1.14.1 with the
+virtio-pci fix, and the jailer directory MUST be owner-only per the
+AWS bulletin.
+
 ## Sign-off
 
 Evaluated against all PACKAGE-APPROVAL-PROCESS.md criteria; approved for the

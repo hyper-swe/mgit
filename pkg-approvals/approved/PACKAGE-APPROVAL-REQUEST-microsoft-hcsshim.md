@@ -59,6 +59,14 @@ the reduced-isolation container fallback (FR-17.15) for hosts without it.
 **Security surface:** HCS control plane; VMM is Windows COTS, assessed per FR-17.30.
 **Maintenance burden:** Medium (pinned + re-baselined per FR-17.36).
 
+
+## Known-Vulnerability Check (2026-06-12, pre-import)
+
+GitHub Advisory Database (ecosystem:Go) and OSV: **no current
+advisories** for `github.com/Microsoft/hcsshim`. Historical
+CVE-2018-8115 (path-handling RCE via crafted container image) was
+fixed in v0.6.10; the pinned minimum (>= 0.12.0) is unaffected.
+
 ## Sign-off
 
 Evaluated against all PACKAGE-APPROVAL-PROCESS.md criteria; approved for the

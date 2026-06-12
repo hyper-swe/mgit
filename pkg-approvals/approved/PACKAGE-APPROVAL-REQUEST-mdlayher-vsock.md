@@ -65,6 +65,12 @@ for SEC-10/FR-17.27 on AF_VSOCK backends.
 **Security surface:** the land-protocol transport — intentionally so; hardened per FR-17.24/17.27/17.35.
 **Maintenance burden:** Low.
 
+
+## Known-Vulnerability Check (2026-06-12, pre-import)
+
+GitHub Advisory Database (ecosystem:Go) and OSV: **no advisories** for
+`github.com/mdlayher/vsock`.
+
 ## Sign-off
 
 Evaluated against all PACKAGE-APPROVAL-PROCESS.md criteria; approved for the
