@@ -117,9 +117,10 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 
 	// Check that internal/store only contains expected subdirectories
 	expectedStoreSubs := map[string]bool{
-		"git":   true,
-		"index": true,
-		"lock":  true,
+		"git":    true,
+		"index":  true,
+		"lock":   true,
+		"policy": true, // host-only sandbox policy store (FR-17.13, MGIT-11.3.4)
 	}
 
 	storeEntries, err := os.ReadDir(filepath.Join(root, "internal", "store"))
