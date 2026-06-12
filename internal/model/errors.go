@@ -84,6 +84,38 @@ var (
 	// ErrFileNotFound indicates a path is absent from a commit's tree.
 	// Refs: FR-6.7
 	ErrFileNotFound = errors.New("file not found in commit")
+
+	// ErrSandboxNotFound indicates a sandbox ID or task resolves to no
+	// registered sandbox. Refs: FR-17.20
+	ErrSandboxNotFound = errors.New("sandbox not found")
+
+	// ErrSandboxBackendUnavailable indicates no hypervisor backend is
+	// available on this platform (and the container fallback was not
+	// explicitly acknowledged). Refs: FR-17.15, FR-17.20
+	ErrSandboxBackendUnavailable = errors.New("no sandbox backend available on this platform")
+
+	// ErrLandVerificationFailed indicates dual-hash or task-binding
+	// verification failed during sandbox land; nothing was imported.
+	// Refs: FR-17.5, FR-17.20, FR-17.24
+	ErrLandVerificationFailed = errors.New("sandbox land: commit verification failed")
+
+	// ErrUnlandedCommits indicates a sandbox still holds commits that
+	// have not been landed; remove requires --force. Refs: FR-17.19, FR-17.20
+	ErrUnlandedCommits = errors.New("sandbox has unlanded commits")
+
+	// ErrNetworkPolicyViolation indicates a guest flow was denied by the
+	// host-enforced network policy. Refs: FR-17.7, FR-17.8, FR-17.20
+	ErrNetworkPolicyViolation = errors.New("network policy violation")
+
+	// ErrUnattestedCommit indicates a commit lacks a valid host-issued
+	// sandbox attestation while require_sandbox is enabled.
+	// Refs: FR-17.6, FR-17.20
+	ErrUnattestedCommit = errors.New("commit lacks sandbox attestation")
+
+	// ErrSensitivePathModified indicates the guest modified a protected
+	// host-trusted path (e.g. .claude/**, .git/hooks/**); land refuses.
+	// Refs: FR-17.14, FR-17.20
+	ErrSensitivePathModified = errors.New("guest modified a protected host-trusted path")
 )
 
 // ValidationError provides structured context for validation failures.
