@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"net/netip"
 	"time"
 )
 
@@ -16,6 +17,11 @@ const (
 
 // validEgressDecisions closes the decision vocabulary.
 var validEgressDecisions = map[string]bool{EgressAllow: true, EgressDeny: true}
+
+// validEgressProtocols closes the protocol vocabulary: the allowlist
+// proxy permits TCP, host-resolver DNS, and (denied) UDP — nothing
+// else exists at the flow layer (FR-17.8).
+var validEgressProtocols = map[string]bool{"tcp": true, "udp": true, "dns": true}
 
 // EgressRecord is one append-only proxy decision. DestHost and Rule
 // originate guest-side (hostnames, SNI) and are sanitized and
@@ -46,8 +52,13 @@ func (e EgressRecord) Validate() error {
 	if !validEgressDecisions[e.Decision] {
 		return &ValidationError{Field: "decision", Message: fmt.Sprintf("unknown decision %q", e.Decision)}
 	}
-	if e.Protocol == "" {
-		return &ValidationError{Field: "protocol", Message: "must not be empty"}
+	if !validEgressProtocols[e.Protocol] {
+		return &ValidationError{Field: "protocol", Message: fmt.Sprintf("unknown protocol %q", e.Protocol)}
+	}
+	if e.DestIP != "" {
+		if _, err := netip.ParseAddr(e.DestIP); err != nil {
+			return &ValidationError{Field: "dest_ip", Message: "must be an IP address when set"}
+		}
 	}
 	if e.DestPort < 0 || e.DestPort > 65535 {
 		return &ValidationError{Field: "dest_port", Message: "must be 0-65535"}

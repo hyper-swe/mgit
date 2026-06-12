@@ -22,11 +22,17 @@ type Store struct {
 	dbPath  string
 	clock   func() time.Time
 
-	// ulidMu guards ulidEntropy: monotonic entropy keeps ULIDs strictly
-	// increasing within one millisecond (and under a frozen test clock),
-	// so append-ordered audit ids sort correctly. Refs: FR-17.18
+	// ulidMu guards ulidEntropy and ulidLastMs: monotonic entropy keeps
+	// ULIDs strictly increasing within one millisecond (and under a
+	// frozen test clock), and the millisecond clamp keeps them
+	// increasing even if the wall clock steps backwards (NTP, VM
+	// resume), so append-ordered audit ids always sort correctly within
+	// this process. Cross-process ordering is serialized by the
+	// single-writer pool plus the process-level file lock (MGIT-10.1).
+	// Refs: FR-17.18
 	ulidMu      sync.Mutex
 	ulidEntropy *ulid.MonotonicEntropy
+	ulidLastMs  uint64
 }
 
 // New creates or opens a Store at the given database path.
@@ -96,10 +102,19 @@ func (s *Store) Now() time.Time {
 }
 
 // newULID returns a monotonically increasing ULID for audit-row ids.
+// The timestamp never decreases across calls (backwards wall-clock
+// steps are clamped), so ORDER BY id is append order in this process.
 func (s *Store) newULID() (string, error) {
 	s.ulidMu.Lock()
 	defer s.ulidMu.Unlock()
-	id, err := ulid.New(ulid.Timestamp(s.clock().UTC()), s.ulidEntropy)
+
+	ms := ulid.Timestamp(s.clock().UTC())
+	if ms < s.ulidLastMs {
+		ms = s.ulidLastMs
+	}
+	s.ulidLastMs = ms
+
+	id, err := ulid.New(ms, s.ulidEntropy)
 	if err != nil {
 		return "", fmt.Errorf("new ulid: %w", err)
 	}
@@ -178,15 +193,16 @@ func (s *Store) migrate() error {
 		return fmt.Errorf("create post-migration indexes: %w", err)
 	}
 
-	// Record schema version if not already present
-	var count int
+	// Append a schema_version row whenever the recorded version is
+	// behind (version history is itself append-only).
+	var latest int
 	err := s.readDB.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM schema_version").Scan(&count)
+		"SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&latest)
 	if err != nil {
 		return fmt.Errorf("check schema version: %w", err)
 	}
 
-	if count == 0 {
+	if latest < schemaVersion {
 		_, err := s.writeDB.ExecContext(ctx,
 			"INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
 			schemaVersion, s.clock().UTC().Format(time.RFC3339))

@@ -177,12 +177,18 @@ func (s *BundleService) Import(ctx context.Context, data []byte, mode ImportMode
 	}
 
 	// Walk the records and insert them. In merge mode, duplicates are
-	// skipped silently.
+	// skipped silently. Sandbox provenance travels with the record:
+	// importing must not strip a commit's producing sandbox (FR-17.18).
 	imported, skipped := 0, 0
 	for _, r := range bundle.TaskCommits {
-		err := s.indexStore.AddCommitToTask(
-			ctx, r.TaskID, r.CommitHash, r.ContentHash, r.AgentID, r.Position,
-		)
+		var sandboxID string
+		if r.SandboxID != nil {
+			sandboxID = *r.SandboxID
+		}
+		err := s.indexStore.AppendTaskCommit(ctx, index.TaskCommitInsert{
+			TaskID: r.TaskID, CommitHash: r.CommitHash, ContentHash: r.ContentHash,
+			AgentID: r.AgentID, Position: r.Position, SandboxID: sandboxID,
+		})
 		if err != nil {
 			if mode == ImportMerge && isDuplicateInsert(err) {
 				skipped++

@@ -5,7 +5,9 @@
 package index
 
 // schemaVersion tracks the current schema version for migrations.
-const schemaVersion = 1
+// Version 2: FR-17 sandbox tables (sandbox_events, sandbox_egress_log)
+// and the additive task_commits.sandbox_id column.
+const schemaVersion = 2
 
 // createTablesSQL defines all tables for the mgit index database.
 // task_commits is APPEND-ONLY: no UPDATE, no DELETE. Ever.

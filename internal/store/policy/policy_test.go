@@ -128,6 +128,9 @@ func TestPolicy_ChangeEmitsAuditEvent(t *testing.T) {
 	require.NoError(t, store.Save(ctx, p))
 	require.Len(t, sink.details, 1, "save must emit one policy event")
 	assert.Contains(t, sink.details[0], `"require_sandbox":true`)
+	assert.Contains(t, sink.details[0], `"source":"host"`)
+	assert.Contains(t, sink.details[0], `"policy_sha256"`,
+		"the audit detail carries the policy hash, not the unbounded document")
 
 	p.RequireSandbox = false
 	require.NoError(t, store.Save(ctx, p))
@@ -213,10 +216,38 @@ func TestPolicy_ErrorPaths(t *testing.T) {
 	})
 
 	t.Run("save_surfaces_audit_sink_failure", func(t *testing.T) {
-		store, err := NewStore(filepath.Join(t.TempDir(), "root"), fixedClock(), failingSink{})
+		root := filepath.Join(t.TempDir(), "root")
+		store, err := NewStore(root, fixedClock(), failingSink{})
 		require.NoError(t, err)
 		assert.Error(t, store.Save(ctx, model.DefaultSandboxPolicy()),
-			"an unrecordable policy change must not be applied silently")
+			"an unrecordable policy change must not be applied")
+		assert.NoFileExists(t, filepath.Join(root, "policy.json"),
+			"the policy file must NOT be written when the audit record fails")
+	})
+
+	t.Run("adopt_symlink_rejected", func(t *testing.T) {
+		store, _, _, worktree := newTestStore(t)
+		target := filepath.Join(worktree, "secret.json")
+		require.NoError(t, os.WriteFile(target, []byte(`{}`), 0o600))
+		link := filepath.Join(worktree, "policy-link.json")
+		require.NoError(t, os.Symlink(target, link))
+		assert.Error(t, store.AdoptSuggested(ctx, link),
+			"symlinked suggestions must be refused (could point at host secrets)")
+	})
+
+	t.Run("adopt_oversized_rejected", func(t *testing.T) {
+		store, _, _, worktree := newTestStore(t)
+		big := filepath.Join(worktree, "big.json")
+		require.NoError(t, os.WriteFile(big, make([]byte, maxSuggestedPolicyLen+1), 0o600))
+		assert.Error(t, store.AdoptSuggested(ctx, big))
+	})
+
+	t.Run("adopt_wiping_sensitive_paths_rejected", func(t *testing.T) {
+		store, _, _, worktree := newTestStore(t)
+		wipe := filepath.Join(worktree, "wipe.json")
+		require.NoError(t, os.WriteFile(wipe, []byte(`{"sensitive_paths":null}`), 0o600))
+		assert.Error(t, store.AdoptSuggested(ctx, wipe),
+			"a suggestion nulling the FR-17.14 protected paths must be refused")
 	})
 
 	t.Run("save_unwritable_root_rejected", func(t *testing.T) {

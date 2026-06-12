@@ -74,9 +74,13 @@ func (s *Store) ListSandboxEvents(ctx context.Context, sandboxID string) ([]mode
 				&ev.Backend, &ev.ImageDigest, &ev.NetworkMode, &ev.Detail, &createdAt); err != nil {
 				return err
 			}
-			if t, parseErr := time.Parse(time.RFC3339, createdAt); parseErr == nil {
-				ev.CreatedAt = t
+			t, parseErr := time.Parse(time.RFC3339, createdAt)
+			if parseErr != nil {
+				// A malformed timestamp in an audit row is integrity
+				// corruption, never quietly rendered as year 1.
+				return fmt.Errorf("%w: bad created_at %q", model.ErrIndexCorrupted, createdAt)
 			}
+			ev.CreatedAt = t
 			events = append(events, ev)
 		}
 		return rows.Err()
@@ -106,7 +110,7 @@ func (s *Store) DeriveState(ctx context.Context, sandboxID string) (string, erro
 	})
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return "", fmt.Errorf("%w: %s", model.ErrSandboxNotFound, sandboxID)
+		return "", fmt.Errorf("%w: %q", model.ErrSandboxNotFound, sandboxID)
 	case err != nil:
 		return "", fmt.Errorf("derive state: %w", err)
 	}
@@ -120,20 +124,29 @@ func (s *Store) DeriveState(ctx context.Context, sandboxID string) (string, erro
 	return state, nil
 }
 
-// sanitizeAuditDetail strips control characters and caps the length of
-// a guest-influenced detail string before it enters an append-only
-// audit table, where a corrupted entry would be permanent (F-09).
+// sanitizeAuditDetail sanitizes one event-detail payload (F-09).
 func sanitizeAuditDetail(detail string) string {
+	return sanitizeAuditString(detail, maxSandboxEventDetailLen)
+}
+
+// sanitizeAuditString strips control and format characters and caps
+// the byte length of a guest-influenced string before it enters an
+// append-only audit table, where a corrupted entry would be permanent
+// (F-09). Format characters (Cf: RTL overrides, zero-width spaces,
+// invisible tag characters) are stripped along with Cc/Cs and the
+// Unicode line/paragraph separators — all are display-spoofing
+// carriers in audit output. Truncation never splits a rune.
+func sanitizeAuditString(value string, maxLen int) string {
 	cleaned := strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Cs, unicode.Zl, unicode.Zp) {
 			return -1
 		}
 		return r
-	}, detail)
+	}, value)
 
-	if len(cleaned) > maxSandboxEventDetailLen {
+	if len(cleaned) > maxLen {
 		// Byte-truncate, then drop any split trailing rune.
-		return strings.ToValidUTF8(cleaned[:maxSandboxEventDetailLen], "")
+		return strings.ToValidUTF8(cleaned[:maxLen], "")
 	}
 	return cleaned
 }

@@ -34,16 +34,12 @@ func (s *Store) AppendEgressRecord(ctx context.Context, rec *model.EgressRecord)
 		(id, sandbox_id, task_id, decision, protocol, dest_host, dest_ip, dest_port, rule, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	destHost := sanitizeAuditDetail(rec.DestHost)
-	if len(destHost) > maxEgressHostLen {
-		destHost = destHost[:maxEgressHostLen]
-	}
-
 	return s.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, insertSQL,
 			id, rec.SandboxID, rec.TaskID, rec.Decision, rec.Protocol,
-			destHost, rec.DestIP, rec.DestPort,
-			sanitizeAuditDetail(rec.Rule),
+			sanitizeAuditString(rec.DestHost, maxEgressHostLen),
+			rec.DestIP, rec.DestPort,
+			sanitizeAuditString(rec.Rule, maxSandboxEventDetailLen),
 			s.clock().UTC().Format(time.RFC3339))
 		if err != nil {
 			return fmt.Errorf("insert egress record: %w", err)
@@ -91,9 +87,13 @@ func (s *Store) queryEgressRecords(ctx context.Context, querySQL string, args ..
 				&rec.Rule, &createdAt); err != nil {
 				return err
 			}
-			if t, parseErr := time.Parse(time.RFC3339, createdAt); parseErr == nil {
-				rec.CreatedAt = t
+			t, parseErr := time.Parse(time.RFC3339, createdAt)
+			if parseErr != nil {
+				// A malformed timestamp in an audit row is integrity
+				// corruption, never quietly rendered as year 1.
+				return fmt.Errorf("%w: bad created_at %q", model.ErrIndexCorrupted, createdAt)
 			}
+			rec.CreatedAt = t
 			records = append(records, rec)
 		}
 		return rows.Err()
