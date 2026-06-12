@@ -10,30 +10,50 @@ import (
 )
 
 // CommitRecord represents a row from the task_commits table.
-// Refs: FR-4
+// SandboxID is nil for commits produced outside a sandbox — a
+// permanently visible provenance gap (FR-17.6, F-02). Refs: FR-4, FR-17.18
 type CommitRecord struct {
-	ID          int64  `json:"id"`
-	TaskID      string `json:"task_id"`
-	CommitHash  string `json:"commit_hash"`
-	ContentHash string `json:"content_hash"`
-	AgentID     string `json:"agent_id"`
-	Position    int    `json:"position"`
-	CreatedAt   string `json:"created_at"`
+	ID          int64   `json:"id"`
+	TaskID      string  `json:"task_id"`
+	CommitHash  string  `json:"commit_hash"`
+	ContentHash string  `json:"content_hash"`
+	AgentID     string  `json:"agent_id"`
+	Position    int     `json:"position"`
+	CreatedAt   string  `json:"created_at"`
+	SandboxID   *string `json:"sandbox_id,omitempty"`
 }
 
-// AddCommitToTask inserts a record into the task_commits table.
-// Returns an error if the (task_id, commit_hash) pair already exists.
-// This is an INSERT-only operation per FR-12 append-only requirement.
-// Refs: FR-4, FR-12, MGIT-2.3.3
-func (s *Store) AddCommitToTask(ctx context.Context, taskID, commitHash, contentHash, agentID string, position int) error {
-	// INSERT-only: append-only audit table (FR-12)
-	const insertSQL = `INSERT INTO task_commits (task_id, commit_hash, content_hash, agent_id, position, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`
+// TaskCommitInsert holds one task_commits row to append. An empty
+// SandboxID stores NULL: the commit is recorded as unsandboxed.
+// Refs: FR-4, FR-17.18
+type TaskCommitInsert struct {
+	TaskID      string
+	CommitHash  string
+	ContentHash string
+	AgentID     string
+	Position    int
+	SandboxID   string // empty = unsandboxed (stored as NULL)
+}
+
+// AppendTaskCommit inserts a record into the task_commits table with
+// sandbox provenance set at append time only. INSERT-only per FR-12.
+// Refs: FR-4, FR-12, FR-17.18, MGIT-11.3.3
+func (s *Store) AppendTaskCommit(ctx context.Context, in TaskCommitInsert) error {
+	// INSERT-only: append-only audit table (FR-12); sandbox_id is
+	// written once here and never updated.
+	const insertSQL = `INSERT INTO task_commits
+		(task_id, commit_hash, content_hash, agent_id, position, created_at, sandbox_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`
+
+	var sandboxID any // NULL when unsandboxed (queryable gap, F-02)
+	if in.SandboxID != "" {
+		sandboxID = in.SandboxID
+	}
 
 	return s.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, insertSQL,
-			taskID, commitHash, contentHash, agentID, position,
-			s.clock().UTC().Format(time.RFC3339))
+			in.TaskID, in.CommitHash, in.ContentHash, in.AgentID, in.Position,
+			s.clock().UTC().Format(time.RFC3339), sandboxID)
 		if err != nil {
 			return fmt.Errorf("insert task_commit: %w", err)
 		}
@@ -41,16 +61,45 @@ func (s *Store) AddCommitToTask(ctx context.Context, taskID, commitHash, content
 	})
 }
 
+// AddCommitToTask inserts an unsandboxed record into task_commits.
+// Kept for pre-FR-17 callers; new code should use AppendTaskCommit.
+// Refs: FR-4, FR-12, MGIT-2.3.3
+func (s *Store) AddCommitToTask(ctx context.Context, taskID, commitHash, contentHash, agentID string, position int) error {
+	return s.AppendTaskCommit(ctx, TaskCommitInsert{
+		TaskID: taskID, CommitHash: commitHash, ContentHash: contentHash,
+		AgentID: agentID, Position: position,
+	})
+}
+
 // GetTaskCommits returns all commits for a task, ordered by position.
 // Refs: FR-4 (task -> commits query)
 func (s *Store) GetTaskCommits(ctx context.Context, taskID string) ([]CommitRecord, error) {
 	// Parameterized query for task -> commits lookup
-	const querySQL = `SELECT id, task_id, commit_hash, content_hash, agent_id, position, created_at
+	const querySQL = `SELECT id, task_id, commit_hash, content_hash, agent_id, position, created_at, sandbox_id
 		FROM task_commits WHERE task_id = ? ORDER BY position ASC`
 
+	return s.queryCommitRecords(ctx, querySQL, taskID)
+}
+
+// GetUnsandboxedCommits returns every commit recorded without sandbox
+// provenance (sandbox_id IS NULL) — the permanently visible gap that
+// require_sandbox closes (FR-17.6, F-02). The result is unpaginated:
+// callers presenting large audit reports should add LIMIT/OFFSET
+// support before exposing this through the CLI. Refs: FR-17.18
+func (s *Store) GetUnsandboxedCommits(ctx context.Context) ([]CommitRecord, error) {
+	// NULL sandbox_id = unsandboxed commit (provenance gap query)
+	const querySQL = `SELECT id, task_id, commit_hash, content_hash, agent_id, position, created_at, sandbox_id
+		FROM task_commits WHERE sandbox_id IS NULL ORDER BY id ASC`
+
+	return s.queryCommitRecords(ctx, querySQL)
+}
+
+// queryCommitRecords runs one parameterized task_commits SELECT whose
+// column list matches CommitRecord, scanning sandbox_id as nullable.
+func (s *Store) queryCommitRecords(ctx context.Context, querySQL string, args ...any) ([]CommitRecord, error) {
 	var records []CommitRecord
 	err := s.ReadTx(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, querySQL, taskID)
+		rows, err := tx.QueryContext(ctx, querySQL, args...)
 		if err != nil {
 			return fmt.Errorf("query task commits: %w", err)
 		}
@@ -58,8 +107,13 @@ func (s *Store) GetTaskCommits(ctx context.Context, taskID string) ([]CommitReco
 
 		for rows.Next() {
 			var r CommitRecord
-			if err := rows.Scan(&r.ID, &r.TaskID, &r.CommitHash, &r.ContentHash, &r.AgentID, &r.Position, &r.CreatedAt); err != nil {
+			var sandboxID sql.NullString
+			if err := rows.Scan(&r.ID, &r.TaskID, &r.CommitHash, &r.ContentHash,
+				&r.AgentID, &r.Position, &r.CreatedAt, &sandboxID); err != nil {
 				return fmt.Errorf("scan task commit: %w", err)
+			}
+			if sandboxID.Valid {
+				r.SandboxID = &sandboxID.String
 			}
 			records = append(records, r)
 		}

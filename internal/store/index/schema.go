@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS task_commits (
     agent_id TEXT NOT NULL DEFAULT '',
     position INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
+    sandbox_id TEXT,  -- nullable: NULL = unsandboxed, a permanently visible gap (FR-17.6, F-02)
     UNIQUE(task_id, commit_hash)
 );
 
@@ -101,4 +102,12 @@ CREATE TABLE IF NOT EXISTS sandbox_events (
 CREATE INDEX IF NOT EXISTS idx_sandbox_events_sandbox_id ON sandbox_events(sandbox_id);
 -- Index for per-task audit queries
 CREATE INDEX IF NOT EXISTS idx_sandbox_events_task_id ON sandbox_events(task_id);
+`
+
+// postMigrationIndexSQL creates indexes on columns added by additive
+// migrations; it must run AFTER ensureColumn so legacy databases gain
+// the column first. Refs: FR-17.18
+const postMigrationIndexSQL = `
+-- Index for sandbox provenance queries (FR-17.18)
+CREATE INDEX IF NOT EXISTS idx_task_commits_sandbox_id ON task_commits(sandbox_id);
 `

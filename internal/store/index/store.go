@@ -168,6 +168,16 @@ func (s *Store) migrate() error {
 		return fmt.Errorf("create tables: %w", err)
 	}
 
+	// Additive column migrations for databases created before the
+	// column existed (ALTER ADD COLUMN only — existing rows are never
+	// updated or deleted; new columns read back NULL). Refs: FR-17.18
+	if err := s.ensureColumn(ctx, "task_commits", "sandbox_id", "TEXT"); err != nil {
+		return err
+	}
+	if _, err := s.writeDB.ExecContext(ctx, postMigrationIndexSQL); err != nil {
+		return fmt.Errorf("create post-migration indexes: %w", err)
+	}
+
 	// Record schema version if not already present
 	var count int
 	err := s.readDB.QueryRowContext(ctx,
@@ -185,6 +195,39 @@ func (s *Store) migrate() error {
 		}
 	}
 
+	return nil
+}
+
+// ensureColumn adds a column to an existing table if absent. Purely
+// additive: never rewrites rows, so append-only laws are preserved.
+func (s *Store) ensureColumn(ctx context.Context, table, column, colType string) error {
+	// PRAGMA table_info cannot be parameterized; table/column names here
+	// are compile-time constants from this package, never user input.
+	rows, err := s.readDB.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return fmt.Errorf("table info %s: %w", table, err)
+	}
+	defer rows.Close() //nolint:errcheck // non-critical
+
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, declType string
+		var dflt any
+		if err := rows.Scan(&cid, &name, &declType, &notNull, &dflt, &pk); err != nil {
+			return fmt.Errorf("scan table info: %w", err)
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("table info rows: %w", err)
+	}
+
+	if _, err := s.writeDB.ExecContext(ctx,
+		"ALTER TABLE "+table+" ADD COLUMN "+column+" "+colType); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
 	return nil
 }
 
