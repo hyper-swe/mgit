@@ -444,7 +444,7 @@ Same logic as ADR-004: hypervisor APIs and the microVM ecosystem are evolving qu
 | 7 | Independent re-verification mode (F-06) | **Converted to requirement** — FR-17.32; implemented in MGIT-11.12.1 |
 | 8 | Fault-injection test categories (F-07) | **Met (specified)** — FR-17.33 enumerates the six categories; suite built in MGIT-11.12.3 |
 | 9 | sandboxd IPC authentication spec (F-08) | **Met (specified)** — FR-17.34; implemented in MGIT-11.4.2 |
-| 10 | vsock IDD; image signing; images.lock change control (F-09..F-12) | **Met (specified)** — FR-17.35, FR-17.29, FR-17.36; IDD authored in MGIT-11.8.2 before backend code |
+| 10 | audit-log sanitization; vsock IDD; image signing; images.lock change control (F-09..F-12) | **Met (specified)** — FR-17.18 (F-09), FR-17.35, FR-17.29, FR-17.36; IDD authored in MGIT-11.8.2 before backend code |
 | 11 | SEC-05/08/09/10/12 hardening clauses | **Met (specified)** — FR-17.12, FR-17.25, FR-17.26, FR-17.27, FR-17.29 |
 
 Acceptance rationale: criteria 1–2 are fully met; every remaining criterion is

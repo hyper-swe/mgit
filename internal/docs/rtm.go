@@ -40,6 +40,26 @@ var findingRowRe = regexp.MustCompile(`^\|\s*((?:SEC|F)-\d{2})\b`)
 // findingIDRe matches audit finding IDs (SEC-01.., F-01..) in free text.
 var findingIDRe = regexp.MustCompile(`\b(?:SEC|F)-\d{2}\b`)
 
+// sectionHeadingRe matches an h2/h3 markdown heading line.
+var sectionHeadingRe = regexp.MustCompile(`(?m)^#{2,3} `)
+
+// RequirementSection returns the body of the "### <id>: ..." section of
+// a requirements document, from its heading to the next h2/h3 heading.
+// Mapping-table parsers must be scoped to a section: rows elsewhere in
+// the document (revision histories, other FR tables) would otherwise
+// merge into the traceability mappings and silently satisfy coverage
+// assertions.
+func RequirementSection(markdown, id string) string {
+	_, rest, found := strings.Cut(markdown, "### "+id+":")
+	if !found {
+		return ""
+	}
+	if loc := sectionHeadingRe.FindStringIndex(rest); loc != nil {
+		rest = rest[:loc[0]]
+	}
+	return rest
+}
+
 // ParseRequirements extracts all criteria with the given ID prefix
 // (e.g. "FR-17") from a requirements markdown document.
 func ParseRequirements(markdown, prefix string) []Requirement {

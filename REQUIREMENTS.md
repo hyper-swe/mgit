@@ -1056,7 +1056,7 @@ var (
 
 **FR-17.26** One-way port publish and global resource ceiling (SEC-09). Guest→host port publishing MUST be strictly one-way: the guest MUST NOT be able to reach host loopback services (e.g. a host database on `127.0.0.1:5432`). `mgit-sandboxd` MUST enforce a global concurrency cap (default **8** concurrent sandboxes) and a global memory ceiling (default **50%** of host physical memory across all sandboxes); exceeding either fails sandbox launch with a machine-readable error rather than degrading the host.
 
-**FR-17.27** vsock peer binding (SEC-10). Each guest's control and land channel MUST be bound to its vsock CID at launch. `mgit-sandboxd` MUST reject messages arriving from a CID other than the one bound to the addressed sandbox — one guest can never address another guest's land or attestation channel.
+**FR-17.27** vsock peer binding (SEC-10). Each guest's control and land channel MUST be bound at launch to its hypervisor-level peer identity — the vsock CID on AF_VSOCK backends (KVM, Virtualization.framework) and the VM identity GUID on Hyper-V sockets (AF_HYPERV). `mgit-sandboxd` MUST reject messages arriving from a peer identity other than the one bound to the addressed sandbox — one guest can never address another guest's land or attestation channel.
 
 **FR-17.28** Guest metadata is advisory (SEC-11). Guest-supplied commit author and timestamp are recorded but advisory. The host MUST record its own receive-time alongside the guest timestamp on every landed commit; audit queries MUST expose both. Task-ID binding remains authoritative per FR-17.5.
 
@@ -1269,7 +1269,7 @@ The `content_hash` (SHA-256) is the authoritative integrity field for mgit opera
 
 **NFR-17.3** Idle suspend: a VM with no exec activity for a configurable idle period (default **5 minutes**) MUST be paused, consuming **0%** host CPU while suspended.
 
-**NFR-17.4** Memory footprint: idle resident memory **≤ 100 MB** per active VM (memory ballooning + free-page reporting return unused pages to the host); a host with 5 idle sandboxes MUST show **< 500 MB** total attributable RSS.
+**NFR-17.4** Memory footprint: idle resident memory **< 100 MB** per active VM (memory ballooning + free-page reporting return unused pages to the host); a host with 5 idle sandboxes MUST show **< 500 MB** total attributable RSS. The per-VM bound is strict so the two criteria compose: five conforming VMs cannot violate the aggregate.
 
 **NFR-17.5** Default resource caps (overridable per task, stored per FR-17.13): **2** vCPU (shared, not pinned), **2048 MB** ballooned memory, **4096 MB** disk quota, TTL default **4 h**. Caps are enforced by the VMM, not the guest.
 

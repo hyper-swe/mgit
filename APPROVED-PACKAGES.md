@@ -1,7 +1,7 @@
 # APPROVED-PACKAGES.md
 ## mgit Package Approval Registry
 
-**Last Updated:** 2026-03-09
+**Last Updated:** 2026-06-12
 **Go Version Requirement:** 1.23+
 **Status:** Active
 
@@ -16,14 +16,14 @@ This document maintains the **exclusive list of approved dependencies** for the 
 - **Only packages listed below may be imported** into mgit codebase.
 - **Violation of this policy results in code rejection** during review and CI/CD pipeline checks.
 - Using an unapproved package without prior approval = automatic code rejection.
-- All approved packages must meet the **Pure Go requirement** (no CGO) to ensure single-binary deployment across all platforms.
+- All packages approved for **core mgit** must meet the **Pure Go requirement** (no CGO) to ensure single-binary deployment across all platforms. The sole exception is §2a: packages approved exclusively for the separate `mgit-sandboxd` helper binary (FR-17.16, ADR-005), which may require CGO and are **never importable from core mgit**.
 
 ### Safety-Critical Constraint
 
 mgit supports LLM coding agents in critical workflows. Dependencies are vetted for:
 - Security posture (no known CVEs)
 - Maintenance status (active, responsive maintainers)
-- Pure Go compilation (no C bindings)
+- Pure Go compilation (no C bindings) — core mgit; see §2a for the sandboxd-only exception
 - Minimal transitive dependencies
 - License compatibility (open-source only)
 

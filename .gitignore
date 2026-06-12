@@ -4,6 +4,10 @@ mgit
 CONCURRENCY-ANALYSIS.md
 SECURITY-AUDIT-LOCK.md
 AUDIT-*.md
+# FR-17 audits are normative anchors for FR-17.24-17.37 and ADR-005
+# acceptance, and are read by TestTrace_* — they must be tracked.
+!AUDIT-FR17-SANDBOX-V1.md
+!AUDIT-FR17-SANDBOX-SECURITY-V1.md
 FR-MTIX-*.md
 
 cover.out

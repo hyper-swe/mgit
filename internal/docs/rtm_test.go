@@ -74,17 +74,26 @@ func TestRTM_FR17_MapsToADR005Goals(t *testing.T) {
 	goalCount := CountADRGoals(adr)
 	require.GreaterOrEqual(t, goalCount, 8, "ADR-005 must declare its numbered goals")
 
-	mappings := ParseGoalMappings(reqs)
+	mappings := ParseGoalMappings(RequirementSection(reqs, "FR-17"))
 	defined := definedFR17Criteria(reqs)
 
 	for goal := 1; goal <= goalCount; goal++ {
 		ids := mappings[goal]
 		assert.NotEmpty(t, ids, "ADR-005 goal %d must map to >=1 requirement criterion", goal)
 		for _, id := range ids {
+			if !isFR17ID(id) {
+				continue // cross-references to other FR sections are legal
+			}
 			assert.True(t, defined[id],
 				"goal %d maps to %s, which must be a defined criterion", goal, id)
 		}
 	}
+}
+
+// isFR17ID reports whether a requirement ID belongs to the FR-17/NFR-17
+// criterion set this RTM verifies.
+func isFR17ID(id string) bool {
+	return strings.HasPrefix(id, "FR-17.") || strings.HasPrefix(id, "NFR-17.")
 }
 
 // TestRTM_NFR17_PerfTargetsQuantified verifies the NFR-17 performance
@@ -170,13 +179,16 @@ func assertFindingsMapped(t *testing.T, auditFile, prefix string, minFindings in
 	require.GreaterOrEqual(t, len(findings), minFindings,
 		"%s must declare at least %d %s findings", auditFile, minFindings, prefix)
 
-	mappings := ParseFindingMappings(reqs)
+	mappings := ParseFindingMappings(RequirementSection(reqs, "FR-17"))
 	defined := definedFR17Criteria(reqs)
 
 	for _, finding := range findings {
 		ids := mappings[finding]
 		assert.NotEmpty(t, ids, "audit finding %s must map to >=1 requirement criterion", finding)
 		for _, id := range ids {
+			if !isFR17ID(id) {
+				continue // cross-references to other FR sections are legal
+			}
 			assert.True(t, defined[id],
 				"finding %s maps to %s, which must be a defined criterion", finding, id)
 		}
@@ -208,13 +220,14 @@ func TestTrace_NoOrphanRequirements(t *testing.T) {
 		defined[c.ID] = true
 	}
 
+	section := RequirementSection(reqs, "FR-17")
 	referenced := make(map[string]bool)
-	collectReferenced(referenced, ParseGoalMappings(reqs))
-	collectReferenced(referenced, ParseFindingMappings(reqs))
+	collectReferenced(referenced, ParseGoalMappings(section))
+	collectReferenced(referenced, ParseFindingMappings(section))
 	require.NotEmpty(t, referenced, "traceability tables must exist")
 
 	for id := range referenced {
-		if strings.HasPrefix(id, "FR-17.") || strings.HasPrefix(id, "NFR-17.") {
+		if isFR17ID(id) {
 			assert.True(t, defined[id], "referenced %s must be a defined criterion", id)
 		}
 	}

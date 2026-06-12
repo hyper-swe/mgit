@@ -50,9 +50,13 @@ needed for FR-17.27 peer binding.
 
 The quarantine-then-land design (FR-17.4/17.5) requires a host↔guest channel
 that exists independently of any network policy, so that `none`-mode sandboxes
-still commit and land. vsock is that channel on every targeted hypervisor
-(KVM, Virtualization.framework, Hyper-V all expose it). The CID addressing this
-package surfaces is also the enforcement primitive for SEC-10/FR-17.27.
+still commit and land. AF_VSOCK is that channel on KVM, and
+Virtualization.framework exposes it guest-side via virtio sockets; Hyper-V
+provides the equivalent hypervisor socket family (AF_HYPERV, addressed by VM
+GUID rather than CID), which is covered by the hcsshim/Windows backend at
+implementation time — not by this package (hence the linux-only constraint in
+§2a). The peer addressing this package surfaces is the enforcement primitive
+for SEC-10/FR-17.27 on AF_VSOCK backends.
 
 ## Impact Assessment
 

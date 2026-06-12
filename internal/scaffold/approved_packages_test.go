@@ -45,11 +45,11 @@ func TestApprovedPackages_SandboxDepsListed(t *testing.T) {
 
 	for _, dep := range sandboxDeps {
 		t.Run(dep.name, func(t *testing.T) {
-			assert.Contains(t, content, dep.pkg,
-				"sandbox dependency %s must be registered", dep.pkg)
+			row := registryRow(content, dep.pkg)
+			assert.NotEmpty(t, row,
+				"sandbox dependency %s must have a registry table row", dep.pkg)
 			if dep.cgoNote {
-				line := lineContaining(content, dep.pkg)
-				assert.Contains(t, line, "CGO",
+				assert.Contains(t, row, "CGO",
 					"CGO-bearing %s must be marked as CGO-confined", dep.pkg)
 			}
 		})
@@ -66,9 +66,9 @@ func TestApprovedPackages_PinnedVersions(t *testing.T) {
 
 	for _, dep := range sandboxDeps {
 		t.Run(dep.name, func(t *testing.T) {
-			line := lineContaining(content, dep.pkg)
-			require.NotEmpty(t, line, "registry row for %s must exist", dep.pkg)
-			assert.Regexp(t, semverRe, line,
+			row := registryRow(content, dep.pkg)
+			require.NotEmpty(t, row, "registry row for %s must exist", dep.pkg)
+			assert.Regexp(t, semverRe, row,
 				"registry row for %s must pin a minimum version", dep.pkg)
 		})
 	}
@@ -79,20 +79,33 @@ func TestApprovedPackages_PinnedVersions(t *testing.T) {
 // MGIT-11.1.4
 func TestGoMod_NoUnapprovedDeps(t *testing.T) {
 	goMod := readGoMod(t)
-	approved := readApprovedPackages(t)
+	// Only the approved sections count: a module path appearing in the
+	// "Explicitly Rejected Packages" table must NOT satisfy this gate.
+	approved := approvedSections(readApprovedPackages(t))
 
 	for _, dep := range directRequires(goMod) {
 		t.Run(dep, func(t *testing.T) {
-			assert.Contains(t, approved, dep,
-				"direct dependency %s must be registered in APPROVED-PACKAGES.md", dep)
+			assert.NotEmpty(t, registryRow(approved, dep),
+				"direct dependency %s must have an approved-registry table row", dep)
 		})
 	}
 }
 
-// lineContaining returns the first line of content containing substr.
-func lineContaining(content, substr string) string {
+// approvedSections returns the registry content preceding the
+// "Explicitly Rejected Packages" section.
+func approvedSections(content string) string {
+	if i := strings.Index(content, "Explicitly Rejected"); i >= 0 {
+		return content[:i]
+	}
+	return content
+}
+
+// registryRow returns the first markdown table row whose backticked
+// package cell names pkg. Prose mentions of a module path do not match.
+func registryRow(content, pkg string) string {
 	for _, line := range strings.Split(content, "\n") {
-		if strings.Contains(line, substr) {
+		if strings.HasPrefix(strings.TrimSpace(line), "|") &&
+			strings.Contains(line, "`"+pkg+"`") {
 			return line
 		}
 	}
