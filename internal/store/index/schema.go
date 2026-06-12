@@ -102,6 +102,28 @@ CREATE TABLE IF NOT EXISTS sandbox_events (
 CREATE INDEX IF NOT EXISTS idx_sandbox_events_sandbox_id ON sandbox_events(sandbox_id);
 -- Index for per-task audit queries
 CREATE INDEX IF NOT EXISTS idx_sandbox_events_task_id ON sandbox_events(task_id);
+
+-- Egress decisions in allowlist mode (APPEND-ONLY, same laws as
+-- sandbox_events: no UPDATE, no DELETE, no retention pruning, ever).
+-- Guest-influenced strings are sanitized + capped before insert
+-- (SEC-04, SEC-07, F-09). Refs: FR-17.8, FR-17.18
+CREATE TABLE IF NOT EXISTS sandbox_egress_log (
+    id          TEXT PRIMARY KEY,   -- ULID (sortable: decision order)
+    sandbox_id  TEXT NOT NULL,
+    task_id     TEXT NOT NULL,
+    decision    TEXT NOT NULL,      -- allow | deny
+    protocol    TEXT NOT NULL,      -- tcp | udp | dns
+    dest_host   TEXT NOT NULL DEFAULT '',  -- guest-influenced; sanitized
+    dest_ip     TEXT NOT NULL DEFAULT '',  -- host-resolved destination
+    dest_port   INTEGER NOT NULL DEFAULT 0,
+    rule        TEXT NOT NULL DEFAULT '',  -- matched entry or deny reason
+    created_at  TEXT NOT NULL       -- ISO-8601 UTC
+);
+
+-- Index for per-sandbox egress audit
+CREATE INDEX IF NOT EXISTS idx_sandbox_egress_sandbox_id ON sandbox_egress_log(sandbox_id);
+-- Index for per-task egress audit
+CREATE INDEX IF NOT EXISTS idx_sandbox_egress_task_id ON sandbox_egress_log(task_id);
 `
 
 // postMigrationIndexSQL creates indexes on columns added by additive
