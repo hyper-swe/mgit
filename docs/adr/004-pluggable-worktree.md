@@ -1,8 +1,8 @@
 # ADR-004: Pluggable Worktree Implementation Strategy
 
 **Status:** Accepted  
-**Date:** 2026-03-12  
-**Refs:** FR-16 (Agent Worktrees)
+**Date:** 2026-03-12 (sandbox quarantine boundary noted 2026-06-12, MGIT-11.1.3)  
+**Refs:** FR-16 (Agent Worktrees), ADR-005 / FR-17.4 (sandbox quarantine — SEC-03)
 
 ---
 
@@ -62,7 +62,24 @@ type WorktreeManager interface {
 - Worktree registry in `index.db` (`worktrees` table with path, name, branch, task_id, agent_id, created_at, last_commit_at)
 - Working directories created at user-specified paths (typically `./worktrees/<agent-name>/`)
 - Branch isolation enforced: no two worktrees may share a branch or task ID
-- Object store and refs are shared across all worktrees (same `.mgit/objects/` and `.mgit/refs/`)
+- Object store and refs are shared across all worktrees (same `.mgit/objects/` and `.mgit/refs/`) — **host worktrees only; this sharing must never extend into sandbox guests** (see below)
+
+## Sandbox Boundary Exception (ADR-005, SEC-03)
+
+The object-store/refs sharing above is a **host-side** property. Security audit
+AUDIT-FR17-SANDBOX-SECURITY-V1 finding **SEC-03** showed that naively mounting
+"the worktree" into a sandboxed microVM would carry the `.git`/`.mgit` linkage
+back into the shared store — giving a hostile guest read access to other
+tasks' objects and write access to the shared index, silently breaking the
+quarantine that ADR-005 promises.
+
+Resolution (binding, FR-17.3/FR-17.4): a sandbox guest mounts the worktree's
+**working-tree files only**; the guest's `.git` is rebound to a private,
+sandbox-local object store; the shared store, refs, index DB, and parent
+`.mgit` are never resolvable from inside the guest. `mgit sandbox land` is the
+only path from the private store into the shared store. Any future
+`WorktreeManager` backend (including go-git v6 native) must preserve this
+exception.
 
 ## v2 Migration Criteria
 

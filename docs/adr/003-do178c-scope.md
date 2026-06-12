@@ -1,8 +1,8 @@
 # ADR-003: DO-178C Applicability Scope for mgit
 
 **Status:** Accepted  
-**Date:** 2026-03-09  
-**Refs:** NFR-1.5, FR-12
+**Date:** 2026-03-09 (sandbox tool-qualification section added 2026-06-12, MGIT-11.1.3)  
+**Refs:** NFR-1.5, FR-12, FR-17.30 (sandbox tool qualification, ADR-005)
 
 ---
 
@@ -59,6 +59,23 @@ DO-330 defines 5 Tool Qualification Levels (TQL-1 through TQL-5). mgit qualifies
 - **TQL-3 criteria**: The tool's output is verified by review before use.
 - **How mgit satisfies TQL-3**: mgit produces git format-patch files (`mgit squash --to-git`) that are reviewed by humans and CI pipelines before integration into production repositories. If mgit introduces an error in the patch, it will be caught during code review.
 - **TQL-3 evidence**: Tool operational requirements (REQUIREMENTS.md), tool description (README.md), and evidence that the tool works correctly (automated test suite with >85% coverage across all packages).
+
+### Sandbox Components (ADR-005 / FR-17.30) — DO-330 Position
+
+ADR-005 introduces three new tool components. Their qualification positions
+(required by audit finding F-04, AUDIT-FR17-SANDBOX-V1):
+
+| Component | Classification | DO-330 Position | Verification of its output |
+|-----------|----------------|-----------------|---------------------------|
+| `mgit-sandboxd` (host helper: VMM control, attestation issuance, egress proxy, IPC) | Development tool, same posture as mgit core | Tool criteria 3 → **TQL-5** at Level A: it cannot insert an error into airborne software; its output (landed commits + attestations) is independently re-verified | `mgit verify --independent` (FR-17.32) re-checks dual hashes, task bindings, and attestations through a separate verification path; landed patches remain human/CI-reviewed per the core TQL-3 argument |
+| `mgit-guest` (PID 1 guest supervisor, transport-only per SEC-01) | Untrusted by design — runs inside the hostile guest | **Not a qualified tool and never trusted**: it holds no signing material and every byte it transmits is re-verified host-side (FR-17.5, FR-17.6, FR-17.24) | Host-side hash-on-write verification; host-issued attestation; schema-validated bounded protocol (FR-17.35) |
+| VMM / hypervisor (Firecracker-class, Virtualization.framework, Hyper-V) | **COTS** | Not qualified as a tool; assessed and registered per IEC 62304 §8.1.2 | SANDBOX-IMAGES.md SOUP/COTS register (FR-17.31) with digest pinning, signature verification at boot (FR-17.29), and known-anomaly review; change control per FR-17.36 |
+
+mgit core retains the TQL-3 posture stated above (more conservative than the
+criteria-3 minimum). The sandbox does not weaken the classification argument:
+it *strengthens* the CM story by adding per-commit environment provenance
+(sandbox ID, image digest, network posture — FR-17.18), and the guest side of
+the boundary is explicitly excluded from the trusted tool set.
 
 ## Rationale
 
