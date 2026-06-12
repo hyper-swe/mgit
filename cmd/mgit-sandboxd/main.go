@@ -21,8 +21,24 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
+	"github.com/hyper-swe/mgit/internal/sandboxd/backend/container"
 )
+
+// slogBackendAuditor records backend selections in the daemon's
+// structured log; the durable sandbox_events record rides the service
+// wiring (MGIT-11.9.x), which also audits each launch.
+type slogBackendAuditor struct {
+	logger *slog.Logger
+}
+
+// RecordBackendSelection logs one selection event.
+func (a slogBackendAuditor) RecordBackendSelection(_ context.Context, detail string) error {
+	a.logger.Warn("sandbox backend selected with reduced isolation",
+		"event", "backend_selected", "detail", detail)
+	return nil
+}
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stderr))
@@ -37,6 +53,10 @@ func run(args []string, logSink io.Writer) int {
 	idleGrace := flags.Duration("idle-grace", 30*time.Second, "zero-sandbox linger before exit")
 	maxSandboxes := flags.Int("max-sandboxes", 8, "global concurrent-sandbox ceiling (FR-17.26)")
 	maxMemoryMB := flags.Int("max-memory-mb", 0, "global sandbox memory ceiling in MB (0 until policy wiring resolves the FR-17.26 50% host default)")
+	backend := flags.String("backend", sandboxd.BackendRequestAuto,
+		"sandbox backend: auto (platform hypervisor) or container (REDUCED isolation; requires --acknowledge-reduced-isolation)")
+	ackReduced := flags.Bool("acknowledge-reduced-isolation", false,
+		"accept the container fallback's shared-kernel risk (recorded in the audit trail)")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -50,12 +70,34 @@ func run(args []string, logSink io.Writer) int {
 		return 2
 	}
 
-	// The ceiling wraps whichever backend this build carries: launches
-	// never reach a backend unadmitted (SEC-09).
-	manager := sandboxd.NewCeilingManager(
-		sandboxd.NewUnavailableManager(runtime.GOOS),
-		*maxSandboxes, *maxMemoryMB, 0,
-	)
+	selected, err := sandboxd.SelectBackend(context.Background(), sandboxd.SelectOptions{
+		Backend:                     *backend,
+		AcknowledgeReducedIsolation: *ackReduced,
+		Audit:                       slogBackendAuditor{logger: logger},
+	}, sandboxd.BackendFactories{
+		// The hypervisor factory wires the platform microVM backend once
+		// image resolution exists (images.lock, MGIT-11.5.5); until then
+		// launches refuse honestly.
+		Hypervisor: func() (model.SandboxManager, error) {
+			return sandboxd.NewUnavailableManager(runtime.GOOS), nil
+		},
+		Container: func() (model.SandboxManager, error) {
+			return container.NewManager(container.Config{
+				Runner:         container.PodmanRunner{},
+				SensitivePaths: model.DefaultSandboxPolicy().SensitivePaths,
+				Logger:         logger,
+				Clock:          func() time.Time { return time.Now().UTC() },
+			})
+		},
+	})
+	if err != nil {
+		logger.Error("sandbox backend selection failed", "error", err.Error())
+		return 2
+	}
+
+	// The ceiling wraps whichever backend was selected: launches never
+	// reach a backend unadmitted (SEC-09).
+	manager := sandboxd.NewCeilingManager(selected, *maxSandboxes, *maxMemoryMB, 0)
 
 	daemon, err := sandboxd.New(sandboxd.Config{
 		SocketPath: *socket,
