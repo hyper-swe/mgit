@@ -73,12 +73,21 @@ func attestorGodoc(t *testing.T) string {
 
 	for _, decl := range file.Decls {
 		gen, ok := decl.(*ast.GenDecl)
-		if !ok || gen.Doc == nil {
+		if !ok {
 			continue
 		}
 		for _, spec := range gen.Specs {
-			if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name.Name == "Attestor" {
+			ts, ok := spec.(*ast.TypeSpec)
+			if !ok || ts.Name.Name != "Attestor" {
+				continue
+			}
+			// Doc may attach to the decl or, in grouped type blocks,
+			// to the spec itself.
+			if gen.Doc != nil {
 				return gen.Doc.Text()
+			}
+			if ts.Doc != nil {
+				return ts.Doc.Text()
 			}
 		}
 	}
@@ -130,27 +139,43 @@ func TestCapabilityRequest_CarriesObservedDest(t *testing.T) {
 	}
 }
 
-// TestCapabilityRequest_Validate covers capability vocabulary and
-// required fields. Refs: FR-17.12
+// TestCapabilityRequest_Validate covers capability vocabulary,
+// required identification, and the SEC-05 observed-destination
+// requirement for egress. Refs: FR-17.12
 func TestCapabilityRequest_Validate(t *testing.T) {
+	egress := CapabilityRequest{
+		SandboxID: "01JX", TaskID: "MGIT-4.2", Capability: CapabilityEgress,
+		ObservedDestIP: "140.82.112.22", ObservedDestPort: 22,
+	}
+	plain := func(capability string) CapabilityRequest {
+		return CapabilityRequest{SandboxID: "01JX", TaskID: "MGIT-4.2", Capability: capability}
+	}
+	mutate := func(base CapabilityRequest, fn func(*CapabilityRequest)) CapabilityRequest {
+		fn(&base)
+		return base
+	}
+
 	tests := []struct {
-		name       string
-		sandboxID  string
-		capability string
-		wantErr    bool
+		name    string
+		req     CapabilityRequest
+		wantErr bool
 	}{
-		{name: "egress", sandboxID: "01JX", capability: CapabilityEgress, wantErr: false},
-		{name: "ssh_agent", sandboxID: "01JX", capability: CapabilitySSHAgent, wantErr: false},
-		{name: "open_network", sandboxID: "01JX", capability: CapabilityOpenNetwork, wantErr: false},
-		{name: "mount", sandboxID: "01JX", capability: CapabilityMount, wantErr: false},
-		{name: "unknown_capability", sandboxID: "01JX", capability: "allow_all", wantErr: true},
-		{name: "empty_capability", sandboxID: "01JX", capability: "", wantErr: true},
-		{name: "empty_sandbox_id", sandboxID: "", capability: CapabilityEgress, wantErr: true},
+		{name: "egress_with_observed_dest", req: egress, wantErr: false},
+		{name: "ssh_agent", req: plain(CapabilitySSHAgent), wantErr: false},
+		{name: "open_network", req: plain(CapabilityOpenNetwork), wantErr: false},
+		{name: "mount", req: plain(CapabilityMount), wantErr: false},
+		{name: "egress_missing_observed_ip", req: plain(CapabilityEgress), wantErr: true},
+		{name: "egress_invalid_port", req: mutate(egress, func(r *CapabilityRequest) { r.ObservedDestPort = 0 }), wantErr: true},
+		{name: "egress_port_too_large", req: mutate(egress, func(r *CapabilityRequest) { r.ObservedDestPort = 70000 }), wantErr: true},
+		{name: "unknown_capability", req: plain("allow_all"), wantErr: true},
+		{name: "empty_capability", req: plain(""), wantErr: true},
+		{name: "empty_sandbox_id", req: mutate(egress, func(r *CapabilityRequest) { r.SandboxID = "" }), wantErr: true},
+		{name: "empty_task_id", req: mutate(egress, func(r *CapabilityRequest) { r.TaskID = "" }), wantErr: true},
+		{name: "malformed_task_id", req: mutate(egress, func(r *CapabilityRequest) { r.TaskID = "not a task!" }), wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := CapabilityRequest{SandboxID: tt.sandboxID, TaskID: "MGIT-4.2", Capability: tt.capability}
-			err := req.Validate()
+			err := tt.req.Validate()
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {

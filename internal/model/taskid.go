@@ -36,6 +36,19 @@ func ParseTaskID(s string) (TaskID, error) {
 	}, nil
 }
 
+// validateTaskIDField validates a required task_id field value for use
+// inside Validate() methods: non-empty and well-formed per ParseTaskID.
+// Shared by worktree and sandbox option types. Refs: FR-4, FR-16, FR-17.1
+func validateTaskIDField(id string) error {
+	if id == "" {
+		return &ValidationError{Field: "task_id", Message: "must not be empty"}
+	}
+	if _, err := ParseTaskID(id); err != nil {
+		return &ValidationError{Field: "task_id", Message: fmt.Sprintf("invalid format: %s", id)}
+	}
+	return nil
+}
+
 // Validate checks that the TaskID is well-formed and non-zero.
 // Refs: FR-4
 func (t TaskID) Validate() error {

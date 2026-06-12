@@ -2,8 +2,10 @@ package model
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -20,9 +22,72 @@ const (
 	NetworkModeOpen = "open"
 )
 
-// digestImageRefRe matches a digest-pinned image reference per
-// FR-17.17: <name>@sha256:<64 lowercase hex>.
-var digestImageRefRe = regexp.MustCompile(`^[a-z0-9][a-zA-Z0-9._/-]*@sha256:[a-f0-9]{64}$`)
+// Sandbox backends per platform. Refs: FR-17.15
+const (
+	// BackendKVM is the Linux KVM microVM backend.
+	BackendKVM = "kvm"
+	// BackendVZF is the macOS Virtualization.framework backend.
+	BackendVZF = "vzf"
+	// BackendHyperV is the Windows Hyper-V/WHP backend.
+	BackendHyperV = "hyperv"
+	// BackendContainer is the reduced-isolation fallback, permitted only
+	// with explicit acknowledgment recorded in the audit trail.
+	BackendContainer = "container"
+)
+
+// Sandbox lifecycle states, derived from the latest sandbox_events row
+// (FR-17.18); never stored mutably. Refs: FR-17.9, FR-17.18
+const (
+	// StateCreated means registered; the VM may not have booted yet
+	// (lazy provisioning, FR-17.10).
+	StateCreated = "created"
+	// StateRunning means the VM is booted and accepting exec requests.
+	StateRunning = "running"
+	// StateSuspended means the VM is paused by idle suspend (NFR-17.3).
+	StateSuspended = "suspended"
+	// StateLanded means commits were verified and imported (FR-17.5).
+	StateLanded = "landed"
+	// StateDestroyed means the sandbox was torn down.
+	StateDestroyed = "destroyed"
+)
+
+// validBackends and validStates close the vocabularies above so writers
+// of the append-only audit trail cannot fork them with typos.
+var (
+	validBackends = map[string]bool{BackendKVM: true, BackendVZF: true, BackendHyperV: true, BackendContainer: true}
+	validStates   = map[string]bool{StateCreated: true, StateRunning: true, StateSuspended: true, StateLanded: true, StateDestroyed: true}
+)
+
+// Image-reference grammar per FR-17.17: lowercase OCI-style name
+// components (the first may carry a registry :port), pinned by a
+// sha256 digest. Tag-only and mixed-case references are rejected.
+var (
+	imageNameComponentRe = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`)
+	registryPortRe       = regexp.MustCompile(`^[0-9]+$`)
+	sha256DigestRe       = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+)
+
+// ValidateImageRef checks that an image reference is digest-pinned per
+// FR-17.17: <name>@sha256:<64 hex>, where <name> is one or more
+// lowercase components separated by '/', and the first component may
+// carry a registry port (host:5000/...). Exported so images.lock
+// handling (FR-17.31, FR-17.36) validates with the same grammar.
+func ValidateImageRef(ref string) error {
+	name, digest, found := strings.Cut(ref, "@")
+	if !found || !sha256DigestRe.MatchString(digest) {
+		return &ValidationError{Field: "image_ref", Message: "must be digest-pinned (<name>@sha256:<64 hex>)"}
+	}
+	for i, component := range strings.Split(name, "/") {
+		host, port, hasPort := strings.Cut(component, ":")
+		if hasPort && (i != 0 || !registryPortRe.MatchString(port)) {
+			return &ValidationError{Field: "image_ref", Message: fmt.Sprintf("invalid name component %q", component)}
+		}
+		if !imageNameComponentRe.MatchString(host) {
+			return &ValidationError{Field: "image_ref", Message: fmt.Sprintf("invalid name component %q", component)}
+		}
+	}
+	return nil
+}
 
 // NetworkPolicy declares a sandbox's network posture at launch. It is
 // recorded immutably in the audit record and enforced on the host.
@@ -50,67 +115,94 @@ func (p NetworkPolicy) Validate() error {
 }
 
 // SandboxLaunchOptions holds the parameters to provision a microVM
-// bound to one task and one worktree. Refs: FR-17.1, FR-17.15, NFR-17.5
+// bound to one task and one worktree. Zero resource values mean "use
+// the host policy store default" (FR-17.13, NFR-17.5).
+// Refs: FR-17.1, FR-17.15
 type SandboxLaunchOptions struct {
 	TaskID       string        `json:"task_id"`
 	WorktreePath string        `json:"worktree_path"`
 	ImageRef     string        `json:"image_ref"` // pinned by digest (FR-17.17)
 	Network      NetworkPolicy `json:"network"`
-	CPUs         int           `json:"cpus"`
-	MemoryMB     int           `json:"memory_mb"`
-	DiskQuotaMB  int           `json:"disk_quota_mb"`
-	TTL          time.Duration `json:"ttl"`
+	CPUs         int           `json:"cpus,omitempty"`          // 0 = policy default
+	MemoryMB     int           `json:"memory_mb,omitempty"`     // 0 = policy default
+	DiskQuotaMB  int           `json:"disk_quota_mb,omitempty"` // 0 = policy default
+	TTL          time.Duration `json:"ttl_ns,omitempty"`        // nanoseconds; 0 = policy default
 }
 
 // Validate checks launch options: task binding, worktree path,
 // digest-pinned image, network policy, and non-negative resources.
 // Refs: FR-17.1, FR-17.7, FR-17.17, NFR-17.5
 func (o SandboxLaunchOptions) Validate() error {
-	if o.TaskID == "" {
-		return &ValidationError{Field: "task_id", Message: "must not be empty"}
-	}
-	if _, err := ParseTaskID(o.TaskID); err != nil {
-		return &ValidationError{Field: "task_id", Message: fmt.Sprintf("invalid format: %s", o.TaskID)}
+	if err := validateTaskIDField(o.TaskID); err != nil {
+		return err
 	}
 	if o.WorktreePath == "" {
 		return &ValidationError{Field: "worktree_path", Message: "must not be empty"}
 	}
-	if !digestImageRefRe.MatchString(o.ImageRef) {
-		return &ValidationError{Field: "image_ref", Message: "must be digest-pinned (<name>@sha256:<64 hex>)"}
-	}
-	if err := o.Network.Validate(); err != nil {
+	if err := ValidateImageRef(o.ImageRef); err != nil {
 		return err
 	}
-	if o.CPUs < 0 || o.MemoryMB < 0 || o.DiskQuotaMB < 0 || o.TTL < 0 {
-		return &ValidationError{Field: "resources", Message: "cpus, memory_mb, disk_quota_mb, and ttl must be non-negative"}
+	if err := o.Network.Validate(); err != nil {
+		return nestField("network", err)
+	}
+	for field, value := range map[string]int64{
+		"cpus": int64(o.CPUs), "memory_mb": int64(o.MemoryMB),
+		"disk_quota_mb": int64(o.DiskQuotaMB), "ttl_ns": int64(o.TTL),
+	} {
+		if value < 0 {
+			return &ValidationError{Field: field, Message: "must be non-negative (zero = policy default)"}
+		}
 	}
 	return nil
 }
 
-// SandboxInfo describes one registered sandbox. State is derived from
-// the latest sandbox_events row, never stored mutably. Wraps backend
-// types — no VMM or go-git types are exposed. Refs: FR-17.1, FR-17.18
-type SandboxInfo struct {
-	ID           string    `json:"id"`      // ULID
-	TaskID       string    `json:"task_id"` // bound task (FR-17.1)
-	WorktreePath string    `json:"worktree_path"`
-	Backend      string    `json:"backend"`      // kvm | vzf | hyperv | container
-	ImageDigest  string    `json:"image_digest"` // sha256 of rootfs image
-	NetworkMode  string    `json:"network_mode"` // none | allowlist | open
-	State        string    `json:"state"`        // derived: created | running | suspended | landed | destroyed
-	CreatedAt    time.Time `json:"created_at"`   // ISO-8601 UTC
+// nestField prefixes a nested struct's ValidationError field with its
+// parent JSON field name so callers can locate the offending input.
+func nestField(parent string, err error) error {
+	var vErr *ValidationError
+	if errors.As(err, &vErr) {
+		return &ValidationError{Field: parent + "." + vErr.Field, Message: vErr.Message}
+	}
+	return err
 }
 
-// Validate checks that the SandboxInfo has required fields.
-// Refs: FR-17.1, FR-17.7
+// SandboxInfo describes one registered sandbox. State is derived from
+// the latest sandbox_events row, never stored mutably. NetworkMode and
+// NetworkAllowlist mirror the immutable launch-time policy so audits
+// can read the egress posture from List/Resolve (FR-17.7). ExpiresAt
+// (launch time + TTL) lets service-level prune reap expired sandboxes
+// via List+Remove (FR-17.9). Wraps backend types — no VMM or go-git
+// types are exposed. Refs: FR-17.1, FR-17.18
+type SandboxInfo struct {
+	ID               string    `json:"id"`      // ULID
+	TaskID           string    `json:"task_id"` // bound task (FR-17.1)
+	WorktreePath     string    `json:"worktree_path"`
+	Backend          string    `json:"backend"`                     // BackendKVM | BackendVZF | BackendHyperV | BackendContainer
+	ImageDigest      string    `json:"image_digest"`                // sha256 of rootfs image
+	NetworkMode      string    `json:"network_mode"`                // NetworkModeNone | NetworkModeAllowlist | NetworkModeOpen
+	NetworkAllowlist []string  `json:"network_allowlist,omitempty"` // immutable launch-time allowlist (FR-17.7)
+	State            string    `json:"state"`                       // derived (StateCreated..StateDestroyed)
+	CreatedAt        time.Time `json:"created_at"`                  // ISO-8601 UTC
+	ExpiresAt        time.Time `json:"expires_at,omitempty"`        // TTL deadline; zero = no TTL
+}
+
+// Validate checks that the SandboxInfo has required, well-formed
+// fields and a closed-vocabulary backend/state.
+// Refs: FR-17.1, FR-17.7, FR-17.15
 func (s SandboxInfo) Validate() error {
 	if s.ID == "" {
 		return &ValidationError{Field: "id", Message: "must not be empty"}
 	}
-	if s.TaskID == "" {
-		return &ValidationError{Field: "task_id", Message: "must not be empty"}
+	if err := validateTaskIDField(s.TaskID); err != nil {
+		return err
 	}
-	return NetworkPolicy{Mode: s.NetworkMode}.Validate()
+	if !validBackends[s.Backend] {
+		return &ValidationError{Field: "backend", Message: fmt.Sprintf("unknown backend %q", s.Backend)}
+	}
+	if s.State != "" && !validStates[s.State] {
+		return &ValidationError{Field: "state", Message: fmt.Sprintf("unknown state %q", s.State)}
+	}
+	return nestField("network", NetworkPolicy{Mode: s.NetworkMode, Allowlist: s.NetworkAllowlist}.Validate())
 }
 
 // ExecRequest is one whole command routed into the guest over vsock.
@@ -118,10 +210,10 @@ func (s SandboxInfo) Validate() error {
 // environment is never passed through (FR-17.3, FR-17.17).
 // Refs: FR-17.11
 type ExecRequest struct {
-	Command []string      `json:"command"`           // argv; whole-command routing, no per-binary shimming
-	Dir     string        `json:"dir,omitempty"`     // cwd inside the guest (identical-path mount)
-	Env     []string      `json:"env,omitempty"`     // explicit injections, flagged in audit
-	Timeout time.Duration `json:"timeout,omitempty"` // zero means the sandbox TTL governs
+	Command []string      `json:"command"`              // argv; whole-command routing, no per-binary shimming
+	Dir     string        `json:"dir,omitempty"`        // cwd inside the guest (identical-path mount)
+	Env     []string      `json:"env,omitempty"`        // explicit injections, flagged in audit
+	Timeout time.Duration `json:"timeout_ns,omitempty"` // nanoseconds; zero means the sandbox TTL governs
 }
 
 // Validate checks the exec request shape. Refs: FR-17.11
@@ -130,7 +222,7 @@ func (r ExecRequest) Validate() error {
 		return &ValidationError{Field: "command", Message: "must contain at least one argument"}
 	}
 	if r.Timeout < 0 {
-		return &ValidationError{Field: "timeout", Message: "must be non-negative (zero = sandbox TTL governs)"}
+		return &ValidationError{Field: "timeout_ns", Message: "must be non-negative (zero = sandbox TTL governs)"}
 	}
 	return nil
 }
@@ -145,7 +237,9 @@ type ExecResult struct {
 
 // SandboxManager abstracts microVM lifecycle per platform backend.
 // Mirrors WorktreeManager (ADR-004); backends live in mgit-sandboxd.
-// Refs: FR-17.15, FR-17.16, ADR-005
+// The verb set is fixed by FR-17.15; prune (FR-17.2, FR-17.9) is a
+// service-level operation built on List (State/ExpiresAt) + Remove,
+// not a backend verb. Refs: FR-17.15, FR-17.16, ADR-005
 type SandboxManager interface {
 	Launch(ctx context.Context, opts SandboxLaunchOptions) (*SandboxInfo, error)
 	List(ctx context.Context) ([]SandboxInfo, error)
@@ -202,15 +296,29 @@ type CapabilityRequest struct {
 	ObservedDestPort int    `json:"observed_dest_port,omitempty"`
 }
 
-// Validate checks the capability request shape. Refs: FR-17.12
+// Validate checks the capability request shape: the requesting sandbox
+// and task must be identified (the grant prompt shows the task), and
+// egress requests must carry the host-observed destination — the whole
+// point of SEC-05. Refs: FR-17.12
 func (c CapabilityRequest) Validate() error {
 	if c.SandboxID == "" {
 		return &ValidationError{Field: "sandbox_id", Message: "must not be empty"}
 	}
+	if err := validateTaskIDField(c.TaskID); err != nil {
+		return err
+	}
 	switch c.Capability {
-	case CapabilityEgress, CapabilitySSHAgent, CapabilityOpenNetwork, CapabilityMount:
-		return nil
+	case CapabilityEgress:
+		if c.ObservedDestIP == "" {
+			return &ValidationError{Field: "observed_dest_ip", Message: "egress requests must carry the host-observed destination (SEC-05)"}
+		}
+		if c.ObservedDestPort < 1 || c.ObservedDestPort > 65535 {
+			return &ValidationError{Field: "observed_dest_port", Message: "must be a valid port (1-65535)"}
+		}
+	case CapabilitySSHAgent, CapabilityOpenNetwork, CapabilityMount:
+		// No observed destination required.
 	default:
 		return &ValidationError{Field: "capability", Message: fmt.Sprintf("unknown capability %q", c.Capability)}
 	}
+	return nil
 }

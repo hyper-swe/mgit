@@ -2,7 +2,6 @@ package model
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"time"
 )
@@ -26,13 +25,7 @@ func (w WorktreeInfo) Validate() error {
 	if w.Path == "" {
 		return &ValidationError{Field: "path", Message: "must not be empty"}
 	}
-	if w.TaskID == "" {
-		return &ValidationError{Field: "task_id", Message: "must not be empty"}
-	}
-	if _, err := ParseTaskID(w.TaskID); err != nil {
-		return &ValidationError{Field: "task_id", Message: fmt.Sprintf("invalid format: %s", w.TaskID)}
-	}
-	return nil
+	return validateTaskIDField(w.TaskID)
 }
 
 // DeriveNameFromPath extracts the worktree name from its filesystem path.
@@ -54,13 +47,7 @@ func (o WorktreeAddOptions) Validate() error {
 	if o.Path == "" {
 		return &ValidationError{Field: "path", Message: "must not be empty"}
 	}
-	if o.TaskID == "" {
-		return &ValidationError{Field: "task_id", Message: "must not be empty"}
-	}
-	if _, err := ParseTaskID(o.TaskID); err != nil {
-		return &ValidationError{Field: "task_id", Message: fmt.Sprintf("invalid format: %s", o.TaskID)}
-	}
-	return nil
+	return validateTaskIDField(o.TaskID)
 }
 
 // WorktreeManager defines the pluggable interface for worktree operations.

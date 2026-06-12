@@ -39,12 +39,18 @@ func TestErrors_SandboxSentinelsDefined(t *testing.T) {
 
 // TestErrors_DistinctMessages verifies no two sandbox sentinels (or any
 // existing model sentinel) share a message, so errors.Is targets stay
-// unambiguous in logs and audit records. Refs: FR-17.20
+// unambiguous in logs and audit records. The inventory covers every
+// package sentinel, not a sample. Refs: FR-17.20
 func TestErrors_DistinctMessages(t *testing.T) {
 	all := append(sandboxSentinels(),
-		ErrCommitNotFound, ErrTaskNotFound, ErrBranchNotFound,
-		ErrAppendOnlyViolation, ErrVerificationFailed,
-		ErrTaskAlreadyBound, ErrTaskMismatch, ErrWorktreeNotFound,
+		ErrCommitNotFound, ErrBranchNotFound, ErrTaskNotFound,
+		ErrInvalidTaskID, ErrInvalidCommit, ErrBranchAlreadyExists,
+		ErrBranchLocked, ErrBranchInUse, ErrMergeConflict,
+		ErrIndexCorrupted, ErrSquashFailed, ErrRollbackFailed,
+		ErrRollbackConflict, ErrInvalidDiff, ErrSignatureInvalid,
+		ErrAppendOnlyViolation, ErrStorageError, ErrChainBroken,
+		ErrVerificationFailed, ErrTaskAlreadyBound, ErrTaskMismatch,
+		ErrWorktreeNotFound, ErrFileNotFound,
 	)
 
 	seen := make(map[string]bool, len(all))

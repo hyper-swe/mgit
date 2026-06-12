@@ -67,12 +67,17 @@ func TestLaunchOptions_NonDigestImage_Invalid(t *testing.T) {
 		wantErr  bool
 	}{
 		{name: "digest_pinned", imageRef: testImageDigest, wantErr: false},
+		{name: "registry_with_port", imageRef: "registry.internal:5000/mgit/go-node@sha256:" + strings.Repeat("a", 64), wantErr: false},
+		{name: "multi_component_path", imageRef: "ghcr.io/hyper-swe/go-node@sha256:" + strings.Repeat("b", 64), wantErr: false},
 		{name: "tag_only", imageRef: "go-node:1.0", wantErr: true},
+		{name: "tag_and_digest", imageRef: "go-node:1.22@sha256:" + strings.Repeat("a", 64), wantErr: true},
 		{name: "no_reference", imageRef: "go-node", wantErr: true},
 		{name: "empty", imageRef: "", wantErr: true},
 		{name: "short_digest", imageRef: "go-node@sha256:abc123", wantErr: true},
 		{name: "wrong_algorithm", imageRef: "go-node@md5:" + strings.Repeat("a", 64), wantErr: true},
 		{name: "uppercase_hex", imageRef: "go-node@sha256:" + strings.Repeat("A", 64), wantErr: true},
+		{name: "uppercase_name", imageRef: "go-Node@sha256:" + strings.Repeat("a", 64), wantErr: true},
+		{name: "port_on_non_first_component", imageRef: "go/node:5000/x@sha256:" + strings.Repeat("a", 64), wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -131,7 +136,17 @@ func TestLaunchOptions_EmptyTask_Invalid(t *testing.T) {
 	t.Run("negative_resources_invalid", func(t *testing.T) {
 		opts := validLaunchOptions()
 		opts.CPUs = -1
-		assert.Error(t, opts.Validate())
+		var vErr *ValidationError
+		err := opts.Validate()
+		require.Error(t, err)
+		require.ErrorAs(t, err, &vErr)
+		assert.Equal(t, "cpus", vErr.Field, "the error must name the offending field")
+	})
+
+	t.Run("zero_resources_mean_policy_default", func(t *testing.T) {
+		opts := validLaunchOptions()
+		opts.CPUs, opts.MemoryMB, opts.DiskQuotaMB, opts.TTL = 0, 0, 0, 0
+		assert.NoError(t, opts.Validate())
 	})
 
 	t.Run("invalid_network_policy_propagates", func(t *testing.T) {
@@ -141,7 +156,8 @@ func TestLaunchOptions_EmptyTask_Invalid(t *testing.T) {
 		err := opts.Validate()
 		require.Error(t, err)
 		require.ErrorAs(t, err, &vErr)
-		assert.Equal(t, "mode", vErr.Field)
+		assert.Equal(t, "network.mode", vErr.Field,
+			"nested errors must carry the parent field path")
 	})
 }
 
@@ -150,14 +166,16 @@ func TestLaunchOptions_EmptyTask_Invalid(t *testing.T) {
 // Refs: FR-17 (JSON tags), CODING-STYLE
 func TestSandboxInfo_JSONRoundTrip_SnakeCase(t *testing.T) {
 	info := SandboxInfo{
-		ID:           "01JXEXAMPLEULID0000000000",
-		TaskID:       "MGIT-4.2",
-		WorktreePath: "/work/repos/mgit/worktrees/MGIT-4.2",
-		Backend:      "kvm",
-		ImageDigest:  "sha256:6c3c624b58dbbcd3c0dd82b4c53f04194d1247c6eebdff7c1962cd129ab80d4f",
-		NetworkMode:  NetworkModeAllowlist,
-		State:        "created",
-		CreatedAt:    time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC),
+		ID:               "01JXEXAMPLEULID0000000000",
+		TaskID:           "MGIT-4.2",
+		WorktreePath:     "/work/repos/mgit/worktrees/MGIT-4.2",
+		Backend:          BackendKVM,
+		ImageDigest:      "sha256:6c3c624b58dbbcd3c0dd82b4c53f04194d1247c6eebdff7c1962cd129ab80d4f",
+		NetworkMode:      NetworkModeAllowlist,
+		NetworkAllowlist: []string{"proxy.golang.org"},
+		State:            StateCreated,
+		CreatedAt:        time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC),
+		ExpiresAt:        time.Date(2026, 6, 12, 16, 0, 0, 0, time.UTC),
 	}
 
 	data, err := json.Marshal(info)
@@ -165,7 +183,8 @@ func TestSandboxInfo_JSONRoundTrip_SnakeCase(t *testing.T) {
 
 	wantKeys := []string{
 		`"id"`, `"task_id"`, `"worktree_path"`, `"backend"`,
-		`"image_digest"`, `"network_mode"`, `"state"`, `"created_at"`,
+		`"image_digest"`, `"network_mode"`, `"network_allowlist"`,
+		`"state"`, `"created_at"`, `"expires_at"`,
 	}
 	for _, key := range wantKeys {
 		assert.Contains(t, string(data), key, "JSON must use snake_case key %s", key)
@@ -181,7 +200,7 @@ func TestSandboxInfo_JSONRoundTrip_SnakeCase(t *testing.T) {
 // TestSandboxInfo_Validate_RequiredFields covers the error paths for
 // the info type itself. Refs: FR-17.1
 func TestSandboxInfo_Validate_RequiredFields(t *testing.T) {
-	valid := SandboxInfo{ID: "01JX", TaskID: "MGIT-4.2", WorktreePath: "/w", Backend: "kvm", NetworkMode: NetworkModeNone}
+	valid := SandboxInfo{ID: "01JX", TaskID: "MGIT-4.2", WorktreePath: "/w", Backend: BackendKVM, NetworkMode: NetworkModeNone}
 	assert.NoError(t, valid.Validate())
 
 	tests := []struct {
@@ -190,7 +209,12 @@ func TestSandboxInfo_Validate_RequiredFields(t *testing.T) {
 	}{
 		{name: "empty_id", mutate: func(s *SandboxInfo) { s.ID = "" }},
 		{name: "empty_task", mutate: func(s *SandboxInfo) { s.TaskID = "" }},
+		{name: "malformed_task", mutate: func(s *SandboxInfo) { s.TaskID = "not a task!" }},
 		{name: "unknown_network_mode", mutate: func(s *SandboxInfo) { s.NetworkMode = "nat" }},
+		{name: "unknown_backend", mutate: func(s *SandboxInfo) { s.Backend = "hyper-v" }},
+		{name: "empty_backend", mutate: func(s *SandboxInfo) { s.Backend = "" }},
+		{name: "unknown_state", mutate: func(s *SandboxInfo) { s.State = "destoyed" }},
+		{name: "allowlist_in_none_mode", mutate: func(s *SandboxInfo) { s.NetworkAllowlist = []string{"x.io"} }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
