@@ -28,6 +28,11 @@ type Config struct {
 	Clock        func() time.Time     // injected clock
 	IdleGrace    time.Duration        // zero-sandbox linger before exit
 	PollInterval time.Duration        // idle-check cadence
+	// PeerUID reads kernel-asserted peer credentials for one
+	// connection. Nil selects the platform mechanism (SO_PEERCRED /
+	// LOCAL_PEERCRED); injectable so foreign-UID rejection is testable
+	// without root. Refs: FR-17.34
+	PeerUID func(*net.UnixConn) (uint32, error)
 }
 
 // Defaults for lifecycle timing (overridable via Config).
@@ -39,9 +44,14 @@ const (
 	drainTimeout = 30 * time.Second
 )
 
+// greeting is the liveness line an authenticated peer receives; the
+// activation health check and the IPC protocol key off its "ok" prefix.
+const greeting = "ok mgit-sandboxd\n"
+
 // Daemon supervises sandboxes and owns the local IPC socket.
 type Daemon struct {
-	cfg Config
+	cfg     Config
+	selfUID uint32 // daemon's own UID, cached at startup (FR-17.34)
 }
 
 // New validates the configuration and returns a Daemon.
@@ -62,7 +72,13 @@ func New(cfg Config) (*Daemon, error) {
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = defaultPollInterval
 	}
-	return &Daemon{cfg: cfg}, nil
+	if cfg.PeerUID == nil {
+		cfg.PeerUID = platformPeerUID
+	}
+	return &Daemon{
+		cfg:     cfg,
+		selfUID: uint32(os.Getuid()), //nolint:gosec // OK: Getuid is non-negative on unix platforms where this runs
+	}, nil
 }
 
 // Run serves the socket until the context is canceled (clean shutdown
@@ -128,12 +144,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 }
 
 // listen binds the unix socket, replacing a stale file left behind by
-// a crashed predecessor (restart safety).
+// a crashed predecessor (restart safety). The socket file is tightened
+// to owner-only before the listener is returned (F-08).
 func (d *Daemon) listen(ctx context.Context) (net.Listener, error) {
 	var lc net.ListenConfig
 	listener, err := lc.Listen(ctx, "unix", d.cfg.SocketPath)
 	if err == nil {
-		return listener, nil
+		return listener, d.tightenSocket()
 	}
 
 	// A live daemon answers dials; a stale file refuses them.
@@ -147,7 +164,16 @@ func (d *Daemon) listen(ctx context.Context) (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sandboxd: bind %s: %w", d.cfg.SocketPath, err)
 	}
-	return listener, nil
+	return listener, d.tightenSocket()
+}
+
+// tightenSocket sets the socket file to owner-only (F-08). Peer-UID
+// authentication is the primary control; the mode is defense in depth.
+func (d *Daemon) tightenSocket() error {
+	if err := os.Chmod(d.cfg.SocketPath, 0o600); err != nil {
+		return fmt.Errorf("sandboxd: tighten socket mode: %w", err)
+	}
+	return nil
 }
 
 // acceptLoop feeds accepted connections to Run's select loop.
@@ -166,12 +192,41 @@ func (d *Daemon) acceptLoop(listener net.Listener, connections chan<- net.Conn, 
 	}
 }
 
-// handleConn services one IPC connection. The request protocol and its
-// same-UID peer authentication land in MGIT-11.4.2; the lifecycle
-// daemon only acknowledges liveness so activation can health-check.
+// handleConn services one IPC connection. Authentication comes FIRST:
+// the kernel-asserted peer UID must equal the daemon's own UID before
+// any byte of control protocol is processed — there is no
+// unauthenticated path (F-08, ASVS V4). Authenticated peers receive
+// the liveness greeting; the full request protocol arrives with the
+// backends. Refs: FR-17.34
 func (d *Daemon) handleConn(_ context.Context, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
-	d.cfg.Logger.Debug("sandboxd connection", "event", "connection")
+
+	if !d.authenticate(conn) {
+		return // rejected and audited; nothing was processed
+	}
+	// Liveness greeting for activation health checks.
+	_, _ = conn.Write([]byte(greeting))
+}
+
+// authenticate verifies the peer's kernel-asserted UID matches the
+// daemon's. Unverifiable peers fail closed. Every rejection is audited
+// with the observed UID. Refs: FR-17.34
+func (d *Daemon) authenticate(conn net.Conn) bool {
+	unixConn, ok := conn.(*net.UnixConn)
+	if !ok {
+		d.cfg.Logger.Error("sandboxd rejected non-unix peer", "event", "auth_rejected", "reason", "not a unix socket")
+		return false
+	}
+	peerUID, err := d.cfg.PeerUID(unixConn)
+	if err != nil {
+		d.cfg.Logger.Error("sandboxd rejected unverifiable peer", "event", "auth_rejected", "reason", "credential lookup failed", "error", err)
+		return false
+	}
+	if peerUID != d.selfUID {
+		d.cfg.Logger.Error("sandboxd rejected foreign peer", "event", "auth_rejected", "reason", "uid mismatch", "peer_uid", peerUID)
+		return false
+	}
+	return true
 }
 
 // hasSandboxes reports whether any sandbox is registered.
