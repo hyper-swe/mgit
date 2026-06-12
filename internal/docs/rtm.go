@@ -9,6 +9,7 @@ package docs
 
 import (
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -32,6 +33,13 @@ var goalRowRe = regexp.MustCompile(`^\|\s*(\d+)\s*[—-]`)
 // numberedItemRe matches a numbered markdown list item: "1. Agents run ..."
 var numberedItemRe = regexp.MustCompile(`(?m)^\d+\.\s+\S`)
 
+// findingRowRe matches a traceability-table row whose first cell is an
+// audit finding ID: | SEC-01 — forgeable attestation | ... | FR-17.6 |
+var findingRowRe = regexp.MustCompile(`^\|\s*((?:SEC|F)-\d{2})\b`)
+
+// findingIDRe matches audit finding IDs (SEC-01.., F-01..) in free text.
+var findingIDRe = regexp.MustCompile(`\b(?:SEC|F)-\d{2}\b`)
+
 // ParseRequirements extracts all criteria with the given ID prefix
 // (e.g. "FR-17") from a requirements markdown document.
 func ParseRequirements(markdown, prefix string) []Requirement {
@@ -44,25 +52,58 @@ func ParseRequirements(markdown, prefix string) []Requirement {
 	return out
 }
 
+// parseMappingTable extracts a traceability table from markdown. Each
+// line matching rowRe contributes one entry: the first capture group is
+// converted by key, and the values are all requirement IDs in the row.
+func parseMappingTable[K comparable](markdown string, rowRe *regexp.Regexp, key func(string) (K, bool)) map[K][]string {
+	out := make(map[K][]string)
+	for _, line := range strings.Split(markdown, "\n") {
+		row := rowRe.FindStringSubmatch(line)
+		if row == nil {
+			continue
+		}
+		k, ok := key(row[1])
+		if !ok {
+			continue
+		}
+		if ids := requirementIDRe.FindAllString(line, -1); len(ids) > 0 {
+			out[k] = append(out[k], ids...)
+		}
+	}
+	return out
+}
+
 // ParseGoalMappings extracts the ADR-goal traceability table from a
 // requirements markdown document. It returns goal number -> requirement
 // IDs listed in that goal's table row.
 func ParseGoalMappings(markdown string) map[int][]string {
-	out := make(map[int][]string)
-	for _, line := range strings.Split(markdown, "\n") {
-		row := goalRowRe.FindStringSubmatch(line)
-		if row == nil {
-			continue
-		}
-		goal, err := strconv.Atoi(row[1])
-		if err != nil {
-			continue
-		}
-		ids := requirementIDRe.FindAllString(line, -1)
-		if len(ids) > 0 {
-			out[goal] = append(out[goal], ids...)
+	return parseMappingTable(markdown, goalRowRe, func(s string) (int, bool) {
+		goal, err := strconv.Atoi(s)
+		return goal, err == nil
+	})
+}
+
+// ParseFindingMappings extracts the audit-finding traceability table
+// from a requirements markdown document. It returns finding ID
+// (e.g. "SEC-01", "F-04") -> requirement IDs listed in that row.
+func ParseFindingMappings(markdown string) map[string][]string {
+	return parseMappingTable(markdown, findingRowRe, func(s string) (string, bool) {
+		return s, true
+	})
+}
+
+// ListFindingIDs returns the distinct audit finding IDs with the given
+// prefix ("SEC" or "F") mentioned in an audit document, sorted.
+func ListFindingIDs(audit, prefix string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, id := range findingIDRe.FindAllString(audit, -1) {
+		if strings.HasPrefix(id, prefix+"-") && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
 		}
 	}
+	sort.Strings(out)
 	return out
 }
 

@@ -75,13 +75,7 @@ func TestRTM_FR17_MapsToADR005Goals(t *testing.T) {
 	require.GreaterOrEqual(t, goalCount, 8, "ADR-005 must declare its numbered goals")
 
 	mappings := ParseGoalMappings(reqs)
-	defined := make(map[string]bool)
-	for _, c := range ParseRequirements(reqs, "FR-17") {
-		defined[c.ID] = true
-	}
-	for _, c := range ParseRequirements(reqs, "NFR-17") {
-		defined[c.ID] = true
-	}
+	defined := definedFR17Criteria(reqs)
 
 	for goal := 1; goal <= goalCount; goal++ {
 		ids := mappings[goal]
@@ -127,6 +121,110 @@ func TestRTM_NFR17_PerfTargetsQuantified(t *testing.T) {
 	for _, c := range criteria {
 		assert.Regexp(t, `\d`, c.Text,
 			"criterion %s must contain a quantified target", c.ID)
+	}
+}
+
+// traceabilityRe identifies criteria that are themselves trace artifacts
+// (the goal and finding tables), which need no inbound trace reference.
+var traceabilityRe = regexp.MustCompile(`(?i)traceability`)
+
+// fr17Criteria returns all FR-17 and NFR-17 criteria defined in the
+// given REQUIREMENTS.md content.
+func fr17Criteria(reqs string) []Requirement {
+	out := make([]Requirement, 0, 64)
+	for _, prefix := range []string{"FR-17", "NFR-17"} {
+		out = append(out, ParseRequirements(reqs, prefix)...)
+	}
+	return out
+}
+
+// definedFR17Criteria returns the set of FR-17/NFR-17 criterion IDs
+// defined in REQUIREMENTS.md.
+func definedFR17Criteria(reqs string) map[string]bool {
+	defined := make(map[string]bool)
+	for _, c := range fr17Criteria(reqs) {
+		defined[c.ID] = true
+	}
+	return defined
+}
+
+// collectReferenced marks every requirement ID in a traceability
+// mapping as referenced.
+func collectReferenced[K comparable](referenced map[string]bool, mappings map[K][]string) {
+	for _, ids := range mappings {
+		for _, id := range ids {
+			referenced[id] = true
+		}
+	}
+}
+
+// assertFindingsMapped verifies every finding ID found in the audit
+// document maps to >=1 defined requirement criterion via the finding
+// traceability table in REQUIREMENTS.md. Refs: FR-17, MGIT-11.1.2
+func assertFindingsMapped(t *testing.T, auditFile, prefix string, minFindings int) {
+	t.Helper()
+	reqs := readRepoFile(t, "REQUIREMENTS.md")
+	audit := readRepoFile(t, auditFile)
+
+	findings := ListFindingIDs(audit, prefix)
+	require.GreaterOrEqual(t, len(findings), minFindings,
+		"%s must declare at least %d %s findings", auditFile, minFindings, prefix)
+
+	mappings := ParseFindingMappings(reqs)
+	defined := definedFR17Criteria(reqs)
+
+	for _, finding := range findings {
+		ids := mappings[finding]
+		assert.NotEmpty(t, ids, "audit finding %s must map to >=1 requirement criterion", finding)
+		for _, id := range ids {
+			assert.True(t, defined[id],
+				"finding %s maps to %s, which must be a defined criterion", finding, id)
+		}
+	}
+}
+
+// TestTrace_AllSECFindingsMapped verifies every SEC finding in the
+// security audit is encoded as a requirement. Refs: FR-17, MGIT-11.1.2
+func TestTrace_AllSECFindingsMapped(t *testing.T) {
+	assertFindingsMapped(t, "AUDIT-FR17-SANDBOX-SECURITY-V1.md", "SEC", 12)
+}
+
+// TestTrace_AllFFindingsMapped verifies every F finding in the
+// standards audit is encoded as a requirement. Refs: FR-17, MGIT-11.1.2
+func TestTrace_AllFFindingsMapped(t *testing.T) {
+	assertFindingsMapped(t, "AUDIT-FR17-SANDBOX-V1.md", "F", 12)
+}
+
+// TestTrace_NoOrphanRequirements verifies bidirectional traceability:
+// every requirement ID referenced from a traceability table is a defined
+// criterion, and every defined FR-17/NFR-17 criterion is referenced by
+// the goal table or the finding table (traceability tables themselves
+// excluded). Refs: FR-17, MGIT-11.1.2
+func TestTrace_NoOrphanRequirements(t *testing.T) {
+	reqs := readRepoFile(t, "REQUIREMENTS.md")
+	criteria := fr17Criteria(reqs)
+	defined := make(map[string]bool, len(criteria))
+	for _, c := range criteria {
+		defined[c.ID] = true
+	}
+
+	referenced := make(map[string]bool)
+	collectReferenced(referenced, ParseGoalMappings(reqs))
+	collectReferenced(referenced, ParseFindingMappings(reqs))
+	require.NotEmpty(t, referenced, "traceability tables must exist")
+
+	for id := range referenced {
+		if strings.HasPrefix(id, "FR-17.") || strings.HasPrefix(id, "NFR-17.") {
+			assert.True(t, defined[id], "referenced %s must be a defined criterion", id)
+		}
+	}
+
+	for _, c := range criteria {
+		if traceabilityRe.MatchString(c.Text) {
+			continue // the tables themselves are the trace artifacts
+		}
+		assert.True(t, referenced[c.ID],
+			"criterion %s must be referenced by a traceability table (orphan)", c.ID)
 	}
 }
 

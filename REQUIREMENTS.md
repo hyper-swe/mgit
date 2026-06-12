@@ -1043,12 +1043,67 @@ var (
 |---|---|
 | 1 — no per-command permission prompts | FR-17.9, FR-17.11, FR-17.12 |
 | 2 — host OS/filesystem unreachable from sandboxed code | FR-17.3, FR-17.4, FR-17.14, FR-17.15 |
-| 3 — platform agnostic, one CLI surface | FR-17.2, FR-17.15, FR-17.16 |
+| 3 — platform agnostic, one CLI surface | FR-17.2, FR-17.15, FR-17.16, FR-17.21 |
 | 4 — per-sandbox network policy | FR-17.7, FR-17.8, FR-17.13 |
-| 5 — full provenance, append-only audit | FR-17.5, FR-17.6, FR-17.18 |
-| 6 — disposable without losing landed work | FR-17.19, FR-17.9 |
+| 5 — full provenance, append-only audit | FR-17.1, FR-17.5, FR-17.6, FR-17.18 |
+| 6 — disposable without losing landed work | FR-17.19, FR-17.20, FR-17.9 |
 | 7 — seamless, zero-touch lifecycle | FR-17.9, FR-17.10, FR-17.11, FR-17.22 |
-| 8 — lightweight, near-zero idle footprint | FR-17.10, FR-17.16, NFR-17.2, NFR-17.4, NFR-17.6 |
+| 8 — lightweight, near-zero idle footprint | FR-17.10, FR-17.16, NFR-17.1, NFR-17.2, NFR-17.3, NFR-17.4, NFR-17.5, NFR-17.6, NFR-17.7 |
+
+**FR-17.24** Hash-on-write land verification (SEC-06, F-03). Land verification MUST hash the exact buffer that is imported — a single read of each object, hashed and written from the same bytes. Verification MUST NOT hash one fetch and import a second fetch (verify-then-import TOCTOU). A guest that serves different bytes to a re-fetch MUST cause `ErrLandVerificationFailed`, never a clean import.
+
+**FR-17.25** Snapshot provenance and memory hygiene (SEC-08). Warm-pool snapshots MUST originate only from a clean boot of the pinned base image — never from a previously used guest. Restoring a snapshot of a used guest MUST be impossible by construction (snapshots are keyed by image digest, created before any exec). Ballooned or reclaimed guest pages returned to the host MUST be zeroed.
+
+**FR-17.26** One-way port publish and global resource ceiling (SEC-09). Guest→host port publishing MUST be strictly one-way: the guest MUST NOT be able to reach host loopback services (e.g. a host database on `127.0.0.1:5432`). `mgit-sandboxd` MUST enforce a global concurrency cap (default **8** concurrent sandboxes) and a global memory ceiling (default **50%** of host physical memory across all sandboxes); exceeding either fails sandbox launch with a machine-readable error rather than degrading the host.
+
+**FR-17.27** vsock peer binding (SEC-10). Each guest's control and land channel MUST be bound to its vsock CID at launch. `mgit-sandboxd` MUST reject messages arriving from a CID other than the one bound to the addressed sandbox — one guest can never address another guest's land or attestation channel.
+
+**FR-17.28** Guest metadata is advisory (SEC-11). Guest-supplied commit author and timestamp are recorded but advisory. The host MUST record its own receive-time alongside the guest timestamp on every landed commit; audit queries MUST expose both. Task-ID binding remains authoritative per FR-17.5.
+
+**FR-17.29** Image signature verification (SEC-12, F-10). Rootfs images MUST be signature-verified at boot (cosign-class detached signature), in addition to digest pinning — a poisoned `images.lock` entry is then detectable, not just a tampered image. Signature verification failure MUST refuse the boot and append an audit event. Signing tooling is subject to PACKAGE-APPROVAL-PROCESS.md before implementation.
+
+**FR-17.30** Tool qualification position (F-04). `mgit-sandboxd`, the VMM, and `mgit-guest` MUST each have a stated DO-330 tool-qualification position recorded in the ADR-003 extension: mgit components as tool criteria 3 (TQL-5 at Level A), the hypervisor/VMM as COTS with a documented assessment record.
+
+**FR-17.31** SOUP/COTS register (F-05). A `SANDBOX-IMAGES.md` register, paralleling APPROVED-PACKAGES.md, MUST identify every rootfs image, guest toolchain, and VMM with version/digest pinning and a known-anomaly review per IEC 62304 §8.1.2. `images.lock` entries MUST reference register entries (FR-17.17).
+
+**FR-17.32** Independent re-verification (F-06). `mgit verify --independent` MUST re-verify landed commits (dual hash per ADR-002, task binding, attestation) through a verification path independent of the binary that performed the import (clean-install binary or separate verifier), satisfying DO-178C §6.2 verification independence for compliance workflows.
+
+**FR-17.33** Fault-injection test categories (F-07). The sandbox verification suite MUST include off-nominal tests for: (1) VM killed mid-exec; (2) vsock dropped mid-land — land atomicity MUST hold (FR-17.5); (3) virtiofs corruption; (4) snapshot-restore integrity; (5) TTL expiry during land; (6) attestation replay. Each category maps to NASA-STD-8739.8 hazard analysis.
+
+**FR-17.34** Daemon IPC authentication (F-08). The `mgit-sandboxd` local IPC socket (FR-17.16) MUST verify peer credentials on every connection: same-UID check via `SO_PEERCRED` (or platform equivalent) plus `0700`/`0600` socket directory/file permissions. Unauthenticated or wrong-UID peers MUST be rejected and the rejection appended to the audit log.
+
+**FR-17.35** vsock protocol specification (F-11, F-03). The control/land vsock protocol MUST have an interface specification document (MIL-STD-498 IDD-equivalent) before backend implementation. All messages MUST be schema-validated with enforced ceilings (defaults, host-configurable per FR-17.13): max object size **64 MiB**, max objects per land **100,000**, max total land payload **4 GiB**. Tree-entry paths MUST be canonicalized with traversal and non-canonical encodings rejected (NFR-5.6 applies at the land boundary).
+
+**FR-17.36** Image change control (F-12). Rootfs images are configuration items (DO-178C §7.1). Any `images.lock` change MUST follow a documented review and re-baseline procedure: proposed digest, register update (FR-17.31), reviewer sign-off, and an append-only audit record of the change. Lock edits are host-side only (FR-17.13).
+
+**FR-17.37** Security-finding traceability. Every audit finding maps to requirement criteria:
+
+| Finding | Resolution | Requirement(s) |
+|---|---|---|
+| SEC-01 — guest-rooted attestation forgeable | Host-anchored attestation | FR-17.6 |
+| SEC-02 — self-weakening config | Host-only policy store | FR-17.13, FR-17.14 |
+| SEC-03 — shared object store leaks into guest | Private sandbox-local object store | FR-17.3, FR-17.4 |
+| SEC-04 — SNI allowlist defeatable | IP/flow-layer default-deny egress | FR-17.8 |
+| SEC-05 — guest remedy string social-engineers grants | Host-derived capability prompts | FR-17.12 |
+| SEC-06 — land-path TOCTOU | Hash-on-write verification | FR-17.24 |
+| SEC-07 — DNS covert/exfil channel | Host DNS restrictions + rate limits | FR-17.8 |
+| SEC-08 — warm-pool/snapshot contamination | Clean-snapshot provenance + zeroed pages | FR-17.25 |
+| SEC-09 — host loopback exposure + DoS | One-way publish + global ceiling | FR-17.26 |
+| SEC-10 — vsock cross-guest addressing | CID peer binding | FR-17.27 |
+| SEC-11 — author/timestamp forgery | Host receive-time, advisory guest metadata | FR-17.28 |
+| SEC-12 — poisoned image lock | Signature verification at boot | FR-17.29 |
+| F-01 — append-only law violation | Event-sourced sandbox_events | FR-17.18 |
+| F-02 — silent unsandboxed execution | require_sandbox attestation + fail-closed routing | FR-17.6, FR-17.11 |
+| F-03 — land path parses hostile input | Bounded, schema-validated land protocol | FR-17.24, FR-17.35 |
+| F-04 — DO-330 position unstated | Tool-qualification clause | FR-17.30 |
+| F-05 — no SOUP/COTS register | SANDBOX-IMAGES.md register | FR-17.31, FR-17.17 |
+| F-06 — no verification independence | Independent re-verification mode | FR-17.32 |
+| F-07 — no fault-injection categories | Off-nominal test categories | FR-17.33 |
+| F-08 — IPC lacks authentication | Same-UID peer-credential check | FR-17.34, FR-17.16 |
+| F-09 — audit-log injection | Sanitized, length-capped guest strings | FR-17.18 |
+| F-10 — images not signature-verified | Signed images at boot | FR-17.29 |
+| F-11 — vsock protocol IDD missing | Protocol specification document | FR-17.35 |
+| F-12 — images.lock change control undefined | Image change-control procedure | FR-17.36 |
 
 ---
 
