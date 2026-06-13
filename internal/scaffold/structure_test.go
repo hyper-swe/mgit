@@ -104,6 +104,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		"scaffold": true, // our test package
 		"docs":     true, // documentation generator
 		"sandboxd": true, // sandbox helper daemon library (FR-17.16, MGIT-11.4.1)
+		"guest":    true, // guest supervisor library (FR-17.16, MGIT-11.5.6)
 	}
 
 	entries, err := os.ReadDir(filepath.Join(root, "internal"))
@@ -138,6 +139,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 	expectedCmds := map[string]bool{
 		"mgit":          true,
 		"mgit-sandboxd": true, // sandbox helper daemon (FR-17.16, MGIT-11.4.1)
+		"mgit-guest":    true, // guest PID-1 supervisor (FR-17.16, MGIT-11.5.6)
 	}
 	cmdEntries, err := os.ReadDir(filepath.Join(root, "cmd"))
 	require.NoError(t, err, "must be able to read cmd/")

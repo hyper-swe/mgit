@@ -98,6 +98,7 @@ func TestGoMod_NoUnapprovedDeps(t *testing.T) {
 // APPROVED-PACKAGES.md §2a packages (the mgit-sandboxd helper scope).
 var sandboxOnlyPrefixes = []string{
 	filepath.Join("cmd", "mgit-sandboxd"),
+	filepath.Join("cmd", "mgit-guest"),
 	filepath.Join("internal", "sandboxd"),
 }
 
