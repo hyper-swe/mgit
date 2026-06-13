@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -225,7 +226,11 @@ func TestImage_BadSignature_BootRejected(t *testing.T) {
 		assert.FileExists(t, filepath.Join(fx.hostRoot, "trust", "image-signing.pub"))
 		info, err := os.Stat(filepath.Join(fx.hostRoot, "trust", "image-signing.key"))
 		require.NoError(t, err)
-		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "signing key is owner-only")
+		if runtime.GOOS != "windows" {
+			// POSIX owner-only mode; Windows owner-only enforcement uses
+			// ACLs (tracked Windows-hardening gap, MGIT-11.5.3).
+			assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "signing key is owner-only")
+		}
 	})
 }
 

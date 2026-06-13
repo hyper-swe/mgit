@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -81,6 +82,9 @@ func TestPolicy_LoadedFromHostRoot_NotWorktree(t *testing.T) {
 	})
 
 	t.Run("file_permissions_are_owner_only", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("POSIX owner-only mode; Windows uses ACLs (tracked host-hardening gap)")
+		}
 		info, err := os.Stat(filepath.Join(hostRoot, "policy.json"))
 		require.NoError(t, err)
 		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())

@@ -29,6 +29,7 @@ func dialAndRead(t *testing.T, socketPath string) string {
 // TestIPC_SameUID_Accepted verifies a same-UID client passes peer
 // authentication and receives the daemon greeting. Refs: FR-17.34
 func TestIPC_SameUID_Accepted(t *testing.T) {
+	skipUnsupportedHostIPC(t)
 	manager := newFakeManager("01JXSB1")
 	cfg, _ := testConfig(t, manager)
 	cfg.IdleGrace = time.Hour
@@ -158,6 +159,7 @@ func TestIPC_NonUnixPeer_Rejected(t *testing.T) {
 // TestIPC_SocketPermissions_0600 verifies the socket file is
 // owner-only. Refs: FR-17.34
 func TestIPC_SocketPermissions_0600(t *testing.T) {
+	skipUnsupportedHostIPC(t)
 	manager := newFakeManager("01JXSB1")
 	cfg, _ := testConfig(t, manager)
 	cfg.IdleGrace = time.Hour

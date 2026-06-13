@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -161,7 +162,20 @@ func waitForSocket(t *testing.T, path string) net.Conn {
 // TestSandboxd_SocketActivation_StartsOnDemand verifies on-demand
 // activation: a dial to a dead socket triggers exactly one spawn, and
 // concurrent EnsureRunning calls do not double-spawn. Refs: NFR-17.6
+// skipUnsupportedHostIPC skips tests that depend on the unix-socket +
+// SO_PEERCRED host IPC, which has no Windows implementation yet —
+// Windows host support (named pipes + ACL peer auth) lands with the
+// Hyper-V backend (MGIT-11.5.3). On Windows platformPeerUID fails
+// closed, so the authenticated greeting handshake cannot complete.
+func skipUnsupportedHostIPC(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("host IPC (unix socket + peer-cred auth) not yet implemented on Windows (MGIT-11.5.3)")
+	}
+}
+
 func TestSandboxd_SocketActivation_StartsOnDemand(t *testing.T) {
+	skipUnsupportedHostIPC(t)
 	manager := newFakeManager("01JXSB1")
 	cfg, _ := testConfig(t, manager)
 	ctx, cancel := context.WithCancel(context.Background())

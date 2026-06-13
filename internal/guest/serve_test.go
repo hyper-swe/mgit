@@ -94,6 +94,7 @@ func (w *failWriter) Write(p []byte) (int, error) {
 // TestServe_WriteFailuresSurface verifies a broken response connection
 // surfaces rather than being swallowed.
 func TestServe_WriteFailuresSurface(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	sup := testSupervisor(t)
 	ctx := context.Background()
 
@@ -116,6 +117,7 @@ func TestServe_WriteFailuresSurface(t *testing.T) {
 // TestServe_LargeOutputStreams verifies large stdout is delivered
 // across many frames intact.
 func TestServe_LargeOutputStreams(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	sup := testSupervisor(t)
 	var req bytes.Buffer
 	require.NoError(t, writeRequest(&req, model.ExecRequest{

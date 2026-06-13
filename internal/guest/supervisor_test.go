@@ -16,6 +16,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,16 @@ import (
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/testutil"
 )
+
+// skipWithoutPOSIXShell skips tests that exec POSIX commands. The
+// guest runs only as PID 1 inside the Linux microVM (FR-17.16), so its
+// exec path is exercised on Linux/darwin runners, not Windows.
+func skipWithoutPOSIXShell(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("guest execs POSIX commands; the guest runs only inside the Linux microVM (FR-17.16)")
+	}
+}
 
 func testSupervisor(t *testing.T) *Supervisor {
 	t.Helper()
@@ -44,6 +55,7 @@ func run(t *testing.T, sup *Supervisor, req model.ExecRequest) (string, string, 
 // exec request over a connection: framed request in, streamed output
 // frames + a result frame out. Refs: FR-17.11
 func TestGuestAgent_PID1_ServesExec(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	sup := testSupervisor(t)
 	client, server := net.Pipe()
 	defer func() { _ = client.Close() }()
@@ -67,6 +79,7 @@ func TestGuestAgent_PID1_ServesExec(t *testing.T) {
 // the child never inherits the agent's (host-injected) environment;
 // only the clean base plus explicit per-exec injections reach it.
 func TestGuestAgent_CleanEnv_NoHostVars(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	t.Setenv("MGIT_HOST_SECRET", "do-not-leak")
 	sup := testSupervisor(t)
 
@@ -87,6 +100,7 @@ func TestGuestAgent_CleanEnv_NoHostVars(t *testing.T) {
 // TestGuestAgent_StreamsExitCodes verifies exit codes propagate and
 // stdout/stderr are separated. Refs: FR-17.11
 func TestGuestAgent_StreamsExitCodes(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	sup := testSupervisor(t)
 
 	tests := []struct {
