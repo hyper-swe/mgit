@@ -63,19 +63,18 @@ func newFixture(t *testing.T) *fixture {
 	rootfsBytes := []byte("rootfs-bytes")
 	require.NoError(t, os.WriteFile(rootfs, rootfsBytes, 0o600))
 
-	sum := sha256.Sum256(rootfsBytes)
-	digest := "sha256:" + hex.EncodeToString(sum[:])
+	digest := fileDigest(t, rootfs)
+	kernelDigest := fileDigest(t, kernel)
 
-	lock := Lock{Images: map[string]Entry{
-		"go-node": {
-			Digest:     digest,
-			KernelPath: kernel,
-			RootfsPath: rootfs,
-			Cmdline:    "console=hvc0 root=/dev/vda ro",
-			Signature:  ed25519.Sign(priv, []byte(digest)),
-		},
-	}}
-	writeLock(t, hostRoot, lock)
+	entry := Entry{
+		Digest:       digest,
+		KernelDigest: kernelDigest,
+		KernelPath:   kernel,
+		RootfsPath:   rootfs,
+		Cmdline:      "console=hvc0 root=/dev/vda ro",
+	}
+	entry.Signature = ed25519.Sign(priv, SigningPayload("go-node", entry))
+	writeLock(t, hostRoot, Lock{Images: map[string]Entry{"go-node": entry}})
 
 	store, err := NewStore(hostRoot, fixedClock())
 	require.NoError(t, err)
@@ -95,6 +94,30 @@ func writeLock(t *testing.T, hostRoot string, lock Lock) {
 	data, err := json.Marshal(lock)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(hostRoot, "images.lock"), data, 0o600))
+}
+
+func fileDigest(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path) //nolint:gosec // test path
+	require.NoError(t, err)
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func signEntry(t *testing.T, priv ed25519.PrivateKey, name string, e Entry) Entry {
+	t.Helper()
+	e.Signature = ed25519.Sign(priv, SigningPayload(name, e))
+	return e
+}
+
+func loadLock(hostRoot string) (Lock, error) {
+	data, err := os.ReadFile(filepath.Join(hostRoot, "images.lock")) //nolint:gosec // test path
+	if err != nil {
+		return Lock{}, err
+	}
+	var lock Lock
+	err = json.Unmarshal(data, &lock)
+	return lock, err
 }
 
 // TestImage_ValidImage_Resolves covers the happy path: a pinned,
@@ -117,33 +140,82 @@ func TestImage_ValidImage_Resolves(t *testing.T) {
 func TestImage_BadSignature_BootRejected(t *testing.T) {
 	fx := newFixture(t)
 
-	// Re-sign the same digest with a DIFFERENT key: the lock-writer
-	// scenario — without the trust root they cannot mint signatures.
+	kernel := filepath.Join(fx.hostRoot, "img", "vmlinux")
+	base := Entry{
+		Digest: fx.digest, KernelDigest: fileDigest(t, kernel),
+		KernelPath: kernel, RootfsPath: fx.rootfsPath,
+		Cmdline: "console=hvc0 root=/dev/vda ro",
+	}
+
+	// Re-sign the canonical payload with a DIFFERENT key: the
+	// lock-writer scenario — without the trust root they cannot mint
+	// signatures the host will accept.
 	_, otherPriv, err := ed25519.GenerateKey(nil)
 	require.NoError(t, err)
-	lock := Lock{Images: map[string]Entry{
-		"go-node": {
-			Digest:     fx.digest,
-			KernelPath: filepath.Join(fx.hostRoot, "img", "vmlinux"),
-			RootfsPath: fx.rootfsPath,
-			Cmdline:    "console=hvc0",
-			Signature:  ed25519.Sign(otherPriv, []byte(fx.digest)),
-		},
-	}}
-	writeLock(t, fx.hostRoot, lock)
+	entry := base
+	entry.Signature = ed25519.Sign(otherPriv, SigningPayload("go-node", entry))
+	writeLock(t, fx.hostRoot, Lock{Images: map[string]Entry{"go-node": entry}})
 
 	_, err = fx.store.Resolve(fx.imageRef)
 	assert.ErrorIs(t, err, model.ErrVerificationFailed,
 		"a signature from outside the trust root must refuse the boot")
 
 	t.Run("missing_signature_rejected", func(t *testing.T) {
-		lock.Images["go-node"] = Entry{
-			Digest: fx.digest, RootfsPath: fx.rootfsPath,
-			KernelPath: filepath.Join(fx.hostRoot, "img", "vmlinux"), Cmdline: "x",
-		}
-		writeLock(t, fx.hostRoot, lock)
+		writeLock(t, fx.hostRoot, Lock{Images: map[string]Entry{"go-node": base}})
 		_, err := fx.store.Resolve(fx.imageRef)
 		assert.ErrorIs(t, err, model.ErrVerificationFailed)
+	})
+
+	t.Run("kernel_swap_with_valid_rootfs_sig_rejected", func(t *testing.T) {
+		// A lock-writer keeps a validly-signed entry but repoints the
+		// kernel to attacker bytes. Content verification of the kernel
+		// digest catches it (the kernel was never unverified).
+		fx := newFixture(t)
+		evilKernel := filepath.Join(fx.hostRoot, "img", "evil-kernel")
+		require.NoError(t, os.WriteFile(evilKernel, []byte("malicious-kernel"), 0o600))
+
+		lock := Lock{Images: map[string]Entry{"go-node": {
+			Digest: fx.digest, KernelDigest: fileDigest(t, filepath.Join(fx.hostRoot, "img", "vmlinux")),
+			KernelPath: evilKernel, // repointed; content will not match KernelDigest
+			RootfsPath: fx.rootfsPath, Cmdline: "console=hvc0 root=/dev/vda ro",
+		}}}
+		// Even sign it correctly: content verification is the backstop.
+		lock.Images["go-node"] = signEntry(t, fx.priv, "go-node", lock.Images["go-node"])
+		writeLock(t, fx.hostRoot, lock)
+
+		_, err := fx.store.Resolve(fx.imageRef)
+		assert.ErrorIs(t, err, model.ErrVerificationFailed,
+			"a kernel whose content does not match its pinned digest must refuse the boot")
+	})
+
+	t.Run("name_rebind_rejected", func(t *testing.T) {
+		// The signature binds the name: a signed "go-node" entry copied
+		// under a different name fails verification for that name.
+		fx := newFixture(t)
+		lock, err := loadLock(fx.hostRoot)
+		require.NoError(t, err)
+		lock.Images["evil"] = lock.Images["go-node"] // same fields + signature
+		writeLock(t, fx.hostRoot, lock)
+
+		_, err = fx.store.Resolve("evil@" + fx.digest)
+		assert.ErrorIs(t, err, model.ErrVerificationFailed,
+			"a signature minted for go-node must not authorize the name evil")
+	})
+
+	t.Run("cmdline_tamper_rejected", func(t *testing.T) {
+		// Changing the cmdline (e.g. injecting init=/work/payload) while
+		// keeping the signature fails: cmdline is in the signed payload.
+		fx := newFixture(t)
+		lock, err := loadLock(fx.hostRoot)
+		require.NoError(t, err)
+		e := lock.Images["go-node"]
+		e.Cmdline = "console=hvc0 init=/work/payload"
+		lock.Images["go-node"] = e // signature unchanged
+		writeLock(t, fx.hostRoot, lock)
+
+		_, err = fx.store.Resolve(fx.imageRef)
+		assert.ErrorIs(t, err, model.ErrVerificationFailed,
+			"a tampered cmdline must refuse the boot")
 	})
 
 	t.Run("trust_root_separate_from_lock", func(t *testing.T) {

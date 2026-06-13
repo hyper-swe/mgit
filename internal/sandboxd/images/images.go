@@ -9,8 +9,10 @@
 package images
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -27,13 +29,19 @@ import (
 const lockFileName = "images.lock"
 
 // Entry is one pinned, signed guest image. Signature is a detached
-// Ed25519 signature over Digest, verified against the trust root.
+// Ed25519 signature over the canonical SigningPayload — which binds the
+// image name, BOTH content digests, and the cmdline — so a lock-writer
+// cannot keep a valid signature while swapping the kernel, cmdline, or
+// name (SEC-12/FR-17.29/FR-17.38). Both digests are content-verified at
+// boot, so the *_path fields are merely where to find the bytes; a
+// repointed path whose content does not match its digest is refused.
 type Entry struct {
-	Digest     string `json:"digest"`      // sha256:<hex> of the rootfs
-	KernelPath string `json:"kernel_path"` // host path to the guest kernel
-	RootfsPath string `json:"rootfs_path"` // host path to the read-only rootfs
-	Cmdline    string `json:"cmdline"`     // guest kernel command line
-	Signature  []byte `json:"signature"`   // Ed25519(trust_root, digest)
+	Digest       string `json:"digest"`        // sha256:<hex> of the rootfs
+	KernelDigest string `json:"kernel_digest"` // sha256:<hex> of the kernel
+	KernelPath   string `json:"kernel_path"`   // host path to the guest kernel
+	RootfsPath   string `json:"rootfs_path"`   // host path to the read-only rootfs
+	Cmdline      string `json:"cmdline"`       // guest kernel command line
+	Signature    []byte `json:"signature"`     // Ed25519(trust_root, SigningPayload(name, entry))
 }
 
 // Lock is the images.lock document: image name -> pinned entry.
@@ -100,14 +108,19 @@ func (s *Store) Resolve(imageRef string) (ResolvedImage, error) {
 		return ResolvedImage{}, fmt.Errorf("%w: ref digest %s != lock digest %s",
 			model.ErrVerificationFailed, refDigest, entry.Digest)
 	}
-	// The signature must verify against the host trust root (SEC-12):
-	// detects a poisoned lock entry, not just a tampered image.
-	if !ed25519.Verify(s.trustPub, []byte(entry.Digest), entry.Signature) {
+	// The signature must verify against the host trust root over the
+	// canonical payload binding name + both digests + cmdline (SEC-12):
+	// detects a poisoned lock entry, not just a tampered rootfs.
+	if !ed25519.Verify(s.trustPub, SigningPayload(name, entry), entry.Signature) {
 		return ResolvedImage{}, fmt.Errorf("%w: image %q signature does not verify against the trust root",
 			model.ErrVerificationFailed, name)
 	}
-	// The rootfs content must hash to the pinned digest (FR-17.17).
+	// Both the rootfs and the kernel content must hash to their pinned
+	// digests (FR-17.17): a repointed path is caught here.
 	if err := verifyContentDigest(entry.RootfsPath, entry.Digest); err != nil {
+		return ResolvedImage{}, err
+	}
+	if err := verifyContentDigest(entry.KernelPath, entry.KernelDigest); err != nil {
 		return ResolvedImage{}, err
 	}
 
@@ -116,6 +129,23 @@ func (s *Store) Resolve(imageRef string) (ResolvedImage, error) {
 		RootfsPath: entry.RootfsPath,
 		Cmdline:    entry.Cmdline,
 	}, nil
+}
+
+// SigningPayload is the canonical, unambiguous byte sequence the trust
+// root signs for one lock entry: the image name, the rootfs digest,
+// the kernel digest, and the cmdline, each length-prefixed so no two
+// distinct field sets collide. The host signing tool and the verifier
+// MUST produce identical bytes. Signature itself is excluded.
+// Refs: FR-17.29, FR-17.38
+func SigningPayload(name string, e Entry) []byte {
+	var buf bytes.Buffer
+	for _, field := range []string{name, e.Digest, e.KernelDigest, e.Cmdline} {
+		var length [8]byte
+		binary.BigEndian.PutUint64(length[:], uint64(len(field)))
+		buf.Write(length[:])
+		buf.WriteString(field)
+	}
+	return buf.Bytes()
 }
 
 // readLock loads and parses images.lock fresh.
