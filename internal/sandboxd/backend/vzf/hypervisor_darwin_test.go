@@ -18,9 +18,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 )
 
-func probeConfig(t *testing.T, attachNIC bool) vmConfig {
+func probeConfig(t *testing.T, attachNIC bool) microvm.VMConfig {
 	t.Helper()
 	dir := t.TempDir()
 	kernel := filepath.Join(dir, "vmlinux")
@@ -29,7 +31,7 @@ func probeConfig(t *testing.T, attachNIC bool) vmConfig {
 	for _, path := range []string{kernel, rootfs, overlay} {
 		require.NoError(t, os.WriteFile(path, make([]byte, 1024), 0o600))
 	}
-	return vmConfig{
+	return microvm.VMConfig{
 		CPUs: 2, MemoryMB: 1024,
 		KernelPath: kernel, RootfsPath: rootfs, RootfsReadOnly: true,
 		Cmdline:     "console=hvc0 root=/dev/vda ro",
