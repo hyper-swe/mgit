@@ -1078,6 +1078,13 @@ var (
 
 **FR-17.38** Key management for host trust anchors. The attestation key (FR-17.6) and the image-signing trust root (FR-17.29) MUST be generated host-side and stored under the host config root (FR-17.13) with `0600` permissions, in files **separate from** `images.lock` and the policy store — a writer who can poison the lock must not be able to substitute the verification key. The trust-root public-key fingerprint MUST be pinned in the SANDBOX-IMAGES.md register (FR-17.31) under FR-17.36 change control, and the independent verifier (FR-17.32) MUST obtain the trust root from that register, never from the policy store it is auditing. Key rotation MUST append an audit event recording old and new fingerprints; signing keys MUST never enter a guest or an image.
 
+**FR-17.39** Host-matching guest OS (platform-native isolation; ADR-006). The sandbox guest OS family MUST match the host OS so the guest runs the developer's own toolchain and working-tree files cross the `land` boundary without path/line-ending/permission translation (preserving FR-17.3's identical-path property per platform). Backends:
+- **Linux host → Linux microVM** (`kvm`, FR-17.15).
+- **Windows host → Hyper-V-isolated Windows container (WCOW)**, driven host-side and headlessly via the HCS API / containerd (NOT a Linux guest / LCOW, NOT Docker Desktop). The control and land channel MUST use **HvSocket (AF_HYPERV)** with the VM-identity-GUID peer binding of FR-17.27, and the guest MUST run a Windows build of `mgit-guest` (transport-only per FR-17.6). The WCOW image MUST be a prepared, digest-pinned Windows base (FR-17.17, FR-17.31, SANDBOX-IMAGES register), and the host build MUST be ≥ the container base build (Hyper-V isolation version constraint).
+- **macOS host → Linux microVM** (`vzf`, FR-17.15) as the documented exception: macOS cannot host nested macOS guests and Mac developers target Linux/containers.
+
+The `land` integrity guarantees (dual hash per ADR-002, task-ID binding, host-anchored attestation FR-17.6) are OS-agnostic and MUST hold identically regardless of guest OS. WSL2 (shared utility VM, violates FR-17.1), LCOW (internal-only API, client-deprecated), QEMU+WHPX, and Cloud Hypervisor (Linux-host only) are rejected for the Windows backend — see ADR-006.
+
 **FR-17.37** Security-finding traceability. Every audit finding maps to requirement criteria:
 
 | Finding | Resolution | Requirement(s) |

@@ -329,7 +329,7 @@ var (
 |----------|-----------|---------------------|-------|
 | Linux | KVM | libkrun or Firecracker-class VMM | ~125 ms boot, rust-vmm lineage, battle-tested (AWS Lambda, E2B) |
 | macOS | Virtualization.framework | vz bindings (Apple-silicon & Intel) | Native, no kext; same approach as Apple's containerization tooling |
-| Windows | Hyper-V / WHP | WSL2 utility-VM or WHP-based VMM | Hyper-V platform required; document fallback |
+| Windows | Hyper-V | **Hyper-V-isolated Windows container (WCOW), Windows guest** — see ADR-006 | **Superseded by ADR-006**: the Windows guest is Windows, not Linux (host-matching, FR-17.39); WSL2/LCOW/WHP-VMM framing here is obsolete |
 | Fallback | none | OS container (rootless Podman/Docker) | **Reduced assurance**; permitted only with explicit `--backend container --acknowledge-reduced-isolation`, recorded in audit |
 
 **CGO containment:** macOS vz bindings (and possibly others) require CGO, which conflicts with mgit's pure-Go, CGO-free policy. Resolution: platform backends live in a separate `mgit-sandboxd` helper binary spoken to over local IPC. Core `mgit` stays CGO-free; the helper is per-platform and independently auditable. All new dependencies go through PACKAGE-APPROVAL-PROCESS.md before any code is written.
