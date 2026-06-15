@@ -111,13 +111,20 @@ func TestGoMod_AllApprovedDepsPresent(t *testing.T) {
 func TestGoMod_NoUnauthorizedDeps(t *testing.T) {
 	content := readGoMod(t)
 
-	// Explicitly forbidden packages per APPROVED-PACKAGES.md
+	// Explicitly forbidden packages per APPROVED-PACKAGES.md §4.
+	// logrus and pkg/errors are deliberately NOT listed here: they enter
+	// the graph only as dependencies of the ADR-005-approved
+	// firecracker-go-sdk (§2a) — logrus as its required logging adapter,
+	// pkg/errors as a pure transitive. A whole-go.mod string scan cannot
+	// tell "core adopted a rejected package" from "an approved sandbox
+	// SDK depends on one". That distinction is enforced precisely by
+	// TestImports_SandboxDepsConfinedToSandboxd, which forbids both from
+	// every core import graph. The packages below are only ever DIRECT
+	// choices, so a go.mod scan remains the right guard for them.
 	forbiddenDeps := []string{
 		"github.com/mattn/go-sqlite3",
 		"gorm.io/gorm",
 		"github.com/jmoiron/sqlx",
-		"github.com/sirupsen/logrus",
-		"github.com/pkg/errors",
 		"github.com/libgit2/git2go",
 		"github.com/gin-gonic/gin",
 		"github.com/spf13/viper",

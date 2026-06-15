@@ -105,8 +105,11 @@ var sandboxOnlyPrefixes = []string{
 // TestImports_SandboxDepsConfinedToSandboxd enforces the §2a scope
 // mechanically: CGO_ENABLED=0 builds only catch the vz binding, so the
 // pure-Go sandbox backends (firecracker-go-sdk, hcsshim, mdlayher/vsock)
-// — and logrus, rejected except as the firecracker SDK's logging
-// adapter — must be absent from every core import graph by inspection.
+// — plus logrus (the firecracker SDK's logging adapter) and pkg/errors
+// (a firecracker transitive) — must be absent from every core import
+// graph by inspection. This is the precise guard that lets the go.mod
+// denylist omit logrus/pkg/errors: they may exist in the module graph
+// for the sandbox SDK, but never in core's imports.
 // Refs: FR-17.16, MGIT-11.1.4, MGIT-11.4.1
 func TestImports_SandboxDepsConfinedToSandboxd(t *testing.T) {
 	root := projectRoot(t)
@@ -116,6 +119,7 @@ func TestImports_SandboxDepsConfinedToSandboxd(t *testing.T) {
 		"github.com/Microsoft/hcsshim",
 		"github.com/mdlayher/vsock",
 		"github.com/sirupsen/logrus",
+		"github.com/pkg/errors",
 	}
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {

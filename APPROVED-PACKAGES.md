@@ -63,6 +63,13 @@ builds. Full evaluations: `pkg-approvals/approved/`. Refs: MGIT-11.1.4.
 | `github.com/Code-Hex/vz/v3` | macOS Virtualization.framework bindings | 3.1.0 | darwin only; **CGO — confined to mgit-sandboxd, never core** | **macOS backend (FR-17.15).** Native hypervisor API, no kext, Apple-silicon + Intel; provides virtio-fs, vsock, ballooning (NFR-17.4). CGO is unavoidable for any Virtualization.framework binding — this is the documented FR-17.16 exception. Rejected: CLI shell-outs (non-deterministic), custom ObjC bridge (unauditable), Docker Desktop/Lima (shared VM violates FR-17.1). |
 | `github.com/Microsoft/hcsshim` | Windows Hyper-V utility-VM control (HCS) | 0.12.0 | windows only; pure Go | **Windows backend (FR-17.15).** Microsoft's own Go interface to HCS — the Docker/containerd Hyper-V isolation code path. Rejected: raw WHP via x/sys (in-house VMM, multi-thousand lines), PowerShell/WMI shell-out, WSL2 shared VM (violates FR-17.1, SEC-08). |
 | `github.com/mdlayher/vsock` | AF_VSOCK transport (control plane + land protocol) | 1.2.1 | linux host/guest; pure Go; tiny dep tree | **Land/control channel (FR-17.5, FR-17.27, FR-17.35).** Network-independent host↔guest transport — required for `none`-mode sandboxes; exposes connection CID for SEC-10 peer binding. Rejected: raw AF_VSOCK via x/sys (~400 error-prone lines), TCP-over-NIC (destroys `none` mode), serial transport (no framing). |
+| `github.com/sirupsen/logrus` | Logging adapter for `firecracker-go-sdk` only | 1.9.3 | sandbox-confined; **rejected for core (§4) — use `log/slog`** | **Not a logging choice.** `firecracker-go-sdk`'s `WithLogger` API is typed on `*logrus.Entry`, so the Linux backend imports logrus solely to hand the SDK a silenced (discard) logger and keep its diagnostics off the daemon's streams. Never imported outside the sandbox tree (enforced by `TestImports_SandboxDepsConfinedToSandboxd`); core mgit logging remains `log/slog`. |
+
+**Transitive note (FR-17.30):** `firecracker-go-sdk` pulls `github.com/pkg/errors`
+(also §4-rejected) as an indirect dependency. mgit never imports it — the
+import-confinement test forbids it in core, so it exists only inside the
+SDK's own call graph. No remediation is possible without forking the SDK; it is
+accepted as a sandbox-scoped transitive per ADR-005 criterion 2.
 
 **Image signature verification (FR-17.29): no new dependency.** Signatures use
 stdlib `crypto/ed25519` (+ approved `golang.org/x/crypto` if needed for key
