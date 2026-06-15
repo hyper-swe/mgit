@@ -15,6 +15,15 @@ coverage.out
 
 dist/
 
+# Local dev/infra notes — contain internal network details (LAN IPs,
+# hostnames, SSH key names, dev-box paths). MUST NOT be committed/pushed.
+FR17-SANDBOX-HANDOFF.md
+*-tasks.json
+import-to-mtix.py
+
+# Guest VM images + other large local test fixtures (downloaded per-host)
+.testdata/
+
 # mtix runtime artifacts (not portable)
 .mtix/data/*.db
 .mtix/data/*.db-shm
