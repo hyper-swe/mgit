@@ -143,7 +143,33 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 		return nil, fmt.Errorf("%s launch: %w", m.cfg.Backend, err)
 	}
 
-	vm, err := m.cfg.Hypervisor.CreateVM(VMConfig{
+	vm, err := m.cfg.Hypervisor.CreateVM(vmConfig(opts, images, overlay))
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, fmt.Errorf("%s launch: create vm: %w", m.cfg.Backend, err)
+	}
+	if err := vm.Start(ctx); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, fmt.Errorf("%s launch: start vm: %w", m.cfg.Backend, err)
+	}
+
+	info := m.newSandboxInfo(id, opts)
+
+	m.mu.Lock()
+	m.sandboxes[id] = &sandbox{info: info, vm: vm, dir: dir}
+	m.mu.Unlock()
+
+	m.cfg.Logger.Info("sandbox launched", "event", "launched", "backend", m.cfg.Backend,
+		"sandbox_id", id, "task_id", opts.TaskID, "network_mode", opts.Network.Mode)
+	return &info, nil
+}
+
+// vmConfig builds the hypervisor-agnostic VM description carrying the
+// FR-17 isolation contract: read-only pinned rootfs + per-VM COW
+// overlay (FR-17.17), worktree share, vsock control plane, and a NIC
+// only when the network mode is not "none" (FR-17.7).
+func vmConfig(opts model.SandboxLaunchOptions, images ImagePaths, overlay string) VMConfig {
+	return VMConfig{
 		CPUs:           opts.CPUs,
 		MemoryMB:       opts.MemoryMB,
 		KernelPath:     images.KernelPath,
@@ -156,16 +182,12 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 		AttachNIC:      opts.Network.Mode != model.NetworkModeNone,
 		VsockEnabled:   true,
 		BalloonEnabled: true,
-	})
-	if err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, fmt.Errorf("%s launch: create vm: %w", m.cfg.Backend, err)
 	}
-	if err := vm.Start(ctx); err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, fmt.Errorf("%s launch: start vm: %w", m.cfg.Backend, err)
-	}
+}
 
+// newSandboxInfo assembles the running sandbox's metadata record,
+// stamping the host clock (and TTL expiry when set).
+func (m *Manager) newSandboxInfo(id string, opts model.SandboxLaunchOptions) model.SandboxInfo {
 	now := m.cfg.Clock().UTC()
 	info := model.SandboxInfo{
 		ID:               id,
@@ -182,14 +204,7 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 	if opts.TTL > 0 {
 		info.ExpiresAt = now.Add(opts.TTL)
 	}
-
-	m.mu.Lock()
-	m.sandboxes[id] = &sandbox{info: info, vm: vm, dir: dir}
-	m.mu.Unlock()
-
-	m.cfg.Logger.Info("sandbox launched", "event", "launched", "backend", m.cfg.Backend,
-		"sandbox_id", id, "task_id", opts.TaskID, "network_mode", opts.Network.Mode)
-	return &info, nil
+	return info
 }
 
 // List returns every supervised sandbox.

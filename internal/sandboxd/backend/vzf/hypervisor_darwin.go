@@ -53,35 +53,8 @@ func (h *vzHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
 	vmCfg.SetDirectorySharingDevicesVirtualMachineConfiguration(
 		[]vz.DirectorySharingDeviceConfiguration{share})
 
-	if cfg.VsockEnabled {
-		sock, err := vz.NewVirtioSocketDeviceConfiguration()
-		if err != nil {
-			return nil, fmt.Errorf("vz vsock device: %w", err)
-		}
-		vmCfg.SetSocketDevicesVirtualMachineConfiguration(
-			[]vz.SocketDeviceConfiguration{sock})
-	}
-
-	if cfg.AttachNIC {
-		nat, err := vz.NewNATNetworkDeviceAttachment()
-		if err != nil {
-			return nil, fmt.Errorf("vz nat attachment: %w", err)
-		}
-		nic, err := vz.NewVirtioNetworkDeviceConfiguration(nat)
-		if err != nil {
-			return nil, fmt.Errorf("vz network device: %w", err)
-		}
-		vmCfg.SetNetworkDevicesVirtualMachineConfiguration(
-			[]*vz.VirtioNetworkDeviceConfiguration{nic})
-	}
-
-	if cfg.BalloonEnabled {
-		balloon, err := vz.NewVirtioTraditionalMemoryBalloonDeviceConfiguration()
-		if err != nil {
-			return nil, fmt.Errorf("vz balloon device: %w", err)
-		}
-		vmCfg.SetMemoryBalloonDevicesVirtualMachineConfiguration(
-			[]vz.MemoryBalloonDeviceConfiguration{balloon})
+	if err := attachAuxDevices(vmCfg, cfg); err != nil {
+		return nil, err
 	}
 
 	if ok, err := vmCfg.Validate(); !ok || err != nil {
@@ -93,6 +66,41 @@ func (h *vzHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
 		return nil, fmt.Errorf("vz new vm: %w", err)
 	}
 	return &vzVM{vm: vm}, nil
+}
+
+// attachAuxDevices wires the vsock control plane (FR-17.27), the NAT
+// NIC (only when the network mode is not "none", FR-17.7), and the
+// memory balloon (NFR-17.4) onto the VM configuration.
+func attachAuxDevices(vmCfg *vz.VirtualMachineConfiguration, cfg microvm.VMConfig) error {
+	if cfg.VsockEnabled {
+		sock, err := vz.NewVirtioSocketDeviceConfiguration()
+		if err != nil {
+			return fmt.Errorf("vz vsock device: %w", err)
+		}
+		vmCfg.SetSocketDevicesVirtualMachineConfiguration(
+			[]vz.SocketDeviceConfiguration{sock})
+	}
+	if cfg.AttachNIC {
+		nat, err := vz.NewNATNetworkDeviceAttachment()
+		if err != nil {
+			return fmt.Errorf("vz nat attachment: %w", err)
+		}
+		nic, err := vz.NewVirtioNetworkDeviceConfiguration(nat)
+		if err != nil {
+			return fmt.Errorf("vz network device: %w", err)
+		}
+		vmCfg.SetNetworkDevicesVirtualMachineConfiguration(
+			[]*vz.VirtioNetworkDeviceConfiguration{nic})
+	}
+	if cfg.BalloonEnabled {
+		balloon, err := vz.NewVirtioTraditionalMemoryBalloonDeviceConfiguration()
+		if err != nil {
+			return fmt.Errorf("vz balloon device: %w", err)
+		}
+		vmCfg.SetMemoryBalloonDevicesVirtualMachineConfiguration(
+			[]vz.MemoryBalloonDeviceConfiguration{balloon})
+	}
+	return nil
 }
 
 // storageDevices builds the immutable rootfs and writable overlay
@@ -117,9 +125,16 @@ func storageDevices(cfg microvm.VMConfig) ([]vz.StorageDeviceConfiguration, erro
 	return []vz.StorageDeviceConfiguration{rootfsDev, overlayDev}, nil
 }
 
-// worktreeShare exposes ONLY the worktree to the guest via virtiofs
-// (FR-17.3: working-tree files only; the parent repo, shared object
-// store, and host $HOME are never shared).
+// worktreeShare wires the virtiofs device that maps the worktree subtree
+// into the guest at the identical path. It only constructs the share
+// device; the SEC-03 quarantine guarantees — rebinding the guest .git to
+// a private sandbox-local object store, rejecting symlinks/.git pointers
+// that resolve into the shared store, and mounting host-trusted paths
+// read-only — are enforced at the guest-filesystem layer (MGIT-11.6,
+// FR-17.3/4/14) and are NOT yet in place. No real hostile guest is driven
+// against a worktree until that lands (exec/land routing is a later
+// stage), so this device is presently exercised only by construction
+// tests. Refs: FR-17.3, MGIT-11.6
 func worktreeShare(cfg microvm.VMConfig) (vz.DirectorySharingDeviceConfiguration, error) {
 	dir, err := vz.NewSharedDirectory(cfg.WorktreePath, false)
 	if err != nil {

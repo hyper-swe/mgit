@@ -7,20 +7,18 @@ import (
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 )
 
-// newPlatformHost returns the platform HCS host. It fails closed
-// pending an unresolved design decision (MGIT-11.5.3): running a Linux
-// microVM under Hyper-V requires the LCOW utility-VM lifecycle, which
-// Microsoft/hcsshim exposes only under internal/uvm + internal/lcow
-// (not importable from this module). The approved hcsshim public API
-// (CreateContainer / HNS / layers) drives Windows containers, not a
-// Linux guest. The host VMM mechanism — vendored LCOW, Cloud
-// Hypervisor on WHP, or another path — is pending a decision before
-// the real host can be wired; until then a nil Config.Host yields
-// ErrSandboxBackendUnavailable rather than a fabricated implementation.
-// Refs: FR-17.15, MGIT-11.5.3
+// newPlatformHost fails closed: no Windows sandbox backend ships in v1
+// (ADR-006, FR-17.39). The decision (MGIT-11.5.3) resolved to a
+// host-matching WINDOWS guest via a Hyper-V-isolated Windows container
+// (WCOW) rather than a Linux guest — the LCOW path was rejected because
+// hcsshim exposes the Linux utility-VM lifecycle only under internal/
+// (not importable) and it is deprecated on Windows clients. The WCOW
+// backend is a distinct model (HCS/containerd + a Windows guest agent),
+// built in epic MGIT-12; until then this returns an honest unavailable
+// error rather than a fabricated implementation. Refs: FR-17.39, ADR-006, MGIT-12
 func newPlatformHost() (microvm.Hypervisor, error) {
 	return nil, fmt.Errorf(
-		"%w: Hyper-V Linux-guest host not yet wired — VMM mechanism pending (MGIT-11.5.3); "+
-			"hcsshim public API does not expose LCOW utility-VM lifecycle",
+		"%w: native Windows sandbox deferred to v1+ (WCOW backend, MGIT-12); "+
+			"Windows runs core mgit without the microVM sandbox",
 		model.ErrSandboxBackendUnavailable)
 }

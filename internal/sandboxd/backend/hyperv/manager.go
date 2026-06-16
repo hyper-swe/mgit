@@ -1,11 +1,16 @@
-// Package hyperv is the Windows Hyper-V sandbox backend (FR-17.15). It
-// is a thin platform seam over the shared microvm lifecycle: this
-// package supplies the Host Compute Service (HCS) implementation via
-// Microsoft/hcsshim (pure Go; no CGO). Prerequisites are documented in
-// Prerequisites() and verified by tests. The HCS/Hyper-V integration
-// tests run on a Windows runner with the Hyper-V feature enabled
-// (MGIT-11.5.8); the lifecycle itself is tested in the microvm package
-// on any platform. Refs: FR-17.15, FR-17.16
+// Package hyperv is a fail-closed placeholder for the Windows sandbox
+// backend (FR-17.15). No Windows backend ships in v1: the microVM
+// sandbox is Linux + macOS only, and Windows runs core mgit without the
+// sandbox (ADR-006, FR-17.39). newPlatformHost therefore returns
+// ErrSandboxBackendUnavailable; the manager wiring below is a skeleton
+// kept for interface parity, not a working backend.
+//
+// The real Windows backend is deferred to epic MGIT-12 and will run a
+// host-matching WINDOWS guest via a Hyper-V-isolated Windows container
+// (WCOW), driven through the HCS API / containerd — NOT a Linux guest
+// (LCOW), and NOT the kernel+rootfs microvm.Manager seam this skeleton
+// happens to wire. Prerequisites are documented in Prerequisites().
+// Refs: FR-17.15, FR-17.39, ADR-006
 package hyperv
 
 import (

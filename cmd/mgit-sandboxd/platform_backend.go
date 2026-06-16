@@ -1,14 +1,63 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd"
+	"github.com/hyper-swe/mgit/internal/sandboxd/backend/container"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 )
+
+// backendSelection is the resolved daemon configuration needed to pick
+// and construct a sandbox backend.
+type backendSelection struct {
+	backend    string // sandboxd.BackendRequestAuto | BackendRequestContainer
+	ackReduced bool   // --acknowledge-reduced-isolation
+	hostRoot   string
+	workDir    string
+	logger     *slog.Logger
+	clock      func() time.Time
+}
+
+// selectManager resolves the sandbox backend: the build-tagged platform
+// hypervisor for "auto", or the audited reduced-isolation container
+// fallback when explicitly requested. A missing hypervisor is a hard
+// failure, never a silent downgrade (FR-17.15). Refs: FR-17.15, FR-17.16
+func selectManager(sel backendSelection) (model.SandboxManager, error) {
+	return sandboxd.SelectBackend(context.Background(), sandboxd.SelectOptions{
+		Backend:                     sel.backend,
+		AcknowledgeReducedIsolation: sel.ackReduced,
+		Audit:                       slogBackendAuditor{logger: sel.logger},
+	}, sandboxd.BackendFactories{
+		// firecracker on Linux, vzf on macOS, graceful "unavailable" on
+		// every other OS (Windows runs core mgit without the sandbox in
+		// v1 — ADR-006, FR-17.39). Selection is build-tagged in
+		// platform_backend_*.go so the future WCOW backend slots in with
+		// no change here.
+		Hypervisor: func() (model.SandboxManager, error) {
+			return newHypervisorBackend(hypervisorDeps{
+				hostRoot: sel.hostRoot,
+				workDir:  sel.workDir,
+				logger:   sel.logger,
+				clock:    sel.clock,
+			})
+		},
+		Container: func() (model.SandboxManager, error) {
+			return container.NewManager(container.Config{
+				Runner:         container.PodmanRunner{},
+				SensitivePaths: model.DefaultSandboxPolicy().SensitivePaths,
+				Logger:         sel.logger,
+				Clock:          sel.clock,
+			})
+		},
+	})
+}
 
 // hypervisorDeps are the inputs every platform microVM backend needs.
 // The per-platform newHypervisorBackend (build-tagged) turns these into

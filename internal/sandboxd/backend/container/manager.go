@@ -94,23 +94,40 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 	}
 	name := "mgit-sbx-" + id
 
+	if _, err := m.cfg.Runner.run(ctx, m.runArgs(name, network, opts)...); err != nil {
+		return nil, fmt.Errorf("container launch: %w", err)
+	}
+
+	info := m.newSandboxInfo(id, opts)
+
+	m.mu.Lock()
+	m.sandboxes[id] = &containerSandbox{info: info, name: name}
+	m.mu.Unlock()
+
+	m.cfg.Logger.Info("container sandbox launched (REDUCED ISOLATION)",
+		"event", "launched", "sandbox_id", id, "task_id", opts.TaskID,
+		"reduced_isolation", true)
+	return &info, nil
+}
+
+// runArgs builds the `run` argv: the worktree is the ONLY writable
+// mount, at the identical path (FR-17.3); host-trusted paths are mounted
+// read-only (FR-17.14); resource caps applied (FR-17.26).
+func (m *Manager) runArgs(name, network string, opts model.SandboxLaunchOptions) []string {
 	args := make([]string, 0, 16+2*len(m.cfg.SensitivePaths))
 	args = append(args,
 		"run", "--detach", "--name", name,
 		"--network", network,
 		"--memory", strconv.Itoa(effectiveMemoryMB(opts.MemoryMB))+"m",
 		"--cpus", strconv.Itoa(effectiveCPUs(opts.CPUs)),
-		// The worktree is the ONLY writable mount, at the identical path.
 		"--volume", opts.WorktreePath+":"+opts.WorktreePath,
 	)
 	args = append(args, sensitiveMounts(opts.WorktreePath, m.cfg.SensitivePaths)...)
-	args = append(args, "--workdir", opts.WorktreePath, opts.ImageRef,
-		"sleep", "infinity")
+	return append(args, "--workdir", opts.WorktreePath, opts.ImageRef, "sleep", "infinity")
+}
 
-	if _, err := m.cfg.Runner.run(ctx, args...); err != nil {
-		return nil, fmt.Errorf("container launch: %w", err)
-	}
-
+// newSandboxInfo assembles the running container's metadata record.
+func (m *Manager) newSandboxInfo(id string, opts model.SandboxLaunchOptions) model.SandboxInfo {
 	now := m.cfg.Clock().UTC()
 	info := model.SandboxInfo{
 		ID:               id,
@@ -127,15 +144,7 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 	if opts.TTL > 0 {
 		info.ExpiresAt = now.Add(opts.TTL)
 	}
-
-	m.mu.Lock()
-	m.sandboxes[id] = &containerSandbox{info: info, name: name}
-	m.mu.Unlock()
-
-	m.cfg.Logger.Info("container sandbox launched (REDUCED ISOLATION)",
-		"event", "launched", "sandbox_id", id, "task_id", opts.TaskID,
-		"reduced_isolation", true)
-	return &info, nil
+	return info
 }
 
 // List returns every supervised sandbox.
@@ -160,7 +169,15 @@ func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*
 		return nil, err
 	}
 
-	args := append([]string{"exec", sb.name}, req.Command...)
+	// Explicit per-exec env injections only (FR-17.17); the host
+	// environment is never inherited — podman exec does not forward it,
+	// and dropping req.Env would silently lose a task's injected creds.
+	args := []string{"exec"}
+	for _, env := range req.Env {
+		args = append(args, "--env", env)
+	}
+	args = append(args, sb.name)
+	args = append(args, req.Command...)
 	out, err := m.cfg.Runner.run(ctx, args...)
 	if err != nil {
 		var exitErr *exec.ExitError

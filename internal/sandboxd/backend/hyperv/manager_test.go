@@ -1,7 +1,6 @@
-// Package hyperv tests verify the Windows backend wiring and
-// prerequisites. The shared lifecycle is tested in microvm; the real
-// HCS host + guest boot are runner-gated (MGIT-11.5.8) and pending the
-// VMM-mechanism decision (MGIT-11.5.3). Refs: FR-17.15, FR-17.16
+// Package hyperv tests verify the placeholder fails closed and the
+// prerequisites are documented. No Windows backend ships in v1 (ADR-006,
+// FR-17.39); the real WCOW backend is epic MGIT-12. Refs: FR-17.15, FR-17.39
 package hyperv
 
 import (
@@ -104,8 +103,8 @@ func TestHyperV_PrereqsDocumented(t *testing.T) {
 }
 
 // TestHyperV_PlatformHost_FailsClosed verifies that with no host wired
-// (nil Config.Host), the backend refuses rather than fabricating a
-// VM — the VMM mechanism is pending (MGIT-11.5.3). Refs: FR-17.15
+// (nil Config.Hypervisor), the backend refuses rather than fabricating a
+// VM — no Windows backend ships in v1 (deferred to MGIT-12). Refs: FR-17.39
 func TestHyperV_PlatformHost_FailsClosed(t *testing.T) {
 	_, err := NewManager(Config{
 		WorkDir: t.TempDir(),

@@ -20,9 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
-	"github.com/hyper-swe/mgit/internal/sandboxd/backend/container"
 )
 
 // slogBackendAuditor records backend selections in the daemon's
@@ -43,62 +41,60 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stderr))
 }
 
-// run wires flags into the daemon and blocks until exit. Split from
-// main for testability (DI; no globals).
-func run(args []string, logSink io.Writer) int {
+// daemonOpts is the parsed command-line configuration.
+type daemonOpts struct {
+	socket       string
+	hostRoot     string
+	workDir      string
+	backend      string
+	idleGrace    time.Duration
+	maxSandboxes int
+	maxMemoryMB  int
+	ackReduced   bool
+}
+
+// parseFlags parses argv. It returns nil opts with an exit code when the
+// caller should stop (help → 0, parse error → 2).
+func parseFlags(args []string, logSink io.Writer) (*daemonOpts, int) {
 	flags := flag.NewFlagSet("mgit-sandboxd", flag.ContinueOnError)
 	flags.SetOutput(logSink)
-	socket := flags.String("socket", "", "unix socket path to serve (required)")
-	hostRoot := flags.String("host-root", "", "host config root holding images.lock + trust root (FR-17.13)")
-	workDir := flags.String("work-dir", "", "sandbox-local state root (overlays, sockets); never a worktree")
-	idleGrace := flags.Duration("idle-grace", 30*time.Second, "zero-sandbox linger before exit")
-	maxSandboxes := flags.Int("max-sandboxes", 8, "global concurrent-sandbox ceiling (FR-17.26)")
-	maxMemoryMB := flags.Int("max-memory-mb", 0, "global sandbox memory ceiling in MB (0 until policy wiring resolves the FR-17.26 50% host default)")
-	backend := flags.String("backend", sandboxd.BackendRequestAuto,
+	o := &daemonOpts{}
+	flags.StringVar(&o.socket, "socket", "", "unix socket path to serve (required)")
+	flags.StringVar(&o.hostRoot, "host-root", "", "host config root holding images.lock + trust root (FR-17.13)")
+	flags.StringVar(&o.workDir, "work-dir", "", "sandbox-local state root (overlays, sockets); never a worktree")
+	flags.DurationVar(&o.idleGrace, "idle-grace", 30*time.Second, "zero-sandbox linger before exit")
+	flags.IntVar(&o.maxSandboxes, "max-sandboxes", 8, "global concurrent-sandbox ceiling (FR-17.26)")
+	flags.IntVar(&o.maxMemoryMB, "max-memory-mb", 0, "global sandbox memory ceiling in MB (0 until policy wiring resolves the FR-17.26 50% host default)")
+	flags.StringVar(&o.backend, "backend", sandboxd.BackendRequestAuto,
 		"sandbox backend: auto (platform hypervisor) or container (REDUCED isolation; requires --acknowledge-reduced-isolation)")
-	ackReduced := flags.Bool("acknowledge-reduced-isolation", false,
+	flags.BoolVar(&o.ackReduced, "acknowledge-reduced-isolation", false,
 		"accept the container fallback's shared-kernel risk (recorded in the audit trail)")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			return 0
+			return nil, 0
 		}
-		return 2
+		return nil, 2
 	}
+	return o, 0
+}
 
+// run wires flags into the daemon and blocks until exit. Split from
+// main for testability (DI; no globals).
+func run(args []string, logSink io.Writer) int {
+	opts, code := parseFlags(args, logSink)
+	if opts == nil {
+		return code
+	}
 	logger := slog.New(slog.NewJSONHandler(logSink, nil))
-	if *socket == "" {
+	if opts.socket == "" {
 		logger.Error("missing required flag", "flag", "socket")
 		return 2
 	}
 	clock := func() time.Time { return time.Now().UTC() }
 
-	selected, err := sandboxd.SelectBackend(context.Background(), sandboxd.SelectOptions{
-		Backend:                     *backend,
-		AcknowledgeReducedIsolation: *ackReduced,
-		Audit:                       slogBackendAuditor{logger: logger},
-	}, sandboxd.BackendFactories{
-		// The hypervisor factory wires the platform microVM backend:
-		// firecracker on Linux, vzf on macOS, graceful "unavailable" on
-		// every other OS (Windows runs core mgit without the sandbox in
-		// v1 — ADR-006, FR-17.39). Selection is build-tagged in
-		// platform_backend_*.go so the future WCOW backend slots in with
-		// no change here.
-		Hypervisor: func() (model.SandboxManager, error) {
-			return newHypervisorBackend(hypervisorDeps{
-				hostRoot: *hostRoot,
-				workDir:  *workDir,
-				logger:   logger,
-				clock:    clock,
-			})
-		},
-		Container: func() (model.SandboxManager, error) {
-			return container.NewManager(container.Config{
-				Runner:         container.PodmanRunner{},
-				SensitivePaths: model.DefaultSandboxPolicy().SensitivePaths,
-				Logger:         logger,
-				Clock:          clock,
-			})
-		},
+	selected, err := selectManager(backendSelection{
+		backend: opts.backend, ackReduced: opts.ackReduced,
+		hostRoot: opts.hostRoot, workDir: opts.workDir, logger: logger, clock: clock,
 	})
 	if err != nil {
 		logger.Error("sandbox backend selection failed", "error", err.Error())
@@ -107,14 +103,11 @@ func run(args []string, logSink io.Writer) int {
 
 	// The ceiling wraps whichever backend was selected: launches never
 	// reach a backend unadmitted (SEC-09).
-	manager := sandboxd.NewCeilingManager(selected, *maxSandboxes, *maxMemoryMB, 0)
+	manager := sandboxd.NewCeilingManager(selected, opts.maxSandboxes, opts.maxMemoryMB, 0)
 
 	daemon, err := sandboxd.New(sandboxd.Config{
-		SocketPath: *socket,
-		Manager:    manager,
-		Logger:     logger,
-		Clock:      clock,
-		IdleGrace:  *idleGrace,
+		SocketPath: opts.socket, Manager: manager,
+		Logger: logger, Clock: clock, IdleGrace: opts.idleGrace,
 	})
 	if err != nil {
 		logger.Error("sandboxd configuration invalid", "error", err)

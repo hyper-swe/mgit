@@ -1043,7 +1043,7 @@ var (
 |---|---|
 | 1 — no per-command permission prompts | FR-17.9, FR-17.11, FR-17.12 |
 | 2 — host OS/filesystem unreachable from sandboxed code | FR-17.3, FR-17.4, FR-17.14, FR-17.15 |
-| 3 — platform agnostic, one CLI surface | FR-17.2, FR-17.15, FR-17.16, FR-17.21 |
+| 3 — platform agnostic, one CLI surface | FR-17.2, FR-17.15, FR-17.16, FR-17.21, FR-17.39 |
 | 4 — per-sandbox network policy | FR-17.7, FR-17.8, FR-17.13 |
 | 5 — full provenance, append-only audit | FR-17.1, FR-17.5, FR-17.6, FR-17.18 |
 | 6 — disposable without losing landed work | FR-17.19, FR-17.20, FR-17.9 |
