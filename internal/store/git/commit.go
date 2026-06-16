@@ -2,8 +2,6 @@ package git
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -69,7 +67,7 @@ func (cs *CommitStore) CreateCommit(_ context.Context, c *model.Commit) (string,
 	c.CommitID = sha1Hex
 
 	// Compute SHA-256 content hash (mgit integrity per ADR-002)
-	c.ContentHash = computeContentHash(c)
+	c.ContentHash = c.ComputeContentHash()
 
 	// Update HEAD ref
 	ref := plumbing.NewHashReference(
@@ -183,20 +181,6 @@ func commitFromGitObject(obj *object.Commit) *model.Commit {
 	}
 }
 
-// computeContentHash computes the SHA-256 content hash for a commit.
-// This is mgit's own integrity hash per ADR-002 (dual-hash model).
-// Input: message + file_diffs JSON + task_id + parent_content_hash + created_at
-// Refs: ADR-002, NFR-5
-func computeContentHash(c *model.Commit) string {
-	h := sha256.New()
-	h.Write([]byte(c.Message))
-
-	diffsJSON, _ := json.Marshal(c.FileDiffs) //nolint:errcheck // marshal of known type
-	h.Write(diffsJSON)
-
-	h.Write([]byte(c.TaskID.String()))
-	h.Write([]byte(c.ParentID))
-	h.Write([]byte(c.CreatedAt.UTC().Format("2006-01-02T15:04:05Z")))
-
-	return fmt.Sprintf("%x", h.Sum(nil))
-}
+// content_hash is computed by model.Commit.ComputeContentHash (ADR-002),
+// the single authoritative definition shared with sandbox land
+// re-verification (FR-17.24).

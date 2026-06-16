@@ -1,6 +1,8 @@
 package model
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -57,6 +59,23 @@ type Commit struct {
 	CommitType CommitType `json:"commit_type"` // normal, rollback, squash, merge, system
 	CreatedBy  string     `json:"created_by"`  // Agent that created this commit
 	Branch     string     `json:"branch"`      // Branch this commit belongs to
+}
+
+// ComputeContentHash returns the mgit SHA-256 integrity hash (ADR-002):
+// SHA-256(message + file_diffs_json + task_id + parent + created_at). It
+// is the single, authoritative definition of content_hash, shared by
+// commit creation (store/git) and sandbox land re-verification
+// (FR-17.5/17.24) so the two can never disagree on a commit's identity.
+// Refs: ADR-002, FR-3.1, FR-17.24, NFR-5
+func (c *Commit) ComputeContentHash() string {
+	h := sha256.New()
+	h.Write([]byte(c.Message))
+	diffsJSON, _ := json.Marshal(c.FileDiffs) //nolint:errcheck // marshal of known type
+	h.Write(diffsJSON)
+	h.Write([]byte(c.TaskID.String()))
+	h.Write([]byte(c.ParentID))
+	h.Write([]byte(c.CreatedAt.UTC().Format("2006-01-02T15:04:05Z")))
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 // Validate checks that the Commit has all required fields populated.
