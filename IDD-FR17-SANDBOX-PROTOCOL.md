@@ -64,14 +64,28 @@ sanitization point; the land protocol additionally bounds object sizes
 above. Land import (MGIT-11.8.5) routes guest strings through that
 sanitizer when it composes audit records.
 
-## 2. CID / peer binding — *MGIT-11.8.6*
+## 2. CID / peer binding — *MGIT-11.8.6* (normative)
 
-Each guest's channel is bound at launch to its hypervisor peer identity
-(vsock CID, or VM-GUID on HvSocket). The daemon rejects and audits any
-message whose source peer identity differs from the addressed sandbox's
-binding, so one guest can never reach another's land/attestation channel
-(SEC-10). The binding is invalidated at teardown: a recycled CID/GUID
-MUST NOT inherit a destroyed sandbox's binding.
+Each guest's control/land/attestation channel is bound at launch to its
+hypervisor peer identity — the vsock CID (AF_VSOCK: KVM,
+Virtualization.framework) or the VM-GUID (AF_HYPERV: WCOW). The host
+`PeerBinder` (`internal/sandboxd`) holds an opaque peer-identity string
+per sandbox so one binder serves every backend. On every incoming
+connection the daemon calls `Authorize(addressedSandboxID, sourcePeer)`,
+which **fails closed**:
+
+- no binding for the addressed sandbox (never launched, or torn down) → reject
+- empty/unverifiable source peer → reject
+- source peer ≠ the sandbox's bound identity → reject
+
+so one guest can never reach another's channel (SEC-10). Every rejection
+is audited (`event=peer_rejected`, with the host-observed source peer —
+never guest-asserted text, SEC-05). At teardown the binding is
+**invalidated** (`Invalidate`), so a CID/GUID the hypervisor recycles for
+a successor VM cannot inherit a destroyed sandbox's binding (FR-17.27).
+The transport supplies the source peer identity (the vsock connection's
+remote CID / the HvSocket VM-GUID); reading it is the backend adapter's
+job, wired with the sandbox service (MGIT-11.9).
 
 ## 3. Commit attestation — *MGIT-11.8.1* (normative)
 

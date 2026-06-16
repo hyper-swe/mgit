@@ -127,6 +127,12 @@ var (
 	// host-wide concurrency or memory ceiling; the launch fails fast
 	// rather than degrading the host (SEC-09). Refs: FR-17.26
 	ErrSandboxCeilingExceeded = errors.New("global sandbox ceiling exceeded")
+
+	// ErrPeerBindingMismatch indicates a vsock/HvSocket connection's
+	// hypervisor peer identity (CID or VM-GUID) does not match the
+	// sandbox channel it addresses — one guest may never reach another's
+	// land/attestation channel. Refs: FR-17.27, SEC-10
+	ErrPeerBindingMismatch = errors.New("sandbox channel peer identity mismatch")
 )
 
 // ValidationError provides structured context for validation failures.
