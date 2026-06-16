@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mgit/internal/sandboxd/hostkey"
 )
 
 // TestStore_Guards covers NewStore validation and fail-closed loading.
@@ -26,8 +28,8 @@ func TestStore_Guards(t *testing.T) {
 	})
 	t.Run("malformed_trust_root_rejected", func(t *testing.T) {
 		hostRoot := t.TempDir()
-		require.NoError(t, os.MkdirAll(filepath.Join(hostRoot, trustDirName), 0o700))
-		require.NoError(t, os.WriteFile(filepath.Join(hostRoot, trustDirName, signingPub),
+		require.NoError(t, os.MkdirAll(filepath.Join(hostRoot, hostkey.TrustDirName), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(hostRoot, hostkey.TrustDirName, signingPub),
 			[]byte("too-short"), 0o600))
 		_, err := NewStore(hostRoot, fixedClock())
 		assert.Error(t, err)

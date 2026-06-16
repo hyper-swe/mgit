@@ -4,11 +4,11 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/hyper-swe/mgit/internal/sandboxd/hostkey"
 )
 
 // Trust-root file layout under the host config root. The signing key
@@ -16,9 +16,8 @@ import (
 // images.lock (FR-17.38): a writer who can poison the lock must not be
 // able to substitute the verification key.
 const (
-	trustDirName = "trust"
-	signingKey   = "image-signing.key" // private key, 0600
-	signingPub   = "image-signing.pub" // public verification key
+	signingKey = "image-signing.key" // private key, 0600
+	signingPub = "image-signing.pub" // public verification key
 )
 
 // TrustRootAuditor records trust-root lifecycle events (FR-17.38).
@@ -40,7 +39,7 @@ func GenerateTrustRoot(ctx context.Context, hostRoot string, audit TrustRootAudi
 	if audit == nil {
 		return nil, fmt.Errorf("trust root: auditor must not be nil")
 	}
-	dir := filepath.Join(hostRoot, trustDirName)
+	dir := filepath.Join(hostRoot, hostkey.TrustDirName)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("trust root: create dir: %w", err)
 	}
@@ -53,14 +52,14 @@ func GenerateTrustRoot(ctx context.Context, hostRoot string, audit TrustRootAudi
 	}
 	// Atomic writes (temp + rename): a crash mid-write never leaves a
 	// torn key on disk, and a reader never observes a half-written key.
-	if err := writeFileAtomic(filepath.Join(dir, signingKey), priv); err != nil {
+	if err := hostkey.WriteFileAtomic(filepath.Join(dir, signingKey), priv); err != nil {
 		return nil, fmt.Errorf("trust root: write key: %w", err)
 	}
-	if err := writeFileAtomic(filepath.Join(dir, signingPub), pub); err != nil {
+	if err := hostkey.WriteFileAtomic(filepath.Join(dir, signingPub), pub); err != nil {
 		return nil, fmt.Errorf("trust root: write pub: %w", err)
 	}
 
-	newFingerprint := fingerprint(pub)
+	newFingerprint := hostkey.Fingerprint(pub)
 	detail := fmt.Sprintf(`{"new_fingerprint":%q}`, newFingerprint)
 	if oldFingerprint != "" {
 		detail = fmt.Sprintf(`{"old_fingerprint":%q,"new_fingerprint":%q}`, oldFingerprint, newFingerprint)
@@ -71,55 +70,21 @@ func GenerateTrustRoot(ctx context.Context, hostRoot string, audit TrustRootAudi
 	return priv, nil
 }
 
-// loadTrustRoot reads the public verification key. Absence is fatal:
-// without it nothing can be verified (fail closed).
+// loadTrustRoot reads the public verification key. Absence (or an
+// invalid key) is fatal: without it nothing can be verified (fail closed).
 func loadTrustRoot(hostRoot string) (ed25519.PublicKey, error) {
-	data, err := os.ReadFile(filepath.Join(hostRoot, trustDirName, signingPub)) //nolint:gosec // host-owned config path
-	if err != nil {
-		return nil, fmt.Errorf("images: load trust root (run GenerateTrustRoot first): %w", err)
+	pub := hostkey.ReadPub(filepath.Join(hostRoot, hostkey.TrustDirName, signingPub))
+	if pub == nil {
+		return nil, fmt.Errorf("images: load trust root (run GenerateTrustRoot first): missing or invalid key")
 	}
-	if len(data) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("images: trust root key is not a valid Ed25519 public key")
-	}
-	return ed25519.PublicKey(data), nil
+	return pub, nil
 }
 
 // existingFingerprint returns the fingerprint of the current public
 // key, or "" if none exists yet.
 func existingFingerprint(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, signingPub)) //nolint:gosec // host-owned config path
-	if err != nil || len(data) != ed25519.PublicKeySize {
-		return ""
+	if pub := hostkey.ReadPub(filepath.Join(dir, signingPub)); pub != nil {
+		return hostkey.Fingerprint(pub)
 	}
-	return fingerprint(ed25519.PublicKey(data))
-}
-
-// fingerprint is the hex SHA-256 of a public key.
-func fingerprint(pub ed25519.PublicKey) string {
-	sum := sha256.Sum256(pub)
-	return hex.EncodeToString(sum[:])
-}
-
-// writeFileAtomic writes data to a temp file in the same directory and
-// renames it into place (0600), so the destination is never torn.
-func writeFileAtomic(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
-
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return ""
 }

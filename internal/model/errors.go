@@ -112,6 +112,12 @@ var (
 	// Refs: FR-17.6, FR-17.20
 	ErrUnattestedCommit = errors.New("commit lacks sandbox attestation")
 
+	// ErrAttestationInvalid indicates an attestation is present but does
+	// not verify: a bad/forged signature, an unknown key_id, an
+	// unsupported algorithm, or a tampered field. Distinct from
+	// ErrUnattestedCommit (no attestation at all). Refs: FR-17.6, SEC-01
+	ErrAttestationInvalid = errors.New("sandbox attestation does not verify")
+
 	// ErrSensitivePathModified indicates the guest modified a protected
 	// host-trusted path (e.g. .claude/**, .git/hooks/**); land refuses.
 	// Refs: FR-17.14, FR-17.20
