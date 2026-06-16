@@ -173,9 +173,24 @@ non-NULL `sandbox_id` therefore unambiguously means "produced and
 attested under enforced sandboxing." Disabling the policy is itself an
 audited event (FR-17.6).
 
-## 6. Atomic land import — *MGIT-11.8.5*
+## 6. Atomic land import — *MGIT-11.8.5* (normative)
 
-Land is all-or-nothing (squash semantics, FR-2.x): every commit verifies
-and imports inside one serializable transaction, or none do. Success
-fast-forwards the task branch append-only; the host records its own
-receive-time alongside the advisory guest timestamp (SEC-11).
+Land is all-or-nothing (squash semantics, FR-2.x). `land.Lander.Land`
+runs three phases in order, and that order is the atomicity guarantee:
+
+1. **Import objects** for every commit (idempotent, content-addressed).
+   A failure here aborts before any `task_commits` row exists — objects
+   already written are harmless orphans, never a partial land.
+2. **Append the batch** — every commit's `task_commits` row in ONE
+   serialized transaction (`index.Store.AppendTaskCommits`); a failure
+   mid-batch rolls back the whole batch. This is the commit point. The
+   row's `created_at` is the host **receive-time**; the guest's own
+   timestamp stays advisory inside the git object (SEC-11, FR-17.28).
+   The `sandbox_id` from the require_sandbox gate (§5) is recorded here
+   (NULL when unsandboxed).
+3. **Fast-forward** the task branch to the last commit, **append-only**
+   (the `Brancher` refuses a non-fast-forward — land never rewrites).
+
+The object import, atomic append, and branch update are injected ports,
+so the trust-boundary logic is host-side and testable independent of
+go-git/SQLite wiring (which the sandbox service composes, MGIT-11.9).

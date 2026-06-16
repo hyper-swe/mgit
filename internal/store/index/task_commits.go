@@ -35,12 +35,11 @@ type TaskCommitInsert struct {
 	SandboxID   string // empty = unsandboxed (stored as NULL)
 }
 
-// AppendTaskCommit inserts a record into the task_commits table with
-// sandbox provenance set at append time only. INSERT-only per FR-12.
-// Refs: FR-4, FR-12, FR-17.18, MGIT-11.3.3
-func (s *Store) AppendTaskCommit(ctx context.Context, in TaskCommitInsert) error {
-	// INSERT-only: append-only audit table (FR-12); sandbox_id is
-	// written once here and never updated.
+// insertTaskCommitTx inserts one task_commits row within an existing
+// transaction. INSERT-only (append-only audit table, FR-12); sandbox_id
+// is written once and never updated. now is the host-side timestamp.
+// Shared by the single and batch appenders. Refs: FR-12, FR-17.18
+func insertTaskCommitTx(ctx context.Context, tx *sql.Tx, in TaskCommitInsert, now string) error {
 	const insertSQL = `INSERT INTO task_commits
 		(task_id, commit_hash, content_hash, agent_id, position, created_at, sandbox_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -49,13 +48,36 @@ func (s *Store) AppendTaskCommit(ctx context.Context, in TaskCommitInsert) error
 	if in.SandboxID != "" {
 		sandboxID = in.SandboxID
 	}
+	if _, err := tx.ExecContext(ctx, insertSQL,
+		in.TaskID, in.CommitHash, in.ContentHash, in.AgentID, in.Position, now, sandboxID); err != nil {
+		return fmt.Errorf("insert task_commit %s: %w", in.CommitHash, err)
+	}
+	return nil
+}
 
+// AppendTaskCommit inserts one record into the task_commits table with
+// sandbox provenance set at append time only. Refs: FR-4, FR-12, FR-17.18, MGIT-11.3.3
+func (s *Store) AppendTaskCommit(ctx context.Context, in TaskCommitInsert) error {
 	return s.WriteTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, insertSQL,
-			in.TaskID, in.CommitHash, in.ContentHash, in.AgentID, in.Position,
-			s.clock().UTC().Format(time.RFC3339), sandboxID)
-		if err != nil {
-			return fmt.Errorf("insert task_commit: %w", err)
+		return insertTaskCommitTx(ctx, tx, in, s.clock().UTC().Format(time.RFC3339))
+	})
+}
+
+// AppendTaskCommits inserts multiple records in a SINGLE serialized
+// transaction: every row commits or none do (sandbox land is
+// all-or-nothing, FR-17.5; a failure mid-batch leaves no partial land).
+// All rows share one host receive-time (FR-17.28). INSERT-only per FR-12.
+// Refs: FR-17.5, FR-17.18, MGIT-11.8.5
+func (s *Store) AppendTaskCommits(ctx context.Context, ins []TaskCommitInsert) error {
+	if len(ins) == 0 {
+		return nil
+	}
+	now := s.clock().UTC().Format(time.RFC3339)
+	return s.WriteTx(ctx, func(tx *sql.Tx) error {
+		for _, in := range ins {
+			if err := insertTaskCommitTx(ctx, tx, in, now); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
