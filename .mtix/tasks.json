@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-12T11:47:33Z",
+  "exported_at": "2026-06-16T16:10:14Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -470,7 +470,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0,
+      "progress": 0.4358974358974359,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -493,15 +493,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "dc5cfae35142b3bf22bbeeb21364a6a9fc6c8b2756f4dfefaf7be853908305fa",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:40Z"
+      "updated_at": "2026-06-12T13:07:10Z",
+      "closed_at": "2026-06-12T13:07:10Z"
     },
     {
       "id": "MGIT-11.1.1",
@@ -517,15 +518,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "9388758698dff52a021ab3207ac1affc3b815c097bdebeddc38f50d79ebfec46",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:40Z"
+      "updated_at": "2026-06-12T12:25:31Z",
+      "closed_at": "2026-06-12T12:25:31Z"
     },
     {
       "id": "MGIT-11.1.2",
@@ -541,15 +543,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "d2f63279ba0d96d6b4d9fb80bc784affe7e04517fd8758e93b368b620bd8bbbe",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:40Z"
+      "updated_at": "2026-06-12T12:32:54Z",
+      "closed_at": "2026-06-12T12:32:54Z"
     },
     {
       "id": "MGIT-11.1.3",
@@ -565,15 +568,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "a8bbb1f7d7664993ac1878887c4455c3c1cf6d0bb30ddd00c00d009504b19681",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:40Z"
+      "updated_at": "2026-06-12T12:45:26Z",
+      "closed_at": "2026-06-12T12:45:26Z"
     },
     {
       "id": "MGIT-11.1.4",
@@ -589,15 +593,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "38cc453e109502ba1e8bc7a2dad87150ffe00e1d1737a6e1301fb96cc1dc7116",
       "created_at": "2026-06-12T11:47:32Z",
-      "updated_at": "2026-06-12T11:47:32Z"
+      "updated_at": "2026-06-12T12:39:44Z",
+      "closed_at": "2026-06-12T12:39:44Z"
     },
     {
       "id": "MGIT-11.10",
@@ -1093,15 +1098,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "e22403087dc5fe18fcefb4172ac41c89da4a4a1c06e5195bf4eb8ff47cf701b0",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:41Z"
+      "updated_at": "2026-06-12T13:38:12Z",
+      "closed_at": "2026-06-12T13:38:12Z"
     },
     {
       "id": "MGIT-11.2.1",
@@ -1117,15 +1123,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "936dae71908c1c4d82ee0add90845e18d55f81a245d38d8e34ebd5dff81df632",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:48Z"
+      "updated_at": "2026-06-12T13:10:55Z",
+      "closed_at": "2026-06-12T13:10:55Z"
     },
     {
       "id": "MGIT-11.2.2",
@@ -1141,15 +1148,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "9b8cc07e08304ab9132b8379cd24ed71b945a0abbdf3ffd637f7d38164182786",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:48Z"
+      "updated_at": "2026-06-12T13:16:06Z",
+      "closed_at": "2026-06-12T13:16:06Z"
     },
     {
       "id": "MGIT-11.2.3",
@@ -1165,15 +1173,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "737cd0b4a402c2d38cec7f3a4d978eb90e438bf65ab26184b93ebdd12ee519c5",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:48Z"
+      "updated_at": "2026-06-12T13:21:32Z",
+      "closed_at": "2026-06-12T13:21:32Z"
     },
     {
       "id": "MGIT-11.3",
@@ -1189,15 +1198,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "d379315cb73c7fd5f17371d540443df6cbe60f7311fb06842cccbad7ef808d64",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:41Z"
+      "updated_at": "2026-06-12T14:14:35Z",
+      "closed_at": "2026-06-12T14:14:35Z"
     },
     {
       "id": "MGIT-11.3.1",
@@ -1213,15 +1223,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "fb7cc7b686a165389df21b80307a2c6da8235cae291553ee73318c3fc720f2ec",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:48Z"
+      "updated_at": "2026-06-12T13:47:05Z",
+      "closed_at": "2026-06-12T13:47:05Z"
     },
     {
       "id": "MGIT-11.3.2",
@@ -1237,15 +1248,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "a6603618afcb41f4f359b672e55f23c595d2b361ebd37271f055d475dd17b936",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:48Z"
+      "updated_at": "2026-06-12T13:51:24Z",
+      "closed_at": "2026-06-12T13:51:24Z"
     },
     {
       "id": "MGIT-11.3.3",
@@ -1261,15 +1273,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "2f4e45a47f30869cf78a1dc0b11afbc6d8ad0840031f204945845ac95fd20eb6",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:48Z"
+      "updated_at": "2026-06-12T13:57:02Z",
+      "closed_at": "2026-06-12T13:57:02Z"
     },
     {
       "id": "MGIT-11.3.4",
@@ -1285,15 +1298,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "1c7147d04e6ec5acb2951bf7d13ad8fde88d2a62cde49aebb4f2db9c849a6169",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:48Z"
+      "updated_at": "2026-06-12T14:01:33Z",
+      "closed_at": "2026-06-12T14:01:33Z"
     },
     {
       "id": "MGIT-11.3.5",
@@ -1309,15 +1323,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "a69efb32074f29798cc00f30d7769e868dc58f3315d2bcc535479e7e22db8993",
       "created_at": "2026-06-12T11:47:32Z",
-      "updated_at": "2026-06-12T11:47:32Z"
+      "updated_at": "2026-06-12T14:04:08Z",
+      "closed_at": "2026-06-12T14:04:08Z"
     },
     {
       "id": "MGIT-11.4",
@@ -1333,15 +1348,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "70589d6ef8409d7ea5bdfcd9d50967b6fd93831eccd6317bffa784f1e33391b0",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:41Z"
+      "updated_at": "2026-06-12T14:53:32Z",
+      "closed_at": "2026-06-12T14:53:32Z"
     },
     {
       "id": "MGIT-11.4.1",
@@ -1357,15 +1373,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "2452af9383cac5811ede6f64bcc93b69f0a7b7414ac54e836bbacf0bbdc60df0",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-12T14:35:51Z",
+      "closed_at": "2026-06-12T14:35:51Z"
     },
     {
       "id": "MGIT-11.4.2",
@@ -1381,15 +1398,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "e013aaf6615dc2f6500d0ee4672ae70962956b4231a119cacf41bde6f5aafdfe",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-12T14:40:09Z",
+      "closed_at": "2026-06-12T14:40:09Z"
     },
     {
       "id": "MGIT-11.4.3",
@@ -1405,15 +1423,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "71e634148d861e9f7e33612028287bab491a73b88548d7832e8be8042e625ba9",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-12T14:42:46Z",
+      "closed_at": "2026-06-12T14:42:46Z"
     },
     {
       "id": "MGIT-11.5",
@@ -1429,15 +1448,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "9b5ff23a3bf18459583d8fbc3ae3c65299334ae51966fa48dab31142c085a7ff",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:41Z"
+      "updated_at": "2026-06-16T11:01:29Z",
+      "closed_at": "2026-06-16T11:01:29Z"
     },
     {
       "id": "MGIT-11.5.1",
@@ -1453,15 +1473,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "ae2ecb046015f406f0743d3f6e6c0f3b633fd06616c3724390ca31f2ee905a4d",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-15T10:45:20Z",
+      "closed_at": "2026-06-15T10:45:20Z"
     },
     {
       "id": "MGIT-11.5.2",
@@ -1477,15 +1498,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "375351a5f2c8f7c98666cc265350c7b88dd1d229106f43a23e7ddc4d30e4405c",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-12T15:18:57Z",
+      "closed_at": "2026-06-12T15:18:57Z"
     },
     {
       "id": "MGIT-11.5.3",
@@ -1501,15 +1523,15 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "deferred",
       "progress": 0,
-      "assignee": "",
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "2344712b18907a1ac4eca9f752d75a1e87aef57bfc0c49ef7c1ada55e5ba8e9b",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-15T15:29:32Z"
     },
     {
       "id": "MGIT-11.5.4",
@@ -1525,15 +1547,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "3a96df7129c21f2a2c31483070cfa3829d96242d3fb862ab5f8f2936b0803709",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-12T16:27:00Z",
+      "closed_at": "2026-06-12T16:27:00Z"
     },
     {
       "id": "MGIT-11.5.5",
@@ -1549,15 +1572,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "fc205b0c9afb094acf3b1bbaf6cb8008dbc28b4cfbe02f0cecbdf4d852b6287f",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-13T07:25:40Z",
+      "closed_at": "2026-06-13T07:25:40Z"
     },
     {
       "id": "MGIT-11.5.6",
@@ -1573,15 +1597,90 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "fable-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "b00926891c0a933b02760c4061a59baf1e254271dc79ee1aa7c379c49506fd2d",
       "created_at": "2026-06-12T11:47:32Z",
-      "updated_at": "2026-06-12T11:47:32Z"
+      "updated_at": "2026-06-13T07:41:26Z",
+      "closed_at": "2026-06-13T07:41:26Z"
+    },
+    {
+      "id": "MGIT-11.5.7",
+      "parent_id": "MGIT-11.5",
+      "depth": 2,
+      "seq": 7,
+      "project": "MGIT",
+      "title": "Provision Linux EC2 runner (KVM/nested virt) for sandbox backend testing",
+      "description": "",
+      "prompt": "Provision an EC2 instance for MGIT-11.5.1 (Linux KVM backend) integration testing. Requirements: (1) bare-metal instance type (e.g. c5.metal / m5zn.metal) or a virtualized type verified to expose /dev/kvm — Firecracker requires KVM; standard nitro VMs do NOT support nested virt; (2) Firecracker VMM \u003e= v1.14.1 AND the CVE-2026-5747 virtio-pci fix (see pkg-approvals/approved/PACKAGE-APPROVAL-REQUEST-firecracker-go-sdk.md Known-Vulnerability Check: CVE-2026-1386 jailer symlink fixed v1.14.1; jailer directory must be owner-only per the AWS bulletin); (3) Go toolchain + golangci-lint matching the repo; (4) wire as a CI runner (GitHub Actions self-hosted or SSH target) running: go test ./... -race and the MGIT-11.5.1 integration suite behind a kvm build tag; (5) record the instance AMI/VMM versions in SANDBOX-IMAGES.md when MGIT-11.12.2 lands. Owner: vimal (infrastructure); agent completes the CI wiring once access is provided.",
+      "acceptance": "EC2 instance reachable; /dev/kvm present; Firecracker \u003e= v1.14.1 with virtio-pci fix installed; repo test suite green on the runner; MGIT-11.5.1 integration tests runnable behind a kvm tag.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "cancelled",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "100ed663aa2f54ddc02cc9f09b27b7eabac1e0633a7f891f49ef3a3ea4ceab16",
+      "created_at": "2026-06-12T15:05:16Z",
+      "updated_at": "2026-06-16T10:38:28Z",
+      "closed_at": "2026-06-16T10:38:28Z"
+    },
+    {
+      "id": "MGIT-11.5.8",
+      "parent_id": "MGIT-11.5",
+      "depth": 2,
+      "seq": 8,
+      "project": "MGIT",
+      "title": "Provision Windows desktop runner (Hyper-V) for sandbox backend testing",
+      "description": "",
+      "prompt": "Bring up the Windows desktop machine as the MGIT-11.5.3 (Hyper-V backend) build/test runner. Requirements: (1) Windows 10/11 Pro or Server with the Hyper-V platform feature enabled (Hyper-V + Windows Hypervisor Platform); (2) Go toolchain + golangci-lint matching the repo; (3) hcsshim \u003e= 0.12.0 target (no current advisories; historical CVE-2018-8115 fixed in 0.6.10 — see pkg-approvals/approved/PACKAGE-APPROVAL-REQUEST-microsoft-hcsshim.md); (4) wire as a CI runner running GOOS=windows builds, go test ./... and the MGIT-11.5.3 integration suite behind a hyperv build tag; (5) note: sandboxd peer auth on Windows needs the named-pipe SID mechanism (see internal/sandboxd/peercred_unsupported.go and lockfile_other.go — both fail closed today and are replaced in MGIT-11.5.3). Owner: vimal (infrastructure); agent completes the CI wiring once access is provided.",
+      "acceptance": "Windows machine reachable with Hyper-V enabled; repo builds and unit tests green on the runner; MGIT-11.5.3 integration tests runnable behind a hyperv tag.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "cancelled",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "c0aed9a19207fe6144e33e97854eb5bd148113cae3ef04781fd55e5c1902d34e",
+      "created_at": "2026-06-12T15:05:22Z",
+      "updated_at": "2026-06-16T10:38:30Z",
+      "closed_at": "2026-06-16T10:38:30Z"
+    },
+    {
+      "id": "MGIT-11.5.9",
+      "parent_id": "MGIT-11.5",
+      "depth": 2,
+      "seq": 9,
+      "project": "MGIT",
+      "title": "Core mgit Windows-host portability (Unix-first assumptions)",
+      "description": "",
+      "prompt": "Native Windows test run on the runner (go1.26.4) showed the module BUILDS + VETs cleanly on Windows, but several PRE-EXISTING core packages fail their tests there because the codebase is Unix-first. Failing packages/tests observed 2026-06-13:\n- internal/store/lock: TestAcquire_* (flock-based advisory lock, MGIT-10.1 — the !linux\u0026\u0026!darwin path is unvalidated/incorrect on Windows; LockFileEx vs flock semantics).\n- internal/store/git: TestRepository_Init_ParentMissing, _InvalidPath, TestSyncingStorer_* (path handling + fsync-aware storer assumptions).\n- internal/service: TestRestoreService_RestoreFile_PathTraversal, _CreatesParentDir (path separator / traversal checks).\n- e2e: TestConcurrent_* (×3), TestExport_File, TestRestore_* (concurrency + path + perms).\n\nDECISION REQUIRED: is Windows a supported HOST platform for core mgit, or only the target for the sandbox guest backend? This matters because mgit-sandboxd + the Hyper-V backend run on a Windows host, which implies core mgit must work there. If Windows host is in scope: fix flock-\u003eLockFileEx (store/lock), path handling (store/git, service), perms-\u003eACLs (owner-only files: policy store FR-17.13, images trust root FR-17.38 — currently os.Chmod is a near-noop on Windows so owner-only is NOT enforced), and wire a Windows CI matrix entry. If out of scope: document core mgit as Unix-host-only and run only the sandbox-relevant subset on the Windows runner. NOT an FR-17 deliverable per se but blocks a usable Windows sandbox host. Owner: vimal (scope decision).",
+      "acceptance": "A documented decision on Windows host support; if in scope, store/lock + store/git + service + e2e pass on Windows and owner-only files use ACLs; if out of scope, documented and CI scoped accordingly.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "deferred",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "d0fe33ddf84fac636f46a5d78e6c8c31345035c8e2051a1a1f99555be5e81a97",
+      "created_at": "2026-06-13T10:14:29Z",
+      "updated_at": "2026-06-16T16:10:14Z"
     },
     {
       "id": "MGIT-11.6",
@@ -1597,7 +1696,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -1605,7 +1704,7 @@
       "weight": 1,
       "content_hash": "0f1d17caab6ef950c3ef8f075255a928c2130addc4bd21f5b690533f6fa3d77e",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:41Z"
+      "updated_at": "2026-06-16T11:01:29Z"
     },
     {
       "id": "MGIT-11.6.1",
@@ -1621,15 +1720,15 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "opus-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "c7faa7978addc107b98a9bba1edc7d071bb27eea1317dcb3d5997d21181c4178",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-16T11:34:28Z"
     },
     {
       "id": "MGIT-11.6.2",
@@ -1645,7 +1744,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -1653,7 +1752,7 @@
       "weight": 1,
       "content_hash": "819ad8f4c8d27493dbfa4b24f35e042a57f4ea75a54f30ae41c6a50703b9c3a1",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-16T11:32:31Z"
     },
     {
       "id": "MGIT-11.6.3",
@@ -1669,7 +1768,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -1677,7 +1776,7 @@
       "weight": 1,
       "content_hash": "2a59a49017ef12516e5e82ec8b855c21544cbadb82853ef9077a7551dea2618e",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-16T11:32:34Z"
     },
     {
       "id": "MGIT-11.7",
@@ -1813,15 +1912,15 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
+      "status": "open",
+      "progress": 0.6666666666666666,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
       "weight": 1,
       "content_hash": "f38755cf2c0b8c74ebcef33ccc713d4bfbcc4117843966dfe9a83e176075c9f1",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:41Z"
+      "updated_at": "2026-06-16T11:52:18Z"
     },
     {
       "id": "MGIT-11.8.1",
@@ -1837,15 +1936,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "860c885b588c6afc0c347fcfc806977e67b0a59500f298b091ca9f1665883ba7",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-16T12:11:10Z",
+      "closed_at": "2026-06-16T12:11:10Z"
     },
     {
       "id": "MGIT-11.8.2",
@@ -1861,15 +1961,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "801481156f495e93a4406a33bcb0fbeb1b911140187976ba01a09bc0b92ea9d3",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-16T14:40:10Z",
+      "closed_at": "2026-06-16T14:40:10Z"
     },
     {
       "id": "MGIT-11.8.3",
@@ -1885,15 +1986,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "144d37656a81b34637e7d9bbf99f0113acb6c78ed5e400fdb4e51e3b9aa49df9",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-16T14:16:11Z",
+      "closed_at": "2026-06-16T14:16:11Z"
     },
     {
       "id": "MGIT-11.8.4",
@@ -1909,15 +2011,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "1b05e23722712f9f37eca7e6bca72397eeab29a7033e66a5aa9eb2f7c71a0bf2",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-16T15:25:44Z",
+      "closed_at": "2026-06-16T15:25:44Z"
     },
     {
       "id": "MGIT-11.8.5",
@@ -2110,6 +2213,222 @@
       "content_hash": "3ba153dec7a8fa2cfaeb91f0837d948637b5d6f6589d8a0f6e9a5f241ab22fcd",
       "created_at": "2026-06-12T11:16:40Z",
       "updated_at": "2026-06-12T11:42:50Z"
+    },
+    {
+      "id": "MGIT-12",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 12,
+      "project": "MGIT",
+      "title": "Windows-native sandbox backend (WCOW)",
+      "description": "Native Windows sandbox backend using Hyper-V-isolated Windows containers (WCOW), Windows guest, host-matching. Deferred until there is developer demand for Windows-host support; Windows hosts are served by the audited container fallback until then. Implements ADR-006 / FR-17.39.",
+      "prompt": "EPIC: Windows-native sandbox backend (WCOW) for FR-17. Build the Windows sandbox backend per ADR-006 and FR-17.39: the guest is a WINDOWS guest in a Hyper-V-isolated Windows container (WCOW), NOT a Linux guest (LCOW). Host-matching principle — a Windows developer's toolchain (npm/python/go/cargo/MSVC) runs on Windows, so the sandbox isolates a Windows execution environment; this also removes Linux\u003c-\u003eWindows path/EOL/permission translation at the land boundary.\n\nWHY DEFERRED: MGIT-11.5.3 reached a decision + validation but no implementation. Pick this epic up when developers request Windows-host sandbox support. Until then Windows hosts use the reduced-isolation container fallback (--backend container --acknowledge-reduced-isolation).\n\nVALIDATED (2026-06-15 WCOW pilot, recorded on MGIT-11.5.3): on a Win10 Pro 22H2 host, docker --isolation=hyperv booted an ltsc2019 Windows container, and Go 1.23.4 / Node 20.18.1+npm (React/Angular) / Python 3.12.7 / C (gcc 14.2) / C++ (g++ 14.2 STL) / Rust 1.96 (gnu) all compiled+ran inside it. So the guest environment is proven; this epic is the productionization.\n\nKEY CONSTRAINTS (read ADR-006, ADR-005, FR-17.* esp. FR-17.39/27/35/15/16/17/31, AUDIT-FR17-SANDBOX-*):\n- Drive WCOW HEADLESSLY via the HCS API (vmcompute.dll/computecore.dll via x/sys/windows) and/or containerd — NEVER Docker Desktop (GUI/session-bound, unfit for a daemon; it was the source of all SSH-pilot flakiness).\n- Do NOT vendor hcsshim internal/ (unsupported-code supply-chain hazard); prefer the documented HCS public API or containerd's public client.\n- Control/land channel = HvSocket (AF_HYPERV), peer-bound to the VM identity GUID (FR-17.27); framed protocol per FR-17.35; enforce ceilings.\n- Windows mgit-guest agent (the current one is //go:build linux); transport-only, no signing key (SEC-01).\n- Prepared, digest-pinned Windows base image (FR-17.17/31, SANDBOX-IMAGES register, Ed25519 signing FR-17.29/38). Version matrix: ltsc2019 for a Win10 host, ltsc2022 for Win11/Server 2022 (Hyper-V isolation needs host build \u003e= container base build).\n- This backend will NOT reuse the Linux/macOS microvm.Manager seam (kernel+rootfs); it is a distinct container+UVM model, closer to a Hyper-V-isolated variant of the container backend. Still behind model.SandboxManager (FR-17.15), wired via select.go.\n- All CLAUDE.md rules apply: TDD, coverage gates, pre-import vuln checks + package approval for any new dep, /simplify after green, story-closure independent review + security pass. Commit format {type}({scope}): {desc} + Refs: MGIT-12.x; NO co-authored-by / agent name / Generated-with trailer (information-exposure control).\n- DEV/TEST target: Windows 11 Pro or Windows Server 2022 (for ltsc2022 + headless containerd). Win10 22H2 works only with ltsc2019.",
+      "acceptance": "A Windows host launches a per-task Hyper-V-isolated Windows container (WCOW) via mgit; the developer's Windows toolchain runs inside it; the worktree is mounted at the identical path; control/land works over HvSocket with VM-GUID peer binding; quarantine-then-land enforces dual-hash + task binding + attestation identically to the Linux backend; teardown leaves no host residue; backend selectable via select.go; coverage + lint + vuln gates met; story-closure independent review + security pass completed.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 4,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "27cafc9905b6a735f5dde5e8056ab625214cbd1732c75b19723c86152f4b22b0",
+      "created_at": "2026-06-15T15:27:00Z",
+      "updated_at": "2026-06-15T15:27:00Z"
+    },
+    {
+      "id": "MGIT-12.1",
+      "parent_id": "MGIT-12",
+      "depth": 1,
+      "seq": 1,
+      "project": "MGIT",
+      "title": "WCOW launch spike \u0026 API-surface decision",
+      "description": "Prototype headless launch of a Hyper-V-isolated Windows container from Go and decide the API surface (no Docker Desktop, no internal-code vendoring).",
+      "prompt": "Spike + decide HOW to launch/manage a Hyper-V-isolated Windows container (WCOW) from Go, HEADLESSLY. Evaluate: (a) HCS API direct — vmcompute.dll/computecore.dll via golang.org/x/sys/windows, constructing the HCS compute-system JSON document for a Windows container utility VM; (b) containerd public client + containerd-shim-runhcs-v1 with the hyperv isolation runtime/annotation; (c) minimal hcsshim public surface. Reject Docker Desktop (GUI/session-bound) and vendoring hcsshim internal/uvm (unsupported code). DELIVERABLE: a working proof on a Win11 Pro / Server 2022 box — launch an isolated Windows container, exec a command, reach it over HvSocket, tear down with no host residue — plus a written recommendation of the API surface with tradeoffs. Pre-import vuln check + PACKAGE-APPROVAL for any new dependency before importing. Refs: ADR-006, FR-17.39, FR-17.15.\n\nACCEPTANCE CRITERIA:\n- Documented decision (HCS-direct vs containerd vs hcsshim) with rationale, no Docker Desktop, no internal-code vendoring.\n- A reproducible proof script that launches an isolated Windows container headlessly, execs, and tears down cleanly.\n- Vuln check + approval recorded for any new dep.",
+      "acceptance": "A documented API-surface decision and a working headless launch/exec/teardown proof of a Hyper-V-isolated Windows container on Win11 Pro/Server 2022; any new dependency vuln-checked and approved.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 4,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "24c7ed7a119878fbfb65a0f1d55e537ba59f3310964377405564c91844122062",
+      "created_at": "2026-06-15T15:27:13Z",
+      "updated_at": "2026-06-15T15:28:35Z"
+    },
+    {
+      "id": "MGIT-12.2",
+      "parent_id": "MGIT-12",
+      "depth": 1,
+      "seq": 2,
+      "project": "MGIT",
+      "title": "Windows mgit-guest agent",
+      "description": "A Windows build of mgit-guest (the current one is //go:build linux): in-guest supervisor + clean-env exec + framed IO over HvSocket, transport-only.",
+      "prompt": "Build a Windows mgit-guest agent. The existing internal/guest + cmd/mgit-guest are //go:build linux (vsock, /work virtiofs, tmpfs). Mirror that contract for the Windows guest: supervise command execution inside the WCOW container, clean-env exec (host env never inherited — BaseEnv + per-request env only), framed stdout/stderr/result protocol per FR-17.35 over HvSocket, transport-only with NO signing key (SEC-01, FR-17.6). Reuse the model.ExecRequest/ExecResult types and the framing already defined for the Linux guest where possible; share cross-platform code, keep OS-specific bits behind build tags. Refs: FR-17.6, FR-17.16, FR-17.35, ADR-006.\n\nACCEPTANCE CRITERIA:\n- cmd/mgit-guest builds for windows/amd64 and runs as the container's entry/supervisor.\n- Clean-env exec verified (host environment not leaked into the guest).\n- Framed exec protocol over HvSocket matches the Linux guest's wire contract; oversized/malformed requests fail closed.\n- No signing material in the guest.",
+      "acceptance": "cmd/mgit-guest builds and runs on Windows as the WCOW supervisor; clean-env exec and the framed HvSocket protocol work; transport-only (no signing key); shares the cross-platform exec types with the Linux guest.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 4,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "9a4f99bbcd72ed99309b620e4daec3e0545c29012c362eaa98d6daefa54f5d89",
+      "created_at": "2026-06-15T15:27:22Z",
+      "updated_at": "2026-06-15T15:28:37Z"
+    },
+    {
+      "id": "MGIT-12.3",
+      "parent_id": "MGIT-12",
+      "depth": 1,
+      "seq": 3,
+      "project": "MGIT",
+      "title": "HvSocket control/land transport (AF_HYPERV)",
+      "description": "Host↔guest control and land transport over Hyper-V sockets (AF_HYPERV), peer-bound to the VM identity GUID per FR-17.27.",
+      "prompt": "Implement the host-side and guest-side HvSocket (AF_HYPERV) transport for the WCOW backend — the Windows analog of the Linux vsock channel. Register the GuestCommunicationServices service GUID (HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Virtualization\\GuestCommunicationServices); peer-bind each guest's control/land channel to its VM identity GUID and REJECT messages from any other peer (FR-17.27); invalidate the binding at teardown so a recycled VM GUID cannot inherit a destroyed sandbox's channel. Implement the FR-17.35 framed protocol with enforced ceilings (max object 64 MiB, max objects/land 100000, max payload 4 GiB; canonicalize tree-entry paths, reject traversal/non-canonical). Pure-Go AF_HYPERV via golang.org/x/sys/windows if sufficient, else an approved lib (vuln-check first). Refs: FR-17.27, FR-17.35, ADR-006.\n\nACCEPTANCE CRITERIA:\n- Host and guest exchange framed control/land messages over HvSocket.\n- Peer binding to VM-GUID enforced; cross-guest addressing rejected and audited; binding invalidated at teardown.\n- Protocol ceilings + path canonicalization enforced (fail closed).",
+      "acceptance": "Framed control/land messaging over HvSocket works host↔guest; VM-GUID peer binding rejects cross-guest traffic and is invalidated on teardown; FR-17.35 ceilings and path canonicalization enforced.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 4,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "71f65397b773d6375ce2681377e1fcd37be4cf2bc637da1f938448abb53eb6bd",
+      "created_at": "2026-06-15T15:27:30Z",
+      "updated_at": "2026-06-15T15:28:38Z"
+    },
+    {
+      "id": "MGIT-12.4",
+      "parent_id": "MGIT-12",
+      "depth": 1,
+      "seq": 4,
+      "project": "MGIT",
+      "title": "WCOW backend manager (model.SandboxManager)",
+      "description": "Implement model.SandboxManager for Windows over the chosen WCOW API; distinct from the Linux/macOS microvm.Manager (container+UVM model). Wire into select.go.",
+      "prompt": "Implement the Windows WCOW backend behind model.SandboxManager (FR-17.15): Launch/List/Exec/Stop/Remove/Resolve over the API chosen in the launch spike. Read-only prepared base image + per-sandbox writable layer (copy-on-write); mount ONLY the bound worktree at the identical absolute path (FR-17.3); sensitive/host-trusted paths mounted read-only (FR-17.14); resource caps + global ceiling (FR-17.26); per-sandbox network policy none/open/allowlist enforced host-side (FR-17.7/8). This is a DISTINCT manager from microvm.Manager (container+utility-VM model, not kernel+rootfs) — do not force-fit the microvm seam. Register the backend in internal/sandboxd/select.go (native Windows backend, not the reduced-isolation fallback). Refs: FR-17.3/7/8/14/15/26, ADR-006.\n\nACCEPTANCE CRITERIA:\n- SandboxManager implemented for Windows; launch→exec→stop→remove lifecycle works on a real Win11/Server 2022 host.\n- Worktree-only mount at identical path; sensitive paths read-only; resource caps + global ceiling enforced; network policy enforced host-side.\n- Selectable via select.go as the native Windows backend; missing prerequisites fail closed (no silent downgrade).",
+      "acceptance": "A working Windows SandboxManager (launch/exec/stop/remove) on real hardware with worktree-only identical-path mount, RO sensitive paths, resource/network policy enforcement, wired into select.go and failing closed when unavailable.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 4,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "144658cd0611dbc224f2ee6a94f05be471d1bf1253b3ef5cb119a2f8b9fb55ad",
+      "created_at": "2026-06-15T15:27:40Z",
+      "updated_at": "2026-06-15T15:28:41Z"
+    },
+    {
+      "id": "MGIT-12.5",
+      "parent_id": "MGIT-12",
+      "depth": 1,
+      "seq": 5,
+      "project": "MGIT",
+      "title": "Prepared Windows base image + SANDBOX-IMAGES register entry",
+      "description": "Build/pin a digest-pinned Windows sandbox base image with the dev toolchains; add to images.lock + SANDBOX-IMAGES register with Ed25519 signing.",
+      "prompt": "Produce the Windows sandbox guest image. A prepared, digest-pinned Windows base (Server Core) with the common developer toolchains baked in (Go, Node/npm, Python, MSVC Build Tools or MinGW for C/C++/Rust) — NOT installed at runtime. Pin in images.lock (host-side, FR-17.13/17), add to the SANDBOX-IMAGES.md register (FR-17.31) with version/digest and a known-anomaly review, and sign with the Ed25519 trust root (FR-17.29/38). Provide a version matrix: ltsc2019 (runs on a Win10 22H2 host) and ltsc2022 (Win11/Server 2022 host) — Hyper-V isolation requires host build \u003e= container base build. Document the image build (Dockerfile/script) as a configuration item under FR-17.36 change control. Refs: FR-17.17/29/31/36/38, ADR-006.\n\nACCEPTANCE CRITERIA:\n- A digest-pinned Windows base image with toolchains, reproducibly built and documented.\n- images.lock + SANDBOX-IMAGES register entry with digest + known-anomaly review; Ed25519 signature verifies against the trust root.\n- ltsc2019 + ltsc2022 variants with the host-build compatibility note.",
+      "acceptance": "A reproducible, digest-pinned, signed Windows sandbox base image (ltsc2019 + ltsc2022) registered in images.lock and SANDBOX-IMAGES.md with toolchains baked in and signature verification passing.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 4,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "ec3a4958957207e981468dc172749b0c392a9fa40d447548d00fbfddf0d35c01",
+      "created_at": "2026-06-15T15:27:48Z",
+      "updated_at": "2026-06-15T15:28:42Z"
+    },
+    {
+      "id": "MGIT-12.6",
+      "parent_id": "MGIT-12",
+      "depth": 1,
+      "seq": 6,
+      "project": "MGIT",
+      "title": "Provision Windows 11 Pro / Server 2022 runner (Hyper-V + headless containers)",
+      "description": "Infra: a Win11 Pro / Server 2022 box (or cloud VM with nested virt) with Hyper-V + Containers + a headless container engine, for building/testing the WCOW backend. Owner: vimal.",
+      "prompt": "Provision the dev/test runner for the WCOW backend. Requirements: Windows 11 Pro OR Windows Server 2022 (for the ltsc2022 base and current Hyper-V isolation), with the Hyper-V and Containers features enabled, nested virtualization if it is itself a VM, a HEADLESS container engine (containerd for Windows, or the chosen HCS path — NOT dependent on Docker Desktop's GUI), SSH access for the agent, and Go. NOTE from the 2026-06-15 pilot: Docker Desktop is GUI/session-bound and unreliable over headless SSH — provision a headless engine instead. A Win10 22H2 host works only with ltsc2019; Win11/Server 2022 is needed for ltsc2022. Owner: vimal (infra). This blocks the spike (MGIT-12.1) and backend (MGIT-12.4) real-hardware work.\n\nACCEPTANCE CRITERIA:\n- Win11 Pro / Server 2022 reachable over SSH with Hyper-V + Containers enabled and a headless container engine running.\n- Confirmed able to launch a Hyper-V-isolated Windows container headlessly (no Docker Desktop GUI dependency).",
+      "acceptance": "A reachable Win11 Pro/Server 2022 runner with Hyper-V + Containers + a headless container engine, confirmed able to launch a Hyper-V-isolated Windows container without Docker Desktop.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 4,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "4de7b7b4f4cd5b2c61e7fd4b5f8b61ae0a1bcdb9923c7c0eede7205f0c5a01b6",
+      "created_at": "2026-06-15T15:27:56Z",
+      "updated_at": "2026-06-15T15:28:33Z"
+    },
+    {
+      "id": "MGIT-12.7",
+      "parent_id": "MGIT-12",
+      "depth": 1,
+      "seq": 7,
+      "project": "MGIT",
+      "title": "WCOW integration/e2e, fault-injection \u0026 compliance",
+      "description": "Real WCOW boot/exec/land/teardown e2e tests, fault-injection categories, and the DO-330 tool-qualification position for the Windows VMM/guest.",
+      "prompt": "End-to-end + compliance for the Windows backend. Real-hardware tests: per-task isolated Windows container boots, execs the toolchain, quarantine-then-land enforces dual-hash (ADR-002) + task-ID binding + host-anchored attestation IDENTICALLY to the Linux backend (FR-17.5/6), residue-free teardown (FR-17.19). Fault-injection categories (FR-17.33) adapted to WCOW: VM killed mid-exec; HvSocket dropped mid-land (land atomicity holds); mount corruption; snapshot/base integrity; TTL expiry during land; attestation replay. Record the DO-330 tool-qualification position for the Windows VMM + Windows mgit-guest (FR-17.30) in the ADR-003 extension; update AUDIT-FR17-SANDBOX-* applicability for the WCOW backend. Meet coverage/lint/race/vuln gates. Refs: FR-17.5/6/19/30/33, ADR-002, ADR-003, ADR-006.\n\nACCEPTANCE CRITERIA:\n- Real-hardware e2e: boot→exec→land→teardown with land verification identical to the Linux backend.\n- Fault-injection categories pass (land atomicity preserved under HvSocket drop, etc.).\n- DO-330 tool-qualification position recorded; AUDIT docs updated; coverage/lint/vuln gates met.",
+      "acceptance": "Real-hardware WCOW e2e (boot/exec/land/teardown) with land verification matching the Linux backend, passing fault-injection categories, DO-330 position recorded, AUDIT docs updated, and all quality gates met.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 4,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "090949ae2705699042434c5e86de6bb05cb70fc02552019f37a037fd0c08df27",
+      "created_at": "2026-06-15T15:28:05Z",
+      "updated_at": "2026-06-15T15:28:44Z"
+    },
+    {
+      "id": "MGIT-12.8",
+      "parent_id": "MGIT-12",
+      "depth": 1,
+      "seq": 8,
+      "project": "MGIT",
+      "title": "WCOW backend story-closure review + security pass",
+      "description": "Independent code review + security pass over the whole Windows WCOW backend before the epic closes.",
+      "prompt": "Mandatory closure gate for the Windows WCOW backend. An INDEPENDENT reviewer (separate agent/session or human, not the implementer) reviews the entire delivered backend: requirement traceability (every FR-17.39 / FR-17.* and ADR-006 criterion → code → test), layered-architecture + dependency rules, SQL/append-only laws, go-git rules, the security-audit remediations (SEC-01..12, F-01..12) as they apply to WCOW (esp. SEC-01 host-anchored attestation, SEC-10 HvSocket peer binding, SEC-02 host-only policy), function/file size limits, anti-stub verification, and that NO commit carries a co-authored-by/agent/Generated-with trailer. Run the security-review skill for the security pass. Log findings and resolve before closing MGIT-12. Refs: ADR-006, FR-17.39, AUDIT-FR17-SANDBOX-V1/SECURITY-V1.\n\nACCEPTANCE CRITERIA:\n- Independent review covering traceability, architecture, append-only/go-git rules, SEC/F findings applicability, size limits, anti-stub, commit-trailer hygiene.\n- Security-review skill pass completed; findings logged and resolved.",
+      "acceptance": "A completed independent review + security-review-skill pass over the full WCOW backend, with all findings logged and resolved, before MGIT-12 is marked done.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 4,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "ebab1252506c76739e7d7409192cb5d15c2e816c56db36e22b84d73a7aced543",
+      "created_at": "2026-06-15T15:28:12Z",
+      "updated_at": "2026-06-15T15:28:12Z"
     },
     {
       "id": "MGIT-2",
@@ -5956,6 +6275,12 @@
     },
     {
       "from_id": "MGIT-11.5.1",
+      "to_id": "MGIT-11.5.7",
+      "dep_type": "blocks",
+      "created_at": "2026-06-12T15:05:35Z"
+    },
+    {
+      "from_id": "MGIT-11.5.1",
       "to_id": "MGIT-11.6.1",
       "dep_type": "blocks",
       "created_at": "2026-06-12T11:42:49Z"
@@ -5992,21 +6317,9 @@
     },
     {
       "from_id": "MGIT-11.5.3",
-      "to_id": "MGIT-11.6.1",
+      "to_id": "MGIT-11.5.8",
       "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:49Z"
-    },
-    {
-      "from_id": "MGIT-11.5.3",
-      "to_id": "MGIT-11.6.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:49Z"
-    },
-    {
-      "from_id": "MGIT-11.5.3",
-      "to_id": "MGIT-11.6.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:49Z"
+      "created_at": "2026-06-12T15:05:37Z"
     },
     {
       "from_id": "MGIT-11.5.4",
@@ -6141,36 +6454,6 @@
       "created_at": "2026-06-12T11:42:50Z"
     },
     {
-      "from_id": "MGIT-11.7",
-      "to_id": "MGIT-11.8",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:16:41Z"
-    },
-    {
-      "from_id": "MGIT-11.7.1",
-      "to_id": "MGIT-11.8.1",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.1",
-      "to_id": "MGIT-11.8.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.1",
-      "to_id": "MGIT-11.8.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.1",
-      "to_id": "MGIT-11.8.4",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
       "from_id": "MGIT-11.7.1",
       "to_id": "MGIT-11.8.5",
       "dep_type": "blocks",
@@ -6181,30 +6464,6 @@
       "to_id": "MGIT-11.8.6",
       "dep_type": "blocks",
       "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
-      "from_id": "MGIT-11.7.2",
-      "to_id": "MGIT-11.8.1",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.2",
-      "to_id": "MGIT-11.8.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.2",
-      "to_id": "MGIT-11.8.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.2",
-      "to_id": "MGIT-11.8.4",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
     },
     {
       "from_id": "MGIT-11.7.2",
@@ -6220,30 +6479,6 @@
     },
     {
       "from_id": "MGIT-11.7.3",
-      "to_id": "MGIT-11.8.1",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.3",
-      "to_id": "MGIT-11.8.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.3",
-      "to_id": "MGIT-11.8.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.3",
-      "to_id": "MGIT-11.8.4",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.3",
       "to_id": "MGIT-11.8.5",
       "dep_type": "blocks",
       "created_at": "2026-06-12T11:42:50Z"
@@ -6253,30 +6488,6 @@
       "to_id": "MGIT-11.8.6",
       "dep_type": "blocks",
       "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
-      "from_id": "MGIT-11.7.4",
-      "to_id": "MGIT-11.8.1",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.4",
-      "to_id": "MGIT-11.8.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.4",
-      "to_id": "MGIT-11.8.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.4",
-      "to_id": "MGIT-11.8.4",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
     },
     {
       "from_id": "MGIT-11.7.4",
@@ -6633,6 +6844,48 @@
       "created_at": "2026-06-12T11:47:33Z"
     },
     {
+      "from_id": "MGIT-12.1",
+      "to_id": "MGIT-12.6",
+      "dep_type": "blocks",
+      "created_at": "2026-06-15T15:28:33Z"
+    },
+    {
+      "from_id": "MGIT-12.4",
+      "to_id": "MGIT-12.1",
+      "dep_type": "blocks",
+      "created_at": "2026-06-15T15:28:35Z"
+    },
+    {
+      "from_id": "MGIT-12.4",
+      "to_id": "MGIT-12.2",
+      "dep_type": "blocks",
+      "created_at": "2026-06-15T15:28:37Z"
+    },
+    {
+      "from_id": "MGIT-12.4",
+      "to_id": "MGIT-12.3",
+      "dep_type": "blocks",
+      "created_at": "2026-06-15T15:28:38Z"
+    },
+    {
+      "from_id": "MGIT-12.7",
+      "to_id": "MGIT-12.4",
+      "dep_type": "blocks",
+      "created_at": "2026-06-15T15:28:41Z"
+    },
+    {
+      "from_id": "MGIT-12.7",
+      "to_id": "MGIT-12.5",
+      "dep_type": "blocks",
+      "created_at": "2026-06-15T15:28:42Z"
+    },
+    {
+      "from_id": "MGIT-12.8",
+      "to_id": "MGIT-12.7",
+      "dep_type": "blocks",
+      "created_at": "2026-06-15T15:28:44Z"
+    },
+    {
       "from_id": "MGIT-2.1.3",
       "to_id": "MGIT-8.1.1",
       "dep_type": "blocks",
@@ -6785,6 +7038,13 @@
   ],
   "agents": [
     {
+      "agent_id": "fable-agent-01",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-11.5.3",
+      "last_heartbeat": "2026-06-12T12:15:22Z"
+    },
+    {
       "agent_id": "import-script",
       "project": "MGIT",
       "state": "working",
@@ -6795,11 +7055,11 @@
       "agent_id": "opus-agent-01",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-8.3.1",
+      "current_node_id": "MGIT-11.8.4",
       "last_heartbeat": "2026-04-07T05:58:03Z"
     }
   ],
   "sessions": null,
-  "node_count": 213,
-  "checksum": "9d69e888a0e456beb008132c4643cebff0e8c920a30cb6b7feb36ec9dc005442"
+  "node_count": 225,
+  "checksum": "3cabb0ae9d107d0920e3bcbc0b1720356d848ada7b8cb8e5702ead5f90d67d88"
 }
