@@ -17,7 +17,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
 	"time"
 
@@ -50,6 +49,8 @@ func run(args []string, logSink io.Writer) int {
 	flags := flag.NewFlagSet("mgit-sandboxd", flag.ContinueOnError)
 	flags.SetOutput(logSink)
 	socket := flags.String("socket", "", "unix socket path to serve (required)")
+	hostRoot := flags.String("host-root", "", "host config root holding images.lock + trust root (FR-17.13)")
+	workDir := flags.String("work-dir", "", "sandbox-local state root (overlays, sockets); never a worktree")
 	idleGrace := flags.Duration("idle-grace", 30*time.Second, "zero-sandbox linger before exit")
 	maxSandboxes := flags.Int("max-sandboxes", 8, "global concurrent-sandbox ceiling (FR-17.26)")
 	maxMemoryMB := flags.Int("max-memory-mb", 0, "global sandbox memory ceiling in MB (0 until policy wiring resolves the FR-17.26 50% host default)")
@@ -69,24 +70,33 @@ func run(args []string, logSink io.Writer) int {
 		logger.Error("missing required flag", "flag", "socket")
 		return 2
 	}
+	clock := func() time.Time { return time.Now().UTC() }
 
 	selected, err := sandboxd.SelectBackend(context.Background(), sandboxd.SelectOptions{
 		Backend:                     *backend,
 		AcknowledgeReducedIsolation: *ackReduced,
 		Audit:                       slogBackendAuditor{logger: logger},
 	}, sandboxd.BackendFactories{
-		// The hypervisor factory wires the platform microVM backend once
-		// image resolution exists (images.lock, MGIT-11.5.5); until then
-		// launches refuse honestly.
+		// The hypervisor factory wires the platform microVM backend:
+		// firecracker on Linux, vzf on macOS, graceful "unavailable" on
+		// every other OS (Windows runs core mgit without the sandbox in
+		// v1 — ADR-006, FR-17.39). Selection is build-tagged in
+		// platform_backend_*.go so the future WCOW backend slots in with
+		// no change here.
 		Hypervisor: func() (model.SandboxManager, error) {
-			return sandboxd.NewUnavailableManager(runtime.GOOS), nil
+			return newHypervisorBackend(hypervisorDeps{
+				hostRoot: *hostRoot,
+				workDir:  *workDir,
+				logger:   logger,
+				clock:    clock,
+			})
 		},
 		Container: func() (model.SandboxManager, error) {
 			return container.NewManager(container.Config{
 				Runner:         container.PodmanRunner{},
 				SensitivePaths: model.DefaultSandboxPolicy().SensitivePaths,
 				Logger:         logger,
-				Clock:          func() time.Time { return time.Now().UTC() },
+				Clock:          clock,
 			})
 		},
 	})
@@ -103,7 +113,7 @@ func run(args []string, logSink io.Writer) int {
 		SocketPath: *socket,
 		Manager:    manager,
 		Logger:     logger,
-		Clock:      func() time.Time { return time.Now().UTC() },
+		Clock:      clock,
 		IdleGrace:  *idleGrace,
 	})
 	if err != nil {
