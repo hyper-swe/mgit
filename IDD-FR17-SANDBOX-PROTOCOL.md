@@ -15,18 +15,54 @@ The **host (`mgit-sandboxd`) is the trust anchor**. `mgit-guest` is
 signing material** (SEC-01). Every integrity decision is made host-side
 on bytes the host itself read.
 
-## 1. Transport & framing — *MGIT-11.8.2*
+## 1. Transport & framing — *MGIT-11.8.2* (normative)
 
 Control/land messages travel over the per-sandbox vsock channel
 (AF_VSOCK on KVM/Virtualization.framework; AF_HYPERV/HvSocket on the
-future WCOW backend, FR-17.27). Framing, message schema, and the ceilings
-below are specified by MGIT-11.8.2.
+future WCOW backend, FR-17.27).
 
-Ceilings (FR-17.35 defaults, host-configurable per FR-17.13): max object
-**64 MiB**, max objects per land **100 000**, max total land payload
-**4 GiB**. Tree-entry paths are canonicalized; traversal (`..`) and
-non-canonical encodings are rejected. Strings bound for audit tables are
-length/control-char capped (F-09).
+### 1.1 Object framing
+
+A land payload is a stream of object frames. Each frame is:
+
+```
+[1 byte: object type][4 bytes: big-endian uint32 payload length][payload]
+```
+
+Object type is one of `C` (commit), `T` (tree), `B` (blob); any other
+tag is a schema violation. The stream ends at EOF on a frame boundary; a
+truncated header or body is a schema violation. All multi-byte integers
+are big-endian. Durations/timestamps elsewhere in the protocol are wire
+int64 nanoseconds (never JSON doubles — they exceed 2^53 at ~104 days).
+
+### 1.2 Ceilings (FR-17.35; host-configurable per FR-17.13)
+
+| Ceiling | Default | Enforcement |
+|---|---|---|
+| Per-object size | **64 MiB** | declared length checked **before** the body is read (zip-bomb defense) |
+| Objects per land | **100 000** | running count as the stream decodes |
+| Total land payload | **4 GiB** | running aggregate of declared lengths |
+
+Exceeding any ceiling, an unknown object type, or truncated framing
+yields `ErrLandVerificationFailed`; nothing partial is imported.
+
+### 1.3 Tree-entry path rules (NFR-5.6 at the land boundary, T8)
+
+Every tree-entry path MUST be a canonical, relative, slash-separated,
+worktree-confined path. The host rejects (`ErrLandVerificationFailed`):
+empty paths; absolute paths; any `..` component (traversal); and
+non-canonical encodings — `.` components, `//` (empty components),
+trailing `/`, backslashes, and NUL. Canonicality is `path.Clean(p) == p`
+plus an explicit leading-`..` check (Clean preserves a leading `..`).
+
+### 1.4 Audit-bound strings
+
+Guest-supplied strings destined for audit tables (e.g. commit message,
+author) are length- and control-char-sanitized at the store insert
+boundary (F-09, `internal/store/index`), which is the authoritative
+sanitization point; the land protocol additionally bounds object sizes
+above. Land import (MGIT-11.8.5) routes guest strings through that
+sanitizer when it composes audit records.
 
 ## 2. CID / peer binding — *MGIT-11.8.6*
 
