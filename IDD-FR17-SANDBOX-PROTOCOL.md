@@ -155,12 +155,23 @@ hashed and written from the same bytes) — never a second fetch (SEC-06).
 Both ADR-002 hashes (SHA-1 git object id, SHA-256 `content_hash`) are
 recomputed on those bytes; mismatch → `ErrLandVerificationFailed`.
 
-## 5. require_sandbox enforcement — *MGIT-11.8.4*
+## 5. require_sandbox enforcement — *MGIT-11.8.4* (normative)
 
-`require_sandbox` defaults **true** (safety-critical). Land refuses any
-commit lacking a valid host-issued attestation → `ErrUnattestedCommit`.
-With the policy explicitly disabled (audited), unsandboxed commits land
-with `sandbox_id = NULL`, a permanently visible audit gap (F-02/SEC-02).
+`require_sandbox` defaults **true** (safety-critical). The land gate
+(`land.EnforceRequireSandbox`) returns the `task_commits.sandbox_id` to
+record (`*string`; nil = SQL NULL) or refuses the commit:
+
+| Policy | Attestation | Outcome |
+|---|---|---|
+| on | none | refuse — `ErrUnattestedCommit` |
+| on | present but invalid | refuse — `ErrAttestationInvalid` (forged never lands) |
+| on | valid | land with `sandbox_id = att.SandboxID` |
+| off | (not consulted) | land with `sandbox_id = NULL` — the permanently visible F-02/SEC-02 gap |
+
+Policy-off always records NULL (the attestation is not consulted): a
+non-NULL `sandbox_id` therefore unambiguously means "produced and
+attested under enforced sandboxing." Disabling the policy is itself an
+audited event (FR-17.6).
 
 ## 6. Atomic land import — *MGIT-11.8.5*
 
