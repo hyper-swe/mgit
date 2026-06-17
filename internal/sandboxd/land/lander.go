@@ -30,12 +30,12 @@ type Brancher interface {
 	FastForward(ctx context.Context, taskID, commitHash string) error
 }
 
-// LandedCommit is one host-verified commit ready to persist: the git
-// objects to import, the commit metadata, its sandbox provenance from
-// the require_sandbox gate (nil = NULL, the unsandboxed gap), and its
-// append position on the task branch.
+// LandedCommit is one host-verified commit ready to persist: the commit
+// metadata, its sandbox provenance from the require_sandbox gate (nil =
+// NULL, the unsandboxed gap), and its append position on the task branch.
+// The git objects are not per-commit — they are one shared pool for the
+// whole land, passed to Land separately (see Lander.Land).
 type LandedCommit struct {
-	Objects   []Object
 	Commit    *model.Commit
 	SandboxID *string
 	Position  int
@@ -53,25 +53,26 @@ func NewLander(importer ObjectImporter, appender CommitAppender, brancher Branch
 	return &Lander{importer: importer, appender: appender, brancher: brancher}
 }
 
-// Land persists a verified batch all-or-nothing (FR-17.5): it imports
-// every commit's objects, then appends every task_commits row in one
+// Land persists a verified batch all-or-nothing (FR-17.5): it imports the
+// land's object pool, then appends every task_commits row in one
 // serialized transaction, then fast-forwards the task branch append-only.
 //
-// Ordering gives the atomicity guarantee: object import comes first and
-// is idempotent, so a failure there aborts before a single task_commits
-// row exists (leaving only harmless orphan objects, no partial land);
-// the append is the all-or-nothing commit point; the append-only
-// fast-forward publishes the branch last. The append records the host
-// receive-time (the store's clock); the guest's own timestamp stays
-// advisory inside the git object (SEC-11, FR-17.28). Refs: FR-17.5, SEC-11
-func (l *Lander) Land(ctx context.Context, taskID string, commits []LandedCommit) error {
+// The objects are one content-addressed pool for the whole land (a blob
+// or tree shared by several commits is one object, not one per commit),
+// so they are imported once rather than partitioned per commit. Ordering
+// gives the atomicity guarantee: the pool import comes first and is
+// idempotent, so a failure there aborts before a single task_commits row
+// exists (leaving only harmless orphan objects, no partial land); the
+// append is the all-or-nothing commit point; the append-only fast-forward
+// publishes the branch last. The append records the host receive-time
+// (the store's clock); the guest's own timestamp stays advisory inside
+// the git object (SEC-11, FR-17.28). Refs: FR-17.5, SEC-11
+func (l *Lander) Land(ctx context.Context, taskID string, pool []Object, commits []LandedCommit) error {
 	if len(commits) == 0 {
 		return nil
 	}
-	for _, c := range commits {
-		if err := l.importer.ImportObjects(ctx, c.Objects); err != nil {
-			return fmt.Errorf("land: import objects for %s: %w", c.Commit.CommitID, err)
-		}
+	if err := l.importer.ImportObjects(ctx, pool); err != nil {
+		return fmt.Errorf("land: import objects: %w", err)
 	}
 
 	rows := make([]index.TaskCommitInsert, 0, len(commits))

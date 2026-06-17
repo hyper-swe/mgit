@@ -214,3 +214,28 @@ func TestVerifyCommit_ImporterErrorSurfaces(t *testing.T) {
 type importerFunc func(objectData []byte, c *model.Commit) error
 
 func (f importerFunc) Import(objectData []byte, c *model.Commit) error { return f(objectData, c) }
+
+// TestCommitObjectsByID_IndexesCommitsSkipsOthers verifies the index maps
+// each commit object to its canonical id and ignores trees/blobs.
+func TestCommitObjectsByID_IndexesCommitsSkipsOthers(t *testing.T) {
+	data, c := validLanded(t)
+	byID, err := CommitObjectsByID([]Object{
+		{Type: ObjCommit, Data: data},
+		{Type: ObjTree, Data: []byte("tree bytes")},
+		{Type: ObjBlob, Data: []byte("blob bytes")},
+	})
+	require.NoError(t, err)
+	require.Len(t, byID, 1, "only the commit object is indexed")
+	assert.Equal(t, data, byID[c.CommitID])
+}
+
+// TestCommitObjectsByID_DuplicateCommit_Rejected verifies the same commit
+// object served twice in one land is rejected.
+func TestCommitObjectsByID_DuplicateCommit_Rejected(t *testing.T) {
+	data, _ := validLanded(t)
+	_, err := CommitObjectsByID([]Object{
+		{Type: ObjCommit, Data: data},
+		{Type: ObjCommit, Data: data},
+	})
+	require.ErrorIs(t, err, model.ErrLandVerificationFailed)
+}

@@ -11,6 +11,8 @@ package land
 import (
 	"fmt"
 
+	"github.com/go-git/go-git/v5/plumbing"
+
 	"github.com/hyper-swe/mgit/internal/model"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
@@ -42,6 +44,19 @@ type Importer interface {
 // FileDiffs are tree-derived (not in the commit object) and are bound
 // when the tree objects land and the diff is recomputed (MGIT-11.9).
 func VerifyCommit(objectData []byte, c *model.Commit, imp Importer) error {
+	if err := VerifyBinding(objectData, c); err != nil {
+		return err
+	}
+	return imp.Import(objectData, c)
+}
+
+// VerifyBinding performs the three hash-on-write bindings (identity,
+// object↔metadata, content_hash) on a single in-memory object buffer
+// WITHOUT importing. The land orchestrator (MGIT-11.9.3) verifies every
+// commit in a batch with this before any commit is imported, so a single
+// failure imports nothing (FR-17.5); VerifyCommit is VerifyBinding +
+// Import for single-commit callers. Refs: SEC-06, FR-17.24
+func VerifyBinding(objectData []byte, c *model.Commit) error {
 	if c == nil {
 		return fmt.Errorf("%w: nil commit", model.ErrLandVerificationFailed)
 	}
@@ -64,7 +79,33 @@ func VerifyCommit(objectData []byte, c *model.Commit, imp Importer) error {
 		return fmt.Errorf("%w: recomputed content_hash does not match claimed",
 			model.ErrLandVerificationFailed)
 	}
-	return imp.Import(objectData, c)
+	return nil
+}
+
+// CommitObjectsByID indexes the commit objects in objs by their git
+// object id — computed directly as the content hash of the object bytes,
+// which is what the id IS, so no two distinct byte buffers can share a
+// key. Non-commit objects (trees, blobs) are skipped here — their bytes
+// still land as part of the imported pool and are bound by the verified
+// commit's tree on the host. A duplicate id (the same commit object served
+// twice in one land) is a schema violation. Decoding and field binding are
+// VerifyBinding's job; this only pairs each claimed commit with the exact
+// bytes it will verify and import (no verify-then-refetch window, SEC-06).
+// Refs: FR-17.5, FR-17.24
+func CommitObjectsByID(objs []Object) (map[string][]byte, error) {
+	byID := make(map[string][]byte)
+	for _, obj := range objs {
+		if obj.Type != ObjCommit {
+			continue
+		}
+		id := plumbing.ComputeHash(plumbing.CommitObject, obj.Data).String()
+		if _, dup := byID[id]; dup {
+			return nil, fmt.Errorf("%w: duplicate commit object %s",
+				model.ErrLandVerificationFailed, id)
+		}
+		byID[id] = obj.Data
+	}
+	return byID, nil
 }
 
 // metadataMismatch returns the first audit field of want that diverges

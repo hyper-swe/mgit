@@ -59,11 +59,19 @@ func newIndex(t *testing.T) *index.Store {
 // landed builds a LandedCommit with a self-consistent commit.
 func landed(commitID, contentHash string, pos int, sandboxID *string) LandedCommit {
 	return LandedCommit{
-		Objects:   []Object{{Type: ObjCommit, Data: []byte(commitID)}},
 		Commit:    &model.Commit{CommitID: commitID, ContentHash: contentHash, AgentID: "agent-1"},
 		SandboxID: sandboxID,
 		Position:  pos,
 	}
+}
+
+// poolFor builds the land's object pool: one commit object per commit.
+func poolFor(commits ...LandedCommit) []Object {
+	objs := make([]Object, len(commits))
+	for i, c := range commits {
+		objs[i] = Object{Type: ObjCommit, Data: []byte(c.Commit.CommitID)}
+	}
+	return objs
 }
 
 func sptr(s string) *string { return &s }
@@ -81,7 +89,7 @@ func TestLand_Success_FastForwardAppendOnly(t *testing.T) {
 		landed("1111111111111111111111111111111111111111", "a1", 0, sptr("01JXSBSANDBOX0000000000000")),
 		landed("2222222222222222222222222222222222222222", "a2", 1, sptr("01JXSBSANDBOX0000000000000")),
 	}
-	require.NoError(t, l.Land(context.Background(), "MGIT-11.8.5", commits))
+	require.NoError(t, l.Land(context.Background(), "MGIT-11.8.5", poolFor(commits...), commits))
 
 	rows, err := idx.GetTaskCommits(context.Background(), "MGIT-11.8.5")
 	require.NoError(t, err)
@@ -90,6 +98,7 @@ func TestLand_Success_FastForwardAppendOnly(t *testing.T) {
 	assert.Equal(t, "MGIT-11.8.5", br.ffTask)
 	assert.Equal(t, "2222222222222222222222222222222222222222", br.ffCommit, "FF to the last commit")
 	assert.Equal(t, 2, imp.imported, "all objects imported")
+	assert.Equal(t, 1, imp.calls, "the pool is imported in one call")
 }
 
 // TestLand_PartialFailure_RollsBackAll verifies that a failure during
@@ -99,14 +108,14 @@ func TestLand_PartialFailure_RollsBackAll(t *testing.T) {
 	t.Run("object_import_fails", func(t *testing.T) {
 		idx := newIndex(t)
 		br := &fakeBrancher{}
-		l := NewLander(&fakeImporter{failOnNth: 2}, idx, br)
+		l := NewLander(&fakeImporter{failOnNth: 1}, idx, br)
 		commits := []LandedCommit{
 			landed("1111111111111111111111111111111111111111", "a1", 0, nil),
 			landed("2222222222222222222222222222222222222222", "a2", 1, nil),
 		}
-		require.Error(t, l.Land(context.Background(), "T", commits))
+		require.Error(t, l.Land(context.Background(), "T", poolFor(commits...), commits))
 		rows, _ := idx.GetTaskCommits(context.Background(), "T")
-		assert.Empty(t, rows, "no commit lands if any object import fails")
+		assert.Empty(t, rows, "no commit lands if the pool import fails")
 		assert.Zero(t, br.calls, "branch is not advanced on failure")
 	})
 
@@ -118,7 +127,7 @@ func TestLand_PartialFailure_RollsBackAll(t *testing.T) {
 		// on the second insert — the whole batch tx must roll back.
 		dup := "3333333333333333333333333333333333333333"
 		commits := []LandedCommit{landed(dup, "a1", 0, nil), landed(dup, "a2", 1, nil)}
-		require.Error(t, l.Land(context.Background(), "T", commits))
+		require.Error(t, l.Land(context.Background(), "T", poolFor(commits...), commits))
 		rows, _ := idx.GetTaskCommits(context.Background(), "T")
 		assert.Empty(t, rows, "a mid-batch insert failure rolls back the whole batch")
 		assert.Zero(t, br.calls)
@@ -134,7 +143,7 @@ func TestLand_HostReceiveTimeRecorded(t *testing.T) {
 	c := landed("4444444444444444444444444444444444444444", "a1", 0, nil)
 	// The guest claims a wildly different (advisory) timestamp.
 	c.Commit.CreatedAt = time.Date(1999, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, l.Land(context.Background(), "T", []LandedCommit{c}))
+	require.NoError(t, l.Land(context.Background(), "T", poolFor(c), []LandedCommit{c}))
 
 	rows, err := idx.GetTaskCommits(context.Background(), "T")
 	require.NoError(t, err)
@@ -147,10 +156,11 @@ func TestLand_HostReceiveTimeRecorded(t *testing.T) {
 func TestLand_SandboxProvenanceRecorded(t *testing.T) {
 	idx := newIndex(t)
 	l := NewLander(&fakeImporter{}, idx, &fakeBrancher{})
-	require.NoError(t, l.Land(context.Background(), "T", []LandedCommit{
+	commits := []LandedCommit{
 		landed("5555555555555555555555555555555555555555", "a1", 0, sptr("01JXSBSANDBOX0000000000000")),
 		landed("6666666666666666666666666666666666666666", "a2", 1, nil), // unsandboxed → NULL
-	}))
+	}
+	require.NoError(t, l.Land(context.Background(), "T", poolFor(commits...), commits))
 	rows, err := idx.GetTaskCommits(context.Background(), "T")
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
@@ -163,7 +173,7 @@ func TestLand_SandboxProvenanceRecorded(t *testing.T) {
 func TestLand_Empty_NoOp(t *testing.T) {
 	br := &fakeBrancher{}
 	l := NewLander(&fakeImporter{}, newIndex(t), br)
-	require.NoError(t, l.Land(context.Background(), "T", nil))
+	require.NoError(t, l.Land(context.Background(), "T", nil, nil))
 	assert.Zero(t, br.calls)
 }
 
@@ -172,9 +182,8 @@ func TestLand_Empty_NoOp(t *testing.T) {
 func TestLand_BrancherError_Surfaces(t *testing.T) {
 	idx := newIndex(t)
 	l := NewLander(&fakeImporter{}, idx, &fakeBrancher{err: errors.New("non-fast-forward")})
-	err := l.Land(context.Background(), "T", []LandedCommit{
-		landed("7777777777777777777777777777777777777777", "a1", 0, nil),
-	})
+	c := landed("7777777777777777777777777777777777777777", "a1", 0, nil)
+	err := l.Land(context.Background(), "T", poolFor(c), []LandedCommit{c})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fast-forward")
 }
