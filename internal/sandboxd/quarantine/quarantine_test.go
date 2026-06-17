@@ -184,3 +184,152 @@ func TestWorktreeMount_AbsentReturnsNil(t *testing.T) {
 	p := Plan{WorktreePath: "/abs/wt"} // no Mounts populated
 	assert.Nil(t, p.WorktreeMount())
 }
+
+// --- SEC-03: private sandbox-local object store (MGIT-11.6.2) ---
+
+// repoLayout returns a sibling worktree + shared store under a temp repo
+// root (the real ADR-004 layout: <repo>/worktrees/<task> and <repo>/.mgit),
+// plus a sandbox-local private store dir outside both.
+func repoLayout(t *testing.T) (worktree, shared, private string) {
+	t.Helper()
+	repo := t.TempDir()
+	worktree = filepath.Join(repo, "worktrees", "task-a")
+	require.NoError(t, os.MkdirAll(worktree, 0o700))
+	shared = filepath.Join(repo, ".mgit")
+	require.NoError(t, os.MkdirAll(shared, 0o700))
+	private = filepath.Join(t.TempDir(), "sandbox-a", "git")
+	return worktree, shared, private
+}
+
+// TestQuarantine_GuestGitUsesPrivateStore verifies the bound plan maps the
+// guest's .git to the sandbox-local private store (read-write), so guest
+// commits land in the private store, never the shared one. Refs: SEC-03
+func TestQuarantine_GuestGitUsesPrivateStore(t *testing.T) {
+	wt, shared, priv := repoLayout(t)
+	base, err := BuildPlan(wt, defaultPatterns())
+	require.NoError(t, err)
+
+	plan, err := base.BindPrivateStore(priv, shared)
+	require.NoError(t, err)
+
+	assert.Equal(t, priv, plan.PrivateStorePath)
+	m := plan.mountFor(priv)
+	require.NotNil(t, m, "the private store must be mounted")
+	assert.Equal(t, filepath.Join(wt, ".git"), m.GuestPath, "the guest .git resolves to the private store")
+	assert.False(t, m.ReadOnly, "the guest writes its micro-commits to the private store")
+}
+
+// TestQuarantine_SharedStoreUnreachable verifies no mount resolves into the
+// shared store, and that a shared store sitting inside the mounted worktree
+// is rejected (it would be a guest-visible file). Refs: SEC-03
+func TestQuarantine_SharedStoreUnreachable(t *testing.T) {
+	t.Run("sibling_shared_store_is_excluded", func(t *testing.T) {
+		wt, shared, priv := repoLayout(t)
+		writeFile(t, wt, ".claude/settings.json")
+		base, err := BuildPlan(wt, defaultPatterns())
+		require.NoError(t, err)
+		plan, err := base.BindPrivateStore(priv, shared)
+		require.NoError(t, err)
+		for _, m := range plan.Mounts {
+			rel, relErr := filepath.Rel(shared, m.HostPath)
+			withinShared := relErr == nil && rel != ".." && !filepath.IsAbs(rel) &&
+				(rel == "." || rel[0] != '.')
+			assert.False(t, withinShared, "mount %q resolves into the shared store", m.HostPath)
+		}
+	})
+
+	t.Run("shared_store_inside_worktree_rejected", func(t *testing.T) {
+		wt := t.TempDir()
+		base, err := BuildPlan(wt, defaultPatterns())
+		require.NoError(t, err)
+		insideShared := filepath.Join(wt, ".mgit") // would be a guest-visible file
+		_, err = base.BindPrivateStore(filepath.Join(t.TempDir(), "priv"), insideShared)
+		assert.ErrorIs(t, err, model.ErrSharedStoreReachable)
+	})
+}
+
+// TestQuarantine_CrossTaskObjectsHidden verifies the bound plan exposes
+// only this sandbox's worktree and private store as read-write — never the
+// shared store or another task's private store. Refs: SEC-03
+func TestQuarantine_CrossTaskObjectsHidden(t *testing.T) {
+	wt, shared, priv := repoLayout(t)
+	base, err := BuildPlan(wt, defaultPatterns())
+	require.NoError(t, err)
+	plan, err := base.BindPrivateStore(priv, shared)
+	require.NoError(t, err)
+
+	var writable []string
+	for _, m := range plan.Mounts {
+		if !m.ReadOnly {
+			writable = append(writable, m.HostPath)
+		}
+	}
+	assert.ElementsMatch(t, []string{wt, priv}, writable,
+		"only this sandbox's worktree and private store are writable; no shared/cross-task store")
+}
+
+// TestQuarantine_PrivateStoreOwnsGitSubtree verifies the private store
+// supersedes any mount BuildPlan layered inside .git (e.g. a read-only
+// .git/hooks): host .git/* must not resolve inside the guest's private
+// .git. Refs: SEC-03, FR-17.14
+func TestQuarantine_PrivateStoreOwnsGitSubtree(t *testing.T) {
+	wt, shared, priv := repoLayout(t)
+	writeFile(t, wt, ".git/hooks/pre-commit") // BuildPlan layers a RO .git/hooks mount
+	base, err := BuildPlan(wt, defaultPatterns())
+	require.NoError(t, err)
+	require.NotNil(t, base.mountFor(filepath.Join(wt, ".git", "hooks")), "precondition: BuildPlan mounts .git/hooks")
+
+	plan, err := base.BindPrivateStore(priv, shared)
+	require.NoError(t, err)
+
+	assert.Nil(t, plan.mountFor(filepath.Join(wt, ".git", "hooks")),
+		"the host .git/hooks mount is dropped — the private store owns the .git subtree")
+	m := plan.mountFor(priv)
+	require.NotNil(t, m)
+	assert.Equal(t, filepath.Join(wt, ".git"), m.GuestPath)
+}
+
+// TestBindPrivateStore_Rejections covers the SEC-03 guards: a relative
+// private store, a private store inside the worktree (guest-visible), and a
+// private store nested in the shared store (would expose shared objects).
+func TestBindPrivateStore_Rejections(t *testing.T) {
+	wt, shared, _ := repoLayout(t)
+	base, err := BuildPlan(wt, defaultPatterns())
+	require.NoError(t, err)
+
+	t.Run("relative_private_store", func(t *testing.T) {
+		_, err := base.BindPrivateStore("relative/priv", shared)
+		assert.Error(t, err)
+	})
+	t.Run("private_store_inside_worktree", func(t *testing.T) {
+		_, err := base.BindPrivateStore(filepath.Join(wt, ".git"), shared)
+		assert.Error(t, err)
+	})
+	t.Run("private_store_inside_shared", func(t *testing.T) {
+		_, err := base.BindPrivateStore(filepath.Join(shared, "objects"), shared)
+		assert.ErrorIs(t, err, model.ErrSharedStoreReachable)
+	})
+	t.Run("private_equals_shared", func(t *testing.T) {
+		_, err := base.BindPrivateStore(shared, shared)
+		assert.ErrorIs(t, err, model.ErrSharedStoreReachable)
+	})
+	t.Run("relative_shared_store", func(t *testing.T) {
+		_, err := base.BindPrivateStore(filepath.Join(t.TempDir(), "priv"), "relative/.mgit")
+		assert.Error(t, err)
+	})
+}
+
+// TestBindPrivateStore_WorktreeInsideSharedStore verifies the defense that
+// rejects a worktree living inside the shared store — every worktree mount
+// would then resolve into the shared store (SEC-03). Refs: SEC-03
+func TestBindPrivateStore_WorktreeInsideSharedStore(t *testing.T) {
+	shared := t.TempDir()
+	wt := filepath.Join(shared, "wt") // worktree nested inside the shared store
+	require.NoError(t, os.MkdirAll(wt, 0o700))
+	base, err := BuildPlan(wt, defaultPatterns())
+	require.NoError(t, err)
+
+	_, err = base.BindPrivateStore(filepath.Join(t.TempDir(), "priv"), shared)
+	assert.ErrorIs(t, err, model.ErrSharedStoreReachable,
+		"a worktree inside the shared store is a quarantine breach")
+}

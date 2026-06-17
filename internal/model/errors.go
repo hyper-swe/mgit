@@ -123,6 +123,13 @@ var (
 	// Refs: FR-17.14, FR-17.20
 	ErrSensitivePathModified = errors.New("guest modified a protected host-trusted path")
 
+	// ErrSharedStoreReachable indicates a guest filesystem plan would make
+	// the host shared object store (.mgit objects/refs/index) resolvable
+	// from inside the guest — a quarantine breach that would let the guest
+	// read other tasks' objects or write the shared store directly,
+	// bypassing the verified land door. The plan is rejected. Refs: SEC-03
+	ErrSharedStoreReachable = errors.New("shared object store reachable from the guest")
+
 	// ErrSandboxCeilingExceeded indicates a launch would exceed the
 	// host-wide concurrency or memory ceiling; the launch fails fast
 	// rather than degrading the host (SEC-09). Refs: FR-17.26
