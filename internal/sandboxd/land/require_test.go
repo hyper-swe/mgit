@@ -31,11 +31,18 @@ type noopKeyAuditor struct{}
 
 func (noopKeyAuditor) RecordKeyChange(context.Context, string) error { return nil }
 
+// matchingCommit is the commit an attestation was issued for (so the
+// anti-replay binding check passes).
+func matchingCommit(att *model.Attestation) *model.Commit {
+	return &model.Commit{CommitID: att.CommitHash, ContentHash: att.ContentHash}
+}
+
 // TestRequireSandbox_UnattestedCommit_Rejected verifies that with the
 // policy on, a commit without an attestation is refused. Refs: FR-17.6, F-02
 func TestRequireSandbox_UnattestedCommit_Rejected(t *testing.T) {
 	verifyCalled := false
-	sid, err := EnforceRequireSandbox(context.Background(), true, nil,
+	sid, err := EnforceRequireSandbox(context.Background(), true,
+		&model.Commit{CommitID: "1111111111111111111111111111111111111111"}, nil,
 		func(context.Context, *model.Attestation) error { verifyCalled = true; return nil })
 	require.ErrorIs(t, err, model.ErrUnattestedCommit)
 	assert.Nil(t, sid, "a rejected commit records no provenance")
@@ -46,10 +53,18 @@ func TestRequireSandbox_UnattestedCommit_Rejected(t *testing.T) {
 // policy off, an unattested commit lands with sandbox_id = NULL — the
 // permanently visible audit gap. Refs: FR-17.6, F-02, SEC-02
 func TestRequireSandbox_OffRecordsNullSandboxID(t *testing.T) {
-	sid, err := EnforceRequireSandbox(context.Background(), false, nil,
+	sid, err := EnforceRequireSandbox(context.Background(), false, nil, nil,
 		func(context.Context, *model.Attestation) error { return assert.AnError })
 	require.NoError(t, err)
 	assert.Nil(t, sid, "policy off → NULL sandbox_id (the visible gap)")
+}
+
+// TestRequireSandbox_NilCommit_FailsClosed verifies the gate refuses
+// when the policy is on but no commit is supplied (defensive guard).
+func TestRequireSandbox_NilCommit_FailsClosed(t *testing.T) {
+	_, err := EnforceRequireSandbox(context.Background(), true, nil, nil,
+		func(context.Context, *model.Attestation) error { return nil })
+	require.ErrorIs(t, err, model.ErrLandVerificationFailed)
 }
 
 // TestRequireSandbox_DefaultTrueSafetyCritical verifies the safe default:
@@ -64,10 +79,34 @@ func TestRequireSandbox_DefaultTrueSafetyCritical(t *testing.T) {
 // REAL host attestor. Refs: FR-17.6, SEC-01
 func TestRequireSandbox_ValidAttestation_RecordsProvenance(t *testing.T) {
 	svc, att := realAttestor(t)
-	sid, err := EnforceRequireSandbox(context.Background(), true, att, svc.Verify)
+	sid, err := EnforceRequireSandbox(context.Background(), true, matchingCommit(att), att, svc.Verify)
 	require.NoError(t, err)
 	require.NotNil(t, sid)
 	assert.Equal(t, att.SandboxID, *sid, "the attested sandbox is recorded as provenance")
+}
+
+// TestRequireSandbox_ReplayedAttestation_Rejected verifies an authentic
+// attestation captured from one commit cannot land a DIFFERENT commit
+// (anti-replay). Refs: SEC-01, F-02
+func TestRequireSandbox_ReplayedAttestation_Rejected(t *testing.T) {
+	svc, att := realAttestor(t) // a valid attestation for commit X
+	// The guest replays it to land a different commit Y.
+	otherCommit := &model.Commit{
+		CommitID:    "9999999999999999999999999999999999999999",
+		ContentHash: att.ContentHash,
+	}
+	sid, err := EnforceRequireSandbox(context.Background(), true, otherCommit, att, svc.Verify)
+	require.ErrorIs(t, err, model.ErrAttestationInvalid,
+		"an authentic attestation for another commit must not land this one")
+	assert.Nil(t, sid)
+
+	// Also reject when only the content_hash differs.
+	otherContent := &model.Commit{
+		CommitID:    att.CommitHash,
+		ContentHash: "00000000000000000000000000000000000000000000000000000000deadbeef",
+	}
+	_, err = EnforceRequireSandbox(context.Background(), true, otherContent, att, svc.Verify)
+	assert.ErrorIs(t, err, model.ErrAttestationInvalid)
 }
 
 // TestRequireSandbox_ForgedAttestation_Rejected verifies that under the
@@ -77,7 +116,7 @@ func TestRequireSandbox_ForgedAttestation_Rejected(t *testing.T) {
 	svc, att := realAttestor(t)
 	forged := *att
 	forged.SandboxID = "01JXSBFORGED0000000000000000" // tamper a signed field
-	sid, err := EnforceRequireSandbox(context.Background(), true, &forged, svc.Verify)
+	sid, err := EnforceRequireSandbox(context.Background(), true, matchingCommit(att), &forged, svc.Verify)
 	require.ErrorIs(t, err, model.ErrAttestationInvalid)
 	assert.Nil(t, sid)
 }

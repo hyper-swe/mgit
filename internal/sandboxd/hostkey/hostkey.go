@@ -41,11 +41,13 @@ func ReadPub(path string) ed25519.PublicKey {
 }
 
 // tempFile is the subset of *os.File WriteFileAtomic needs. It exists so
-// the fail-closed write/close error paths are testable by injection — a
-// torn or failed key write MUST surface, never silently succeed.
+// the fail-closed write/sync/close error paths are testable by injection
+// — a torn, unsynced, or failed key write MUST surface, never silently
+// succeed.
 type tempFile interface {
 	io.Writer
 	io.Closer
+	Sync() error
 	Name() string
 }
 
@@ -55,11 +57,14 @@ type tempFile interface {
 var createTemp = func(dir string) (tempFile, error) { return os.CreateTemp(dir, ".tmp-*") }
 
 // WriteFileAtomic writes data to a temp file in the destination
-// directory and renames it into place, so the destination is never
-// observed torn (a crash mid-write leaves only the temp file). The file
-// is owner-only (0600): os.CreateTemp already creates 0600-before-umask,
-// and umask only clears bits, so the result is owner-rw at most — no
-// explicit chmod needed. Intended for small key material.
+// directory, fsyncs it, and renames it into place, so the destination is
+// never observed torn or empty (a crash mid-write leaves only the temp
+// file; the fsync before rename guarantees the bytes are durable before
+// the rename publishes them, so a crash cannot leave a zero-length or
+// torn private key at the destination). The file is owner-only (0600):
+// os.CreateTemp already creates 0600-before-umask, and umask only clears
+// bits, so the result is owner-rw at most — no explicit chmod needed.
+// Intended for small key material.
 func WriteFileAtomic(path string, data []byte) error {
 	tmp, err := createTemp(filepath.Dir(path))
 	if err != nil {
@@ -68,6 +73,10 @@ func WriteFileAtomic(path string, data []byte) error {
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
 	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil { // durable before the rename publishes it
 		_ = tmp.Close()
 		return err
 	}

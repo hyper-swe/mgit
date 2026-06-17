@@ -181,6 +181,27 @@ func commitFromGitObject(obj *object.Commit) *model.Commit {
 	}
 }
 
+// CommitFromObjectData decodes a canonical git commit object (the raw
+// object content, as received over the sandbox land channel) and maps it
+// to a model.Commit via the single commitFromGitObject mapping. The land
+// boundary uses this to DERIVE a commit's identity-bearing fields from
+// the bytes it verified, rather than trust guest-supplied metadata
+// (FR-17.24, SEC-06). Fields not present in a commit object (FileDiffs,
+// ContentHash) are left zero for the caller to bind separately.
+// Refs: FR-17.5, FR-17.24
+func CommitFromObjectData(objectData []byte) (*model.Commit, error) {
+	obj := &plumbing.MemoryObject{}
+	obj.SetType(plumbing.CommitObject)
+	if _, err := obj.Write(objectData); err != nil {
+		return nil, fmt.Errorf("git: stage commit object: %w", err)
+	}
+	var c object.Commit
+	if err := c.Decode(obj); err != nil {
+		return nil, fmt.Errorf("git: decode commit object: %w", err)
+	}
+	return commitFromGitObject(&c), nil
+}
+
 // content_hash is computed by model.Commit.ComputeContentHash (ADR-002),
 // the single authoritative definition shared with sandbox land
 // re-verification (FR-17.24).

@@ -206,8 +206,8 @@ func TestGenerateKey_WriteError(t *testing.T) {
 	}
 	hostRoot := t.TempDir()
 	dir := filepath.Join(hostRoot, "trust")
-	require.NoError(t, os.MkdirAll(dir, 0o500)) // readable+executable, not writable
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	require.NoError(t, os.MkdirAll(dir, 0o500))    //nolint:gosec // intentional: unwritable dir
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) //nolint:gosec // restore so t.TempDir cleanup can remove it
 
 	require.Error(t, GenerateKey(context.Background(), hostRoot, &recorder{}),
 		"an unwritable trust dir must fail closed, not half-create a key")

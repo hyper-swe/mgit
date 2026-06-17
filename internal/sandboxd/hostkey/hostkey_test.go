@@ -61,11 +61,12 @@ func TestWriteFileAtomic_RenameError(t *testing.T) {
 	assert.Error(t, WriteFileAtomic(dest, []byte("x")))
 }
 
-// failTemp is a tempFile whose Write and/or Close fail, to exercise the
-// fail-closed key-write paths.
+// failTemp is a tempFile whose Write, Sync, and/or Close fail, to
+// exercise the fail-closed key-write paths.
 type failTemp struct {
 	name     string
 	writeErr error
+	syncErr  error
 	closeErr error
 }
 
@@ -75,33 +76,35 @@ func (f *failTemp) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+func (f *failTemp) Sync() error  { return f.syncErr }
 func (f *failTemp) Close() error { return f.closeErr }
 func (f *failTemp) Name() string { return f.name }
 
-// TestWriteFileAtomic_WriteAndCloseErrorsSurface verifies a failed write
-// or close fails closed — a security-critical key must never be reported
-// written when the bytes did not land.
-func TestWriteFileAtomic_WriteAndCloseErrorsSurface(t *testing.T) {
+// TestWriteFileAtomic_WriteSyncCloseErrorsSurface verifies a failed
+// write, fsync, or close fails closed — a security-critical key must
+// never be reported written when the bytes did not durably land.
+func TestWriteFileAtomic_WriteSyncCloseErrorsSurface(t *testing.T) {
 	dir := t.TempDir()
 	orig := createTemp
 	t.Cleanup(func() { createTemp = orig })
 
-	createTemp = func(string) (tempFile, error) {
-		f, err := os.CreateTemp(dir, ".tmp-*")
-		require.NoError(t, err)
-		name := f.Name()
-		_ = f.Close()
-		return &failTemp{name: name, writeErr: assert.AnError}, nil
+	stage := func(ft *failTemp) {
+		createTemp = func(string) (tempFile, error) {
+			f, err := os.CreateTemp(dir, ".tmp-*")
+			require.NoError(t, err)
+			ft.name = f.Name()
+			_ = f.Close()
+			return ft, nil
+		}
 	}
+
+	stage(&failTemp{writeErr: assert.AnError})
 	assert.ErrorIs(t, WriteFileAtomic(filepath.Join(dir, "k"), []byte("x")), assert.AnError, "write failure surfaces")
 
-	createTemp = func(string) (tempFile, error) {
-		f, err := os.CreateTemp(dir, ".tmp-*")
-		require.NoError(t, err)
-		name := f.Name()
-		_ = f.Close()
-		return &failTemp{name: name, closeErr: assert.AnError}, nil
-	}
+	stage(&failTemp{syncErr: assert.AnError})
+	assert.ErrorIs(t, WriteFileAtomic(filepath.Join(dir, "k"), []byte("x")), assert.AnError, "fsync failure surfaces")
+
+	stage(&failTemp{closeErr: assert.AnError})
 	assert.ErrorIs(t, WriteFileAtomic(filepath.Join(dir, "k"), []byte("x")), assert.AnError, "close failure surfaces")
 }
 
