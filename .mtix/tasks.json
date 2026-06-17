@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-17T09:39:32Z",
+  "exported_at": "2026-06-17T14:30:54Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -2460,6 +2460,30 @@
       "content_hash": "ebab1252506c76739e7d7409192cb5d15c2e816c56db36e22b84d73a7aced543",
       "created_at": "2026-06-15T15:28:12Z",
       "updated_at": "2026-06-15T15:28:12Z"
+    },
+    {
+      "id": "MGIT-13",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 13,
+      "project": "MGIT",
+      "title": "Host-side guest vsock dialer (real GuestDialer)",
+      "description": "",
+      "prompt": "DISCOVERED GAP (2026-06-17, backend-boot track): both microVM backends really boot (vzf real VZVirtualMachine; firecracker real firecracker-go-sdk) and wire a vsock device, but there is NO concrete host-side GuestDialer (microvm.Manager.GuestDialer is the interface; only a test pipeDialer exists). So microvm.Manager.Exec returns ErrSandboxBackendUnavailable and exec/land cannot reach the guest's vsock :1024 listener (cmd/mgit-guest). This blocks the exec/land e2e that 11.6/11.7/11.9 defer to.\n\nImplement the real host-side guest dialer that the daemon injects into microvm.Config.GuestDialer.\n\nPORTABLE CORE (build-tag-free, unit-testable on any OS — DO FIRST): firecracker exposes vsock via a per-VM unix socket with host-initiated connections: the host dials the uds, sends \"CONNECT \u003cport\u003e\\n\", firecracker replies \"OK \u003chostport\u003e\\n\" on success, then proxies the stream to the guest's vsock port. This handshake is plain I/O over a unix socket and is OS-portable (unix sockets work on macOS+Linux), so the firecracker dialer + handshake is fully unit-testable against a fake firecracker uds server WITHOUT /dev/kvm.\n\nPLATFORM WIRING (needs the hardware, defer): (a) firecracker (linux): the firecracker manager must expose each sandbox's vsock.sock path, and a GuestDialer maps sandboxID -\u003e that path -\u003e the portable Dial; wire PeerBinder.Bind(sandboxID, peer) at launch (SEC-10). (b) vzf (macOS, CGO): VZVirtioSocketDevice.Connect(port) on the running VM returns a VZVirtioSocketConnection — a thin GuestDialer wrapper; needs the VZ virtualization entitlement + a real guest image to test. Real-VM round-trips (exec/land) are e2e (MGIT-11.13), needing the Linux KVM box / entitled Mac.\n\nDEFINITION OF DONE per issue: TDD red-\u003egreen-\u003erefactor; REQUIRED TESTS pass; coverage gates met (other 90%/85%); zero linter/vet/race/vuln findings; /simplify after green; full Verification Checklist. Commit format {type}({scope}): {desc} + 'Refs: MGIT-11.5.x'. NO co-authored-by/agent/Generated-with trailer (information-exposure control).\n\nACCEPTANCE CRITERIA:\nThe portable firecracker vsock dialer connects to a uds and completes the CONNECT handshake to a guest port, returning a stream; a rejected/garbled handshake and an absent socket fail closed; the dialer satisfies a host-side dial contract the microvm.Manager.GuestDialer can adopt. (Platform manager wiring + real-VM exec/land round-trip are tracked for the e2e step on real hardware.)\n\nREQUIRED TESTS:\n  - TestFCVsock_Dial_HandshakeSucceeds\n  - TestFCVsock_Dial_HandshakeRejected\n  - TestFCVsock_Dial_SocketAbsent",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "e297ee38350b721371bf144501005979a33982f53248a6538c586ff7039787c6",
+      "created_at": "2026-06-17T14:24:45Z",
+      "updated_at": "2026-06-17T14:25:58Z"
     },
     {
       "id": "MGIT-2",
@@ -7024,7 +7048,7 @@
       "agent_id": "",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-11.6.2",
+      "current_node_id": "MGIT-13",
       "last_heartbeat": "2026-06-17T08:16:40Z"
     },
     {
@@ -7050,6 +7074,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 226,
-  "checksum": "e30efcc0fd95784d17830208ec0132f4c26c48d12b24ce95debdf5bf8854568e"
+  "node_count": 227,
+  "checksum": "7ee9a55a03880b1785af2455e4d6fe00c8a542f414fb31c99c6c4d9957b1443f"
 }
