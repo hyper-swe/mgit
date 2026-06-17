@@ -88,9 +88,14 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 		return nil, err
 	}
 
-	id, err := m.newID()
-	if err != nil {
-		return nil, fmt.Errorf("container launch: %w", err)
+	// Honor a host-assigned lifecycle ID (lazy provisioning, FR-17.10);
+	// generate one only for direct/legacy use.
+	id := opts.SandboxID
+	if id == "" {
+		var gerr error
+		if id, gerr = m.newID(); gerr != nil {
+			return nil, fmt.Errorf("container launch: %w", gerr)
+		}
 	}
 	name := "mgit-sbx-" + id
 

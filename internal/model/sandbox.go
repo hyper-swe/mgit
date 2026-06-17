@@ -141,6 +141,11 @@ func (p NetworkPolicy) Validate() error {
 // the host policy store default" (FR-17.13, NFR-17.5).
 // Refs: FR-17.1, FR-17.15
 type SandboxLaunchOptions struct {
+	// SandboxID, when set, is the host-assigned lifecycle ID the backend
+	// must use for this VM (so a sandbox registered lazily and booted
+	// later share one ID, FR-17.10). Empty means the backend generates
+	// one — the legacy/direct path.
+	SandboxID    string        `json:"sandbox_id,omitempty"`
 	TaskID       string        `json:"task_id"`
 	WorktreePath string        `json:"worktree_path"`
 	ImageRef     string        `json:"image_ref"` // pinned by digest (FR-17.17)

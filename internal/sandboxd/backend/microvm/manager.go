@@ -133,9 +133,15 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 		return nil, fmt.Errorf("%s launch: resolve image %q: %w", m.cfg.Backend, opts.ImageRef, err)
 	}
 
-	id, err := m.newID()
-	if err != nil {
-		return nil, fmt.Errorf("%s launch: %w", m.cfg.Backend, err)
+	// Use the host-assigned lifecycle ID when the caller (the sandbox
+	// service, lazy provisioning) supplied one, so registration and boot
+	// share one ID; otherwise generate (direct/legacy use). Refs: FR-17.10
+	id := opts.SandboxID
+	if id == "" {
+		var err error
+		if id, err = m.newID(); err != nil {
+			return nil, fmt.Errorf("%s launch: %w", m.cfg.Backend, err)
+		}
 	}
 	dir := filepath.Join(m.cfg.WorkDir, id)
 	overlay, err := createOverlay(dir, opts.DiskQuotaMB)
