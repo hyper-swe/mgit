@@ -9,10 +9,12 @@
 package microvm
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +24,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd/guestexec"
 )
 
 // defaultOverlaySizeMB sizes the writable overlay when the request
@@ -66,14 +69,26 @@ type Hypervisor interface {
 	CreateVM(cfg VMConfig) (VM, error)
 }
 
+// GuestDialer opens a connection to a running guest's exec channel,
+// abstracting the vsock dial (the real AF_VSOCK dial on Linux; an
+// in-memory pipe in tests) behind the manager, which knows only that it
+// gets an io connection to the bound guest. It is optional: when nil,
+// Exec reports the transport unavailable rather than faking success — the
+// honest state before the platform vsock dialer and real-boot CID
+// assignment are wired (e2e, MGIT-11.13). Refs: FR-17.11, FR-17.16, FR-17.27
+type GuestDialer interface {
+	DialGuest(ctx context.Context, sandboxID string) (net.Conn, error)
+}
+
 // Config wires the shared manager's dependencies.
 type Config struct {
-	Backend    string                                    // model.Backend* this platform reports
-	WorkDir    string                                    // sandbox-local state root; never the worktree
-	Resolve    func(imageRef string) (ImagePaths, error) // verified image resolution (FR-17.17)
-	Hypervisor Hypervisor
-	Logger     *slog.Logger
-	Clock      func() time.Time
+	Backend     string                                    // model.Backend* this platform reports
+	WorkDir     string                                    // sandbox-local state root; never the worktree
+	Resolve     func(imageRef string) (ImagePaths, error) // verified image resolution (FR-17.17)
+	Hypervisor  Hypervisor
+	GuestDialer GuestDialer // exec transport into the guest; nil = exec unavailable
+	Logger      *slog.Logger
+	Clock       func() time.Time
 }
 
 // sandbox is one supervised microVM.
@@ -224,19 +239,47 @@ func (m *Manager) List(_ context.Context) ([]model.SandboxInfo, error) {
 	return out, nil
 }
 
-// Exec routes one command into the guest. The vsock exec transport is
-// the mgit-guest agent's contract (MGIT-11.5.6); until the host wires
-// it, exec reports honestly that the transport is unavailable rather
-// than faking success. Refs: FR-17.11
-func (m *Manager) Exec(_ context.Context, id string, _ model.ExecRequest) (*model.ExecResult, error) {
+// Exec routes one whole command into the running guest over the exec
+// channel and returns its buffered output and exit code. The command is
+// sent verbatim (whole-command routing, FR-17.11) and the host
+// environment is never forwarded — only req.Env reaches the guest. A
+// non-zero exit is a normal result, not an error. When no guest dialer is
+// configured the transport is honestly reported unavailable rather than
+// faked. Refs: FR-17.11, FR-17.3
+func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*model.ExecResult, error) {
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("%s exec: %w", m.cfg.Backend, err)
+	}
 	m.mu.Lock()
-	_, ok := m.sandboxes[id]
+	sb, ok := m.sandboxes[id]
 	m.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", model.ErrSandboxNotFound, id)
 	}
-	return nil, fmt.Errorf("%w: exec requires the mgit-guest vsock transport (MGIT-11.5.6)",
-		model.ErrSandboxBackendUnavailable)
+	if sb.info.State != model.StateRunning {
+		return nil, fmt.Errorf("%w: sandbox %q is %s, not running",
+			model.ErrSandboxBackendUnavailable, id, sb.info.State)
+	}
+	if m.cfg.GuestDialer == nil {
+		return nil, fmt.Errorf("%w: exec requires the guest vsock transport (MGIT-11.9.2)",
+			model.ErrSandboxBackendUnavailable)
+	}
+
+	conn, err := m.cfg.GuestDialer.DialGuest(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("%s exec: dial guest: %w", m.cfg.Backend, err)
+	}
+	defer func() { _ = conn.Close() }()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+
+	var stdout, stderr bytes.Buffer
+	result, err := guestexec.Run(conn, req, &stdout, &stderr)
+	if err != nil {
+		return nil, fmt.Errorf("%s exec: %w", m.cfg.Backend, err)
+	}
+	return &model.ExecResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ExitCode: result.ExitCode}, nil
 }
 
 // Stop halts the sandbox's VM and records it suspended. v1 does not

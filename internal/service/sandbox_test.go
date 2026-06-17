@@ -13,11 +13,18 @@ import (
 	"github.com/hyper-swe/mgit/internal/model"
 )
 
-// fakeSandboxManager records Launch calls and echoes opts into the info.
+// fakeSandboxManager records Launch/Exec calls and echoes opts into the info.
 type fakeSandboxManager struct {
 	launches  int
 	lastOpts  model.SandboxLaunchOptions
 	launchErr error
+
+	execs              int
+	lastExecID         string
+	lastExecReq        model.ExecRequest
+	execCtxHadDeadline bool
+	execResult         *model.ExecResult
+	execErr            error
 }
 
 func (m *fakeSandboxManager) Launch(_ context.Context, opts model.SandboxLaunchOptions) (*model.SandboxInfo, error) {
@@ -32,8 +39,14 @@ func (m *fakeSandboxManager) Launch(_ context.Context, opts model.SandboxLaunchO
 	}, nil
 }
 func (m *fakeSandboxManager) List(context.Context) ([]model.SandboxInfo, error) { return nil, nil }
-func (m *fakeSandboxManager) Exec(context.Context, string, model.ExecRequest) (*model.ExecResult, error) {
-	return nil, nil
+func (m *fakeSandboxManager) Exec(ctx context.Context, id string, req model.ExecRequest) (*model.ExecResult, error) {
+	m.execs++
+	m.lastExecID, m.lastExecReq = id, req
+	_, m.execCtxHadDeadline = ctx.Deadline()
+	if m.execErr != nil {
+		return nil, m.execErr
+	}
+	return m.execResult, nil
 }
 func (m *fakeSandboxManager) Stop(context.Context, string, bool) error   { return nil }
 func (m *fakeSandboxManager) Remove(context.Context, string, bool) error { return nil }
@@ -264,6 +277,70 @@ func TestEnsureRunning_ResumeAuditFailure(t *testing.T) {
 	require.NoError(t, err)
 	_, err = svc.EnsureRunning(context.Background(), "MGIT-1")
 	assert.Error(t, err)
+}
+
+// TestExec_BootsThenRoutesToManager verifies Exec lazily boots the
+// sandbox (EnsureRunning) and routes the command to the manager with the
+// booted sandbox ID, returning its result. Refs: FR-17.9, FR-17.11
+func TestExec_BootsThenRoutesToManager(t *testing.T) {
+	mgr := &fakeSandboxManager{execResult: &model.ExecResult{Stdout: []byte("hi\n"), ExitCode: 0}}
+	svc := newSvc(t, mgr, &fakeEventAppender{})
+	reg, err := svc.Register(context.Background(), regOpts("MGIT-9.1", "/work/a"))
+	require.NoError(t, err)
+
+	res, err := svc.Exec(context.Background(), "MGIT-9.1", model.ExecRequest{Command: []string{"sh", "-c", "echo hi"}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, mgr.launches, "exec boots the sandbox on first use")
+	assert.Equal(t, reg.ID, mgr.lastExecID, "exec routes to the booted sandbox ID")
+	assert.Equal(t, []string{"sh", "-c", "echo hi"}, mgr.lastExecReq.Command)
+	assert.Equal(t, "hi\n", string(res.Stdout))
+}
+
+// TestExec_PositiveTimeout_BoundsCommand verifies a positive per-exec
+// timeout reaches the manager as a context deadline (so both backends
+// enforce it), while a zero timeout leaves the context unbounded.
+// Refs: FR-17.11
+func TestExec_PositiveTimeout_BoundsCommand(t *testing.T) {
+	t.Run("positive_timeout_sets_deadline", func(t *testing.T) {
+		mgr := &fakeSandboxManager{execResult: &model.ExecResult{}}
+		svc := newSvc(t, mgr, &fakeEventAppender{})
+		_, err := svc.Register(context.Background(), regOpts("MGIT-1", "/work/a"))
+		require.NoError(t, err)
+		_, err = svc.Exec(context.Background(), "MGIT-1",
+			model.ExecRequest{Command: []string{"true"}, Timeout: 5 * time.Second})
+		require.NoError(t, err)
+		assert.True(t, mgr.execCtxHadDeadline, "a positive timeout bounds the exec context")
+	})
+	t.Run("zero_timeout_no_deadline", func(t *testing.T) {
+		mgr := &fakeSandboxManager{execResult: &model.ExecResult{}}
+		svc := newSvc(t, mgr, &fakeEventAppender{})
+		_, err := svc.Register(context.Background(), regOpts("MGIT-1", "/work/a"))
+		require.NoError(t, err)
+		_, err = svc.Exec(context.Background(), "MGIT-1", model.ExecRequest{Command: []string{"true"}})
+		require.NoError(t, err)
+		assert.False(t, mgr.execCtxHadDeadline, "a zero timeout leaves the context unbounded")
+	})
+}
+
+// TestExec_UnknownTask_Rejected verifies exec on an unregistered task
+// fails closed (no boot, no route).
+func TestExec_UnknownTask_Rejected(t *testing.T) {
+	mgr := &fakeSandboxManager{}
+	svc := newSvc(t, mgr, &fakeEventAppender{})
+	_, err := svc.Exec(context.Background(), "MGIT-nope", model.ExecRequest{Command: []string{"true"}})
+	assert.ErrorIs(t, err, model.ErrSandboxNotFound)
+	assert.Zero(t, mgr.execs, "no routing for an unregistered task")
+}
+
+// TestExec_ManagerError_Surfaces verifies a transport/manager error
+// surfaces from Exec.
+func TestExec_ManagerError_Surfaces(t *testing.T) {
+	mgr := &fakeSandboxManager{execErr: model.ErrSandboxBackendUnavailable}
+	svc := newSvc(t, mgr, &fakeEventAppender{})
+	_, err := svc.Register(context.Background(), regOpts("MGIT-1", "/work/a"))
+	require.NoError(t, err)
+	_, err = svc.Exec(context.Background(), "MGIT-1", model.ExecRequest{Command: []string{"true"}})
+	assert.ErrorIs(t, err, model.ErrSandboxBackendUnavailable)
 }
 
 // TestImageDigestOf covers the digest extraction including the no-@ edge.

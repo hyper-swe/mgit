@@ -156,6 +156,32 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 	return &info, nil
 }
 
+// Exec routes one command into the task's sandbox, booting it on first
+// use (EnsureRunning, lazy provisioning) and returning the guest's result
+// unchanged. Handlers call this, never the manager directly (architecture
+// rule). The manager owns the transport into the guest. Refs: FR-17.9, FR-17.11
+func (s *SandboxService) Exec(ctx context.Context, taskID string, req model.ExecRequest) (*model.ExecResult, error) {
+	info, err := s.EnsureRunning(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	// A positive per-exec timeout bounds this single command (the
+	// ExecRequest.Timeout contract; zero leaves the sandbox TTL to govern).
+	// Deriving it here — after the boot, which the timeout must not bound —
+	// makes both backends enforce it through the request context (the
+	// microVM conn deadline, the container exec context). Refs: FR-17.11
+	if req.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, req.Timeout)
+		defer cancel()
+	}
+	res, err := s.manager.Exec(ctx, info.ID, req)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox exec: %w", err)
+	}
+	return res, nil
+}
+
 // checkExclusivity rejects a duplicate task or worktree binding. Caller
 // holds the lock. Refs: FR-17.1
 func (s *SandboxService) checkExclusivity(taskID, worktreePath string) error {
