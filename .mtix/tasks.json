@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-16T16:10:14Z",
+  "exported_at": "2026-06-17T05:33:03Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -470,7 +470,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.4358974358974359,
+      "progress": 0.46153846153846156,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -987,6 +987,30 @@
       "content_hash": "0430cd66fe8e41e1feffb6b6e77b7afbc629aecf07faa72121bdf9a694bcbeb4",
       "created_at": "2026-06-12T11:16:41Z",
       "updated_at": "2026-06-12T11:42:51Z"
+    },
+    {
+      "id": "MGIT-11.12.5",
+      "parent_id": "MGIT-11.12",
+      "depth": 2,
+      "seq": 5,
+      "project": "MGIT",
+      "title": "Harden ADR-002 content_hash (omitted fields + sub-second time)",
+      "description": "The ADR-002 content_hash formula (SHA-256 over message+file_diffs+task_id+parent+created_at) omits AgentID/CreatedBy/SessionID/CommitType/Branch and truncates created_at to second precision. Two distinct audit records can therefore collide on content_hash. Found by the MGIT-11.8 closure security pass (F3); pre-existing, not introduced by 11.8.",
+      "prompt": "The authoritative ADR-002 content_hash is model.Commit.ComputeContentHash = SHA-256(message + file_diffs_json + task_id + parent_id + created_at), with created_at formatted to SECOND precision (\"2006-01-02T15:04:05Z\"). The MGIT-11.8 closure security pass (F3, MEDIUM) found:\n1. The hash OMITS AgentID, CreatedBy, SessionID, CommitType, Branch — two commits differing only in (e.g.) AgentID produce the SAME content_hash, so the \"authoritative compliance identifier\" does not uniquely identify the audited record, weakening \"if hashes diverge, the commit was tampered with\".\n2. created_at is truncated to second precision — sub-second differences collide.\n3. The formula uses parent_id (parent SHA-1) where ADR-002's prose says parent_content_hash.\n\nThis is a PRE-EXISTING design issue (predates FR-17; 11.8 only extracted the function to model and single-sourced it). It was NOT changed in 11.8 because changing content_hash REWRITES every existing commit's hash — a breaking, migration-bearing change to ADR-002 that needs its own ADR revision + data-migration plan.\n\nSCOPE: revise ADR-002 to define a complete, collision-resistant content_hash (include the identity-bearing fields; full-precision UTC time; resolve the parent_id-vs-parent_content_hash wording), with a migration/versioning strategy (e.g. a content_hash version tag) so existing task_commits remain verifiable. Coordinate with FR-3.1, FR-12.3, and the sandbox land re-verification (FR-17.24) which recomputes via the same function. Owner decision: whether to version the hash or accept the documented limitation for v1.\n\nRefs: ADR-002, FR-3.1, FR-12.3, FR-17.24; found in MGIT-11.8 closure (F3).",
+      "acceptance": "A decision (revise vs. accept-documented) recorded; if revised, ADR-002 updated with a complete content_hash definition + a migration/versioning plan that keeps existing commits verifiable, and model.Commit.ComputeContentHash updated accordingly with tests.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "76c7e6a88fd3f02f5fbb104f515f9e589844d9342034f97a3c79b34cc3dafa63",
+      "created_at": "2026-06-17T05:30:35Z",
+      "updated_at": "2026-06-17T05:30:35Z"
     },
     {
       "id": "MGIT-11.13",
@@ -1912,15 +1936,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0.6666666666666666,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "f38755cf2c0b8c74ebcef33ccc713d4bfbcc4117843966dfe9a83e176075c9f1",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-16T11:52:18Z"
+      "updated_at": "2026-06-17T05:31:03Z",
+      "closed_at": "2026-06-17T05:31:03Z"
     },
     {
       "id": "MGIT-11.8.1",
@@ -2036,15 +2061,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "e7c05818a42be1238703c151ea19e064d9363b3bc34783cdf34dcaf5bff72118",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-16T16:19:49Z",
+      "closed_at": "2026-06-16T16:19:49Z"
     },
     {
       "id": "MGIT-11.8.6",
@@ -2060,15 +2086,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "c6129599cf063f4a374c2a776e66e983b8ab4dd1bfe9724687f1b1c967b267bf",
       "created_at": "2026-06-12T11:47:32Z",
-      "updated_at": "2026-06-12T11:47:32Z"
+      "updated_at": "2026-06-16T16:43:05Z",
+      "closed_at": "2026-06-16T16:43:05Z"
     },
     {
       "id": "MGIT-11.9",
@@ -2084,7 +2111,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -2092,7 +2119,7 @@
       "weight": 1,
       "content_hash": "ac9941f2c8f42ddd4b34bde3d1c83c13f5a11eeac79ec3ebdd08af0641d117b5",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:41Z"
+      "updated_at": "2026-06-17T05:31:03Z"
     },
     {
       "id": "MGIT-11.9.1",
@@ -2108,7 +2135,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -2116,7 +2143,7 @@
       "weight": 1,
       "content_hash": "5317e5f4abe314016b65400e95659e1e99d56d77bd7577b18659f95d958aa0bf",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-16T16:43:05Z"
     },
     {
       "id": "MGIT-11.9.2",
@@ -2132,7 +2159,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -2140,7 +2167,7 @@
       "weight": 1,
       "content_hash": "b6cba9fcaf3fb08395437c92b2fb5856a81963d08c690c2e44b6e6bd0b0418b8",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-16T16:43:05Z"
     },
     {
       "id": "MGIT-11.9.3",
@@ -2156,7 +2183,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -2164,7 +2191,7 @@
       "weight": 1,
       "content_hash": "d44946d731a95829ebe074c7da0fdb02a7cb23eb3e882729c10c0723f0abb6b3",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-16T16:43:05Z"
     },
     {
       "id": "MGIT-11.9.4",
@@ -2180,7 +2207,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -2188,7 +2215,7 @@
       "weight": 1,
       "content_hash": "ad44267a424a8d07b02fe89645b01286481c06cf472a7fc36a76b18c52eb11f8",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-16T16:43:05Z"
     },
     {
       "id": "MGIT-11.9.5",
@@ -2204,7 +2231,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -2212,7 +2239,7 @@
       "weight": 1,
       "content_hash": "3ba153dec7a8fa2cfaeb91f0837d948637b5d6f6589d8a0f6e9a5f241ab22fcd",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-16T16:43:05Z"
     },
     {
       "id": "MGIT-12",
@@ -6454,54 +6481,6 @@
       "created_at": "2026-06-12T11:42:50Z"
     },
     {
-      "from_id": "MGIT-11.7.1",
-      "to_id": "MGIT-11.8.5",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.1",
-      "to_id": "MGIT-11.8.6",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
-      "from_id": "MGIT-11.7.2",
-      "to_id": "MGIT-11.8.5",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.2",
-      "to_id": "MGIT-11.8.6",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
-      "from_id": "MGIT-11.7.3",
-      "to_id": "MGIT-11.8.5",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.3",
-      "to_id": "MGIT-11.8.6",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
-      "from_id": "MGIT-11.7.4",
-      "to_id": "MGIT-11.8.5",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:50Z"
-    },
-    {
-      "from_id": "MGIT-11.7.4",
-      "to_id": "MGIT-11.8.6",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
       "from_id": "MGIT-11.8",
       "to_id": "MGIT-11.9",
       "dep_type": "blocks",
@@ -7055,11 +7034,11 @@
       "agent_id": "opus-agent-01",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-11.8.4",
+      "current_node_id": "MGIT-11.8",
       "last_heartbeat": "2026-04-07T05:58:03Z"
     }
   ],
   "sessions": null,
-  "node_count": 225,
-  "checksum": "3cabb0ae9d107d0920e3bcbc0b1720356d848ada7b8cb8e5702ead5f90d67d88"
+  "node_count": 226,
+  "checksum": "7fbf7f666535db3e9495afdbea5edd5f2a61ffe8b4ff0d4766516db5ed426b74"
 }
