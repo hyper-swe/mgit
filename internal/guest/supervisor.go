@@ -16,23 +16,21 @@ import (
 	"io"
 	"log/slog"
 	"os/exec"
-	"time"
 
+	"github.com/hyper-swe/mgit/internal/execwire"
 	"github.com/hyper-swe/mgit/internal/model"
 )
 
-// ResourceUsage is the child's CPU usage, reported to the host.
-type ResourceUsage struct {
-	UserTime   time.Duration `json:"user_time_ns"`
-	SystemTime time.Duration `json:"system_time_ns"`
-}
-
-// Outcome is one exec's result: exit code plus resource usage. Stdout
-// and stderr are streamed during the run, not buffered here.
-type Outcome struct {
-	ExitCode int           `json:"exit_code"`
-	Usage    ResourceUsage `json:"usage"`
-}
+// ResourceUsage and Outcome are the exec wire result types, owned by the
+// execwire package so the host client and the guest share one definition.
+// They are aliased here for the supervisor's existing call sites.
+type (
+	// ResourceUsage is the child's CPU usage, reported to the host.
+	ResourceUsage = execwire.ResourceUsage
+	// Outcome is one exec's result: exit code plus resource usage. Stdout
+	// and stderr are streamed during the run, not buffered here.
+	Outcome = execwire.Result
+)
 
 // Supervisor runs guest commands. BaseEnv is the clean environment the
 // child starts from; the host environment is deliberately absent.

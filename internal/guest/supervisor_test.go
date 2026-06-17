@@ -7,7 +7,6 @@ package guest
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"go/parser"
 	"go/token"
@@ -24,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mgit/internal/execwire"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/testutil"
 )
@@ -65,7 +65,7 @@ func TestGuestAgent_PID1_ServesExec(t *testing.T) {
 		_ = sup.Serve(context.Background(), server)
 	}()
 
-	require.NoError(t, writeRequest(client, model.ExecRequest{
+	require.NoError(t, execwire.WriteRequest(client, model.ExecRequest{
 		Command: []string{"/bin/echo", "hello-guest"},
 	}))
 
@@ -192,45 +192,28 @@ func TestGuestAgent_NoSigningKeyMaterial(t *testing.T) {
 	}
 }
 
-// --- test client: the minimal exec wire protocol ---
-
-func writeRequest(w io.Writer, req model.ExecRequest) error {
-	payload, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
-	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], uint32(len(payload)))
-	if _, err := w.Write(hdr[:]); err != nil {
-		return err
-	}
-	_, err = w.Write(payload)
-	return err
-}
-
+// readResponse reads the streamed exec frames using the shared execwire
+// codec and returns the accumulated stdout/stderr and the decoded result.
 func readResponse(t *testing.T, r io.Reader) (stdout, stderr string, outcome Outcome) {
 	t.Helper()
 	var out, errb strings.Builder
 	for {
-		var hdr [5]byte
-		if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		kind, payload, err := execwire.ReadFrame(r)
+		if err != nil {
 			require.ErrorIs(t, err, io.EOF, "stream ends cleanly")
 			break
 		}
-		n := binary.BigEndian.Uint32(hdr[1:])
-		payload := make([]byte, n)
-		_, err := io.ReadFull(r, payload)
-		require.NoError(t, err)
-		switch hdr[0] {
-		case frameStdout:
+		switch kind {
+		case execwire.FrameStdout:
 			out.Write(payload)
-		case frameStderr:
+		case execwire.FrameStderr:
 			errb.Write(payload)
-		case frameResult:
-			require.NoError(t, json.Unmarshal(payload, &outcome), "result frame must decode")
-			return out.String(), errb.String(), outcome
+		case execwire.FrameResult:
+			var frame execwire.ResultFrame
+			require.NoError(t, json.Unmarshal(payload, &frame), "result frame must decode")
+			return out.String(), errb.String(), frame.Result
 		default:
-			t.Fatalf("unknown frame kind %q", hdr[0])
+			t.Fatalf("unknown frame kind %q", kind)
 		}
 	}
 	return out.String(), errb.String(), outcome

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mgit/internal/execwire"
 	"github.com/hyper-swe/mgit/internal/model"
 )
 
@@ -35,7 +36,7 @@ func TestServe_MalformedRequests(t *testing.T) {
 
 	t.Run("oversized_request_rejected", func(t *testing.T) {
 		var hdr [4]byte
-		binary.BigEndian.PutUint32(hdr[:], maxExecRequestBytes+1)
+		binary.BigEndian.PutUint32(hdr[:], execwire.MaxRequestBytes+1)
 		var resp bytes.Buffer
 		err := sup.Serve(ctx, rwPair{Reader: bytes.NewReader(hdr[:]), Writer: &resp})
 		require.Error(t, err)
@@ -62,7 +63,7 @@ func TestServe_MalformedRequests(t *testing.T) {
 
 	t.Run("invalid_command_reported_in_result", func(t *testing.T) {
 		var req bytes.Buffer
-		require.NoError(t, writeRequest(&req, model.ExecRequest{Command: []string{}}))
+		require.NoError(t, execwire.WriteRequest(&req, model.ExecRequest{Command: []string{}}))
 		var resp bytes.Buffer
 		err := sup.Serve(ctx, rwPair{Reader: &req, Writer: &resp})
 		require.Error(t, err, "empty command surfaces as a serve error")
@@ -100,7 +101,7 @@ func TestServe_WriteFailuresSurface(t *testing.T) {
 
 	t.Run("result_frame_write_fails", func(t *testing.T) {
 		var req bytes.Buffer
-		require.NoError(t, writeRequest(&req, model.ExecRequest{Command: []string{"/bin/echo", "hi"}}))
+		require.NoError(t, execwire.WriteRequest(&req, model.ExecRequest{Command: []string{"/bin/echo", "hi"}}))
 		// Allow the stdout frame through, then fail on the result frame.
 		err := sup.Serve(ctx, rwPair{Reader: &req, Writer: &failWriter{remaining: 8}})
 		assert.Error(t, err, "a failed result write surfaces")
@@ -108,7 +109,7 @@ func TestServe_WriteFailuresSurface(t *testing.T) {
 
 	t.Run("stdout_frame_write_fails", func(t *testing.T) {
 		var req bytes.Buffer
-		require.NoError(t, writeRequest(&req, model.ExecRequest{Command: []string{"/bin/echo", "hi"}}))
+		require.NoError(t, execwire.WriteRequest(&req, model.ExecRequest{Command: []string{"/bin/echo", "hi"}}))
 		err := sup.Serve(ctx, rwPair{Reader: &req, Writer: &failWriter{remaining: 0}})
 		assert.Error(t, err)
 	})
@@ -120,7 +121,7 @@ func TestServe_LargeOutputStreams(t *testing.T) {
 	skipWithoutPOSIXShell(t)
 	sup := testSupervisor(t)
 	var req bytes.Buffer
-	require.NoError(t, writeRequest(&req, model.ExecRequest{
+	require.NoError(t, execwire.WriteRequest(&req, model.ExecRequest{
 		Command: []string{"/bin/sh", "-c", "for i in $(seq 1 1000); do echo line-$i; done"},
 	}))
 

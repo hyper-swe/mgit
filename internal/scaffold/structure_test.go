@@ -105,6 +105,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		"docs":     true, // documentation generator
 		"sandboxd": true, // sandbox helper daemon library (FR-17.16, MGIT-11.4.1)
 		"guest":    true, // guest supervisor library (FR-17.16, MGIT-11.5.6)
+		"execwire": true, // host<->guest exec wire protocol (FR-17.11, MGIT-11.9.2)
 	}
 
 	entries, err := os.ReadDir(filepath.Join(root, "internal"))
