@@ -158,7 +158,7 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 			return nil, fmt.Errorf("%s launch: %w", m.cfg.Backend, err)
 		}
 	}
-	dir := filepath.Join(m.cfg.WorkDir, id)
+	dir := SandboxStateDir(m.cfg.WorkDir, id)
 	overlay, err := createOverlay(dir, opts.DiskQuotaMB)
 	if err != nil {
 		return nil, fmt.Errorf("%s launch: %w", m.cfg.Backend, err)
@@ -348,6 +348,16 @@ func (m *Manager) newID() (string, error) {
 		return "", fmt.Errorf("new ulid: %w", err)
 	}
 	return id.String(), nil
+}
+
+// SandboxStateDir returns the per-sandbox state directory: a subdirectory
+// of the manager's work dir named for the sandbox ID. It holds every
+// per-sandbox host artifact (the COW overlay and the backend's sockets),
+// so teardown is one RemoveAll. It is exported as the single source of
+// this convention: a backend's guest dialer reconstructs a sandbox's
+// socket path from the same dir, so both must agree. Refs: FR-17.19
+func SandboxStateDir(workDir, sandboxID string) string {
+	return filepath.Join(workDir, sandboxID)
 }
 
 // createOverlay creates the per-sandbox writable disk as a SPARSE file

@@ -60,21 +60,6 @@ func newPlatformHypervisor(bin string) (microvm.Hypervisor, error) {
 // over its unix-socket HTTP API, so no CGO is involved.
 type fcHypervisor struct{ bin string }
 
-// vmPaths locates every per-VM host artifact under the sandbox state
-// dir (the dir that holds the COW overlay). Keeping the API socket,
-// vsock socket, and console there makes teardown one RemoveAll with no
-// host residue (FR-17.19).
-type vmPaths struct{ socket, vsock, console string }
-
-func sandboxPaths(overlayPath string) vmPaths {
-	dir := filepath.Dir(overlayPath)
-	return vmPaths{
-		socket:  filepath.Join(dir, "firecracker.sock"),
-		vsock:   filepath.Join(dir, "vsock.sock"),
-		console: filepath.Join(dir, "console.log"),
-	}
-}
-
 // buildConfig translates the hypervisor-agnostic VMConfig into a
 // Firecracker machine configuration: the pinned image as a read-only
 // root device on vda, the per-VM writable COW overlay on vdb, and the
@@ -117,7 +102,7 @@ func buildConfig(cfg microvm.VMConfig, p vmPaths) fc.Config {
 // VMM process is tied to a detached lifetime context so the guest
 // outlives the request that launched it; Stop cancels it.
 func (h *fcHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
-	p := sandboxPaths(cfg.OverlayPath)
+	p := sandboxPaths(filepath.Dir(cfg.OverlayPath))
 	fcfg := buildConfig(cfg, p)
 	if err := fcfg.Validate(); err != nil {
 		return nil, fmt.Errorf("firecracker config invalid: %w", err)

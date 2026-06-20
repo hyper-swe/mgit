@@ -44,11 +44,12 @@ func NewManager(cfg Config) (*microvm.Manager, error) {
 		}
 	}
 	return microvm.NewManager(microvm.Config{
-		Backend:    model.BackendKVM,
-		WorkDir:    cfg.WorkDir,
-		Resolve:    cfg.Resolve,
-		Hypervisor: hv,
-		Logger:     cfg.Logger,
-		Clock:      cfg.Clock,
+		Backend:     model.BackendKVM,
+		WorkDir:     cfg.WorkDir,
+		Resolve:     cfg.Resolve,
+		Hypervisor:  hv,
+		GuestDialer: newGuestDialer(cfg.WorkDir),
+		Logger:      cfg.Logger,
+		Clock:       cfg.Clock,
 	})
 }

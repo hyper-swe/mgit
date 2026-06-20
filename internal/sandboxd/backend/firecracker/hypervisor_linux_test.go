@@ -126,7 +126,7 @@ func TestKVM_RootfsReadOnly_OverlayCOW(t *testing.T) {
 		Cmdline: bootCmdline, OverlayPath: "/state/sb1/overlay.img",
 		VsockEnabled: true,
 	}
-	fcfg := buildConfig(cfg, sandboxPaths(cfg.OverlayPath))
+	fcfg := buildConfig(cfg, sandboxPaths(filepath.Dir(cfg.OverlayPath)))
 
 	require.Len(t, fcfg.Drives, 2, "exactly a rootfs + overlay drive")
 	root := fcfg.Drives[0]
@@ -171,7 +171,7 @@ func TestKVM_BuildConfig_VsockDisabled(t *testing.T) {
 		KernelPath: "/img/vmlinux", RootfsPath: "/img/rootfs.sqfs", RootfsReadOnly: true,
 		OverlayPath: "/state/sb1/overlay.img", VsockEnabled: false,
 	}
-	fcfg := buildConfig(cfg, sandboxPaths(cfg.OverlayPath))
+	fcfg := buildConfig(cfg, sandboxPaths(filepath.Dir(cfg.OverlayPath)))
 	assert.Empty(t, fcfg.VsockDevices, "no vsock device when the control plane is disabled")
 }
 
@@ -179,7 +179,7 @@ func TestKVM_BuildConfig_VsockDisabled(t *testing.T) {
 // rooted in the sandbox state dir so teardown is one RemoveAll.
 // Refs: FR-17.19
 func TestKVM_SandboxPaths_AllUnderStateDir(t *testing.T) {
-	p := sandboxPaths("/state/sb1/overlay.img")
+	p := sandboxPaths("/state/sb1")
 	for _, path := range []string{p.socket, p.vsock, p.console} {
 		assert.Equal(t, "/state/sb1", filepath.Dir(path), "artifact %q must live under the state dir", path)
 	}
