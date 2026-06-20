@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-20T17:02:14Z",
+  "exported_at": "2026-06-20T17:09:32Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -470,7 +470,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.5425824175824177,
+      "progress": 0.5502747252747253,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -618,15 +618,15 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
+      "status": "open",
+      "progress": 0.1,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
       "weight": 1,
       "content_hash": "ab22b1532f8e92a88b00295e15a85dcf4525a71a41a6a332a40ee42fd5656526",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:41Z"
+      "updated_at": "2026-06-20T17:04:04Z"
     },
     {
       "id": "MGIT-11.10.1",
@@ -810,15 +810,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "987cb278c174daae16a9dab974fd0e867a8e2a40b18b4ce495beba40f4ef47ab",
       "created_at": "2026-06-20T16:55:23Z",
-      "updated_at": "2026-06-20T17:00:58Z"
+      "updated_at": "2026-06-20T17:09:21Z",
+      "closed_at": "2026-06-20T17:09:21Z"
     },
     {
       "id": "MGIT-11.10.8",
@@ -7064,12 +7065,6 @@
       "created_at": "2026-06-12T11:47:32Z"
     },
     {
-      "from_id": "MGIT-11.9",
-      "to_id": "MGIT-11.10",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:16:41Z"
-    },
-    {
       "from_id": "MGIT-11.9.1",
       "to_id": "MGIT-11.10.1",
       "dep_type": "blocks",
@@ -7417,7 +7412,7 @@
       "agent_id": "",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-11.9.6",
+      "current_node_id": "MGIT-11.10.7",
       "last_heartbeat": "2026-06-17T08:16:40Z"
     },
     {
@@ -7444,5 +7439,5 @@
   ],
   "sessions": null,
   "node_count": 241,
-  "checksum": "14a5db2305941f1ae12a8871479b609fef709e450ab5e2df8e7ba141acb1abb5"
+  "checksum": "4a042af1281dc1560bfd8c06d4086dd6ead3319e871bbcf59dee72c736e3a522"
 }
