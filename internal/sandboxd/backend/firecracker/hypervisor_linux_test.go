@@ -148,6 +148,7 @@ func TestKVM_RootfsReadOnly_OverlayCOW(t *testing.T) {
 
 	require.Len(t, fcfg.VsockDevices, 1, "vsock control plane present")
 	assert.Equal(t, uint32(guestVsockCID), fcfg.VsockDevices[0].CID)
+	assert.NotContains(t, fcfg.KernelArgs, "mgit.worktree", "no worktree cmdline without a worktree drive")
 }
 
 // TestKVM_BuildConfig_WorktreeDrive verifies the copy-and-land worktree
@@ -157,7 +158,8 @@ func TestKVM_BuildConfig_WorktreeDrive(t *testing.T) {
 	cfg := microvm.VMConfig{
 		CPUs: 1, MemoryMB: 256,
 		KernelPath: "/img/vmlinux", RootfsPath: "/img/rootfs.sqfs", RootfsReadOnly: true,
-		OverlayPath: "/state/sb1/overlay.img", VsockEnabled: true,
+		Cmdline: "console=ttyS0", OverlayPath: "/state/sb1/overlay.img",
+		WorktreePath: "/home/dev/wt/task-a", VsockEnabled: true,
 	}
 	fcfg := buildConfig(cfg, sandboxPaths("/state/sb1"), "/state/sb1/worktree.ext4")
 
@@ -167,6 +169,11 @@ func TestKVM_BuildConfig_WorktreeDrive(t *testing.T) {
 	assert.Equal(t, "/state/sb1/worktree.ext4", *wt.PathOnHost)
 	assert.False(t, *wt.IsRootDevice, "worktree is not the root device")
 	assert.False(t, *wt.IsReadOnly, "the guest edits the worktree copy (writable)")
+
+	// The kernel cmdline tells the guest to mount vdc at the identical path.
+	assert.Contains(t, fcfg.KernelArgs, "mgit.worktree=/home/dev/wt/task-a")
+	assert.Contains(t, fcfg.KernelArgs, "mgit.worktree_fs=ext4")
+	assert.Contains(t, fcfg.KernelArgs, "mgit.worktree_src="+worktreeDevice)
 }
 
 // TestKVM_WorktreeImage_BuiltAndAttached boots a real guest with a

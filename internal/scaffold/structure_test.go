@@ -94,18 +94,19 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 
 	// Check that internal/ only contains expected subdirectories
 	expectedInternalSubs := map[string]bool{
-		"model":    true,
-		"store":    true,
-		"service":  true,
-		"api":      true,
-		"mcp":      true,
-		"mtix":     true,
-		"testutil": true,
-		"scaffold": true, // our test package
-		"docs":     true, // documentation generator
-		"sandboxd": true, // sandbox helper daemon library (FR-17.16, MGIT-11.4.1)
-		"guest":    true, // guest supervisor library (FR-17.16, MGIT-11.5.6)
-		"execwire": true, // host<->guest exec wire protocol (FR-17.11, MGIT-11.9.2)
+		"model":     true,
+		"store":     true,
+		"service":   true,
+		"api":       true,
+		"mcp":       true,
+		"mtix":      true,
+		"testutil":  true,
+		"scaffold":  true, // our test package
+		"docs":      true, // documentation generator
+		"sandboxd":  true, // sandbox helper daemon library (FR-17.16, MGIT-11.4.1)
+		"guest":     true, // guest supervisor library (FR-17.16, MGIT-11.5.6)
+		"execwire":  true, // host<->guest exec wire protocol (FR-17.11, MGIT-11.9.2)
+		"guestboot": true, // host->guest worktree-mount boot contract (FR-17.3, MGIT-11.6.5)
 	}
 
 	entries, err := os.ReadDir(filepath.Join(root, "internal"))

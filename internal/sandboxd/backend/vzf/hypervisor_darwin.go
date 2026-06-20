@@ -8,6 +8,7 @@ import (
 
 	"github.com/Code-Hex/vz/v3"
 
+	"github.com/hyper-swe/mgit/internal/guestboot"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 )
 
@@ -28,8 +29,15 @@ type vzHypervisor struct{}
 // worktree share at the identical path, vsock device, optional NAT
 // NIC, and the memory balloon. Refs: FR-17.3, FR-17.7, FR-17.17, NFR-17.4
 func (h *vzHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
-	bootLoader, err := vz.NewLinuxBootLoader(cfg.KernelPath,
-		vz.WithCommandLine(cfg.Cmdline))
+	// Tell the guest to mount the virtiofs worktree share (tag) at the
+	// worktree's identical path (FR-17.3, guestboot, MGIT-11.6.5).
+	cmdline := cfg.Cmdline
+	if cfg.WorktreePath != "" {
+		cmdline = guestboot.AppendCmdline(cmdline, guestboot.WorktreeMount{
+			Path: cfg.WorktreePath, FSType: "virtiofs", Source: cfg.WorktreeTag,
+		})
+	}
+	bootLoader, err := vz.NewLinuxBootLoader(cfg.KernelPath, vz.WithCommandLine(cmdline))
 	if err != nil {
 		return nil, fmt.Errorf("vz boot loader: %w", err)
 	}

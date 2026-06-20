@@ -14,6 +14,7 @@ import (
 	models "github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 	"github.com/sirupsen/logrus"
 
+	"github.com/hyper-swe/mgit/internal/guestboot"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 )
@@ -21,6 +22,12 @@ import (
 // guestVsockCID is the guest-side context ID for the control plane. The
 // host addresses the guest at this CID over the per-VM unix socket.
 const guestVsockCID = 3
+
+// worktreeDevice is the guest block device the worktree ext4 image
+// appears as: drives attach in buildConfig order (rootfs=vda, overlay=vdb,
+// worktree=vdc), so the worktree is the third virtio-blk device. The guest
+// mounts it at the worktree's identical path (guestboot). Refs: MGIT-11.6.5
+const worktreeDevice = "/dev/vdc"
 
 // kvmDevice is the KVM character device probed by the fail-closed
 // availability check. A var (not a const) only so that fail-closed path
@@ -106,10 +113,19 @@ func buildConfig(cfg microvm.VMConfig, p vmPaths, worktreeImg string) fc.Config 
 			IsReadOnly:   fc.Bool(false), // the guest edits the worktree copy
 		})
 	}
+	// When the worktree image is attached (vdc), tell the guest to mount
+	// it at the worktree's identical path (copy-and-land, MGIT-11.6.5).
+	kernelArgs := cfg.Cmdline
+	if worktreeImg != "" {
+		kernelArgs = guestboot.AppendCmdline(kernelArgs, guestboot.WorktreeMount{
+			Path: cfg.WorktreePath, FSType: "ext4", Source: worktreeDevice,
+		})
+	}
+
 	out := fc.Config{
 		SocketPath:      p.socket,
 		KernelImagePath: cfg.KernelPath,
-		KernelArgs:      cfg.Cmdline,
+		KernelArgs:      kernelArgs,
 		Drives:          drives,
 		MachineCfg: models.MachineConfiguration{
 			VcpuCount:  fc.Int64(int64(cfg.CPUs)),
