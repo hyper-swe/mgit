@@ -141,6 +141,26 @@ func (r *Repository) Now() time.Time {
 	return r.clock()
 }
 
+// WriteRawObject stores a raw git object — its canonical content (the
+// bytes after the type/size header) — of the given type in the .mgit
+// object store, returning its content-addressed hash. It is idempotent:
+// the store is content-addressed, so writing the same bytes twice yields
+// the same hash and is a harmless no-op. The sandbox land path uses it to
+// import verified guest objects (commits, trees, blobs) into the host
+// store host-side, after VerifyBinding (FR-17.5, FR-17.24).
+func (r *Repository) WriteRawObject(typ plumbing.ObjectType, content []byte) (string, error) {
+	obj := &plumbing.MemoryObject{}
+	obj.SetType(typ)
+	if _, err := obj.Write(content); err != nil {
+		return "", fmt.Errorf("git: stage %s object: %w", typ, err)
+	}
+	h, err := r.repo.Storer.SetEncodedObject(obj)
+	if err != nil {
+		return "", fmt.Errorf("git: store %s object: %w", typ, err)
+	}
+	return h.String(), nil
+}
+
 // Head returns the SHA-1 hash of the current HEAD commit.
 // Refs: FR-1.4
 func (r *Repository) Head() (string, error) {
