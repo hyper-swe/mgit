@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-20T13:40:21Z",
+  "exported_at": "2026-06-20T14:04:27Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1841,15 +1841,15 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
       "assignee": "",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "a65c3f283d5684fe12d504440d4bc043a317e137bce83468934f0c26bf5ae760",
       "created_at": "2026-06-20T13:39:00Z",
-      "updated_at": "2026-06-20T13:39:00Z"
+      "updated_at": "2026-06-20T13:52:00Z"
     },
     {
       "id": "MGIT-11.6.5",
@@ -7216,7 +7216,7 @@
       "agent_id": "",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-13",
+      "current_node_id": "MGIT-11.6.4",
       "last_heartbeat": "2026-06-17T08:16:40Z"
     },
     {
@@ -7243,5 +7243,5 @@
   ],
   "sessions": null,
   "node_count": 234,
-  "checksum": "a7b14c9a746dacae1bd0f81fcafb54c139886e2432329fcb88586a28fb40792b"
+  "checksum": "dfd4c2ce96b438b197af37caf61b91d7c749af8bbb14ed862137b18bbdd797a4"
 }
