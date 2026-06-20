@@ -13,9 +13,10 @@ import (
 // silent downgrade (FR-17.15). Refs: FR-17.15, FR-17.16
 func newHypervisorBackend(deps hypervisorDeps) (model.SandboxManager, error) {
 	return vzf.NewManager(vzf.Config{
-		WorkDir: deps.workDir,
-		Resolve: newImageResolver(deps.hostRoot, deps.clock),
-		Logger:  deps.logger,
-		Clock:   deps.clock,
+		WorkDir:    deps.workDir,
+		Resolve:    newImageResolver(deps.hostRoot, deps.clock),
+		Logger:     deps.logger,
+		Clock:      deps.clock,
+		PeerBinder: deps.peerBinder,
 	})
 }

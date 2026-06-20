@@ -39,6 +39,12 @@ type Config struct {
 	// daemon rejects fast (accept-then-close) rather than spawning an
 	// unbounded number of goroutines. Refs: MGIT-11.10.8 (security audit)
 	MaxConns int
+	// PeerBinder holds the sandbox->peer-identity bindings (the backend
+	// Binds at launch and Invalidates at teardown). The daemon owns it to
+	// authorize incoming guest->host land/attestation channels against the
+	// addressed sandbox's binding (SEC-10); that accept path is wired in
+	// MGIT-11.10.10. Refs: FR-17.27, SEC-10
+	PeerBinder *PeerBinder
 	// PeerUID reads kernel-asserted peer credentials for one
 	// connection. Nil selects the platform mechanism (SO_PEERCRED /
 	// LOCAL_PEERCRED); injectable so foreign-UID rejection is testable

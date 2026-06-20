@@ -31,6 +31,9 @@ type Config struct {
 	// FirecrackerBin is the path to the firecracker binary. Empty
 	// resolves "firecracker" from PATH. Ignored when Hypervisor is set.
 	FirecrackerBin string
+	// PeerBinder records each sandbox's host-observed peer identity for
+	// channel authorization (SEC-10); nil disables binding.
+	PeerBinder microvm.PeerBinder
 }
 
 // NewManager returns a microVM manager backed by Firecracker on KVM.
@@ -49,6 +52,7 @@ func NewManager(cfg Config) (*microvm.Manager, error) {
 		Resolve:     cfg.Resolve,
 		Hypervisor:  hv,
 		GuestDialer: newGuestDialer(cfg.WorkDir),
+		PeerBinder:  cfg.PeerBinder,
 		Logger:      cfg.Logger,
 		Clock:       cfg.Clock,
 	})

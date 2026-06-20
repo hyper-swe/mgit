@@ -94,9 +94,16 @@ func run(args []string, logSink io.Writer) int {
 	}
 	clock := func() time.Time { return time.Now().UTC() }
 
+	// One PeerBinder is shared: the backend Binds each launch / Invalidates
+	// each teardown to its host-observed peer identity, and the daemon owns
+	// it to authorize incoming guest->host channels against those bindings
+	// (SEC-10, the land/attestation accept path). Refs: FR-17.27
+	peerBinder := sandboxd.NewPeerBinder(logger)
+
 	selected, err := selectManager(backendSelection{
 		backend: opts.backend, ackReduced: opts.ackReduced,
 		hostRoot: opts.hostRoot, workDir: opts.workDir, logger: logger, clock: clock,
+		peerBinder: peerBinder,
 	})
 	if err != nil {
 		logger.Error("sandbox backend selection failed", "error", err.Error())
@@ -110,6 +117,7 @@ func run(args []string, logSink io.Writer) int {
 	dcfg := sandboxd.Config{
 		SocketPath: opts.socket, Manager: manager,
 		Logger: logger, Clock: clock, IdleGrace: opts.idleGrace, MaxConns: opts.maxConns,
+		PeerBinder: peerBinder,
 	}
 	// Wire the dispatch service when a host root is configured: the daemon
 	// then serves launch/exec/list/remove/status (going through the

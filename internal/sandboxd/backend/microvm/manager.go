@@ -80,6 +80,25 @@ type GuestDialer interface {
 	DialGuest(ctx context.Context, sandboxID string) (net.Conn, error)
 }
 
+// PeerBinder records a sandbox's host-observed peer identity at launch and
+// clears it at teardown, so the daemon can authorize incoming guest->host
+// land/attestation channels against it (SEC-10). Optional: nil disables
+// binding (e.g. the container fallback, which has no vsock peer).
+// sandboxd.PeerBinder satisfies it. Refs: FR-17.27, SEC-10
+type PeerBinder interface {
+	Bind(sandboxID, peerID string)
+	Invalidate(sandboxID string)
+}
+
+// PeerIdentifier is implemented by a VM that knows its host-observed peer
+// identity — the vsock CID on AF_VSOCK backends, the VM-GUID on Hyper-V.
+// The identity is host-observed, never guest-asserted (SEC-05). A VM that
+// reports none is bound under its sandbox ID, which is host-assigned and
+// likewise unique per VM. Refs: SEC-10, SEC-05
+type PeerIdentifier interface {
+	PeerIdentity() string
+}
+
 // Config wires the shared manager's dependencies.
 type Config struct {
 	Backend     string                                    // model.Backend* this platform reports
@@ -87,6 +106,7 @@ type Config struct {
 	Resolve     func(imageRef string) (ImagePaths, error) // verified image resolution (FR-17.17)
 	Hypervisor  Hypervisor
 	GuestDialer GuestDialer // exec transport into the guest; nil = exec unavailable
+	PeerBinder  PeerBinder  // channel peer-identity binder (SEC-10); nil disables
 	Logger      *slog.Logger
 	Clock       func() time.Time
 }
@@ -179,6 +199,14 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 	m.mu.Lock()
 	m.sandboxes[id] = &sandbox{info: info, vm: vm, dir: dir}
 	m.mu.Unlock()
+
+	// Bind the sandbox to its host-observed peer identity so incoming
+	// guest->host channels can be authorized against it (SEC-10). The VM
+	// reports the identity when it knows one (the vsock CID); otherwise the
+	// host-assigned sandbox ID is used. Refs: FR-17.27, SEC-10
+	if m.cfg.PeerBinder != nil {
+		m.cfg.PeerBinder.Bind(id, peerIdentity(vm, id))
+	}
 
 	m.cfg.Logger.Info("sandbox launched", "event", "launched", "backend", m.cfg.Backend,
 		"sandbox_id", id, "task_id", opts.TaskID, "network_mode", opts.Network.Mode)
@@ -324,8 +352,24 @@ func (m *Manager) Remove(ctx context.Context, id string, force bool) error {
 	delete(m.sandboxes, id)
 	m.mu.Unlock()
 
+	// Drop the peer binding so a connection still addressing this sandbox —
+	// or a recycled CID handed to a successor VM — cannot reach the
+	// destroyed channel (SEC-10). Refs: FR-17.27
+	if m.cfg.PeerBinder != nil {
+		m.cfg.PeerBinder.Invalidate(id)
+	}
+
 	m.cfg.Logger.Info("sandbox removed", "event", "removed", "backend", m.cfg.Backend, "sandbox_id", id)
 	return nil
+}
+
+// peerIdentity returns the VM's host-observed peer identity, falling back
+// to the (host-assigned, unique) sandbox ID when the VM reports none.
+func peerIdentity(vm VM, sandboxID string) string {
+	if pi, ok := vm.(PeerIdentifier); ok {
+		return pi.PeerIdentity()
+	}
+	return sandboxID
 }
 
 // Resolve returns one sandbox by id.

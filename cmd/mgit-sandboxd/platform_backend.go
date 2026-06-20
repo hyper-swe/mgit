@@ -23,6 +23,7 @@ type backendSelection struct {
 	workDir    string
 	logger     *slog.Logger
 	clock      func() time.Time
+	peerBinder microvm.PeerBinder // channel peer-identity binder (SEC-10)
 }
 
 // selectManager resolves the sandbox backend: the build-tagged platform
@@ -42,10 +43,11 @@ func selectManager(sel backendSelection) (model.SandboxManager, error) {
 		// no change here.
 		Hypervisor: func() (model.SandboxManager, error) {
 			return newHypervisorBackend(hypervisorDeps{
-				hostRoot: sel.hostRoot,
-				workDir:  sel.workDir,
-				logger:   sel.logger,
-				clock:    sel.clock,
+				hostRoot:   sel.hostRoot,
+				workDir:    sel.workDir,
+				logger:     sel.logger,
+				clock:      sel.clock,
+				peerBinder: sel.peerBinder,
 			})
 		},
 		Container: func() (model.SandboxManager, error) {
@@ -66,10 +68,11 @@ func selectManager(sel backendSelection) (model.SandboxManager, error) {
 // WCOW backend lands (ADR-006, MGIT-12). The struct is OS-neutral so the
 // future Windows backend slots in with no caller change.
 type hypervisorDeps struct {
-	hostRoot string // host config root holding images.lock + trust root (FR-17.13)
-	workDir  string // sandbox-local state root; never a worktree
-	logger   *slog.Logger
-	clock    func() time.Time
+	hostRoot   string // host config root holding images.lock + trust root (FR-17.13)
+	workDir    string // sandbox-local state root; never a worktree
+	logger     *slog.Logger
+	clock      func() time.Time
+	peerBinder microvm.PeerBinder // channel peer-identity binder (SEC-10); nil disables
 }
 
 // newImageResolver returns a verified-image resolver that lazily opens

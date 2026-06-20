@@ -27,6 +27,9 @@ type Config struct {
 	Hypervisor microvm.Hypervisor
 	Logger     *slog.Logger
 	Clock      func() time.Time
+	// PeerBinder records each sandbox's host-observed peer identity for
+	// channel authorization (SEC-10); nil disables binding.
+	PeerBinder microvm.PeerBinder
 }
 
 // NewManager returns a microVM manager backed by Virtualization.framework.
@@ -44,6 +47,7 @@ func NewManager(cfg Config) (*microvm.Manager, error) {
 		WorkDir:    cfg.WorkDir,
 		Resolve:    cfg.Resolve,
 		Hypervisor: hv,
+		PeerBinder: cfg.PeerBinder,
 		Logger:     cfg.Logger,
 		Clock:      cfg.Clock,
 	})

@@ -190,6 +190,16 @@ type fcVM struct {
 	console *os.File
 }
 
+// PeerIdentity reports the host-observed vsock peer identity. Over
+// Firecracker the guest's well-known context ID is guestVsockCID; the
+// per-VM unix socket (keyed by sandbox ID) is the actual transport
+// discriminator, so the daemon's channel authorization keys on the
+// addressed sandbox and confirms this bound peer. The CID is host-observed,
+// never guest-asserted (SEC-05). Refs: FR-17.27, SEC-10
+func (v *fcVM) PeerIdentity() string {
+	return fmt.Sprintf("cid:%d", guestVsockCID)
+}
+
 // teardown cancels the VMM lifetime and closes the console capture.
 func (v *fcVM) teardown() {
 	v.cancel()
