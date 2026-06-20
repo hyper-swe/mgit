@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-20T16:43:23Z",
+  "exported_at": "2026-06-20T17:02:14Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -653,6 +653,30 @@
       "updated_at": "2026-06-12T11:42:50Z"
     },
     {
+      "id": "MGIT-11.10.10",
+      "parent_id": "MGIT-11.10",
+      "depth": 2,
+      "seq": 10,
+      "project": "MGIT",
+      "title": "Land over the control plane (guest land server + host land-stream + mgit sandbox land)",
+      "description": "",
+      "prompt": "Wire the full land path end to end. Land needs MORE than exec: (1) GUEST side — mgit-guest must serve the commit object pool for a task over a vsock LAND channel (a port distinct from the exec port 1024), streaming framed objects (land/protocol.DecodeObjects format) on request; pure transport, no signing key (SEC-01). (2) HOST side — a concrete LandStreamOpener that vsock-dials the guest land port (analogous to fcvsock for exec) and returns the framed object stream; wire it + the AttestationVerifier (attest.Service) + the concrete LandPersister (Lander with StoreImporter + StoreBrancher + index AppendTaskCommits, MGIT-11.9.6) into a LandOrchestrator constructed in the daemon. (3) Daemon dispatch for Land + `mgit sandbox land --task \u003cid\u003e` CLI. Land MUST go through the existing verified LandOrchestrator (dual-hash + attestation + require_sandbox + ceilings + FileDiffs\u003c-\u003etree once MGIT-11.9.6 completes) — no path may import guest objects without that verification. Atomic; verification failure imports nothing. Commit format + NO co-authored-by/agent/Generated-with trailer.\n\nDEFINITION OF DONE: TDD; the host land path is unit-tested against a fake guest land stream; coverage gates; zero lint/vet/race/vuln; /simplify; real-KVM e2e land round-trip (guest land server -\u003e host pull -\u003e verify -\u003e import -\u003e fast-forward) gated like the exec e2e.\n\nACCEPTANCE CRITERIA:\n`mgit sandbox land --task \u003cid\u003e` pulls the guest's commit objects over a dedicated vsock land channel, runs them through the verified LandOrchestrator (dual-hash + attestation + ceilings), and atomically imports + fast-forwards host-side; verification failure imports nothing; no path bypasses verification.\n\nREQUIRED TESTS:\n  - TestGuestLandServer_StreamsObjects\n  - TestLandStreamOpener_DialsGuestLandPort\n  - TestDaemon_Land_RoutesThroughVerifiedOrchestrator\n  - TestE2E_Land_RealGuest_RoundTrip (KVM-gated)",
+      "acceptance": "`mgit sandbox land` pulls guest objects over a dedicated vsock land channel, runs them through the verified LandOrchestrator (dual-hash + attestation + ceilings), and atomically imports + fast-forwards; verification failure imports nothing; no path bypasses verification.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "54e00e74a39ffa45f669a4d8552a598b9a7a82ddf9cac7c44d6efc8a0e1f5685",
+      "created_at": "2026-06-20T16:55:55Z",
+      "updated_at": "2026-06-20T16:55:55Z"
+    },
+    {
       "id": "MGIT-11.10.2",
       "parent_id": "MGIT-11.10",
       "depth": 2,
@@ -771,6 +795,78 @@
       "content_hash": "45af757e0b0f8bcbc916213516d57e890101912230adaf1c356d8e2bf0f74650",
       "created_at": "2026-06-20T15:43:11Z",
       "updated_at": "2026-06-20T15:43:11Z"
+    },
+    {
+      "id": "MGIT-11.10.7",
+      "parent_id": "MGIT-11.10",
+      "depth": 2,
+      "seq": 7,
+      "project": "MGIT",
+      "title": "Control-plane IPC protocol (host CLI \u003c-\u003e mgit-sandboxd)",
+      "description": "",
+      "prompt": "Define the framed request/response protocol the CLI and mgit-sandboxd speak over the daemon's unix socket, AFTER the existing peer-UID auth + greeting (daemon.go handleConn). Single-source it in one package both ends import (mirror internal/execwire), so client and daemon framings cannot drift. Request kinds for v1: Launch, Exec (streams stdout/stderr like execwire + exit code), Land, List, Remove, Status. TRUST BOUNDARY NOTE: the socket is already same-UID-only (peer UID == daemon UID, 0600, owner-only dir, flock) — so the client is as privileged as the daemon; the protocol's job is robustness + defense-in-depth (a malformed/oversized request must never crash or hang the daemon or escape ceilings), NOT a privilege boundary. The real security boundary is host\u003c-\u003eguest (vsock), unchanged. Enforce per-message ceilings (max request bytes, max frame bytes) before allocating; fail closed on truncation/unknown kind. Pure Go, no new deps. Commit format + NO co-authored-by/agent/Generated-with trailer.\n\nDEFINITION OF DONE: TDD; round-trip + oversize/truncated/unknown-kind fail-closed tests; coverage gate (other 90/85); zero lint/vet/race/vuln; /simplify.\n\nACCEPTANCE CRITERIA:\nA single shared package encodes/decodes every control-plane request + response (incl. streamed exec frames), enforces size ceilings before allocation, fails closed on malformed input, and is used by both the daemon and the CLI client so framings cannot drift.\n\nREQUIRED TESTS:\n  - TestControlProto_RequestRoundTrip\n  - TestControlProto_OversizeRejected\n  - TestControlProto_TruncatedFailsClosed\n  - TestControlProto_UnknownKindRejected",
+      "acceptance": "A single shared package encodes/decodes all control-plane requests/responses (incl. streamed exec), enforces size ceilings before allocation, fails closed on malformed input, and is imported by both daemon and CLI so the framing cannot drift.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "987cb278c174daae16a9dab974fd0e867a8e2a40b18b4ce495beba40f4ef47ab",
+      "created_at": "2026-06-20T16:55:23Z",
+      "updated_at": "2026-06-20T17:00:58Z"
+    },
+    {
+      "id": "MGIT-11.10.8",
+      "parent_id": "MGIT-11.10",
+      "depth": 2,
+      "seq": 8,
+      "project": "MGIT",
+      "title": "Daemon request dispatch + SandboxService wiring (launch/exec/list/remove/status)",
+      "description": "",
+      "prompt": "Wire the daemon to actually serve sandbox operations. Today daemon.go handleConn authenticates + greets then closes; the manager is never invoked and internal/service.SandboxService is never constructed in production. Construct the SandboxService (manager + sandbox_events appender + policy reader + clock + id gen) in cmd/mgit-sandboxd and have the daemon, after auth+greeting, read a control-plane request (the IPC protocol ticket) and dispatch: Launch-\u003eRegister/EnsureRunning, Exec-\u003eSandboxService.Exec (stream stdout/stderr + exit code back), List, Remove, Status. Handlers go through the SERVICE, never the manager directly (architecture rule). Each op records the appropriate append-only sandbox_event (FR-17.18). A malformed/oversized request, a hung client, or a backend error must fail closed without crashing the daemon or stranding VMs (drain still holds). Per-connection goroutine + deadlines; bounded concurrent connections. The GuestDialer is already injected for firecracker; ensure exec routes through it. Commit format + NO co-authored-by/agent/Generated-with trailer.\n\nDEFINITION OF DONE: TDD; coverage gates (service 95/90); zero lint/vet/race/vuln; /simplify; the daemon never panics on hostile/malformed input (fuzz/edge tests).\n\nACCEPTANCE CRITERIA:\nThe daemon dispatches launch/exec/list/remove/status to the SandboxService over the control plane; exec streams output + exit code; every op is audited; malformed/oversized/hung requests fail closed without crashing the daemon or leaking VMs; handlers never touch the manager directly.\n\nREQUIRED TESTS:\n  - TestDaemon_Exec_RoutesToService\n  - TestDaemon_Launch_RegistersAndAudits\n  - TestDaemon_MalformedRequest_FailsClosedNoCrash\n  - TestDaemon_List_Remove_Status",
+      "acceptance": "After auth+greeting the daemon dispatches launch/exec/list/remove/status to the SandboxService (never the manager directly); exec streams stdout/stderr + exit code; ops are audited; malformed/oversized/hung input fails closed without crashing the daemon or stranding VMs.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "b1690c02d24c7c053ae97744c463c84560e583ccdbf6441be0dcb453af62f387",
+      "created_at": "2026-06-20T16:55:34Z",
+      "updated_at": "2026-06-20T17:01:01Z"
+    },
+    {
+      "id": "MGIT-11.10.9",
+      "parent_id": "MGIT-11.10",
+      "depth": 2,
+      "seq": 9,
+      "project": "MGIT",
+      "title": "mgit sandbox CLI commands (launch/exec/list/remove/status)",
+      "description": "",
+      "prompt": "Add the `mgit sandbox` cobra command surface so a user/agent can drive the sandbox. Subcommands mirror worktree verbs: `mgit sandbox launch --task \u003cid\u003e`, `mgit sandbox exec --task \u003cid\u003e -- \u003ccmd...\u003e` (streams stdout/stderr, propagates exit code), `mgit sandbox list`, `mgit sandbox remove \u003cid\u003e`, `mgit sandbox status \u003cid\u003e`. The CLI is a thin client of the control plane: it uses sandboxd.EnsureRunning (activation + the greeting check that rejects a squatter socket) to reach a live daemon, then speaks the IPC protocol. The CLI calls the daemon ONLY (never Store/Manager directly). Fail clearly when the sandbox backend is unavailable (e.g. no /dev/kvm on Linux, or macOS without the vzf path) — never silently fall back. Support --json for structured output. Register in cmd/mgit/main.go rootCmd. Commit format + NO co-authored-by/agent/Generated-with trailer.\n\nDEFINITION OF DONE: TDD (command construction + flag wiring + client encode/decode against a fake daemon); coverage gates (CLI 90/85); zero lint/vet/race/vuln; /simplify; smoke `mgit sandbox --help`.\n\nACCEPTANCE CRITERIA:\n`mgit sandbox launch/exec/list/remove/status` work against a running daemon via the control plane (activation + greeting-verified); exec streams output and propagates the exit code; unavailable backend fails clearly (no silent fallback); --json supported.\n\nREQUIRED TESTS:\n  - TestSandboxCmd_Help\n  - TestSandboxExec_StreamsAndPropagatesExit (fake daemon)\n  - TestSandboxCmd_BackendUnavailable_FailsClearly\n  - TestSandboxCmd_FlagWiring",
+      "acceptance": "`mgit sandbox launch/exec/list/remove/status` drive the daemon over the control plane (activation + greeting-verified, daemon-only); exec streams output + propagates exit code; an unavailable backend fails clearly with no silent fallback; --json supported.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "a231d8d4e312c38858d7fa01589a8a7a3f0c2ddd50a4437095b9ad56f38a9575",
+      "created_at": "2026-06-20T16:55:43Z",
+      "updated_at": "2026-06-20T16:55:43Z"
     },
     {
       "id": "MGIT-11.11",
@@ -2406,7 +2502,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "in_progress",
+      "status": "blocked",
       "progress": 0,
       "assignee": "",
       "creator": "mcp",
@@ -2414,7 +2510,7 @@
       "weight": 1,
       "content_hash": "878c1e186cb508effa11ba2127aea77443f22510f8eff43b2752773aaef9fdb4",
       "created_at": "2026-06-20T13:39:26Z",
-      "updated_at": "2026-06-20T16:33:02Z"
+      "updated_at": "2026-06-20T17:01:09Z"
     },
     {
       "id": "MGIT-11.9.7",
@@ -2454,7 +2550,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
+      "status": "blocked",
       "progress": 0,
       "assignee": "",
       "creator": "mcp",
@@ -2462,7 +2558,7 @@
       "weight": 1,
       "content_hash": "cb29686179779b15f43aa9d2ffbf9eccf695fdd3134853b9c79cccc979cf3c81",
       "created_at": "2026-06-20T13:39:55Z",
-      "updated_at": "2026-06-20T13:39:55Z"
+      "updated_at": "2026-06-20T17:01:06Z"
     },
     {
       "id": "MGIT-12",
@@ -5984,6 +6080,24 @@
       "created_at": "2026-06-12T11:47:32Z"
     },
     {
+      "from_id": "MGIT-11.10.10",
+      "to_id": "MGIT-11.10.8",
+      "dep_type": "blocks",
+      "created_at": "2026-06-20T17:01:04Z"
+    },
+    {
+      "from_id": "MGIT-11.10.10",
+      "to_id": "MGIT-11.9.6",
+      "dep_type": "blocks",
+      "created_at": "2026-06-20T17:01:09Z"
+    },
+    {
+      "from_id": "MGIT-11.10.10",
+      "to_id": "MGIT-11.9.8",
+      "dep_type": "blocks",
+      "created_at": "2026-06-20T17:01:06Z"
+    },
+    {
       "from_id": "MGIT-11.10.2",
       "to_id": "MGIT-11.11.1",
       "dep_type": "blocks",
@@ -6078,6 +6192,18 @@
       "to_id": "MGIT-11.11.4",
       "dep_type": "blocks",
       "created_at": "2026-06-12T11:47:32Z"
+    },
+    {
+      "from_id": "MGIT-11.10.8",
+      "to_id": "MGIT-11.10.7",
+      "dep_type": "blocks",
+      "created_at": "2026-06-20T17:00:58Z"
+    },
+    {
+      "from_id": "MGIT-11.10.9",
+      "to_id": "MGIT-11.10.8",
+      "dep_type": "blocks",
+      "created_at": "2026-06-20T17:01:01Z"
     },
     {
       "from_id": "MGIT-11.11",
@@ -7317,6 +7443,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 237,
-  "checksum": "c6c12bcce921fa618ad18d64b32b7cad581ebf04ac59452d096fbd198a1b866d"
+  "node_count": 241,
+  "checksum": "14a5db2305941f1ae12a8871479b609fef709e450ab5e2df8e7ba141acb1abb5"
 }
