@@ -71,6 +71,17 @@ func (p *fakePersister) Land(_ context.Context, taskID string, pool []land.Objec
 	return p.landErr
 }
 
+// fakeParentTrees returns a fixed parent file set (empty by default, the
+// initial-commit case).
+type fakeParentTrees struct {
+	files map[string]string
+	err   error
+}
+
+func (f *fakeParentTrees) ParentFileSet(_ context.Context, _ string) (map[string]string, error) {
+	return f.files, f.err
+}
+
 // --- helpers -------------------------------------------------------------
 
 // frame encodes objects in the land wire format DecodeObjects reads:
@@ -135,7 +146,7 @@ func streamOf(data []byte) *fakeLandStream {
 func newOrch(t *testing.T, s LandStreamOpener, v AttestationVerifier, p LandPersister,
 	ev SandboxEventAppender, pol SandboxPolicyReader) *LandOrchestrator {
 	t.Helper()
-	o, err := NewLandOrchestrator(s, v, p, ev, pol, land.DefaultLimits(),
+	o, err := NewLandOrchestrator(s, v, p, &fakeParentTrees{}, ev, pol, land.DefaultLimits(),
 		func() time.Time { return time.Unix(0, 0).UTC() })
 	require.NoError(t, err)
 	return o
@@ -310,21 +321,43 @@ func TestLandOrch_ValidateRequest(t *testing.T) {
 	}
 }
 
+// TestLandOrch_TreeBindingMismatch_FailsLand verifies the orchestrator
+// enforces the SEC-06 tree binding: a commit whose claimed FileDiffs do not
+// match the landed tree fails the land and persists nothing — even though
+// its dual-hash binding (VerifyBinding) is self-consistent. Refs: SEC-06
+func TestLandOrch_TreeBindingMismatch_FailsLand(t *testing.T) {
+	data, c := buildCommit(t, "MGIT-11.9.3", "feat: land me", "agent-1")
+	// The git object has an empty tree, but the commit claims a file change.
+	// content_hash is recomputed so VerifyBinding still passes — only the
+	// tree binding catches the lie.
+	c.FileDiffs = []model.FileDiff{{Path: "ghost.txt", Operation: model.DiffAdded, NewHash: "deadbeef"}}
+	c.ContentHash = c.ComputeContentHash()
+
+	persist := &fakePersister{}
+	orch := newOrch(t, streamOf(data), &fakeVerifier{}, persist, &fakeEventAppender{}, fakePolicy{p: policyOff()})
+
+	err := orch.Land(context.Background(), landReq("MGIT-11.9.3", "sbx-1", ClaimedCommit{Commit: c}))
+	require.ErrorIs(t, err, model.ErrLandVerificationFailed)
+	assert.Zero(t, persist.called, "nothing is persisted when the tree binding fails")
+}
+
 func TestNewLandOrchestrator_NilDeps(t *testing.T) {
 	s := &fakeLandStream{}
 	v := &fakeVerifier{}
 	p := &fakePersister{}
+	pt := &fakeParentTrees{}
 	ev := &fakeEventAppender{}
 	pol := fakePolicy{}
 	clk := time.Now
 	lim := land.DefaultLimits()
 	for name, build := range map[string]func() (*LandOrchestrator, error){
-		"nil_stream":   func() (*LandOrchestrator, error) { return NewLandOrchestrator(nil, v, p, ev, pol, lim, clk) },
-		"nil_verifier": func() (*LandOrchestrator, error) { return NewLandOrchestrator(s, nil, p, ev, pol, lim, clk) },
-		"nil_persist":  func() (*LandOrchestrator, error) { return NewLandOrchestrator(s, v, nil, ev, pol, lim, clk) },
-		"nil_events":   func() (*LandOrchestrator, error) { return NewLandOrchestrator(s, v, p, nil, pol, lim, clk) },
-		"nil_policy":   func() (*LandOrchestrator, error) { return NewLandOrchestrator(s, v, p, ev, nil, lim, clk) },
-		"nil_clock":    func() (*LandOrchestrator, error) { return NewLandOrchestrator(s, v, p, ev, pol, lim, nil) },
+		"nil_stream":       func() (*LandOrchestrator, error) { return NewLandOrchestrator(nil, v, p, pt, ev, pol, lim, clk) },
+		"nil_verifier":     func() (*LandOrchestrator, error) { return NewLandOrchestrator(s, nil, p, pt, ev, pol, lim, clk) },
+		"nil_persist":      func() (*LandOrchestrator, error) { return NewLandOrchestrator(s, v, nil, pt, ev, pol, lim, clk) },
+		"nil_parent_trees": func() (*LandOrchestrator, error) { return NewLandOrchestrator(s, v, p, nil, ev, pol, lim, clk) },
+		"nil_events":       func() (*LandOrchestrator, error) { return NewLandOrchestrator(s, v, p, pt, nil, pol, lim, clk) },
+		"nil_policy":       func() (*LandOrchestrator, error) { return NewLandOrchestrator(s, v, p, pt, ev, nil, lim, clk) },
+		"nil_clock":        func() (*LandOrchestrator, error) { return NewLandOrchestrator(s, v, p, pt, ev, pol, lim, nil) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := build()

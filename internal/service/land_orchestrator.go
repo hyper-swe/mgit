@@ -32,6 +32,15 @@ type LandPersister interface {
 	Land(ctx context.Context, taskID string, pool []land.Object, commits []land.LandedCommit) error
 }
 
+// ParentTreeResolver resolves a commit's full file set (path -> blob hash)
+// from the host store, so the SEC-06 tree binding can recompute the landed
+// diff against it. An empty parent commit id yields the empty set (an
+// initial commit). Host-side; the concrete host-git resolver is wired with
+// the daemon land path (MGIT-11.10.10). Refs: SEC-06, FR-17.24
+type ParentTreeResolver interface {
+	ParentFileSet(ctx context.Context, parentCommitID string) (map[string]string, error)
+}
+
 // ClaimedCommit is one commit a guest asserts it produced, with the
 // host-issued attestation it holds for it (nil only acceptable when
 // require_sandbox is off). The metadata is UNTRUSTED until the orchestrator
@@ -58,19 +67,21 @@ type LandRequest struct {
 // never the persister/stores directly. DI everywhere, clock injected.
 // Refs: FR-17.5, FR-17.6, FR-17.24, SEC-01, SEC-02, SEC-06
 type LandOrchestrator struct {
-	streams  LandStreamOpener
-	verifier AttestationVerifier
-	persist  LandPersister
-	events   SandboxEventAppender
-	policy   SandboxPolicyReader
-	limits   land.Limits
-	clock    func() time.Time
+	streams     LandStreamOpener
+	verifier    AttestationVerifier
+	persist     LandPersister
+	parentTrees ParentTreeResolver
+	events      SandboxEventAppender
+	policy      SandboxPolicyReader
+	limits      land.Limits
+	clock       func() time.Time
 }
 
 // NewLandOrchestrator wires the orchestrator. All dependencies are
 // required (DI; no globals).
 func NewLandOrchestrator(streams LandStreamOpener, verifier AttestationVerifier, persist LandPersister,
-	events SandboxEventAppender, policy SandboxPolicyReader, limits land.Limits, clock func() time.Time) (*LandOrchestrator, error) {
+	parentTrees ParentTreeResolver, events SandboxEventAppender, policy SandboxPolicyReader,
+	limits land.Limits, clock func() time.Time) (*LandOrchestrator, error) {
 	switch {
 	case streams == nil:
 		return nil, fmt.Errorf("land orchestrator: stream opener must not be nil")
@@ -78,6 +89,8 @@ func NewLandOrchestrator(streams LandStreamOpener, verifier AttestationVerifier,
 		return nil, fmt.Errorf("land orchestrator: attestation verifier must not be nil")
 	case persist == nil:
 		return nil, fmt.Errorf("land orchestrator: persister must not be nil")
+	case parentTrees == nil:
+		return nil, fmt.Errorf("land orchestrator: parent tree resolver must not be nil")
 	case events == nil:
 		return nil, fmt.Errorf("land orchestrator: event appender must not be nil")
 	case policy == nil:
@@ -86,7 +99,7 @@ func NewLandOrchestrator(streams LandStreamOpener, verifier AttestationVerifier,
 		return nil, fmt.Errorf("land orchestrator: clock must not be nil")
 	}
 	return &LandOrchestrator{
-		streams: streams, verifier: verifier, persist: persist,
+		streams: streams, verifier: verifier, persist: persist, parentTrees: parentTrees,
 		events: events, policy: policy, limits: limits, clock: clock,
 	}, nil
 }
@@ -109,7 +122,7 @@ func (o *LandOrchestrator) Land(ctx context.Context, req LandRequest) error {
 	if err != nil {
 		return err
 	}
-	landed, err := o.verifyBatch(ctx, req, policy.RequireSandbox, objsByID)
+	landed, err := o.verifyBatch(ctx, req, policy.RequireSandbox, objsByID, pool)
 	if err != nil {
 		return err // nothing imported
 	}
@@ -157,7 +170,7 @@ func (o *LandOrchestrator) pullObjects(ctx context.Context, sandboxID string) (m
 // (SEC-06), then run through require_sandbox to derive its provenance
 // (SEC-01/SEC-02). Refs: FR-17.5, FR-17.6, FR-17.24
 func (o *LandOrchestrator) verifyBatch(ctx context.Context, req LandRequest, requireSandbox bool,
-	objsByID map[string][]byte) ([]land.LandedCommit, error) {
+	objsByID map[string][]byte, pool []land.Object) ([]land.LandedCommit, error) {
 	landed := make([]land.LandedCommit, 0, len(req.Commits))
 	for i, cc := range req.Commits {
 		objData, ok := objsByID[cc.Commit.CommitID]
@@ -170,6 +183,17 @@ func (o *LandOrchestrator) verifyBatch(ctx context.Context, req LandRequest, req
 				model.ErrTaskMismatch, cc.Commit.CommitID, cc.Commit.TaskID.String(), req.TaskID)
 		}
 		if err := land.VerifyBinding(objData, cc.Commit); err != nil {
+			return nil, err
+		}
+		// SEC-06 completeness: bind the CLAIMED FileDiffs to the actual
+		// landed tree. The parent file set comes from the host store; the
+		// recomputed diff must match the claim and every tree path must be
+		// worktree-safe, or nothing lands. Refs: FR-17.24, FR-17.35, SEC-06
+		parentFiles, err := o.parentTrees.ParentFileSet(ctx, cc.Commit.ParentID)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox land: resolve parent tree: %w", err)
+		}
+		if err := land.VerifyTreeBinding(pool, cc.Commit, parentFiles); err != nil {
 			return nil, err
 		}
 		sandboxID, err := land.EnforceRequireSandbox(ctx, requireSandbox, cc.Commit, cc.Attestation, o.verifier.Verify)
