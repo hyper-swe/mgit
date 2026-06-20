@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-20T14:53:09Z",
+  "exported_at": "2026-06-20T15:43:39Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -470,7 +470,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.5211538461538462,
+      "progress": 0.5352564102564102,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -747,6 +747,30 @@
       "content_hash": "97fd82c22645d8e0c97b2b5807b89115beb2f8627d936b67fe607da35550f3d4",
       "created_at": "2026-06-12T11:47:32Z",
       "updated_at": "2026-06-12T11:47:32Z"
+    },
+    {
+      "id": "MGIT-11.10.6",
+      "parent_id": "MGIT-11.10",
+      "depth": 2,
+      "seq": 6,
+      "project": "MGIT",
+      "title": "CLI/daemon wiring for image registration (images.Register)",
+      "description": "",
+      "prompt": "MGIT-11.13.4 added the host-side image signer/registrar (internal/sandboxd/images: BuildEntry/Sign/Register/LoadSigningKey) — the library that computes digests, Ed25519-signs, and writes images.lock. It has no CLI/daemon caller yet; today only tests + the e2e invoke it. Wire a host operator surface to register a built guest image into images.lock, e.g. `mgit sandbox image add --name \u003cn\u003e --kernel \u003cvmlinux\u003e --rootfs \u003crootfs\u003e --cmdline \u003cargs\u003e` (computes digests via BuildEntry, signs with the trust-root key via LoadSigningKey, writes via Register, prints the digest-pinned ref). Also consider `mgit sandbox image ls` / trust-root init surfacing GenerateTrustRoot. Pairs with scripts/build-guest-image.sh (which produces the rootfs this registers).\n\nDEFINITION OF DONE per issue: TDD; REQUIRED TESTS pass; coverage gates; zero lint/vet/race/vuln; /simplify after green; handlers go through the images library (no duplicated signing logic). Commit format + no co-authored-by/agent/Generated-with trailer.\n\nACCEPTANCE CRITERIA:\nA host operator can register a built guest image (kernel+rootfs+cmdline) into images.lock from the CLI; it is signed against the trust root and immediately resolvable by the sandbox (Store.Resolve); the command prints the digest-pinned image reference.\n\nREQUIRED TESTS:\n  - TestImageAdd_RegistersAndResolves\n  - TestImageAdd_MissingTrustRoot_FailsClosed",
+      "acceptance": "A host operator can register a built guest image into images.lock from the CLI; it is signed against the trust root and immediately resolvable (Store.Resolve); the command prints the digest-pinned reference.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "45af757e0b0f8bcbc916213516d57e890101912230adaf1c356d8e2bf0f74650",
+      "created_at": "2026-06-20T15:43:11Z",
+      "updated_at": "2026-06-20T15:43:11Z"
     },
     {
       "id": "MGIT-11.11",
@@ -1027,7 +1051,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "blocked",
-      "progress": 0,
+      "progress": 0.25,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1122,15 +1146,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "aa11b7b03b59ffaf18651edd353047d80a7309144383f8d6123ee8a4cbfb3773",
       "created_at": "2026-06-20T13:39:50Z",
-      "updated_at": "2026-06-20T13:39:50Z"
+      "updated_at": "2026-06-20T15:43:30Z",
+      "closed_at": "2026-06-20T15:43:30Z"
     },
     {
       "id": "MGIT-11.2",
@@ -1745,7 +1770,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.4,
+      "progress": 0.3333333333333333,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1875,6 +1900,30 @@
       "created_at": "2026-06-20T13:39:04Z",
       "updated_at": "2026-06-20T14:53:00Z",
       "closed_at": "2026-06-20T14:53:00Z"
+    },
+    {
+      "id": "MGIT-11.6.6",
+      "parent_id": "MGIT-11.6",
+      "depth": 2,
+      "seq": 6,
+      "project": "MGIT",
+      "title": "Guest writable root (overlay) for arbitrary identical-path worktree mounts",
+      "description": "",
+      "prompt": "DISCOVERED in MGIT-11.13.4 (real exec round-trip, 2026-06-20). The guest rootfs is mounted READ-ONLY (FR-17.17 immutable pinned image), so mgit-guest (PID 1) can only mount the worktree over a PRE-EXISTING mount point — it cannot os.MkdirAll an arbitrary host worktree path (e.g. /home/user/repo/worktrees/task) on a read-only root (the mkdir fails). The cached CI image sidesteps this with an external /sbin/overlay-init that makes / writable via overlayfs(lower=squashfs RO, upper=overlay COW drive vdb) then switch_roots. mgit-guest needs the equivalent so the identical-path worktree mount (FR-17.3, MGIT-11.6.5) works for ANY host path, not just a baked one.\n\nSCOPE: make the guest root writable before mounting the worktree. Option A (preferred): mgit-guest, as PID 1, mounts an overlayfs (lowerdir = the RO image root, upperdir/workdir on the backend's overlay drive vdb or a tmpfs) and switch_root/pivot_root into it, then continues (mount /proc already done, /dev, worktree at its now-creatable identical path, /tmp). Option B: ship overlay-init in the guest image and chain init -\u003e mgit-guest after it sets up the writable root. The backend already attaches the overlay drive (vdb); wiring mgit-guest to consume it as the upper is the natural fit. This also removes the os.MkdirAll-on-RO-root limitation noted in MGIT-11.6.5 and lets MGIT-11.13.4's e2e use a t.TempDir() worktree (drop the baked-mountpoint requirement, MGIT_E2E_WORKTREE).\n\nDEFINITION OF DONE: TDD where unit-testable (the overlay/switch_root path is e2e-gated on KVM); a firecracker guest mounts a worktree at an ARBITRARY (not pre-baked) identical absolute path and an exec reads it (extend TestE2E_Exec_RealGuest_RoundTrip to a t.TempDir worktree); zero lint/vet/vuln; /simplify; no co-authored-by/agent/Generated-with trailer.\n\nACCEPTANCE CRITERIA:\nA firecracker guest with a read-only image root mounts the worktree at an arbitrary identical absolute host path (created at runtime, not baked into the image); the guest root is writable for the mount-point creation without mutating the pinned image; the e2e round-trip works with a t.TempDir worktree.\n\nREQUIRED TESTS:\n  - TestGuestRoot_WritableForArbitraryWorktreePath (e2e/KVM)\n  - TestE2E_Exec_RealGuest_RoundTrip updated to a runtime worktree path",
+      "acceptance": "A firecracker guest with a read-only pinned image root mounts the worktree at an arbitrary identical absolute host path created at runtime (not baked into the image), without mutating the image; the e2e exec round-trip passes with a t.TempDir worktree.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "f35a9040f9bf7ace5edd57f5aad3bb2306df7f549d603595673f32d365cdf87e",
+      "created_at": "2026-06-20T15:42:57Z",
+      "updated_at": "2026-06-20T15:42:57Z"
     },
     {
       "id": "MGIT-11.7",
@@ -7217,7 +7266,7 @@
       "agent_id": "",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-11.6.5",
+      "current_node_id": "MGIT-11.13.4",
       "last_heartbeat": "2026-06-17T08:16:40Z"
     },
     {
@@ -7243,6 +7292,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 234,
-  "checksum": "ee7b2a436c6f333fad4f1125ddffe9b2da1aa2aa574d076c7c880abf11bea8d2"
+  "node_count": 236,
+  "checksum": "2d771890a9b45e9b9f3a0249d2be2b95b9433b0b1f0daa1bdc2e781f7eb756d7"
 }
