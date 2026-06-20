@@ -50,6 +50,7 @@ type daemonOpts struct {
 	idleGrace    time.Duration
 	maxSandboxes int
 	maxMemoryMB  int
+	maxConns     int
 	ackReduced   bool
 }
 
@@ -65,6 +66,7 @@ func parseFlags(args []string, logSink io.Writer) (*daemonOpts, int) {
 	flags.DurationVar(&o.idleGrace, "idle-grace", 30*time.Second, "zero-sandbox linger before exit")
 	flags.IntVar(&o.maxSandboxes, "max-sandboxes", 8, "global concurrent-sandbox ceiling (FR-17.26)")
 	flags.IntVar(&o.maxMemoryMB, "max-memory-mb", 0, "global sandbox memory ceiling in MB (0 until policy wiring resolves the FR-17.26 50% host default)")
+	flags.IntVar(&o.maxConns, "max-conns", 0, "max concurrent control connections (0 = daemon default)")
 	flags.StringVar(&o.backend, "backend", sandboxd.BackendRequestAuto,
 		"sandbox backend: auto (platform hypervisor) or container (REDUCED isolation; requires --acknowledge-reduced-isolation)")
 	flags.BoolVar(&o.ackReduced, "acknowledge-reduced-isolation", false,
@@ -105,10 +107,28 @@ func run(args []string, logSink io.Writer) int {
 	// reach a backend unadmitted (SEC-09).
 	manager := sandboxd.NewCeilingManager(selected, opts.maxSandboxes, opts.maxMemoryMB, 0)
 
-	daemon, err := sandboxd.New(sandboxd.Config{
+	dcfg := sandboxd.Config{
 		SocketPath: opts.socket, Manager: manager,
-		Logger: logger, Clock: clock, IdleGrace: opts.idleGrace,
-	})
+		Logger: logger, Clock: clock, IdleGrace: opts.idleGrace, MaxConns: opts.maxConns,
+	}
+	// Wire the dispatch service when a host root is configured: the daemon
+	// then serves launch/exec/list/remove/status (going through the
+	// service, never the manager). Without it the daemon greets only — a
+	// loud warning, never a silent half-serving daemon.
+	if opts.hostRoot != "" {
+		svc, closeAudit, svcErr := buildSandboxService(manager, opts.hostRoot, clock, logger)
+		if svcErr != nil {
+			logger.Error("sandbox service wiring failed", "error", svcErr.Error())
+			return 2
+		}
+		defer func() { _ = closeAudit() }()
+		dcfg.Service = svc
+	} else {
+		logger.Warn("sandboxd serving greet-only: --host-root not set; no sandbox operations will be served",
+			"event", "greet_only")
+	}
+
+	daemon, err := sandboxd.New(dcfg)
 	if err != nil {
 		logger.Error("sandboxd configuration invalid", "error", err)
 		return 2
