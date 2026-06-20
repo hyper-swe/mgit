@@ -25,6 +25,17 @@ type fakeSandboxManager struct {
 	execCtxHadDeadline bool
 	execResult         *model.ExecResult
 	execErr            error
+
+	stops           int
+	removes         int
+	lastStopID      string
+	lastRemoveID    string
+	lastStopForce   bool
+	lastRemoveForce bool
+	stopErr         error
+	removeErr       error
+
+	listResult []model.SandboxInfo
 }
 
 func (m *fakeSandboxManager) Launch(_ context.Context, opts model.SandboxLaunchOptions) (*model.SandboxInfo, error) {
@@ -38,7 +49,9 @@ func (m *fakeSandboxManager) Launch(_ context.Context, opts model.SandboxLaunchO
 		Backend: model.BackendKVM, State: model.StateRunning, MemoryMB: opts.MemoryMB,
 	}, nil
 }
-func (m *fakeSandboxManager) List(context.Context) ([]model.SandboxInfo, error) { return nil, nil }
+func (m *fakeSandboxManager) List(context.Context) ([]model.SandboxInfo, error) {
+	return m.listResult, nil
+}
 func (m *fakeSandboxManager) Exec(ctx context.Context, id string, req model.ExecRequest) (*model.ExecResult, error) {
 	m.execs++
 	m.lastExecID, m.lastExecReq = id, req
@@ -48,8 +61,16 @@ func (m *fakeSandboxManager) Exec(ctx context.Context, id string, req model.Exec
 	}
 	return m.execResult, nil
 }
-func (m *fakeSandboxManager) Stop(context.Context, string, bool) error   { return nil }
-func (m *fakeSandboxManager) Remove(context.Context, string, bool) error { return nil }
+func (m *fakeSandboxManager) Stop(_ context.Context, id string, force bool) error {
+	m.stops++
+	m.lastStopID, m.lastStopForce = id, force
+	return m.stopErr
+}
+func (m *fakeSandboxManager) Remove(_ context.Context, id string, force bool) error {
+	m.removes++
+	m.lastRemoveID, m.lastRemoveForce = id, force
+	return m.removeErr
+}
 func (m *fakeSandboxManager) Resolve(context.Context, string) (*model.SandboxInfo, error) {
 	return nil, nil
 }
@@ -269,14 +290,147 @@ func TestEnsureRunning_PolicyLoadFailure(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestEnsureRunning_ResumeAuditFailure covers the boot-audit error path.
+// TestEnsureRunning_ResumeAuditFailure covers the boot-audit error path and
+// verifies the just-booted VM is rolled back (Stop+Remove) so no
+// running-but-unaudited sandbox is ever left behind, and the registration
+// stays retryable. Refs: MGIT-11.10.8 (security audit: partial-failure)
 func TestEnsureRunning_ResumeAuditFailure(t *testing.T) {
+	mgr := &fakeSandboxManager{}
 	ev := &fakeEventAppender{failNth: 2} // created ok, resumed fails
-	svc := newSvc(t, &fakeSandboxManager{}, ev)
+	svc := newSvc(t, mgr, ev)
+	reg, err := svc.Register(context.Background(), regOpts("MGIT-1", "/work/a"))
+	require.NoError(t, err)
+
+	_, err = svc.EnsureRunning(context.Background(), "MGIT-1")
+	require.Error(t, err)
+	assert.Equal(t, 1, mgr.stops, "the booted-but-unaudited VM is stopped")
+	assert.Equal(t, 1, mgr.removes, "the booted-but-unaudited VM is removed")
+	assert.Equal(t, reg.ID, mgr.lastRemoveID, "exactly the just-booted VM is rolled back")
+
+	// The registration is left un-booted and retryable.
+	info, err := svc.Status(context.Background(), "MGIT-1")
+	require.NoError(t, err)
+	assert.Equal(t, model.StateCreated, info.State, "rollback leaves the sandbox un-booted")
+}
+
+// TestList_ReturnsRegisteredSandboxes verifies List returns every
+// registered sandbox (created + running), in a stable task-ID order.
+func TestList_ReturnsRegisteredSandboxes(t *testing.T) {
+	svc := newSvc(t, &fakeSandboxManager{}, &fakeEventAppender{})
+	_, err := svc.Register(context.Background(), regOpts("MGIT-2", "/work/b"))
+	require.NoError(t, err)
+	_, err = svc.Register(context.Background(), regOpts("MGIT-1", "/work/a"))
+	require.NoError(t, err)
+
+	list, err := svc.List(context.Background())
+	require.NoError(t, err)
+	require.Len(t, list, 2)
+	assert.Equal(t, "MGIT-1", list[0].TaskID, "list is sorted by task ID")
+	assert.Equal(t, "MGIT-2", list[1].TaskID)
+}
+
+// TestStatus_KnownAndUnknown covers the status lookup for a registered and
+// an unregistered task.
+func TestStatus_KnownAndUnknown(t *testing.T) {
+	svc := newSvc(t, &fakeSandboxManager{}, &fakeEventAppender{})
+	_, err := svc.Register(context.Background(), regOpts("MGIT-1", "/work/a"))
+	require.NoError(t, err)
+
+	info, err := svc.Status(context.Background(), "MGIT-1")
+	require.NoError(t, err)
+	assert.Equal(t, "MGIT-1", info.TaskID)
+
+	_, err = svc.Status(context.Background(), "MGIT-nope")
+	assert.ErrorIs(t, err, model.ErrSandboxNotFound)
+}
+
+// TestRemove_BootedSandbox_TearsDownAndAudits verifies removing a booted
+// sandbox stops + removes the VM, audits a destroyed event, and frees the
+// task binding (so the task can be re-registered).
+func TestRemove_BootedSandbox_TearsDownAndAudits(t *testing.T) {
+	mgr := &fakeSandboxManager{}
+	ev := &fakeEventAppender{}
+	svc := newSvc(t, mgr, ev)
+	reg, err := svc.Register(context.Background(), regOpts("MGIT-1", "/work/a"))
+	require.NoError(t, err)
+	_, err = svc.EnsureRunning(context.Background(), "MGIT-1")
+	require.NoError(t, err)
+
+	require.NoError(t, svc.Remove(context.Background(), "MGIT-1", true))
+	assert.Equal(t, 1, mgr.stops, "the booted VM is stopped")
+	assert.Equal(t, reg.ID, mgr.lastRemoveID, "the booted VM is removed")
+	assert.True(t, mgr.lastRemoveForce, "force is forwarded to the backend")
+	assert.Equal(t, []string{model.EventCreated, model.EventResumed, model.EventDestroyed}, ev.types())
+
+	// The task binding is freed: re-registration succeeds, and status is gone.
+	_, err = svc.Status(context.Background(), "MGIT-1")
+	assert.ErrorIs(t, err, model.ErrSandboxNotFound)
+	_, err = svc.Register(context.Background(), regOpts("MGIT-1", "/work/a"))
+	assert.NoError(t, err, "the task can be re-registered after removal")
+}
+
+// TestRemove_UnbootedSandbox_NoBackendCall verifies removing a registered
+// but never-booted sandbox audits destroyed without touching the backend.
+func TestRemove_UnbootedSandbox_NoBackendCall(t *testing.T) {
+	mgr := &fakeSandboxManager{}
+	ev := &fakeEventAppender{}
+	svc := newSvc(t, mgr, ev)
+	_, err := svc.Register(context.Background(), regOpts("MGIT-1", "/work/a"))
+	require.NoError(t, err)
+
+	require.NoError(t, svc.Remove(context.Background(), "MGIT-1", false))
+	assert.Zero(t, mgr.stops, "an un-booted sandbox has no VM to stop")
+	assert.Zero(t, mgr.removes)
+	assert.Equal(t, []string{model.EventCreated, model.EventDestroyed}, ev.types())
+}
+
+// TestRemove_BackendRemoveError_Surfaces verifies a backend remove failure
+// (after a successful stop) surfaces and leaves the sandbox registered.
+func TestRemove_BackendRemoveError_Surfaces(t *testing.T) {
+	mgr := &fakeSandboxManager{removeErr: errors.New("vmm remove failed")}
+	svc := newSvc(t, mgr, &fakeEventAppender{})
 	_, err := svc.Register(context.Background(), regOpts("MGIT-1", "/work/a"))
 	require.NoError(t, err)
 	_, err = svc.EnsureRunning(context.Background(), "MGIT-1")
-	assert.Error(t, err)
+	require.NoError(t, err)
+
+	require.Error(t, svc.Remove(context.Background(), "MGIT-1", true))
+	assert.Equal(t, 1, mgr.stops, "stop ran before the failing remove")
+	_, err = svc.Status(context.Background(), "MGIT-1")
+	assert.NoError(t, err, "a failed remove leaves the sandbox registered for retry")
+}
+
+// TestRemove_AuditFailure_Surfaces verifies a destroyed-audit failure
+// surfaces (the VM is already torn down; the registration is retryable).
+func TestRemove_AuditFailure_Surfaces(t *testing.T) {
+	mgr := &fakeSandboxManager{}
+	ev := &fakeEventAppender{failNth: 2} // created ok, destroyed fails (unbooted: only 2 events)
+	svc := newSvc(t, mgr, ev)
+	_, err := svc.Register(context.Background(), regOpts("MGIT-1", "/work/a"))
+	require.NoError(t, err)
+	require.Error(t, svc.Remove(context.Background(), "MGIT-1", false))
+}
+
+// TestRemove_UnknownTask_NotFound verifies removing an unregistered task
+// fails closed.
+func TestRemove_UnknownTask_NotFound(t *testing.T) {
+	svc := newSvc(t, &fakeSandboxManager{}, &fakeEventAppender{})
+	assert.ErrorIs(t, svc.Remove(context.Background(), "MGIT-nope", false), model.ErrSandboxNotFound)
+}
+
+// TestRemove_BackendStopError_Surfaces verifies a backend teardown failure
+// surfaces and the sandbox stays registered (retryable).
+func TestRemove_BackendStopError_Surfaces(t *testing.T) {
+	mgr := &fakeSandboxManager{stopErr: errors.New("vmm hung")}
+	svc := newSvc(t, mgr, &fakeEventAppender{})
+	_, err := svc.Register(context.Background(), regOpts("MGIT-1", "/work/a"))
+	require.NoError(t, err)
+	_, err = svc.EnsureRunning(context.Background(), "MGIT-1")
+	require.NoError(t, err)
+
+	require.Error(t, svc.Remove(context.Background(), "MGIT-1", false))
+	_, err = svc.Status(context.Background(), "MGIT-1")
+	assert.NoError(t, err, "a failed teardown leaves the sandbox registered for retry")
 }
 
 // TestExec_BootsThenRoutesToManager verifies Exec lazily boots the

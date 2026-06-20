@@ -30,6 +30,15 @@ type Config struct {
 	Clock        func() time.Time     // injected clock
 	IdleGrace    time.Duration        // zero-sandbox linger before exit
 	PollInterval time.Duration        // idle-check cadence
+	// Service dispatches authenticated control requests (launch/exec/
+	// list/remove/status). When nil the daemon greets only — a backend
+	// build without a wired service still authenticates and reports
+	// liveness but serves no operations. Refs: MGIT-11.10.8
+	Service SandboxDispatcher
+	// MaxConns bounds concurrent in-flight connections; beyond it the
+	// daemon rejects fast (accept-then-close) rather than spawning an
+	// unbounded number of goroutines. Refs: MGIT-11.10.8 (security audit)
+	MaxConns int
 	// PeerUID reads kernel-asserted peer credentials for one
 	// connection. Nil selects the platform mechanism (SO_PEERCRED /
 	// LOCAL_PEERCRED); injectable so foreign-UID rejection is testable
@@ -44,6 +53,10 @@ const (
 	// drainTimeout bounds shutdown: one hung backend must not stall the
 	// daemon's exit indefinitely.
 	drainTimeout = 30 * time.Second
+	// defaultMaxConns bounds concurrent connections when Config.MaxConns is
+	// unset — a backstop against goroutine exhaustion, well above the
+	// single-client CLI's real concurrency. Refs: MGIT-11.10.8
+	defaultMaxConns = 64
 )
 
 // greeting is the liveness line an authenticated peer receives; the
@@ -78,6 +91,9 @@ func New(cfg Config) (*Daemon, error) {
 	if cfg.PeerUID == nil {
 		cfg.PeerUID = platformPeerUID
 	}
+	if cfg.MaxConns <= 0 {
+		cfg.MaxConns = defaultMaxConns
+	}
 	return &Daemon{
 		cfg:     cfg,
 		selfUID: uint32(os.Geteuid()), //nolint:gosec // OK: Geteuid is non-negative on unix platforms where this runs
@@ -109,6 +125,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// legitimate peers reset the idle clock (an unauthorized dialer
 	// must not control daemon lifetime).
 	authed := make(chan struct{}, 16)
+	// sem bounds concurrent connection handlers: a counted slot is taken
+	// before each handler goroutine and released when it returns. At
+	// capacity the daemon rejects fast rather than spawning unbounded
+	// goroutines (security audit). Refs: MGIT-11.10.8
+	sem := make(chan struct{}, d.cfg.MaxConns)
 	go d.acceptLoop(listener, connections, acceptDone, stop)
 
 	idleSince := d.cfg.Clock()
@@ -122,9 +143,21 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return d.drainBounded(ctx)
 
 		case conn := <-connections:
-			// Per-connection goroutine: a slow or hung client must never
-			// block idle checks or shutdown responsiveness.
-			go d.handleConn(ctx, conn, authed)
+			// Per-connection goroutine, bounded by the semaphore: a slow or
+			// hung client must never block idle checks or shutdown, and a
+			// flood must never exhaust goroutines (the daemon supervises
+			// every VM). At capacity, reject fast.
+			select {
+			case sem <- struct{}{}:
+				go func() {
+					defer func() { <-sem }()
+					d.handleConn(ctx, conn, authed)
+				}()
+			default:
+				d.cfg.Logger.Warn("sandboxd at capacity, rejecting connection",
+					"event", "conn_rejected", "max_conns", d.cfg.MaxConns)
+				_ = conn.Close()
+			}
 
 		case <-authed:
 			idleSince = d.cfg.Clock()
@@ -241,8 +274,17 @@ func (d *Daemon) acceptLoop(listener net.Listener, connections chan<- net.Conn, 
 // unauthenticated path (F-08, ASVS V4). Authenticated peers tick the
 // idle clock and receive the liveness greeting; the full request
 // protocol arrives with the backends. Refs: FR-17.34
-func (d *Daemon) handleConn(_ context.Context, conn net.Conn, authed chan<- struct{}) {
+func (d *Daemon) handleConn(ctx context.Context, conn net.Conn, authed chan<- struct{}) {
 	defer func() { _ = conn.Close() }()
+	// A panic in one connection handler must NEVER crash the daemon: a hard
+	// crash skips drain and strands every running VM unsupervised. Recover,
+	// audit, and drop only this connection. Refs: MGIT-11.10.8 (security audit)
+	defer func() {
+		if r := recover(); r != nil {
+			d.cfg.Logger.Error("sandboxd recovered from handler panic",
+				"event", "handler_panic", "panic", fmt.Sprintf("%v", r))
+		}
+	}()
 
 	if !d.authenticate(conn) {
 		return // rejected and audited; nothing was processed
@@ -251,9 +293,13 @@ func (d *Daemon) handleConn(_ context.Context, conn net.Conn, authed chan<- stru
 	case authed <- struct{}{}:
 	default: // Run is busy or exiting; the tick is best-effort.
 	}
-	// Liveness greeting for activation health checks.
+	// Liveness greeting for activation health checks; a write failure means
+	// the peer is already gone, so there is nothing to serve.
 	_ = conn.SetWriteDeadline(d.cfg.Clock().Add(time.Second))
-	_, _ = conn.Write([]byte(greeting))
+	if _, err := conn.Write([]byte(greeting)); err != nil {
+		return
+	}
+	d.serveRequest(ctx, conn)
 }
 
 // authenticate verifies the peer's kernel-asserted UID matches the

@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -145,10 +147,18 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 	if err != nil {
 		return nil, fmt.Errorf("sandbox ensure-running: %w", err)
 	}
-	if err := s.events.AppendSandboxEvent(ctx, &model.SandboxEvent{
+	if auditErr := s.events.AppendSandboxEvent(ctx, &model.SandboxEvent{
 		SandboxID: launched.ID, TaskID: taskID, EventType: model.EventResumed,
-	}); err != nil {
-		return nil, fmt.Errorf("sandbox ensure-running: audit: %w", err)
+	}); auditErr != nil {
+		// A booted-but-unaudited VM must never survive (an unaudited
+		// sandbox is an audit-trail gap, FR-17.18). Roll back the VM we
+		// just launched before returning; the registration stays un-booted
+		// and retryable. Rollback errors are joined so none is swallowed.
+		return nil, errors.Join(
+			fmt.Errorf("sandbox ensure-running: audit: %w", auditErr),
+			s.manager.Stop(ctx, launched.ID, true),
+			s.manager.Remove(ctx, launched.ID, true),
+		)
 	}
 	reg.info = *launched
 	reg.booted = true
@@ -180,6 +190,63 @@ func (s *SandboxService) Exec(ctx context.Context, taskID string, req model.Exec
 		return nil, fmt.Errorf("sandbox exec: %w", err)
 	}
 	return res, nil
+}
+
+// List returns every registered sandbox (created and running), sorted by
+// task ID for stable output. The registry — not the backend — is the
+// source of truth here: it includes lazily-created sandboxes the backend
+// has not yet booted. Refs: FR-17.9, FR-17.18
+func (s *SandboxService) List(_ context.Context) ([]model.SandboxInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.SandboxInfo, 0, len(s.byTask))
+	for _, reg := range s.byTask {
+		out = append(out, reg.info)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TaskID < out[j].TaskID })
+	return out, nil
+}
+
+// Status returns the registered sandbox bound to a task, or
+// ErrSandboxNotFound. Refs: FR-17.9
+func (s *SandboxService) Status(_ context.Context, taskID string) (*model.SandboxInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reg, ok := s.byTask[taskID]
+	if !ok {
+		return nil, fmt.Errorf("%w: task %q", model.ErrSandboxNotFound, taskID)
+	}
+	info := reg.info
+	return &info, nil
+}
+
+// Remove tears down a task's sandbox and frees its task+worktree binding.
+// A booted VM is stopped and removed first (the dangerous direction — a
+// stranded running VM — is closed before the audit), then a destroyed
+// event is appended, then the registration is dropped. A backend or audit
+// failure leaves the sandbox registered and retryable. Refs: FR-17.9, FR-17.18
+func (s *SandboxService) Remove(ctx context.Context, taskID string, force bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reg, ok := s.byTask[taskID]
+	if !ok {
+		return fmt.Errorf("%w: task %q", model.ErrSandboxNotFound, taskID)
+	}
+	if reg.booted {
+		if err := s.manager.Stop(ctx, reg.info.ID, force); err != nil {
+			return fmt.Errorf("sandbox remove: stop: %w", err)
+		}
+		if err := s.manager.Remove(ctx, reg.info.ID, force); err != nil {
+			return fmt.Errorf("sandbox remove: %w", err)
+		}
+	}
+	if err := s.events.AppendSandboxEvent(ctx, &model.SandboxEvent{
+		SandboxID: reg.info.ID, TaskID: taskID, EventType: model.EventDestroyed,
+	}); err != nil {
+		return fmt.Errorf("sandbox remove: audit: %w", err)
+	}
+	delete(s.byTask, taskID)
+	return nil
 }
 
 // checkExclusivity rejects a duplicate task or worktree binding. Caller
