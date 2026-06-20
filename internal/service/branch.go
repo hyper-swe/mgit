@@ -41,7 +41,7 @@ func (s *BranchService) CreateBranch(ctx context.Context, taskID string) (*model
 		return nil, fmt.Errorf("create branch: resolve HEAD: %w", err)
 	}
 
-	branchName := "task/" + taskID
+	branchName := model.TaskBranchName(taskID)
 	branch := &model.Branch{
 		Name:       branchName,
 		TaskID:     tid,

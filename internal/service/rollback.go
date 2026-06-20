@@ -80,7 +80,7 @@ func (s *RollbackService) RollbackTask(ctx context.Context, req RollbackRequest)
 		FileDiffs:  inverseDiffs,
 		CommitType: model.CommitTypeRollback,
 		CreatedBy:  "mgit-rollback",
-		Branch:     "task/" + req.TaskID,
+		Branch:     model.TaskBranchName(req.TaskID),
 	}
 
 	if req.DryRun {

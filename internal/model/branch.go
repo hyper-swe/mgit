@@ -5,6 +5,18 @@ import (
 	"time"
 )
 
+// TaskBranchPrefix is the auto-naming prefix for a task's branch.
+const TaskBranchPrefix = "task/"
+
+// TaskBranchName returns the canonical branch name for a task
+// (task/<id>). It is the single source of this convention: branch
+// creation (CreateBranch), rollback, and the sandbox land fast-forward
+// MUST agree on the exact name, or a landed commit would advance the
+// wrong ref. Refs: FR-5, FR-17.5
+func TaskBranchName(taskID string) string {
+	return TaskBranchPrefix + taskID
+}
+
 // Branch represents a task-scoped branch in the mgit repository.
 // Each branch is owned by exactly one task ID. Branches support
 // advisory locking for concurrent agent safety.

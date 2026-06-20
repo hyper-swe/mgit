@@ -161,3 +161,11 @@ func TestBranch_IsLocked(t *testing.T) {
 	assert.True(t, b.IsLocked(now.Add(10*time.Second)), "locked branch should return true")
 	assert.False(t, b.IsLocked(now.Add(31*time.Second)), "expired lock should return false")
 }
+
+// TestTaskBranchName verifies the canonical task-branch naming used by
+// branch creation, rollback, and sandbox land (single source).
+func TestTaskBranchName(t *testing.T) {
+	if got := TaskBranchName("MGIT-1.2.3"); got != "task/MGIT-1.2.3" {
+		t.Fatalf("TaskBranchName = %q, want task/MGIT-1.2.3", got)
+	}
+}
