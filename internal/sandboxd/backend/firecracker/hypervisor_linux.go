@@ -53,20 +53,37 @@ func newPlatformHypervisor(bin string) (microvm.Hypervisor, error) {
 	if _, err := os.Stat(kvmDevice); err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", model.ErrSandboxBackendUnavailable, kvmDevice, err)
 	}
-	return &fcHypervisor{bin: resolved}, nil
+	return &fcHypervisor{bin: resolved, mkfs: mke2fsExecRunner{}}, nil
 }
 
 // fcHypervisor builds Firecracker VMs. The pure-Go SDK drives the VMM
 // over its unix-socket HTTP API, so no CGO is involved.
-type fcHypervisor struct{ bin string }
+type fcHypervisor struct {
+	bin  string
+	mkfs mkfsRunner // builds the worktree ext4 image (copy-and-land, ADR-005)
+}
+
+// mke2fsExecRunner is the real worktree-image builder: it execs mke2fs to
+// create+populate an ext4 filesystem. mke2fs -d needs no root. The binary
+// must be on PATH (e2fsprogs; commonly /usr/sbin). Refs: MGIT-11.6.4
+type mke2fsExecRunner struct{}
+
+func (mke2fsExecRunner) run(ctx context.Context, args ...string) error {
+	out, err := exec.CommandContext(ctx, "mke2fs", args...).CombinedOutput() //nolint:gosec // argv built from manager-owned paths, no shell
+	if err != nil {
+		return fmt.Errorf("mke2fs: %w: %s", err, out)
+	}
+	return nil
+}
 
 // buildConfig translates the hypervisor-agnostic VMConfig into a
 // Firecracker machine configuration: the pinned image as a read-only
 // root device on vda, the per-VM writable COW overlay on vdb, and the
 // vsock control plane. Firecracker has no virtiofs, so the worktree is
-// NOT directory-shared here; worktree delivery to the guest is the
-// guest-fs stage (MGIT-11.6). Refs: FR-17.3, FR-17.17, NFR-17.4
-func buildConfig(cfg microvm.VMConfig, p vmPaths) fc.Config {
+// delivered copy-and-land as a writable ext4 image on vdc when
+// worktreeImg is set (ADR-005, MGIT-11.6.4); the guest mounts it at the
+// worktree's identical path (MGIT-11.6.5). Refs: FR-17.3, FR-17.17, NFR-17.4
+func buildConfig(cfg microvm.VMConfig, p vmPaths, worktreeImg string) fc.Config {
 	drives := []models.Drive{
 		{
 			DriveID:      fc.String("rootfs"),
@@ -80,6 +97,14 @@ func buildConfig(cfg microvm.VMConfig, p vmPaths) fc.Config {
 			IsRootDevice: fc.Bool(false),
 			IsReadOnly:   fc.Bool(false),
 		},
+	}
+	if worktreeImg != "" {
+		drives = append(drives, models.Drive{
+			DriveID:      fc.String("worktree"),
+			PathOnHost:   fc.String(worktreeImg),
+			IsRootDevice: fc.Bool(false),
+			IsReadOnly:   fc.Bool(false), // the guest edits the worktree copy
+		})
 	}
 	out := fc.Config{
 		SocketPath:      p.socket,
@@ -102,8 +127,22 @@ func buildConfig(cfg microvm.VMConfig, p vmPaths) fc.Config {
 // VMM process is tied to a detached lifetime context so the guest
 // outlives the request that launched it; Stop cancels it.
 func (h *fcHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
-	p := sandboxPaths(filepath.Dir(cfg.OverlayPath))
-	fcfg := buildConfig(cfg, p)
+	stateDir := filepath.Dir(cfg.OverlayPath)
+	p := sandboxPaths(stateDir)
+
+	// Copy-and-land worktree delivery (ADR-005): pack the worktree into a
+	// per-VM ext4 image in the state dir (cleaned by teardown's RemoveAll),
+	// attached as a writable drive. mke2fs is a quick local op, so it runs
+	// on a background context (the Hypervisor seam has none).
+	var worktreeImg string
+	if cfg.WorktreePath != "" {
+		worktreeImg = filepath.Join(stateDir, worktreeImageName)
+		if err := buildWorktreeImage(context.Background(), h.mkfs, cfg.WorktreePath, worktreeImg, 0); err != nil {
+			return nil, fmt.Errorf("firecracker worktree delivery: %w", err)
+		}
+	}
+
+	fcfg := buildConfig(cfg, p, worktreeImg)
 	if err := fcfg.Validate(); err != nil {
 		return nil, fmt.Errorf("firecracker config invalid: %w", err)
 	}

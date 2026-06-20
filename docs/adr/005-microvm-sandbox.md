@@ -334,6 +334,42 @@ var (
 
 **CGO containment:** macOS vz bindings (and possibly others) require CGO, which conflicts with mgit's pure-Go, CGO-free policy. Resolution: platform backends live in a separate `mgit-sandboxd` helper binary spoken to over local IPC. Core `mgit` stays CGO-free; the helper is per-platform and independently auditable. All new dependencies go through PACKAGE-APPROVAL-PROCESS.md before any code is written.
 
+### Worktree Delivery (per-backend — amendment 2026-06-20, MGIT-11.6.4)
+
+FR-17.3 mandates that the guest see **only** the bound worktree's working-tree
+files, at the **identical absolute path** as on the host, with the parent repo,
+shared `.mgit`, host `$HOME`, and host environment unreachable. It does **not**
+mandate that the guest's *uncommitted* edits be visible host-side live; the
+quarantine-then-land model (above) is explicit that only committed-and-verified
+objects cross back into the host store, and unlanded work is discarded by design.
+The **delivery mechanism is therefore backend-specific**, and the two v1 Linux/
+macOS backends differ:
+
+- **macOS (vzf):** a **live virtiofs share** of the worktree directory
+  (`VZVirtioFileSystemDevice`, read-write). Guest edits land on the host worktree
+  immediately. This live visibility is **incidental to virtiofs**, not a
+  requirement.
+- **Linux (firecracker):** firecracker has **no virtiofs**. The worktree is
+  delivered **copy-and-land**: its working-tree files are packed into a per-VM,
+  writable **ext4 image** (built rootlessly with `mke2fs -d`), attached as a
+  `virtio-blk` device, and mounted by the guest at the identical absolute path.
+  The guest edits and builds against this **copy**; only commits that pass the
+  land verification gate (FR-17.5) return to the host. There is **no live
+  host-side write-back**, and the image (with all unlanded working-tree changes)
+  is discarded at teardown.
+
+**Why accept the divergence:** both satisfy FR-17.3's binding clauses
+(identical-path, working-tree-only, isolation). Nothing in mgit reads the live
+worktree mid-run — the agent workflow is exec-in-guest → commit → land — so live
+visibility is a convenience, not a functional dependency. Copy-and-land is, if
+anything, the **more faithful** expression of the quarantine model: a hostile
+guest never mutates the host's actual worktree files; only verified objects land.
+The private sandbox-local `.git` (FR-17.4 / SEC-03, MGIT-11.6.2) and the
+identical-path guest mount (MGIT-11.6.5) are delivered as separate devices/mounts
+and are mechanism-agnostic. A future virtiofs-capable Linux VMM, or unifying all
+backends on copy-and-land, may revisit this; recorded here so the difference is
+deliberate, not accidental.
+
 ### Guest Image Discipline
 
 - Rootfs images are **content-addressed and digest-pinned** in the host-side `images.lock` under `~/.mgit/host/<repo-id>/` (SEC-02 / FR-17.13, FR-17.36; same supply-chain posture as APPROVED-PACKAGES.md).
@@ -461,3 +497,4 @@ Standards audit: AUDIT-FR17-SANDBOX-V1.md (3 P1 remediated). Security audit: AUD
 |------|--------|
 | 2026-06-12 | Initial proposal; P1/Critical remediations from AUDIT-FR17-SANDBOX-V1 (F-01..F-03) and AUDIT-FR17-SANDBOX-SECURITY-V1 (SEC-01..SEC-04) applied in-cycle |
 | 2026-06-12 | **Promoted Proposed → Accepted** (MGIT-11.1.3): criteria 1–2 met (FR-17/NFR-17 drafted; backend packages approved), criteria 3–11 encoded as binding FR-17/NFR-17 clauses with owning MGIT-11 tasks. Corrections in the same revision: stale task references from the pre-import MGIT-9 numbering rewritten to MGIT-11.x (the sandbox epic was imported into mtix as MGIT-11; MGIT-9 is the unrelated coverage sprint); policy.json and images.lock paths moved out of `.mgit/sandbox/` (worktree-resident, contradicted SEC-02) to the host config root per FR-17.13 |
+| 2026-06-20 | **Worktree-delivery amendment** (MGIT-11.6.4): recorded per-backend worktree delivery — vzf uses a live virtiofs share; firecracker (no virtiofs) uses **copy-and-land** via a per-VM writable ext4 `virtio-blk` image (`mke2fs -d`), with no live host-side write-back. Both satisfy FR-17.3 (identical-path, working-tree-only, isolation); live visibility is a vzf incidental, not a requirement. Decision: owner-approved 2026-06-20 |

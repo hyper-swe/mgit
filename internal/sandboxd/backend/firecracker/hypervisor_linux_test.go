@@ -61,6 +61,9 @@ func requireKVM(t *testing.T) (kernel, rootfs string) {
 	if _, err := newPlatformHypervisor(""); err != nil {
 		t.Skipf("firecracker backend unavailable: %v", err)
 	}
+	if _, err := exec.LookPath("mke2fs"); err != nil {
+		t.Skipf("mke2fs (e2fsprogs) absent; needed for worktree delivery: %v", err)
+	}
 	kernel, rootfs, ok := testImagePaths(t)
 	if !ok {
 		t.Skip("guest images absent (set MGIT_TEST_KERNEL/MGIT_TEST_ROOTFS or populate .testdata/images)")
@@ -87,10 +90,13 @@ func kvmManager(t *testing.T, kernel, rootfs string) (*microvm.Manager, string) 
 	return mgr, workDir
 }
 
-func launchOpts() model.SandboxLaunchOptions {
+func launchOpts(t *testing.T) model.SandboxLaunchOptions {
+	t.Helper()
+	wt := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "marker.txt"), []byte("worktree-file"), 0o600))
 	return model.SandboxLaunchOptions{
 		TaskID:       "MGIT-11.5.1",
-		WorktreePath: "/work/MGIT-11.5.1",
+		WorktreePath: wt,
 		ImageRef:     "fc-ci@sha256:" + strings.Repeat("a", 64),
 		Network:      model.NetworkPolicy{Mode: model.NetworkModeNone},
 		CPUs:         2, MemoryMB: 512,
@@ -104,7 +110,7 @@ func TestKVM_Launch_BootsGuest(t *testing.T) {
 	kernel, rootfs := requireKVM(t)
 	mgr, workDir := kvmManager(t, kernel, rootfs)
 
-	info, err := mgr.Launch(context.Background(), launchOpts())
+	info, err := mgr.Launch(context.Background(), launchOpts(t))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Remove(context.Background(), info.ID, true) })
 	assert.Equal(t, model.BackendKVM, info.Backend)
@@ -126,7 +132,7 @@ func TestKVM_RootfsReadOnly_OverlayCOW(t *testing.T) {
 		Cmdline: bootCmdline, OverlayPath: "/state/sb1/overlay.img",
 		VsockEnabled: true,
 	}
-	fcfg := buildConfig(cfg, sandboxPaths(filepath.Dir(cfg.OverlayPath)))
+	fcfg := buildConfig(cfg, sandboxPaths(filepath.Dir(cfg.OverlayPath)), "")
 
 	require.Len(t, fcfg.Drives, 2, "exactly a rootfs + overlay drive")
 	root := fcfg.Drives[0]
@@ -144,6 +150,56 @@ func TestKVM_RootfsReadOnly_OverlayCOW(t *testing.T) {
 	assert.Equal(t, uint32(guestVsockCID), fcfg.VsockDevices[0].CID)
 }
 
+// TestKVM_BuildConfig_WorktreeDrive verifies the copy-and-land worktree
+// image is attached as a third, writable drive when present (FR-17.3,
+// MGIT-11.6.4); without it only rootfs + overlay are attached.
+func TestKVM_BuildConfig_WorktreeDrive(t *testing.T) {
+	cfg := microvm.VMConfig{
+		CPUs: 1, MemoryMB: 256,
+		KernelPath: "/img/vmlinux", RootfsPath: "/img/rootfs.sqfs", RootfsReadOnly: true,
+		OverlayPath: "/state/sb1/overlay.img", VsockEnabled: true,
+	}
+	fcfg := buildConfig(cfg, sandboxPaths("/state/sb1"), "/state/sb1/worktree.ext4")
+
+	require.Len(t, fcfg.Drives, 3, "rootfs + overlay + worktree")
+	wt := fcfg.Drives[2]
+	assert.Equal(t, "worktree", *wt.DriveID)
+	assert.Equal(t, "/state/sb1/worktree.ext4", *wt.PathOnHost)
+	assert.False(t, *wt.IsRootDevice, "worktree is not the root device")
+	assert.False(t, *wt.IsReadOnly, "the guest edits the worktree copy (writable)")
+}
+
+// TestKVM_WorktreeImage_BuiltAndAttached boots a real guest with a
+// populated worktree and proves copy-and-land delivery end to end on the
+// host side: the ext4 image is built into the state dir, contains the
+// worktree's files (debugfs), and the guest boots with it attached.
+// Refs: FR-17.3, MGIT-11.6.4
+func TestKVM_WorktreeImage_BuiltAndAttached(t *testing.T) {
+	kernel, rootfs := requireKVM(t)
+	debugfs, err := exec.LookPath("debugfs")
+	if err != nil {
+		t.Skipf("debugfs (e2fsprogs) absent; needed to inspect the image: %v", err)
+	}
+	mgr, workDir := kvmManager(t, kernel, rootfs)
+
+	info, err := mgr.Launch(context.Background(), launchOpts(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = mgr.Remove(context.Background(), info.ID, true) })
+
+	img := filepath.Join(workDir, info.ID, worktreeImageName)
+	require.FileExists(t, img, "the worktree ext4 image is built into the state dir")
+
+	// debugfs lists the populated worktree file inside the image (proves
+	// mke2fs -d packed the worktree's working-tree files).
+	out, err := exec.CommandContext(context.Background(), debugfs, "-R", "ls -l /", img).CombinedOutput() //nolint:gosec // fixed argv, manager-owned image
+	require.NoError(t, err, "debugfs must read the built ext4 image: %s", out)
+	assert.Contains(t, string(out), "marker.txt", "the worktree's files are present in the image")
+
+	console := filepath.Join(workDir, info.ID, "console.log")
+	booted, _ := waitForConsole(t, console, "Linux version", 20*time.Second)
+	require.True(t, booted, "guest boots with the worktree drive attached")
+}
+
 // TestKVM_Teardown_NoResidue boots a guest, removes it, and verifies the
 // entire per-sandbox state dir (overlay, sockets, console) is gone and
 // the sandbox is no longer known — the worktree is never touched.
@@ -152,7 +208,7 @@ func TestKVM_Teardown_NoResidue(t *testing.T) {
 	kernel, rootfs := requireKVM(t)
 	mgr, workDir := kvmManager(t, kernel, rootfs)
 
-	info, err := mgr.Launch(context.Background(), launchOpts())
+	info, err := mgr.Launch(context.Background(), launchOpts(t))
 	require.NoError(t, err)
 	dir := filepath.Join(workDir, info.ID)
 	require.DirExists(t, dir, "sandbox state dir exists while running")
@@ -171,7 +227,7 @@ func TestKVM_BuildConfig_VsockDisabled(t *testing.T) {
 		KernelPath: "/img/vmlinux", RootfsPath: "/img/rootfs.sqfs", RootfsReadOnly: true,
 		OverlayPath: "/state/sb1/overlay.img", VsockEnabled: false,
 	}
-	fcfg := buildConfig(cfg, sandboxPaths(filepath.Dir(cfg.OverlayPath)))
+	fcfg := buildConfig(cfg, sandboxPaths(filepath.Dir(cfg.OverlayPath)), "")
 	assert.Empty(t, fcfg.VsockDevices, "no vsock device when the control plane is disabled")
 }
 
@@ -283,13 +339,34 @@ func TestKVM_CreateVM_ConsoleOpenError(t *testing.T) {
 	assert.Contains(t, err.Error(), "console", "an unwritable state dir fails at console creation")
 }
 
+// TestKVM_CreateVM_WorktreeBuildFails covers the copy-and-land
+// fail-closed branch: a WorktreePath that is not a directory fails at
+// worktree-image build, before any VMM process is spawned. Refs: MGIT-11.6.4
+func TestKVM_CreateVM_WorktreeBuildFails(t *testing.T) {
+	hv := requireFirecracker(t)
+	dir := t.TempDir()
+	for _, n := range []string{"vmlinux", "rootfs", "overlay.img"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600))
+	}
+	_, err := hv.CreateVM(microvm.VMConfig{
+		CPUs: 1, MemoryMB: 128,
+		KernelPath: filepath.Join(dir, "vmlinux"),
+		RootfsPath: filepath.Join(dir, "rootfs"), RootfsReadOnly: true,
+		OverlayPath:  filepath.Join(dir, "overlay.img"),
+		WorktreePath: filepath.Join(dir, "no-such-worktree"), // absent → build fails
+		Cmdline:      bootCmdline, VsockEnabled: true,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "worktree delivery", "an unbuildable worktree fails closed before boot")
+}
+
 // TestKVM_Remove_GracefulStop boots a guest and removes it without
 // force, exercising the graceful-shutdown path. Refs: FR-17.19
 func TestKVM_Remove_GracefulStop(t *testing.T) {
 	kernel, rootfs := requireKVM(t)
 	mgr, workDir := kvmManager(t, kernel, rootfs)
 
-	info, err := mgr.Launch(context.Background(), launchOpts())
+	info, err := mgr.Launch(context.Background(), launchOpts(t))
 	require.NoError(t, err)
 	require.NoError(t, mgr.Remove(context.Background(), info.ID, false))
 	assert.NoDirExists(t, filepath.Join(workDir, info.ID), "graceful teardown also leaves no residue")
