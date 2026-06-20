@@ -11,12 +11,9 @@ package images
 import (
 	"bytes"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,25 +158,17 @@ func (s *Store) readLock() (Lock, error) {
 	return lock, nil
 }
 
-// verifyContentDigest recomputes the rootfs SHA-256 and compares it to
-// the pinned digest. The hash is STREAMED (io.Copy into the digest),
-// never buffered: rootfs images are multi-GB and this runs at every
-// boot. Refs: FR-17.17, NFR-17.1
-func verifyContentDigest(rootfsPath, pinnedDigest string) error {
-	file, err := os.Open(rootfsPath) //nolint:gosec // path from host-owned lock
+// verifyContentDigest recomputes a file's SHA-256 (streamed, never
+// buffered: images are multi-GB and this runs at every boot) and compares
+// it to the pinned digest. Refs: FR-17.17, NFR-17.1
+func verifyContentDigest(path, pinnedDigest string) error {
+	got, err := ComputeDigest(path)
 	if err != nil {
-		return fmt.Errorf("%w: read rootfs %s: %w", model.ErrVerificationFailed, rootfsPath, err)
+		return fmt.Errorf("%w: %w", model.ErrVerificationFailed, err)
 	}
-	defer func() { _ = file.Close() }()
-
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return fmt.Errorf("%w: hash rootfs %s: %w", model.ErrVerificationFailed, rootfsPath, err)
-	}
-	got := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
 	if got != pinnedDigest {
-		return fmt.Errorf("%w: rootfs %s hashes to %s, pinned %s",
-			model.ErrVerificationFailed, rootfsPath, got, pinnedDigest)
+		return fmt.Errorf("%w: %s hashes to %s, pinned %s",
+			model.ErrVerificationFailed, path, got, pinnedDigest)
 	}
 	return nil
 }
