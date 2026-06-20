@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-20T15:43:39Z",
+  "exported_at": "2026-06-20T15:56:18Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -470,7 +470,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.5352564102564102,
+      "progress": 0.5425824175824177,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1770,7 +1770,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.3333333333333333,
+      "progress": 0.42857142857142855,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1915,15 +1915,40 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "f35a9040f9bf7ace5edd57f5aad3bb2306df7f549d603595673f32d365cdf87e",
+      "created_at": "2026-06-20T15:42:57Z",
+      "updated_at": "2026-06-20T15:56:09Z",
+      "closed_at": "2026-06-20T15:56:09Z"
+    },
+    {
+      "id": "MGIT-11.6.7",
+      "parent_id": "MGIT-11.6",
+      "depth": 2,
+      "seq": 7,
+      "project": "MGIT",
+      "title": "Guest writable root: disk-backed COW upper (vdb) instead of tmpfs",
+      "description": "",
+      "prompt": "Follow-on from MGIT-11.6.6. mgit-guest's makeRootWritable currently uses a TMPFS upper for the writable overlay root (RAM-backed, ephemeral) — chosen for v1 simplicity (no in-guest mkfs). But FR-17.17/NFR-17.7 mandate a per-VM DISK-BACKED COW overlay that 'grows only with what the task installs', and the firecracker backend ALREADY attaches one as the overlay drive vdb (microvm createOverlay -\u003e a sparse file, attached IsReadOnly=false). The cached image's /sbin/overlay-init overlays onto vdb, not tmpfs. With a tmpfs upper, every byte written outside the worktree (npm/pip/apt installs, build artifacts that escape the worktree) consumes guest RAM and can OOM the guest on large installs, and is invisible to the disk quota the overlay drive is sized to.\n\nSCOPE: make mgit-guest use the backend's overlay drive (vdb) as the overlayfs upperdir when present, falling back to tmpfs when no overlay drive is attached (e.g. vzf/virtiofs). The drive is a raw sparse file, so the guest must mkfs it on first boot (busybox mkfs.ext4 or e2fsprogs in the image) then mount it for upper/work. Mind drive ordering (rootfs=vda, overlay=vdb, worktree=vdc) and that the worktree is mounted AFTER switch_root. Host-supply the overlay device the same way the worktree descriptor is supplied (guestboot cmdline) rather than hardcoding /dev/vdb.\n\nDEFINITION OF DONE: the guest writable root is backed by the disk COW drive (vdb), sized to the quota; large writes outside the worktree do not consume guest RAM; e2e on KVM proves a multi-MB write outside the worktree lands on vdb not RAM; tmpfs fallback when no overlay drive; zero lint/vet/vuln; /simplify; no co-authored-by/agent/Generated-with trailer.\n\nACCEPTANCE CRITERIA:\nThe guest's writable overlay upper is the backend's disk-backed COW overlay drive (vdb) when attached (tmpfs fallback otherwise); writes outside the worktree consume disk (quota-bounded) not RAM; the e2e round-trip still passes.\n\nREQUIRED TESTS:\n  - TestE2E_GuestRoot_UpperOnOverlayDrive (KVM)",
+      "acceptance": "The guest writable overlay upper is the backend's disk-backed COW overlay drive (vdb) when attached, with a tmpfs fallback; writes outside the worktree are disk-backed (quota-bounded) not RAM-backed; the e2e round-trip passes.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
       "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "mcp",
       "agent_state": "",
       "weight": 1,
-      "content_hash": "f35a9040f9bf7ace5edd57f5aad3bb2306df7f549d603595673f32d365cdf87e",
-      "created_at": "2026-06-20T15:42:57Z",
-      "updated_at": "2026-06-20T15:42:57Z"
+      "content_hash": "f236fc43da727411db5c3ff752df201939e2ccc5bc71bbf25a4b8470d17910dd",
+      "created_at": "2026-06-20T15:54:52Z",
+      "updated_at": "2026-06-20T15:54:52Z"
     },
     {
       "id": "MGIT-11.7",
@@ -7266,7 +7291,7 @@
       "agent_id": "",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-11.13.4",
+      "current_node_id": "MGIT-11.6.6",
       "last_heartbeat": "2026-06-17T08:16:40Z"
     },
     {
@@ -7292,6 +7317,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 236,
-  "checksum": "2d771890a9b45e9b9f3a0249d2be2b95b9433b0b1f0daa1bdc2e781f7eb756d7"
+  "node_count": 237,
+  "checksum": "849f69babc586df476ab914dff7e81bcc8d1d5581c6eefbf136ba1bb41d0c27c"
 }
