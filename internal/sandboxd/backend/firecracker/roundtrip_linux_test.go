@@ -36,23 +36,26 @@ func (noopAudit) RecordTrustRootChange(context.Context, string) error { return n
 
 // TestE2E_Exec_RealGuest_RoundTrip proves the whole sandbox stack on real
 // KVM: a signed mgit-guest image boots under the backend and an exec over
-// the GuestDialer reads the worktree mounted into the guest.
+// the GuestDialer (1) reads a worktree mounted at an ARBITRARY runtime
+// path the guest created on its writable overlay root (MGIT-11.6.6, not a
+// path baked into the read-only image) and (2) writes to a normally
+// read-only root path, proving the overlay root is writable.
 func TestE2E_Exec_RealGuest_RoundTrip(t *testing.T) {
 	kernel, _ := requireKVM(t) // KVM + firecracker + mke2fs + kernel present
 	rootfs := os.Getenv("MGIT_E2E_GUEST_ROOTFS")
-	wtPath := os.Getenv("MGIT_E2E_WORKTREE")
-	if rootfs == "" || wtPath == "" {
-		t.Skip("set MGIT_E2E_GUEST_ROOTFS (build with scripts/build-guest-image.sh) and " +
-			"MGIT_E2E_WORKTREE (the worktree mount point baked into that image) to run the real round-trip")
+	if rootfs == "" {
+		t.Skip("set MGIT_E2E_GUEST_ROOTFS to a guest image built with scripts/build-guest-image.sh to run the real round-trip")
 	}
 	if !fileExists(rootfs) {
 		t.Skipf("guest rootfs %s absent", rootfs)
 	}
 
-	// The host worktree the backend packs into the guest (vdc), with a marker.
+	// An ARBITRARY runtime worktree path (not baked into the image): the
+	// guest must create this mount point on its writable overlay root.
+	wtPath := filepath.Join(t.TempDir(), "repo", "worktrees", "task-a")
 	const marker = "e2e-roundtrip-marker-content"
-	require.NoError(t, os.MkdirAll(wtPath, 0o755))                                               //nolint:gosec // operator-supplied test worktree dir
-	require.NoError(t, os.WriteFile(filepath.Join(wtPath, "marker.txt"), []byte(marker), 0o600)) //nolint:gosec // operator-supplied test worktree path
+	require.NoError(t, os.MkdirAll(wtPath, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(wtPath, "marker.txt"), []byte(marker), 0o600))
 
 	// Register the mgit-guest image in a fresh host trust root.
 	clock := func() time.Time { return time.Now().UTC() }
@@ -91,12 +94,15 @@ func TestE2E_Exec_RealGuest_RoundTrip(t *testing.T) {
 	t.Cleanup(func() { _ = mgr.Remove(context.Background(), info.ID, true) })
 
 	// The guest boots + starts serving vsock asynchronously; retry exec
-	// until the guest is listening, then assert it read the mounted worktree.
+	// until the guest is listening. The command writes to a normally
+	// read-only root path (proves the writable overlay root) and reads the
+	// worktree mounted at its arbitrary runtime path.
+	const cmd = "touch /overlay-writable-proof && cat " // + worktree marker path
 	var res *model.ExecResult
 	deadline := time.Now().Add(25 * time.Second)
 	for time.Now().Before(deadline) {
 		res, err = mgr.Exec(context.Background(), info.ID, model.ExecRequest{
-			Command: []string{"/bin/sh", "-c", "cat " + filepath.Join(wtPath, "marker.txt")},
+			Command: []string{"/bin/sh", "-c", cmd + filepath.Join(wtPath, "marker.txt")},
 		})
 		if err == nil {
 			break
@@ -104,7 +110,8 @@ func TestE2E_Exec_RealGuest_RoundTrip(t *testing.T) {
 		time.Sleep(400 * time.Millisecond)
 	}
 	require.NoError(t, err, "exec must reach the guest once it is serving vsock")
-	assert.Equal(t, 0, res.ExitCode)
+	assert.Equal(t, 0, res.ExitCode,
+		"writable overlay root + worktree read both succeed (exit 0); stderr=%q", string(res.Stderr))
 	assert.Contains(t, string(res.Stdout), marker,
-		"the guest exec read the worktree mounted over the real round-trip")
+		"the guest exec read the worktree mounted at its arbitrary runtime path")
 }

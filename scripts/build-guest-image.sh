@@ -8,22 +8,25 @@
 #   /sbin/mgit-guest   - the PID-1 supervisor (static, CGO-free)
 #   /bin/busybox + sh  - a shell + coreutils for the guest to exec
 #   /proc /dev /tmp     - pseudo-fs mount points (mgit-guest mounts them)
-#   <worktree-mount>    - the worktree mount point, baked so the read-only
-#                         image can mount the worktree over it (until the
-#                         guest writable-root lands, MGIT-11.13.5)
+#   /mnt                - tmpfs scratch for the writable-root overlay
+#                         (mgit-guest overlays a writable root over this
+#                         read-only image so it can create the worktree's
+#                         identical mount point at runtime, MGIT-11.6.6)
+#
+# The worktree mount point is NOT baked: mgit-guest creates it on the
+# writable overlay root, so any host worktree path works.
 #
 # Requires (Linux): go, busybox (static), mke2fs (e2fsprogs).
-# Usage: build-guest-image.sh <output.ext4> [worktree-mount-path]
+# Usage: build-guest-image.sh <output.ext4>
 set -euo pipefail
 
-OUT="${1:?usage: build-guest-image.sh <output.ext4> [worktree-mount-path]}"
-WT_MOUNT="${2:-/sandbox/worktree}"
+OUT="${1:?usage: build-guest-image.sh <output.ext4>}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SIZE_MB="${MGIT_GUEST_IMAGE_MB:-128}"
 
 root="$(mktemp -d)"
 trap 'rm -rf "$root"' EXIT
-mkdir -p "$root"/{sbin,bin,proc,dev,tmp} "$root$WT_MOUNT"
+mkdir -p "$root"/{sbin,bin,proc,dev,tmp,mnt}
 
 echo "building mgit-guest (static, CGO-free)…"
 CGO_ENABLED=0 GOOS=linux go build -C "$REPO_ROOT" -o "$root/sbin/mgit-guest" ./cmd/mgit-guest/
@@ -39,4 +42,3 @@ truncate -s "${SIZE_MB}m" "$OUT"
 mke2fs -F -q -t ext4 -d "$root" "$OUT"
 
 echo "done. cmdline: console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro rootfstype=ext4 init=/sbin/mgit-guest"
-echo "worktree mount point baked at: $WT_MOUNT"
