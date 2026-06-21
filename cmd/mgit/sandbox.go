@@ -58,6 +58,7 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 		sandboxListCmd(connect),
 		sandboxStatusCmd(connect),
 		sandboxRemoveCmd(connect),
+		sandboxImageCmd(), // host-local image registry (no daemon)
 	)
 	return cmd
 }
