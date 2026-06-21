@@ -136,7 +136,7 @@ func TestE2E_Land_RealGuest_RoundTrip(t *testing.T) {
 		mainIdx, e2eOffPolicy{}, land.DefaultLimits(), clock)
 	require.NoError(t, err)
 	landSvc, err := service.NewLandService(e2eStubResolver{id: info.ID}, channel, mainIdx,
-		parents, e2eStubAttestor{}, orch, e2eOffPolicy{}, clock)
+		parents, e2eStubAttestor{}, orch, e2eOffPolicy{})
 	require.NoError(t, err)
 
 	// The guest serves the land port asynchronously after boot; retry until it

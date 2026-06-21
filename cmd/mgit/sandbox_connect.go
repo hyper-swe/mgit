@@ -91,7 +91,8 @@ func productionSandboxConnect(ctx context.Context) (sandboxClient, error) {
 		// (it serves later commands and idle-exits on its own). Binding it
 		// to ctx would kill it the moment this command returns.
 		//nolint:gosec,noctx // fixed binary + derived owner-only paths, no shell; long-lived daemon must not die with the request ctx
-		c := exec.Command(bin, "--socket", p.socket, "--host-root", p.hostRoot, "--work-dir", p.workDir)
+		c := exec.Command(bin, "--socket", p.socket, "--host-root", p.hostRoot,
+			"--repo-root", cwd, "--work-dir", p.workDir)
 		configureDaemonCmd(c) // detach into its own session (platform-guarded)
 		return c.Start()
 	}

@@ -3,8 +3,6 @@ package land
 import (
 	"fmt"
 
-	"github.com/go-git/go-git/v5/plumbing"
-
 	"github.com/hyper-swe/mgit/internal/model"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
@@ -40,29 +38,27 @@ func CommitChain(pool []Object, skip func(id string) bool) ([]PoolCommit, error)
 	return orderChain(newByID)
 }
 
-// newPoolCommits decodes every commit object in the pool, computes its
-// host-side id and parent, and keeps only those not already landed. A
-// duplicate id (the same commit served twice) is a schema violation.
+// newPoolCommits indexes the pool's commit objects by host-computed id
+// (CommitObjectsByID, the single source of that walk + dup check) and keeps
+// only those not already landed, deriving each survivor's parent from its
+// bytes.
 func newPoolCommits(pool []Object, skip func(id string) bool) (map[string]PoolCommit, error) {
-	byID := make(map[string]PoolCommit)
-	for _, obj := range pool {
-		if obj.Type != ObjCommit {
-			continue
-		}
-		id := plumbing.ComputeHash(plumbing.CommitObject, obj.Data).String()
-		if _, dup := byID[id]; dup {
-			return nil, fmt.Errorf("%w: duplicate commit object %s", model.ErrLandVerificationFailed, id)
-		}
+	byID, err := CommitObjectsByID(pool)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]PoolCommit, len(byID))
+	for id, data := range byID {
 		if skip(id) {
 			continue
 		}
-		derived, err := gitstore.CommitFromObjectData(obj.Data)
+		derived, err := gitstore.CommitFromObjectData(data)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", model.ErrLandVerificationFailed, err)
 		}
-		byID[id] = PoolCommit{ID: id, ParentID: derived.ParentID, Data: obj.Data}
+		out[id] = PoolCommit{ID: id, ParentID: derived.ParentID, Data: data}
 	}
-	return byID, nil
+	return out, nil
 }
 
 // orderChain orders a non-empty set of new commits parent-first, requiring

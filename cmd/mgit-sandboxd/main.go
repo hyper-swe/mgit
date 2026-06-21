@@ -45,6 +45,7 @@ func main() {
 type daemonOpts struct {
 	socket       string
 	hostRoot     string
+	repoRoot     string
 	workDir      string
 	backend      string
 	idleGrace    time.Duration
@@ -62,6 +63,7 @@ func parseFlags(args []string, logSink io.Writer) (*daemonOpts, int) {
 	o := &daemonOpts{}
 	flags.StringVar(&o.socket, "socket", "", "unix socket path to serve (required)")
 	flags.StringVar(&o.hostRoot, "host-root", "", "host config root holding images.lock + trust root (FR-17.13)")
+	flags.StringVar(&o.repoRoot, "repo-root", "", "mgit repository root the land path imports into (defaults to the host-root's repo)")
 	flags.StringVar(&o.workDir, "work-dir", "", "sandbox-local state root (overlays, sockets); never a worktree")
 	flags.DurationVar(&o.idleGrace, "idle-grace", 30*time.Second, "zero-sandbox linger before exit")
 	flags.IntVar(&o.maxSandboxes, "max-sandboxes", 8, "global concurrent-sandbox ceiling (FR-17.26)")
@@ -135,7 +137,7 @@ func run(args []string, logSink io.Writer) int {
 		// Wire the land path when the host repo is reachable. A failure here is
 		// non-fatal: the daemon still serves launch/exec/list/remove/status,
 		// but `mgit sandbox land` reports "not served" until land is wired.
-		lander, closeLand, landErr := buildLandService(opts.hostRoot, opts.workDir, svc, events, policyStore, peerBinder, clock, logger)
+		lander, closeLand, landErr := buildLandService(opts.hostRoot, opts.repoRoot, opts.workDir, svc, events, policyStore, peerBinder, clock, logger)
 		if landErr != nil {
 			logger.Warn("sandbox land path not wired; land will not be served",
 				"event", "land_unwired", "error", landErr.Error())

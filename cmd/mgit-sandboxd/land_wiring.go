@@ -26,11 +26,15 @@ import (
 // reachable solely through the orchestrator (SEC-01 no-bypass). The single
 // peer-authorized read closes the SEC-06 refetch window. A returned closer
 // releases the repo + index this opens. Refs: MGIT-11.10.10, SEC-01, SEC-06, SEC-10
-func buildLandService(hostRoot, workDir string, resolver service.SandboxResolver,
+func buildLandService(hostRoot, repoRoot, workDir string, resolver service.SandboxResolver,
 	events service.SandboxEventAppender, policy service.SandboxPolicyReader,
 	peerBinder *sandboxd.PeerBinder, clock func() time.Time, logger *slog.Logger,
 ) (sandboxd.SandboxLander, func() error, error) {
-	repoRoot := filepath.Dir(filepath.Dir(hostRoot)) // <repo>/.mgit/sandbox -> <repo>
+	if repoRoot == "" {
+		// Fallback for callers that do not pass the repo root explicitly:
+		// recover it from the conventional <repo>/.mgit/sandbox host root.
+		repoRoot = filepath.Dir(filepath.Dir(hostRoot))
+	}
 	repo, err := gitstore.Open(repoRoot, clock)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open host repo %s: %w", repoRoot, err)
@@ -65,7 +69,7 @@ func buildLandService(hostRoot, workDir string, resolver service.SandboxResolver
 		_ = closer()
 		return nil, nil, fmt.Errorf("wire land orchestrator: %w", err)
 	}
-	landSvc, err := service.NewLandService(resolver, channel, mainIdx, parents, attestor, orch, policy, clock)
+	landSvc, err := service.NewLandService(resolver, channel, mainIdx, parents, attestor, orch, policy)
 	if err != nil {
 		_ = closer()
 		return nil, nil, fmt.Errorf("wire land service: %w", err)

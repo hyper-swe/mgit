@@ -43,7 +43,7 @@ func TestBuildLandService_WiresAndBootstrapsAttestKey(t *testing.T) {
 	require.NoError(t, err)
 
 	binder := sandboxd.NewPeerBinder(testLogger())
-	lander, closeLand, err := buildLandService(hostRoot, t.TempDir(), stubResolver{},
+	lander, closeLand, err := buildLandService(hostRoot, repoRoot, t.TempDir(), stubResolver{},
 		events, policyStore, binder, clock, testLogger())
 	require.NoError(t, err)
 	require.NotNil(t, lander)
@@ -70,7 +70,9 @@ func TestBuildLandService_BadRepo_Error(t *testing.T) {
 	policyStore, err := policy.NewStore(hostRoot, clock, slogPolicyRecorder{logger: testLogger()})
 	require.NoError(t, err)
 
-	_, _, err = buildLandService(hostRoot, t.TempDir(), stubResolver{}, events, policyStore,
+	// Empty repo root exercises the host-root fallback (which derives a root
+	// with no .mgit repo).
+	_, _, err = buildLandService(hostRoot, "", t.TempDir(), stubResolver{}, events, policyStore,
 		sandboxd.NewPeerBinder(testLogger()), clock, testLogger())
 	assert.Error(t, err)
 }

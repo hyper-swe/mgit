@@ -175,7 +175,7 @@ type landSvcFakes struct {
 func newLandSvc(t *testing.T, f landSvcFakes) *LandService {
 	t.Helper()
 	svc, err := NewLandService(f.resolver, f.puller, f.ledger, f.parents, f.attestor,
-		f.orch, f.policy, func() time.Time { return time.Unix(0, 0).UTC() })
+		f.orch, f.policy)
 	require.NoError(t, err)
 	return svc
 }
@@ -318,16 +318,14 @@ func TestNewLandService_NilDeps(t *testing.T) {
 	a := &fakeAttestor{}
 	o := &fakeOrchestrator{}
 	pol := fakePolicy{}
-	clk := func() time.Time { return time.Unix(0, 0).UTC() }
 	for name, build := range map[string]func() (*LandService, error){
-		"nil_resolver": func() (*LandService, error) { return NewLandService(nil, p, l, pt, a, o, pol, clk) },
-		"nil_puller":   func() (*LandService, error) { return NewLandService(r, nil, l, pt, a, o, pol, clk) },
-		"nil_ledger":   func() (*LandService, error) { return NewLandService(r, p, nil, pt, a, o, pol, clk) },
-		"nil_parents":  func() (*LandService, error) { return NewLandService(r, p, l, nil, a, o, pol, clk) },
-		"nil_attestor": func() (*LandService, error) { return NewLandService(r, p, l, pt, nil, o, pol, clk) },
-		"nil_orch":     func() (*LandService, error) { return NewLandService(r, p, l, pt, a, nil, pol, clk) },
-		"nil_policy":   func() (*LandService, error) { return NewLandService(r, p, l, pt, a, o, nil, clk) },
-		"nil_clock":    func() (*LandService, error) { return NewLandService(r, p, l, pt, a, o, pol, nil) },
+		"nil_resolver": func() (*LandService, error) { return NewLandService(nil, p, l, pt, a, o, pol) },
+		"nil_puller":   func() (*LandService, error) { return NewLandService(r, nil, l, pt, a, o, pol) },
+		"nil_ledger":   func() (*LandService, error) { return NewLandService(r, p, nil, pt, a, o, pol) },
+		"nil_parents":  func() (*LandService, error) { return NewLandService(r, p, l, nil, a, o, pol) },
+		"nil_attestor": func() (*LandService, error) { return NewLandService(r, p, l, pt, nil, o, pol) },
+		"nil_orch":     func() (*LandService, error) { return NewLandService(r, p, l, pt, a, nil, pol) },
+		"nil_policy":   func() (*LandService, error) { return NewLandService(r, p, l, pt, a, o, nil) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := build()

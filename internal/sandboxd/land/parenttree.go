@@ -117,19 +117,15 @@ func (r *PoolAwareParentResolver) ParentFileSet(ctx context.Context, parentCommi
 }
 
 // commitIDs returns the host-computed git ids of every commit object in a
-// pool, rejecting a duplicate (the same commit served twice).
+// pool, rejecting a duplicate (CommitObjectsByID is the single source of
+// that walk + dup check).
 func commitIDs(pool []Object) ([]string, error) {
-	seen := make(map[string]bool)
-	var ids []string
-	for _, o := range pool {
-		if o.Type != ObjCommit {
-			continue
-		}
-		id := plumbing.ComputeHash(plumbing.CommitObject, o.Data).String()
-		if seen[id] {
-			return nil, fmt.Errorf("%w: duplicate commit object %s", model.ErrLandVerificationFailed, id)
-		}
-		seen[id] = true
+	byID, err := CommitObjectsByID(pool)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(byID))
+	for id := range byID {
 		ids = append(ids, id)
 	}
 	return ids, nil
@@ -139,22 +135,21 @@ func commitIDs(pool []Object) ([]string, error) {
 // commit that lives in the given pool, resolving its tree from the pool's
 // content-addressed objects (so an intra-batch parent binds to real bytes).
 func poolCommitFileSet(pool []Object, commitID string) (map[string]string, error) {
-	for _, o := range pool {
-		if o.Type != ObjCommit {
-			continue
-		}
-		if plumbing.ComputeHash(plumbing.CommitObject, o.Data).String() != commitID {
-			continue
-		}
-		c, err := gitstore.CommitFromObjectData(o.Data)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", model.ErrLandVerificationFailed, err)
-		}
-		storer, err := poolStorer(pool)
-		if err != nil {
-			return nil, err
-		}
-		return landedFileSet(storer, c.TreeHash)
+	byID, err := CommitObjectsByID(pool)
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("%w: intra-batch parent %s absent from pool", model.ErrLandVerificationFailed, commitID)
+	data, ok := byID[commitID]
+	if !ok {
+		return nil, fmt.Errorf("%w: intra-batch parent %s absent from pool", model.ErrLandVerificationFailed, commitID)
+	}
+	c, err := gitstore.CommitFromObjectData(data)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", model.ErrLandVerificationFailed, err)
+	}
+	storer, err := poolStorer(pool)
+	if err != nil {
+		return nil, err
+	}
+	return landedFileSet(storer, c.TreeHash)
 }

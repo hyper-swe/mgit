@@ -167,7 +167,7 @@ func TestDaemon_Land_RoutesThroughVerifiedOrchestrator(t *testing.T) {
 	require.NoError(t, err)
 
 	landSvc, err := service.NewLandService(landResolver{id: "sbx-1"}, channel, emptyLedger{},
-		parents, nopAttestor{}, orch, offPolicy{}, clock)
+		parents, nopAttestor{}, orch, offPolicy{})
 	require.NoError(t, err)
 
 	cfg, _ := dispatchConfig(t, &fakeDispatcher{})

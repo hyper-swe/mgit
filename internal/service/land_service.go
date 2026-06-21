@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/land"
@@ -81,13 +80,14 @@ type LandService struct {
 	attestor Attestor
 	orch     landOrchestrator
 	policy   SandboxPolicyReader
-	clock    func() time.Time
 }
 
 // NewLandService wires the land service. All dependencies are required.
+// Timestamping is owned by the orchestrator and attestor (clock-injected
+// there), so the service holds no clock of its own.
 func NewLandService(resolver SandboxResolver, puller LandPuller, ledger LandedCommitReader,
 	parents poolParentResolver, attestor Attestor, orch landOrchestrator,
-	policy SandboxPolicyReader, clock func() time.Time) (*LandService, error) {
+	policy SandboxPolicyReader) (*LandService, error) {
 	switch {
 	case resolver == nil:
 		return nil, fmt.Errorf("land service: sandbox resolver must not be nil")
@@ -103,12 +103,10 @@ func NewLandService(resolver SandboxResolver, puller LandPuller, ledger LandedCo
 		return nil, fmt.Errorf("land service: orchestrator must not be nil")
 	case policy == nil:
 		return nil, fmt.Errorf("land service: policy reader must not be nil")
-	case clock == nil:
-		return nil, fmt.Errorf("land service: clock must not be nil")
 	}
 	return &LandService{
 		resolver: resolver, puller: puller, ledger: ledger, parents: parents,
-		attestor: attestor, orch: orch, policy: policy, clock: clock,
+		attestor: attestor, orch: orch, policy: policy,
 	}, nil
 }
 
