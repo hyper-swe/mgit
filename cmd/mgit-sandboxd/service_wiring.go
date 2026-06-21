@@ -26,26 +26,26 @@ const sandboxIndexDB = "sandbox-index.db"
 // buildSandboxService constructs the lifecycle service the daemon
 // dispatches to: the supervised (ceiling-wrapped) manager, the append-only
 // sandbox_events audit store, the host policy reader, the injected clock,
-// and a host-owned ULID id generator. It returns a closer for the audit
-// store so the daemon can checkpoint and release it on exit. Handlers go
-// through this service, never the manager directly (architecture rule).
-// Refs: FR-17.13, FR-17.18, MGIT-11.10.8
-func buildSandboxService(manager model.SandboxManager, hostRoot string, clock func() time.Time, logger *slog.Logger) (*service.SandboxService, func() error, error) {
+// and a host-owned ULID id generator. It returns the audit-event store and
+// policy reader (shared with the land path) and a closer for the audit
+// store. Handlers go through this service, never the manager directly
+// (architecture rule). Refs: FR-17.13, FR-17.18, MGIT-11.10.8
+func buildSandboxService(manager model.SandboxManager, hostRoot string, clock func() time.Time, logger *slog.Logger) (*service.SandboxService, *index.Store, *policy.Store, func() error, error) {
 	events, err := index.New(filepath.Join(hostRoot, sandboxIndexDB), clock)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open sandbox audit index: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("open sandbox audit index: %w", err)
 	}
 	policyStore, err := policy.NewStore(hostRoot, clock, slogPolicyRecorder{logger: logger})
 	if err != nil {
 		_ = events.Close()
-		return nil, nil, fmt.Errorf("open host policy store: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("open host policy store: %w", err)
 	}
 	svc, err := service.NewSandboxService(manager, events, policyStore, clock, newIDGen(clock))
 	if err != nil {
 		_ = events.Close()
-		return nil, nil, fmt.Errorf("wire sandbox service: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("wire sandbox service: %w", err)
 	}
-	return svc, events.Close, nil
+	return svc, events, policyStore, events.Close, nil
 }
 
 // newIDGen returns a monotonic ULID generator for host-assigned sandbox

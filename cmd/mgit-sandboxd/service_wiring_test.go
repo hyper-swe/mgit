@@ -46,9 +46,11 @@ func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard,
 // host root, and returns a closer that releases it cleanly.
 func TestBuildSandboxService_WiresServiceAndCloser(t *testing.T) {
 	clock := func() time.Time { return time.Unix(0, 0).UTC() }
-	svc, closeAudit, err := buildSandboxService(nopManager{}, t.TempDir(), clock, testLogger())
+	svc, events, policyStore, closeAudit, err := buildSandboxService(nopManager{}, t.TempDir(), clock, testLogger())
 	require.NoError(t, err)
 	require.NotNil(t, svc)
+	require.NotNil(t, events)
+	require.NotNil(t, policyStore)
 	require.NotNil(t, closeAudit)
 
 	// The service is live: a register records into the real audit index.
@@ -89,7 +91,7 @@ func TestBuildSandboxService_BadHostRoot(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "not-a-dir")
 	require.NoError(t, os.WriteFile(f, []byte("x"), 0o600))
 	clock := func() time.Time { return time.Unix(0, 0).UTC() }
-	_, _, err := buildSandboxService(nopManager{}, f, clock, testLogger())
+	_, _, _, _, err := buildSandboxService(nopManager{}, f, clock, testLogger())
 	require.Error(t, err)
 }
 

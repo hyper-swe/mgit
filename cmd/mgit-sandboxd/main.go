@@ -124,13 +124,25 @@ func run(args []string, logSink io.Writer) int {
 	// service, never the manager). Without it the daemon greets only — a
 	// loud warning, never a silent half-serving daemon.
 	if opts.hostRoot != "" {
-		svc, closeAudit, svcErr := buildSandboxService(manager, opts.hostRoot, clock, logger)
+		svc, events, policyStore, closeAudit, svcErr := buildSandboxService(manager, opts.hostRoot, clock, logger)
 		if svcErr != nil {
 			logger.Error("sandbox service wiring failed", "error", svcErr.Error())
 			return 2
 		}
 		defer func() { _ = closeAudit() }()
 		dcfg.Service = svc
+
+		// Wire the land path when the host repo is reachable. A failure here is
+		// non-fatal: the daemon still serves launch/exec/list/remove/status,
+		// but `mgit sandbox land` reports "not served" until land is wired.
+		lander, closeLand, landErr := buildLandService(opts.hostRoot, opts.workDir, svc, events, policyStore, peerBinder, clock, logger)
+		if landErr != nil {
+			logger.Warn("sandbox land path not wired; land will not be served",
+				"event", "land_unwired", "error", landErr.Error())
+		} else {
+			defer func() { _ = closeLand() }()
+			dcfg.Lander = lander
+		}
 	} else {
 		logger.Warn("sandboxd serving greet-only: --host-root not set; no sandbox operations will be served",
 			"event", "greet_only")
