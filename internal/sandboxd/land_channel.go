@@ -59,7 +59,14 @@ func NewLandChannel(binder *PeerBinder, dialer LandDialer, limits land.Limits, l
 func (c *LandChannel) Pull(ctx context.Context, sandboxID string) ([]land.Object, error) {
 	// Resolve the launch-bound peer and authorize it BEFORE any connection,
 	// so the host only ever pulls from the exact peer bound at launch and
-	// refuses an unbound or torn-down sandbox (SEC-10, fail closed).
+	// refuses an unbound or torn-down sandbox (SEC-10, fail closed). This is
+	// a HOST-INITIATED dial, so the security-relevant property here is the
+	// unbound/torn-down rejection (Authorize's internal binding re-lookup);
+	// passing the bound peer as the source makes the peer-equality branch a
+	// no-op. Trust that the dial reaches the right guest rests on the per-VM
+	// vsock socket path being host-private (the firecracker dialer). A guest
+	// that connects INTO the host (the future attestation/notify channel)
+	// would carry a transport-observed source CID to compare instead.
 	boundPeer, _ := c.binder.BoundPeer(sandboxID)
 	if err := c.binder.Authorize(sandboxID, boundPeer); err != nil {
 		return nil, err

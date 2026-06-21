@@ -196,7 +196,7 @@ func (o *LandOrchestrator) verifyBatch(ctx context.Context, req LandRequest, req
 		if err := land.VerifyTreeBinding(pool, cc.Commit, parentFiles); err != nil {
 			return nil, err
 		}
-		sandboxID, err := land.EnforceRequireSandbox(ctx, requireSandbox, cc.Commit, cc.Attestation, o.verifier.Verify)
+		sandboxID, err := land.EnforceRequireSandbox(ctx, requireSandbox, req.SandboxID, cc.Commit, cc.Attestation, o.verifier.Verify)
 		if err != nil {
 			return nil, err
 		}
