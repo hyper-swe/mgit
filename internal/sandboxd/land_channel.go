@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+
+	"github.com/hyper-swe/mgit/internal/sandboxd/land"
 )
 
 // LandDialer opens a raw, host-initiated connection to a guest's land
@@ -28,40 +30,43 @@ type LandDialer interface {
 // verify-then-refetch window. One pull serves one land; the buffer is
 // consumed on replay. Refs: FR-17.5, FR-17.35, SEC-06, SEC-10
 type LandChannel struct {
-	binder   *PeerBinder
-	dialer   LandDialer
-	maxBytes int64
-	logger   *slog.Logger
+	binder *PeerBinder
+	dialer LandDialer
+	limits land.Limits
+	logger *slog.Logger
 
 	mu    sync.Mutex
 	pools map[string][]byte // sandbox ID -> pulled raw pool, awaiting replay
 }
 
-// NewLandChannel wires the land channel. maxBytes bounds one pulled pool (a
+// NewLandChannel wires the land channel. limits bound one pulled pool (a
 // hostile guest must never drive an unbounded host allocation); pass
-// land.DefaultLimits().MaxTotalBytes.
-func NewLandChannel(binder *PeerBinder, dialer LandDialer, maxBytes int64, logger *slog.Logger) *LandChannel {
+// land.DefaultLimits().
+func NewLandChannel(binder *PeerBinder, dialer LandDialer, limits land.Limits, logger *slog.Logger) *LandChannel {
 	return &LandChannel{
-		binder: binder, dialer: dialer, maxBytes: maxBytes, logger: logger,
+		binder: binder, dialer: dialer, limits: limits, logger: logger,
 		pools: make(map[string][]byte),
 	}
 }
 
 // Pull authorizes the sandbox's bound peer (SEC-10), dials the guest land
-// channel, and reads the whole framed pool once into a bounded buffer kept
-// for replay. An unbound/torn-down sandbox is refused before any dial. A
-// pool exceeding the host budget is refused. Refs: FR-17.5, FR-17.35, SEC-06, SEC-10
-func (c *LandChannel) Pull(ctx context.Context, sandboxID string) error {
+// channel, reads the whole framed pool once into a bounded buffer kept for
+// the orchestrator to replay, and returns the decoded pool for host-side
+// batch derivation. The single network read is what the orchestrator later
+// verifies and imports (SEC-06: no verify-then-refetch). An unbound/torn-down
+// sandbox is refused before any dial; an over-budget or malformed pool is
+// refused and nothing is buffered. Refs: FR-17.5, FR-17.35, SEC-06, SEC-10
+func (c *LandChannel) Pull(ctx context.Context, sandboxID string) ([]land.Object, error) {
 	// Resolve the launch-bound peer and authorize it BEFORE any connection,
 	// so the host only ever pulls from the exact peer bound at launch and
 	// refuses an unbound or torn-down sandbox (SEC-10, fail closed).
 	boundPeer, _ := c.binder.BoundPeer(sandboxID)
 	if err := c.binder.Authorize(sandboxID, boundPeer); err != nil {
-		return err
+		return nil, err
 	}
 	conn, err := c.dialer.DialGuest(ctx, sandboxID)
 	if err != nil {
-		return fmt.Errorf("sandbox land: dial guest land channel: %w", err)
+		return nil, fmt.Errorf("sandbox land: dial guest land channel: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
 	if dl, ok := ctx.Deadline(); ok {
@@ -70,18 +75,24 @@ func (c *LandChannel) Pull(ctx context.Context, sandboxID string) error {
 
 	// Read one byte past the ceiling so an over-budget pool is detected
 	// rather than silently truncated.
-	raw, err := io.ReadAll(io.LimitReader(conn, c.maxBytes+1))
+	raw, err := io.ReadAll(io.LimitReader(conn, c.limits.MaxTotalBytes+1))
 	if err != nil {
-		return fmt.Errorf("sandbox land: read pool: %w", err)
+		return nil, fmt.Errorf("sandbox land: read pool: %w", err)
 	}
-	if int64(len(raw)) > c.maxBytes {
-		return fmt.Errorf("sandbox land: pool exceeds the %d-byte host budget", c.maxBytes)
+	if int64(len(raw)) > c.limits.MaxTotalBytes {
+		return nil, fmt.Errorf("sandbox land: pool exceeds the %d-byte host budget", c.limits.MaxTotalBytes)
+	}
+	// Decode under the full ceilings (per-object/count/total) for host-side
+	// derivation; the same bytes are replayed and re-decoded by the orchestrator.
+	objs, err := c.limits.DecodeObjects(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("sandbox land: %w", err)
 	}
 
 	c.mu.Lock()
 	c.pools[sandboxID] = raw
 	c.mu.Unlock()
-	return nil
+	return objs, nil
 }
 
 // OpenLandStream replays the buffer pulled for this sandbox, satisfying the

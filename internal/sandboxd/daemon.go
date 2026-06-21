@@ -35,6 +35,12 @@ type Config struct {
 	// build without a wired service still authenticates and reports
 	// liveness but serves no operations. Refs: MGIT-11.10.8
 	Service SandboxDispatcher
+	// Lander serves the land control-plane verb. It routes EXCLUSIVELY
+	// through the verified LandOrchestrator (the daemon holds no persister,
+	// importer, appender, or brancher): the only land capability the daemon
+	// has is "land this task", which cannot import objects without
+	// host-side verification. When nil, land is not served. Refs: MGIT-11.10.10, SEC-01
+	Lander SandboxLander
 	// MaxConns bounds concurrent in-flight connections; beyond it the
 	// daemon rejects fast (accept-then-close) rather than spawning an
 	// unbounded number of goroutines. Refs: MGIT-11.10.8 (security audit)

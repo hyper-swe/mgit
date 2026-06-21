@@ -26,6 +26,18 @@ type SandboxDispatcher interface {
 	Status(ctx context.Context, taskID string) (*model.SandboxInfo, error)
 }
 
+// SandboxLander serves the land verb. It is the daemon's ENTIRE land
+// capability: "land this task" — pull the guest pool, verify it host-side,
+// and import atomically. The implementation (service.LandService, wrapped at
+// wiring) routes exclusively through the verified LandOrchestrator, so the
+// daemon can never import guest objects without verification and holds no
+// persister/importer/brancher reference. Commits is the number of new
+// commits landed (0 = nothing new); Branch is the task branch advanced.
+// Refs: MGIT-11.10.10, SEC-01
+type SandboxLander interface {
+	Land(ctx context.Context, taskID string) (commits int, branch string, err error)
+}
+
 // execRelayChunkBytes bounds one exec output frame relayed to the client.
 // Output is forwarded in chunks no larger than this so a single frame can
 // never approach the execwire ceiling and the client sees output
@@ -78,12 +90,28 @@ func (d *Daemon) dispatch(ctx context.Context, conn net.Conn, req *controlproto.
 	case controlproto.KindStatus:
 		info, err := d.cfg.Service.Status(ctx, req.Status.TaskID)
 		d.reply(conn, &controlproto.Response{Sandbox: info}, err)
+	case controlproto.KindLand:
+		d.serveLand(ctx, conn, req.Land)
 	default:
-		// KindLand is a valid protocol kind but is served by the land
-		// orchestrator (MGIT-11.10.10), not this dispatcher.
 		d.reply(conn, &controlproto.Response{},
 			fmt.Errorf("controlproto kind %#x not served by this daemon", req.Kind))
 	}
+}
+
+// serveLand routes one land request through the verified land path. The
+// daemon's only land dependency is the SandboxLander (land-this-task), which
+// imports nothing without the orchestrator's host-side verification; the
+// daemon never touches the persister or stores (SEC-01, no-bypass guard).
+// A nil lander (land not wired) is reported, not crashed. The reply carries
+// only host-observed text (SEC-05). Refs: MGIT-11.10.10, SEC-01, SEC-05
+func (d *Daemon) serveLand(ctx context.Context, conn net.Conn, ref *controlproto.TaskRef) {
+	if d.cfg.Lander == nil {
+		d.reply(conn, &controlproto.Response{},
+			fmt.Errorf("controlproto kind %#x not served by this daemon", controlproto.KindLand))
+		return
+	}
+	commits, branch, err := d.cfg.Lander.Land(ctx, ref.TaskID)
+	d.reply(conn, &controlproto.Response{Landed: &controlproto.LandResult{Commits: commits, Branch: branch}}, err)
 }
 
 // reply writes a success response, or an error response carrying a
