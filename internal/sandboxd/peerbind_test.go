@@ -85,6 +85,23 @@ func TestVsock_UnboundOrEmpty_Rejected(t *testing.T) {
 		model.ErrPeerBindingMismatch, "an unverifiable (empty) peer → reject")
 }
 
+// TestVsock_BoundPeer_ResolvesAndReportsUnbound verifies the land path can
+// resolve a sandbox's bound peer and learns when it is unbound. Refs: SEC-10
+func TestVsock_BoundPeer_ResolvesAndReportsUnbound(t *testing.T) {
+	b, _ := binderWithLog()
+	if _, ok := b.BoundPeer("01JXSBA000000000000000000"); ok {
+		t.Fatal("an unbound sandbox must report not-bound")
+	}
+	b.Bind("01JXSBA000000000000000000", "cid:3")
+	peer, ok := b.BoundPeer("01JXSBA000000000000000000")
+	assert.True(t, ok)
+	assert.Equal(t, "cid:3", peer)
+
+	b.Invalidate("01JXSBA000000000000000000")
+	_, ok = b.BoundPeer("01JXSBA000000000000000000")
+	assert.False(t, ok, "a torn-down sandbox is no longer bound")
+}
+
 // TestVsock_Rebind_ReplacesBinding verifies a relaunch rebinds cleanly.
 func TestVsock_Rebind_ReplacesBinding(t *testing.T) {
 	b, _ := binderWithLog()

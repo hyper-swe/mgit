@@ -47,6 +47,18 @@ func (b *PeerBinder) Invalidate(sandboxID string) {
 	delete(b.bindings, sandboxID)
 }
 
+// BoundPeer returns the peer identity bound to a sandbox, or ("", false)
+// when the sandbox is unbound (never launched or torn down). The host land
+// path resolves the bound identity with this before dialing the guest, so
+// it dials exactly the launch-bound peer and never an unbound or recycled
+// one (SEC-10). Refs: FR-17.27, SEC-10
+func (b *PeerBinder) BoundPeer(sandboxID string) (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	peer, ok := b.bindings[sandboxID]
+	return peer, ok
+}
+
 // Authorize verifies that a connection's source peer identity matches the
 // binding of the sandbox it addresses. It fails closed: an unbound
 // sandbox (never launched or torn down) and an empty/unverifiable source
