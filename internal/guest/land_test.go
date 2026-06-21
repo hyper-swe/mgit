@@ -176,3 +176,17 @@ func TestServeLandHead_UnbornHead_NoBytes(t *testing.T) {
 func TestServeLandHead_NotARepo_Error(t *testing.T) {
 	assert.Error(t, ServeLandHead(t.TempDir(), io.Discard))
 }
+
+// TestStreamReachable_TreeMissing_Error verifies a commit whose tree object
+// is absent fails the stream (the guest fails closed, not partial).
+func TestStreamReachable_TreeMissing_Error(t *testing.T) {
+	b := newGitBuilder(t)
+	// Build a commit referencing a tree hash that is not stored.
+	missingTree := plumbing.ComputeHash(plumbing.TreeObject, []byte("absent"))
+	sig := object.Signature{Name: "a", Email: "a@mgit", When: time.Unix(0, 0).UTC()}
+	o := b.st.NewEncodedObject()
+	require.NoError(t, (&object.Commit{Author: sig, Committer: sig, Message: "m", TreeHash: missingTree}).Encode(o))
+	head, err := b.st.SetEncodedObject(o)
+	require.NoError(t, err)
+	assert.Error(t, StreamReachable(b.st, head, io.Discard))
+}

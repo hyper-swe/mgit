@@ -146,3 +146,19 @@ func TestPoolAwareParentResolver_DuplicateCommit_RegisterError(t *testing.T) {
 	_, err := r.Register(pool)
 	assert.ErrorIs(t, err, model.ErrLandVerificationFailed)
 }
+
+// TestPoolAwareParentResolver_IntraBatchTreeMissing_Error verifies an
+// intra-batch parent whose tree is absent from the pool fails closed.
+func TestPoolAwareParentResolver_IntraBatchTreeMissing_Error(t *testing.T) {
+	b := newBuilder(t)
+	tree := b.writeTree(object.TreeEntry{Name: "a.txt", Mode: filemode.Regular, Hash: b.writeBlob("x")})
+	parent := b.writeCommit("c1", "a", tree, plumbing.ZeroHash, time.Unix(0, 0).UTC())
+	// Pool has the commit but NOT its tree object.
+	pool := []Object{{Type: ObjCommit, Data: b.raw(parent)}}
+	r := NewPoolAwareParentResolver(NewHostParentTreeResolver(openRepo(t)))
+	ids, err := r.Register(pool)
+	require.NoError(t, err)
+	require.Contains(t, ids, parent.String())
+	_, err = r.ParentFileSet(context.Background(), parent.String())
+	assert.ErrorIs(t, err, model.ErrLandVerificationFailed)
+}

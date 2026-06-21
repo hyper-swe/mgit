@@ -335,3 +335,48 @@ func TestNewLandService_NilDeps(t *testing.T) {
 		})
 	}
 }
+
+func TestLandService_LedgerError_DiscardsAndSurfaces(t *testing.T) {
+	b := newPoolBuilder(t)
+	pool, _ := singleCommitPool(b, "feat: x", "a.txt", "x")
+	f := defaultFakes(pool, fakePolicy{p: policyOff()})
+	f.ledger.err = errors.New("index down")
+	svc := newLandSvc(t, f)
+	_, err := svc.Land(context.Background(), "MGIT-1")
+	assert.Error(t, err)
+	assert.Equal(t, 1, f.puller.discarded, "the buffered pool is dropped on a derivation error")
+	assert.Zero(t, f.orch.called)
+}
+
+func TestLandService_PolicyError_Discards(t *testing.T) {
+	b := newPoolBuilder(t)
+	pool, _ := singleCommitPool(b, "feat: x", "a.txt", "x")
+	f := defaultFakes(pool, errPolicy{})
+	svc := newLandSvc(t, f)
+	_, err := svc.Land(context.Background(), "MGIT-1")
+	assert.Error(t, err)
+	assert.Equal(t, 1, f.puller.discarded)
+	assert.Zero(t, f.orch.called)
+}
+
+func TestLandService_ForkedChain_DiscardsAndSurfaces(t *testing.T) {
+	b := newPoolBuilder(t)
+	// Two independent root commits → not a single chain.
+	tree := b.tree(object.TreeEntry{Name: "a.txt", Mode: filemode.Regular, Hash: b.blob("x")})
+	c1 := b.commit("c1", tree, plumbing.ZeroHash)
+	c2 := b.commit("c2", tree, plumbing.ZeroHash)
+	pool := []land.Object{{Type: land.ObjCommit, Data: b.raw(c1)}, {Type: land.ObjCommit, Data: b.raw(c2)}}
+	f := defaultFakes(pool, fakePolicy{p: policyOff()})
+	svc := newLandSvc(t, f)
+	_, err := svc.Land(context.Background(), "MGIT-1")
+	assert.ErrorIs(t, err, model.ErrLandVerificationFailed)
+	assert.Equal(t, 1, f.puller.discarded)
+}
+
+func TestLandService_BadTaskID_NoPull(t *testing.T) {
+	f := defaultFakes(nil, fakePolicy{p: policyOff()})
+	svc := newLandSvc(t, f)
+	_, err := svc.Land(context.Background(), "not a task id!!")
+	assert.Error(t, err)
+	assert.Zero(t, f.puller.pulls, "an invalid task id is rejected before any pull")
+}

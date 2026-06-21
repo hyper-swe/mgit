@@ -106,6 +106,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		"sandboxd":     true, // sandbox helper daemon library (FR-17.16, MGIT-11.4.1)
 		"guest":        true, // guest supervisor library (FR-17.16, MGIT-11.5.6)
 		"execwire":     true, // host<->guest exec wire protocol (FR-17.11, MGIT-11.9.2)
+		"landwire":     true, // host<->guest land object-frame wire protocol (FR-17.5, MGIT-11.10.10)
 		"guestboot":    true, // host->guest worktree-mount boot contract (FR-17.3, MGIT-11.6.5)
 		"controlproto": true, // host CLI<->daemon control-plane protocol (FR-17.34, MGIT-11.10.7)
 	}

@@ -152,7 +152,7 @@ func TestLandChannel_MalformedPool_Refused(t *testing.T) {
 }
 
 func TestLandChannel_DialError_Surfaces(t *testing.T) {
-	dialer := &fakeLandDialer{dialErr: assertDialErr}
+	dialer := &fakeLandDialer{dialErr: errAssertDial}
 	c, binder := newTestChannel(dialer, defaultLandLimits())
 	binder.Bind("sbx-1", "sbx-1")
 	_, err := c.Pull(context.Background(), "sbx-1")
@@ -170,4 +170,4 @@ func TestLandChannel_Discard_DropsBuffer(t *testing.T) {
 	assert.Error(t, err, "a discarded pull leaves no buffer")
 }
 
-var assertDialErr = io.ErrUnexpectedEOF
+var errAssertDial = io.ErrUnexpectedEOF

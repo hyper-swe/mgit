@@ -44,7 +44,7 @@ type failWriter struct{ left int }
 
 func (f *failWriter) Write(p []byte) (int, error) {
 	if f.left <= 0 {
-		return 0, assertErr
+		return 0, errAssert
 	}
 	n := len(p)
 	if n > f.left {
@@ -52,12 +52,12 @@ func (f *failWriter) Write(p []byte) (int, error) {
 	}
 	f.left -= n
 	if n < len(p) {
-		return n, assertErr
+		return n, errAssert
 	}
 	return n, nil
 }
 
-var assertErr = bytes.ErrTooLarge
+var errAssert = bytes.ErrTooLarge
 
 func TestWriteFrame_HeaderWriteError(t *testing.T) {
 	assert.Error(t, WriteFrame(&failWriter{left: 0}, ObjBlob, []byte("data")))
