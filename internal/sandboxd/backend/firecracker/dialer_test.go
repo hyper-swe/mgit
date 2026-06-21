@@ -77,6 +77,23 @@ func TestGuestDialer_DialsGuestPort(t *testing.T) {
 	assert.Equal(t, "CONNECT 1024\n", <-got, "the dialer requests the guest vsock port")
 }
 
+// TestLandStreamOpener_DialsGuestLandPort verifies the host land dialer
+// connects to the sandbox's vsock socket and requests the guest LAND port
+// (distinct from the exec port 1024), so the host pulls the object pool
+// over the dedicated land channel. Refs: FR-17.5
+func TestLandStreamOpener_DialsGuestLandPort(t *testing.T) {
+	workDir := shortDir(t)
+	d := NewLandDialer(workDir)
+	// The land dialer uses the same per-VM vsock socket as exec.
+	got := fakeGuestVsock(t, sandboxPaths(microvm.SandboxStateDir(workDir, "sbx-1")).vsock)
+
+	conn, err := d.DialGuest(context.Background(), "sbx-1")
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	assert.Equal(t, "CONNECT 1025\n", <-got, "the land dialer requests the guest land port")
+}
+
 // TestGuestDialer_SandboxSocketAbsent verifies dialing a sandbox whose VM
 // is not running (no vsock socket) fails closed.
 func TestGuestDialer_SandboxSocketAbsent(t *testing.T) {
