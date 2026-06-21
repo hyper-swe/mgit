@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mgit/internal/model"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
@@ -75,4 +76,73 @@ func TestHostParentTreeResolver_UnknownParent_Error(t *testing.T) {
 	r := NewHostParentTreeResolver(openRepo(t))
 	_, err := r.ParentFileSet(context.Background(), plumbing.ComputeHash(plumbing.CommitObject, []byte("absent")).String())
 	assert.Error(t, err)
+}
+
+// TestPoolAwareParentResolver_IntraBatchParentFromPool verifies a parent that
+// is a new commit in the batch resolves from the registered pool (it is not
+// yet in the host store), enabling multi-commit chains. Refs: FR-17.5, SEC-06
+func TestPoolAwareParentResolver_IntraBatchParentFromPool(t *testing.T) {
+	b := newBuilder(t)
+	blob := b.writeBlob("v1")
+	tree := b.writeTree(object.TreeEntry{Name: "a.txt", Mode: filemode.Regular, Hash: blob})
+	parent := b.writeCommit("c1", "a", tree, plumbing.ZeroHash, time.Unix(0, 0).UTC())
+	pool := []Object{
+		{Type: ObjBlob, Data: b.raw(blob)},
+		{Type: ObjTree, Data: b.raw(tree)},
+		{Type: ObjCommit, Data: b.raw(parent)},
+	}
+
+	r := NewPoolAwareParentResolver(NewHostParentTreeResolver(openRepo(t)))
+	ids, err := r.Register(pool)
+	require.NoError(t, err)
+	require.Contains(t, ids, parent.String())
+
+	files, err := r.ParentFileSet(context.Background(), parent.String())
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"a.txt": blob.String()}, files)
+
+	r.Deregister(ids)
+	// After deregister it falls through to the host store, where the commit is
+	// absent → error.
+	_, err = r.ParentFileSet(context.Background(), parent.String())
+	assert.Error(t, err)
+}
+
+// TestPoolAwareParentResolver_BaseParentFromHost verifies a parent already in
+// the host store (base history) resolves via the wrapped host resolver.
+func TestPoolAwareParentResolver_BaseParentFromHost(t *testing.T) {
+	repo := openRepo(t)
+	b := newBuilder(t)
+	blob := b.writeBlob("base")
+	tree := b.writeTree(object.TreeEntry{Name: "base.txt", Mode: filemode.Regular, Hash: blob})
+	commit := b.writeCommit("base", "a", tree, plumbing.ZeroHash, time.Unix(0, 0).UTC())
+	for _, o := range []struct {
+		typ plumbing.ObjectType
+		h   plumbing.Hash
+	}{{plumbing.BlobObject, blob}, {plumbing.TreeObject, tree}, {plumbing.CommitObject, commit}} {
+		_, err := repo.WriteRawObject(o.typ, b.raw(o.h))
+		require.NoError(t, err)
+	}
+
+	r := NewPoolAwareParentResolver(NewHostParentTreeResolver(repo))
+	files, err := r.ParentFileSet(context.Background(), commit.String())
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"base.txt": blob.String()}, files)
+}
+
+func TestPoolAwareParentResolver_EmptyParent(t *testing.T) {
+	r := NewPoolAwareParentResolver(NewHostParentTreeResolver(openRepo(t)))
+	files, err := r.ParentFileSet(context.Background(), "")
+	require.NoError(t, err)
+	assert.Empty(t, files)
+}
+
+func TestPoolAwareParentResolver_DuplicateCommit_RegisterError(t *testing.T) {
+	b := newBuilder(t)
+	tree := b.writeTree(object.TreeEntry{Name: "a.txt", Mode: filemode.Regular, Hash: b.writeBlob("x")})
+	c := b.writeCommit("c", "a", tree, plumbing.ZeroHash, time.Unix(0, 0).UTC())
+	pool := []Object{{Type: ObjCommit, Data: b.raw(c)}, {Type: ObjCommit, Data: b.raw(c)}}
+	r := NewPoolAwareParentResolver(NewHostParentTreeResolver(openRepo(t)))
+	_, err := r.Register(pool)
+	assert.ErrorIs(t, err, model.ErrLandVerificationFailed)
 }
