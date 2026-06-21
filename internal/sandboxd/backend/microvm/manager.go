@@ -31,6 +31,17 @@ import (
 // leaves the disk quota unresolved (NFR-17.5 default).
 const defaultOverlaySizeMB = 4096
 
+// Guest vsock ports the in-guest mgit-guest supervisor listens on, and the
+// single source every backend's host dialer connects to: the exec channel
+// and the land object-pool channel. cmd/mgit-guest defaults its
+// --vsock-port / --land-vsock-port flags to these. Sharing one definition
+// across the firecracker and vzf dialers keeps a port change from silently
+// splitting the host and guest. Refs: FR-17.11, FR-17.5, MGIT-11.9.7
+const (
+	GuestExecPort uint32 = 1024
+	GuestLandPort uint32 = 1025
+)
+
 // ImagePaths locates one resolved, digest-pinned guest image. The
 // resolver verifies the image (FR-17.17, FR-17.29) before returning.
 type ImagePaths struct {
@@ -43,6 +54,7 @@ type ImagePaths struct {
 // builds; each platform translates it to its native configuration. It
 // carries the FR-17 isolation contract.
 type VMConfig struct {
+	SandboxID      string // host-assigned lifecycle ID; lets a backend key a live-VM registry to its dialer (vzf, FR-17.16)
 	CPUs           int
 	MemoryMB       int
 	KernelPath     string
@@ -184,7 +196,7 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 		return nil, fmt.Errorf("%s launch: %w", m.cfg.Backend, err)
 	}
 
-	vm, err := m.cfg.Hypervisor.CreateVM(vmConfig(opts, images, overlay))
+	vm, err := m.cfg.Hypervisor.CreateVM(vmConfig(id, opts, images, overlay))
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("%s launch: create vm: %w", m.cfg.Backend, err)
@@ -217,8 +229,9 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 // FR-17 isolation contract: read-only pinned rootfs + per-VM COW
 // overlay (FR-17.17), worktree share, vsock control plane, and a NIC
 // only when the network mode is not "none" (FR-17.7).
-func vmConfig(opts model.SandboxLaunchOptions, images ImagePaths, overlay string) VMConfig {
+func vmConfig(id string, opts model.SandboxLaunchOptions, images ImagePaths, overlay string) VMConfig {
 	return VMConfig{
+		SandboxID:      id,
 		CPUs:           opts.CPUs,
 		MemoryMB:       opts.MemoryMB,
 		KernelPath:     images.KernelPath,

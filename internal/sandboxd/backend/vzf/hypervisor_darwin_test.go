@@ -43,7 +43,7 @@ func probeConfig(t *testing.T, attachNIC bool) microvm.VMConfig {
 // TestVZHypervisor_ConstructsFullConfiguration drives the real vz
 // constructors for both network modes. Refs: FR-17.3, FR-17.7, FR-17.15
 func TestVZHypervisor_ConstructsFullConfiguration(t *testing.T) {
-	hv, err := newPlatformHypervisor()
+	hv, err := newPlatformHypervisor(newLiveVMs())
 	require.NoError(t, err)
 
 	for _, attachNIC := range []bool{false, true} {
@@ -64,7 +64,7 @@ func TestVZHypervisor_ConstructsFullConfiguration(t *testing.T) {
 // TestVZHypervisor_BadImagePathsSurface covers the construction error
 // paths: missing image files fail at attachment, before validation.
 func TestVZHypervisor_BadImagePathsSurface(t *testing.T) {
-	hv, err := newPlatformHypervisor()
+	hv, err := newPlatformHypervisor(newLiveVMs())
 	require.NoError(t, err)
 
 	cfg := probeConfig(t, false)

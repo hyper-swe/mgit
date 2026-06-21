@@ -5,24 +5,28 @@ package vzf
 import (
 	"context"
 	"fmt"
+	"net"
 
 	"github.com/Code-Hex/vz/v3"
 
 	"github.com/hyper-swe/mgit/internal/guestboot"
+	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 )
 
 // newPlatformHypervisor returns the Virtualization.framework
 // implementation. Requires a binary signed with the
 // com.apple.security.virtualization entitlement at runtime; creation
-// succeeds here, entitlement failures surface at CreateVM/Start.
+// succeeds here, entitlement failures surface at CreateVM/Start. The
+// registry binds each running VM to the host dialer (FR-17.16).
 // Refs: FR-17.15, ADR-005
-func newPlatformHypervisor() (microvm.Hypervisor, error) {
-	return &vzHypervisor{}, nil
+func newPlatformHypervisor(reg *liveVMs) (microvm.Hypervisor, error) {
+	return &vzHypervisor{reg: reg}, nil
 }
 
-// vzHypervisor translates vmConfig into vz configuration objects.
-type vzHypervisor struct{}
+// vzHypervisor translates vmConfig into vz configuration objects and
+// publishes each started VM into the live-VM registry the dialer reads.
+type vzHypervisor struct{ reg *liveVMs }
 
 // CreateVM builds and validates the full VM configuration: Linux boot
 // loader, read-only rootfs + COW overlay block devices, virtiofs
@@ -73,7 +77,7 @@ func (h *vzHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
 	if err != nil {
 		return nil, fmt.Errorf("vz new vm: %w", err)
 	}
-	return &vzVM{vm: vm}, nil
+	return &vzVM{vm: vm, id: cfg.SandboxID, reg: h.reg}, nil
 }
 
 // attachAuxDevices wires the vsock control plane (FR-17.27), the NAT
@@ -160,22 +164,42 @@ func worktreeShare(cfg microvm.VMConfig) (vz.DirectorySharingDeviceConfiguration
 	return fs, nil
 }
 
-// vzVM adapts *vz.VirtualMachine to the manager's lifecycle seam.
+// vzVM adapts *vz.VirtualMachine to the manager's lifecycle seam and is the
+// live handle the host dialer connects through. It registers itself in the
+// live-VM registry once started and deregisters on stop, so the dialer
+// reaches only running VMs. Refs: FR-17.16
 type vzVM struct {
-	vm *vz.VirtualMachine
+	vm  *vz.VirtualMachine
+	id  string
+	reg *liveVMs
 }
 
-// Start boots the guest.
+// guestConnector is satisfied by the live VM so the CGO-free dialer can
+// resolve a sandbox to its framework connect.
+var _ guestConnector = (*vzVM)(nil)
+
+// Start boots the guest, then publishes it to the live-VM registry so the
+// host dialer can reach its vsock channels.
 func (v *vzVM) Start(_ context.Context) error {
 	if err := v.vm.Start(); err != nil {
 		return fmt.Errorf("vz start: %w", err)
 	}
+	v.reg.put(v.id, v)
 	return nil
 }
 
-// Stop halts the guest; force uses an immediate stop, otherwise a
-// graceful stop request is attempted first.
+// Stop halts the guest and deregisters it; force uses an immediate stop,
+// otherwise a graceful stop request is attempted first.
 func (v *vzVM) Stop(_ context.Context, force bool) error {
+	if err := v.halt(force); err != nil {
+		return err
+	}
+	v.reg.remove(v.id)
+	return nil
+}
+
+// halt performs the framework stop without touching the registry.
+func (v *vzVM) halt(force bool) error {
 	if !force && v.vm.CanRequestStop() {
 		if ok, err := v.vm.RequestStop(); err == nil && ok {
 			return nil
@@ -185,4 +209,20 @@ func (v *vzVM) Stop(_ context.Context, force bool) error {
 		return fmt.Errorf("vz stop: %w", err)
 	}
 	return nil
+}
+
+// connectGuest opens a host->guest vsock connection to a port on the
+// running VM via the framework. It fails closed when the VM has no socket
+// device (the vsock control plane was not attached). The returned
+// *vz.VirtioSocketConnection is a net.Conn. Refs: FR-17.11, FR-17.16
+func (v *vzVM) connectGuest(port uint32) (net.Conn, error) {
+	devs := v.vm.SocketDevices()
+	if len(devs) == 0 {
+		return nil, fmt.Errorf("%w: sandbox VM has no vsock socket device", model.ErrSandboxBackendUnavailable)
+	}
+	conn, err := devs[0].Connect(port)
+	if err != nil {
+		return nil, fmt.Errorf("vz vsock connect to guest port %d: %w", port, err)
+	}
+	return conn, nil
 }

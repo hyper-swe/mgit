@@ -33,22 +33,28 @@ type Config struct {
 }
 
 // NewManager returns a microVM manager backed by Virtualization.framework.
+// The live-VM registry is shared between the platform hypervisor (which
+// publishes each started VM into it) and the guest dialer (which resolves a
+// sandbox ID to its live handle to connect), so exec/land reach the running
+// guest's vsock over the framework API. Refs: FR-17.15, FR-17.16
 func NewManager(cfg Config) (*microvm.Manager, error) {
+	reg := newLiveVMs()
 	hv := cfg.Hypervisor
 	if hv == nil {
 		var err error
-		hv, err = newPlatformHypervisor()
+		hv, err = newPlatformHypervisor(reg)
 		if err != nil {
 			return nil, err
 		}
 	}
 	return microvm.NewManager(microvm.Config{
-		Backend:    model.BackendVZF,
-		WorkDir:    cfg.WorkDir,
-		Resolve:    cfg.Resolve,
-		Hypervisor: hv,
-		PeerBinder: cfg.PeerBinder,
-		Logger:     cfg.Logger,
-		Clock:      cfg.Clock,
+		Backend:     model.BackendVZF,
+		WorkDir:     cfg.WorkDir,
+		Resolve:     cfg.Resolve,
+		Hypervisor:  hv,
+		GuestDialer: newGuestExecDialer(reg),
+		PeerBinder:  cfg.PeerBinder,
+		Logger:      cfg.Logger,
+		Clock:       cfg.Clock,
 	})
 }

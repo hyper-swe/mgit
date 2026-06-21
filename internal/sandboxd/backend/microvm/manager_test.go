@@ -129,6 +129,7 @@ func TestManager_Launch_IsolationContract(t *testing.T) {
 	assert.Equal(t, info.CreatedAt.Add(time.Hour), info.ExpiresAt)
 
 	cfg := hv.configs[0]
+	assert.Equal(t, info.ID, cfg.SandboxID, "VM config carries the sandbox ID so a backend can key a live-VM registry (FR-17.16)")
 	assert.True(t, cfg.RootfsReadOnly, "rootfs immutable (FR-17.17)")
 	assert.True(t, strings.HasPrefix(cfg.OverlayPath, workDir), "overlay never in the worktree")
 	assert.FileExists(t, cfg.OverlayPath)

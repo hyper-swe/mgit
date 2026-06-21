@@ -8,23 +8,15 @@ import (
 	"github.com/hyper-swe/mgit/internal/sandboxd/fcvsock"
 )
 
-// Guest-side vsock ports the mgit-guest supervisor listens on (cmd/mgit-guest
-// defaults --vsock-port / --land-vsock-port to these). The host reaches the
-// guest's exec channel at guestVsockPort and pulls the land object pool at
-// guestLandPort, both over the per-VM firecracker vsock socket.
-// Refs: FR-17.11, FR-17.5
-const (
-	guestVsockPort = 1024
-	guestLandPort  = 1025
-)
-
 // guestDialer is the firecracker realization of microvm.GuestDialer: it
 // maps a sandbox ID to that VM's per-VM vsock unix socket and dials a
 // guest vsock port through it (fcvsock's firecracker handshake). It is
 // pure host-side I/O — no CGO, no KVM — so it is unit-testable against a
 // fake firecracker socket; only a live guest listener is hardware-bound.
-// The same type serves the exec channel (guestVsockPort) and, configured
-// for guestLandPort, the host land pull. Refs: FR-17.11, FR-17.5, FR-17.16
+// The same type serves the exec channel (microvm.GuestExecPort) and,
+// configured for microvm.GuestLandPort, the host land pull. The ports are
+// single-sourced in the microvm package and shared with the vzf dialer and
+// cmd/mgit-guest. Refs: FR-17.11, FR-17.5, FR-17.16
 type guestDialer struct {
 	// workDir is microvm.Manager's sandbox state root; each sandbox's
 	// artifacts (overlay, sockets) live under <workDir>/<sandbox-id>.
@@ -34,7 +26,7 @@ type guestDialer struct {
 
 // newGuestDialer returns a dialer for the guest exec channel.
 func newGuestDialer(workDir string) *guestDialer {
-	return &guestDialer{workDir: workDir, port: guestVsockPort}
+	return &guestDialer{workDir: workDir, port: microvm.GuestExecPort}
 }
 
 // NewLandDialer returns a dialer for the guest LAND channel: it dials the
@@ -43,7 +35,7 @@ func newGuestDialer(workDir string) *guestDialer {
 // the microvm.GuestDialer contract (DialGuest) so the daemon depends on the
 // transport interface, not a firecracker type. Refs: FR-17.5
 func NewLandDialer(workDir string) microvm.GuestDialer {
-	return &guestDialer{workDir: workDir, port: guestLandPort}
+	return &guestDialer{workDir: workDir, port: microvm.GuestLandPort}
 }
 
 // vsockSocketPath returns the firecracker per-VM vsock socket for a
