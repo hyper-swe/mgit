@@ -42,6 +42,20 @@ func TestSupervisor_AllowlistEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, allow, "allowlisted name connects through the assembled stack")
 	assert.Equal(t, []string{"140.82.112.3:443"}, rec.targets())
+
+	// the resolver is exposed for the guest's DNS, sharing the same allowlist.
+	require.NotNil(t, sup.Resolver())
+	_, err = sup.Resolver().Resolve(context.Background(), "registry.npmjs.org")
+	assert.NoError(t, err)
+}
+
+// TestSystemLookup_ResolvesLocalhost exercises the production adapter's
+// success path (localhost resolves from the hosts file, no network).
+// Refs: SEC-07
+func TestSystemLookup_ResolvesLocalhost(t *testing.T) {
+	ips, err := SystemLookup(nil)(context.Background(), "localhost")
+	require.NoError(t, err)
+	assert.NotEmpty(t, ips, "localhost resolves to a loopback address")
 }
 
 // TestSupervisor_RejectsNonAllowlistModes verifies the supervisor is only

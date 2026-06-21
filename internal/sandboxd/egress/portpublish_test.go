@@ -2,6 +2,7 @@ package egress
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"sync"
@@ -114,6 +115,25 @@ func TestPortPublish_OneWayOnly(t *testing.T) {
 
 	assert.Eventually(t, func() bool { return len(dialer.dials()) == 1 }, time.Second, 10*time.Millisecond,
 		"exactly one guest dial, initiated by the host accept")
+}
+
+// TestPortPublish_GuestDialFailure verifies a guest-dial failure closes the
+// host connection cleanly (no half-open leak). Refs: SEC-09
+func TestPortPublish_GuestDialFailure(t *testing.T) {
+	dialer := &fakeGuestPortDialer{dialErr: errors.New("guest forwarder down")}
+	pub, err := NewPublisher(PublisherConfig{Dialer: dialer, Logger: quietLogger()})
+	require.NoError(t, err)
+	ln, err := pub.Publish(context.Background(), 9090)
+	require.NoError(t, err)
+	defer func() { _ = ln.Close() }()
+
+	c, err := net.Dial("tcp", ln.Addr().String())
+	require.NoError(t, err)
+	defer func() { _ = c.Close() }()
+	// the host side is closed by the publisher when the guest dial fails.
+	_ = c.SetReadDeadline(time.Now().Add(time.Second))
+	_, err = c.Read(make([]byte, 1))
+	assert.Error(t, err, "the host connection is closed on a guest-dial failure")
 }
 
 // TestNewPublisher_Validates rejects missing dependencies (fail closed).
