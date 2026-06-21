@@ -21,25 +21,44 @@ import (
 var procCmdline = "/proc/cmdline"
 
 // serveGuest performs PID-1 duties — mount the worktree at its identical
-// host path and a tmpfs /tmp — then accepts exec connections over vsock,
-// serving each with the supervisor. One connection is one exec request
-// (FR-17.11).
-func serveGuest(ctx context.Context, supervisor *guest.Supervisor, port uint32, logger *slog.Logger) error {
+// host path and a tmpfs /tmp — then accepts connections on two vsock ports:
+// exec requests (one connection = one exec, FR-17.11) and land pulls (the
+// host dials, the guest streams the task branch's object pool, SEC-01). Both
+// listeners run until the context is canceled; the first that fails returns.
+func serveGuest(ctx context.Context, supervisor *guest.Supervisor, execPort, landPort uint32, logger *slog.Logger) error {
 	if err := mountGuestFilesystems(); err != nil {
 		return err
 	}
+	worktreePath := worktreeMountPath()
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make(chan error, 2)
+	go func() {
+		errs <- serveVsock(ctx, execPort, logger, func(c net.Conn) { serveExecConn(ctx, supervisor, c, logger) })
+	}()
+	go func() {
+		errs <- serveVsock(ctx, landPort, logger, func(c net.Conn) { serveLandConn(worktreePath, c, logger) })
+	}()
+	// Return on first listener exit; canceling stops the other.
+	err := <-errs
+	cancel()
+	<-errs
+	return err
+}
+
+// serveVsock accepts connections on a vsock port and dispatches each to
+// handle in its own goroutine until ctx is canceled.
+func serveVsock(ctx context.Context, port uint32, logger *slog.Logger, handle func(net.Conn)) error {
 	listener, err := vsock.Listen(port, nil)
 	if err != nil {
 		return fmt.Errorf("mgit-guest: vsock listen :%d: %w", port, err)
 	}
 	defer func() { _ = listener.Close() }()
-
 	go func() {
 		<-ctx.Done()
 		_ = listener.Close()
 	}()
-
 	logger.Info("mgit-guest serving", "event", "started", "vsock_port", port)
 	for {
 		conn, err := listener.Accept()
@@ -48,19 +67,42 @@ func serveGuest(ctx context.Context, supervisor *guest.Supervisor, port uint32, 
 			case <-ctx.Done():
 				return nil
 			default:
-				return fmt.Errorf("mgit-guest: accept: %w", err)
+				return fmt.Errorf("mgit-guest: accept :%d: %w", port, err)
 			}
 		}
-		go serveConn(ctx, supervisor, conn, logger)
+		go handle(conn)
 	}
 }
 
-// serveConn serves one exec connection and closes it.
-func serveConn(ctx context.Context, supervisor *guest.Supervisor, conn net.Conn, logger *slog.Logger) {
+// serveExecConn serves one exec connection and closes it.
+func serveExecConn(ctx context.Context, supervisor *guest.Supervisor, conn net.Conn, logger *slog.Logger) {
 	defer func() { _ = conn.Close() }()
 	if err := supervisor.Serve(ctx, conn); err != nil {
 		logger.Error("mgit-guest exec failed", "event", "exec_error", "error", err.Error())
 	}
+}
+
+// serveLandConn streams the worktree's HEAD object pool to the host and
+// closes the connection. With no worktree there is nothing to land.
+func serveLandConn(worktreePath string, conn net.Conn, logger *slog.Logger) {
+	defer func() { _ = conn.Close() }()
+	if worktreePath == "" {
+		return
+	}
+	if err := guest.ServeLandHead(worktreePath, conn); err != nil {
+		logger.Error("mgit-guest land failed", "event", "land_error", "error", err.Error())
+	}
+}
+
+// worktreeMountPath re-reads the kernel cmdline worktree descriptor to learn
+// the worktree's absolute path (the land server's repository). Empty when no
+// worktree was delivered.
+func worktreeMountPath() string {
+	cmdline, err := os.ReadFile(procCmdline)
+	if err != nil {
+		return ""
+	}
+	return guestboot.ParseWorktreeMount(string(cmdline)).Path
 }
 
 // mountGuestFilesystems mounts the worktree at its identical absolute host

@@ -7,26 +7,19 @@ import (
 	"path"
 	"strings"
 
+	"github.com/hyper-swe/mgit/internal/landwire"
 	"github.com/hyper-swe/mgit/internal/model"
 )
 
-// Object type tags carried in the land frame header. Only known git
-// object kinds are accepted; an unknown tag is a schema violation.
+// Object type tags carried in the land frame header, single-sourced from
+// the shared wire package so the guest writer and this host reader cannot
+// drift. Only known git object kinds are accepted; an unknown tag is a
+// schema violation.
 const (
-	ObjCommit byte = 'C'
-	ObjTree   byte = 'T'
-	ObjBlob   byte = 'B'
+	ObjCommit = landwire.ObjCommit
+	ObjTree   = landwire.ObjTree
+	ObjBlob   = landwire.ObjBlob
 )
-
-// validObjectType reports whether t is an accepted object kind.
-func validObjectType(t byte) bool {
-	switch t {
-	case ObjCommit, ObjTree, ObjBlob:
-		return true
-	default:
-		return false
-	}
-}
 
 // Object is one raw git object read off the land channel, within the
 // configured ceilings. Hashing/verification is land.VerifyCommit's job
@@ -54,8 +47,8 @@ func DefaultLimits() Limits {
 }
 
 // frameHeaderLen is the fixed land frame header: 1 type byte + 4-byte
-// big-endian payload length.
-const frameHeaderLen = 5
+// big-endian payload length (single-sourced from landwire).
+const frameHeaderLen = landwire.HeaderLen
 
 // DecodeObjects reads length-framed objects from r — each frame is
 // [1 type byte][4-byte BE length][payload] — enforcing all three
@@ -79,7 +72,7 @@ func (l Limits) DecodeObjects(r io.Reader) ([]Object, error) {
 			return nil, fmt.Errorf("%w: truncated frame header: %w", model.ErrLandVerificationFailed, err)
 		}
 		typ := hdr[0]
-		if !validObjectType(typ) {
+		if !landwire.ValidType(typ) {
 			return nil, fmt.Errorf("%w: unknown object type %#x", model.ErrLandVerificationFailed, typ)
 		}
 		length := binary.BigEndian.Uint32(hdr[1:])

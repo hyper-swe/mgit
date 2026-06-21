@@ -29,6 +29,7 @@ func run(args []string, logSink io.Writer) int {
 	flags := flag.NewFlagSet("mgit-guest", flag.ContinueOnError)
 	flags.SetOutput(logSink)
 	port := flags.Uint("vsock-port", 1024, "vsock port to serve exec requests on")
+	landPort := flags.Uint("land-vsock-port", 1025, "vsock port to serve the land object pool on")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -39,7 +40,7 @@ func run(args []string, logSink io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := serveGuest(ctx, supervisor, uint32(*port), logger); err != nil {
+	if err := serveGuest(ctx, supervisor, uint32(*port), uint32(*landPort), logger); err != nil {
 		logger.Error("mgit-guest exited with error", "error", err.Error())
 		return 1
 	}
