@@ -60,6 +60,15 @@ func (p TapPlan) SetupCommands() ([][]string, error) {
 	}
 }
 
+// chainName is the per-sandbox iptables chain holding this tap's filter
+// rules. A dedicated chain — jumped to from the TOP of INPUT/FORWARD via
+// -I ... 1 — guarantees mgit's rules take precedence over any pre-existing
+// ACCEPT another tool installed (Docker, libvirt, a default-ACCEPT policy),
+// and makes teardown deterministic (flush + delete the chain). Refs: SEC-04
+func (p TapPlan) chainName() string {
+	return "f" + p.TapDev // "f"+<=14 = <=15 chars, within iptables' 28-char limit
+}
+
 // linkUpCommands creates the tap, assigns the host gateway IP on a /30
 // point-to-point link, and brings it up.
 func (p TapPlan) linkUpCommands() [][]string {
@@ -71,50 +80,73 @@ func (p TapPlan) linkUpCommands() [][]string {
 	}
 }
 
-// allowlistRules give the guest no direct route: it may reach only the host
-// proxy and the host resolver on the gateway; all other guest INPUT is
-// dropped and no traffic is forwarded out (no NAT). Order matters — the
-// ACCEPTs precede the DROPs. Refs: SEC-04, FR-17.8
+// allowlistRules give the guest no direct route: in a private chain reached
+// from the top of INPUT and FORWARD, it may reach only the host proxy and
+// the host resolver on the gateway; everything else is dropped and nothing
+// is forwarded out (no NAT). The chain terminates in DROP, so a guest packet
+// to any other destination is refused regardless of host-global rules.
+// Refs: SEC-04, FR-17.8
 func (p TapPlan) allowlistRules() [][]string {
+	c := p.chainName()
 	gw := p.GatewayIP.String()
 	proxy := fmt.Sprintf("%d", p.ProxyPort)
 	dns := fmt.Sprintf("%d", p.DNSPort)
 	return [][]string{
-		{"iptables", "-A", "INPUT", "-i", p.TapDev, "-p", "tcp", "-d", gw, "--dport", proxy, "-j", "ACCEPT"},
-		{"iptables", "-A", "INPUT", "-i", p.TapDev, "-p", "udp", "-d", gw, "--dport", dns, "-j", "ACCEPT"},
-		{"iptables", "-A", "INPUT", "-i", p.TapDev, "-p", "tcp", "-d", gw, "--dport", dns, "-j", "ACCEPT"},
-		// default-deny everything else the guest sends to the host...
-		{"iptables", "-A", "INPUT", "-i", p.TapDev, "-j", "DROP"},
-		// ...and forward nothing out: the guest has no route to the internet.
-		{"iptables", "-A", "FORWARD", "-i", p.TapDev, "-j", "DROP"},
+		{"iptables", "-N", c},
+		{"iptables", "-A", c, "-p", "tcp", "-d", gw, "--dport", proxy, "-j", "ACCEPT"},
+		{"iptables", "-A", c, "-p", "udp", "-d", gw, "--dport", dns, "-j", "ACCEPT"},
+		{"iptables", "-A", c, "-p", "tcp", "-d", gw, "--dport", dns, "-j", "ACCEPT"},
+		{"iptables", "-A", c, "-j", "DROP"}, // default-deny everything else
+		{"iptables", "-I", "INPUT", "1", "-i", p.TapDev, "-j", c},
+		{"iptables", "-I", "FORWARD", "1", "-i", p.TapDev, "-j", c},
 	}
 }
 
 // openRules NAT the guest to the host network (full egress) — the explicitly
-// risky posture (T3/T9 disabled). Refs: FR-17.7
+// risky posture (T3/T9 disabled). The forward-accept lives in the private
+// chain (jumped from the top of FORWARD) and the return path + masquerade
+// are inserted at the top of their chains. Refs: FR-17.7
 func (p TapPlan) openRules() [][]string {
+	c := p.chainName()
 	return [][]string{
 		{"sysctl", "-w", "net.ipv4.ip_forward=1"},
-		{"iptables", "-A", "FORWARD", "-i", p.TapDev, "-o", p.ExtIface, "-j", "ACCEPT"},
-		{"iptables", "-A", "FORWARD", "-i", p.ExtIface, "-o", p.TapDev, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
-		{"iptables", "-t", "nat", "-A", "POSTROUTING", "-s", p.GuestIP.String(), "-o", p.ExtIface, "-j", "MASQUERADE"},
+		{"iptables", "-N", c},
+		{"iptables", "-A", c, "-o", p.ExtIface, "-j", "ACCEPT"},
+		{"iptables", "-I", "FORWARD", "1", "-i", p.TapDev, "-j", c},
+		{"iptables", "-I", "FORWARD", "1", "-i", p.ExtIface, "-o", p.TapDev, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
+		{"iptables", "-t", "nat", "-I", "POSTROUTING", "1", "-s", p.GuestIP.String(), "-o", p.ExtIface, "-j", "MASQUERADE"},
 	}
 }
 
-// TeardownCommands delete the tap, which also drops its addresses and the
-// interface-scoped filter rules, leaving no host residue. Refs: FR-17.19
+// TeardownCommands remove exactly what SetupCommands installed: the chain
+// jumps, the flushed+deleted private chain, the open-mode return-path and nat
+// rules, and finally the tap — leaving no host residue and no stale rule a
+// future tap of the same (deterministic) name could inherit. Refs: FR-17.19, SEC-04
 func (p TapPlan) TeardownCommands() [][]string {
 	if p.Mode == model.NetworkModeNone || p.TapDev == "" {
 		return nil
 	}
-	cmds := [][]string{}
-	if p.Mode == model.NetworkModeOpen && p.ExtIface != "" && p.GuestIP.IsValid() {
-		// The NAT rule is in the nat table and not interface-scoped on the
-		// tap, so it must be explicitly removed.
-		cmds = append(cmds, []string{"iptables", "-t", "nat", "-D", "POSTROUTING",
-			"-s", p.GuestIP.String(), "-o", p.ExtIface, "-j", "MASQUERADE"})
+	c := p.chainName()
+	var cmds [][]string
+	switch p.Mode {
+	case model.NetworkModeAllowlist:
+		cmds = append(cmds,
+			[]string{"iptables", "-D", "INPUT", "-i", p.TapDev, "-j", c},
+			[]string{"iptables", "-D", "FORWARD", "-i", p.TapDev, "-j", c},
+		)
+	case model.NetworkModeOpen:
+		cmds = append(cmds,
+			[]string{"iptables", "-t", "nat", "-D", "POSTROUTING", "-s", p.GuestIP.String(), "-o", p.ExtIface, "-j", "MASQUERADE"},
+			[]string{"iptables", "-D", "FORWARD", "-i", p.ExtIface, "-o", p.TapDev, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
+			[]string{"iptables", "-D", "FORWARD", "-i", p.TapDev, "-j", c},
+		)
 	}
-	return append(cmds, []string{"ip", "link", "del", p.TapDev})
+	cmds = append(cmds,
+		[]string{"iptables", "-F", c},
+		[]string{"iptables", "-X", c},
+		[]string{"ip", "link", "del", p.TapDev},
+	)
+	return cmds
 }
 
 // validate rejects an incomplete plan so a misconfigured tap fails closed

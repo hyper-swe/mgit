@@ -92,14 +92,17 @@ func (a *Authorizer) authorizeRawIP(ctx context.Context, f Flow, ip netip.Addr) 
 }
 
 // authorizeName resolves an allowlisted name host-side and targets a
-// surviving pinned IP. Refs: SEC-04, SEC-07
+// surviving pinned IP. The allowlist (name AND port) is checked BEFORE
+// resolving, so a flow to an allowlisted name on a forbidden port is denied
+// without consuming the DNS rate-limit budget or emitting a resolution
+// (SEC-07). Refs: SEC-04, SEC-07
 func (a *Authorizer) authorizeName(ctx context.Context, f Flow) (Decision, error) {
+	if !a.cfg.Allowlist.AllowsName(f.Host, f.Port) {
+		return a.deny(ctx, f, netip.Addr{}, "name/port not allowlisted")
+	}
 	ips, err := a.cfg.Resolver.Resolve(ctx, f.Host)
 	if err != nil {
 		return a.deny(ctx, f, netip.Addr{}, "name resolution refused")
-	}
-	if !a.cfg.Allowlist.AllowsName(f.Host, f.Port) {
-		return a.deny(ctx, f, netip.Addr{}, "port not allowlisted for name")
 	}
 	for _, ip := range ips {
 		ip = ip.Unmap()

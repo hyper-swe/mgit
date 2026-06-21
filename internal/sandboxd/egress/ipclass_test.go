@@ -64,6 +64,33 @@ func TestUnconditionalDeny_MetadataIPNamed(t *testing.T) {
 	assert.Contains(t, reason, "link-local", "the metadata IP is denied as link-local")
 }
 
+// TestUnconditionalDeny_NAT64AndReserved verifies NAT64 translation prefixes
+// and reserved / special-use ranges are denied — a host with a NAT64 gateway
+// would otherwise translate 64:ff9b::<v4> to a denied IPv4 (metadata/LAN),
+// and reserved ranges must never be a sandbox egress target. Refs: SEC-04, T9
+func TestUnconditionalDeny_NAT64AndReserved(t *testing.T) {
+	denied := []string{
+		"64:ff9b::a9fe:a9fe", // NAT64-embedded 169.254.169.254 metadata
+		"64:ff9b::0a00:0001", // NAT64-embedded 10.0.0.1 (RFC1918)
+		"64:ff9b:1::1",       // NAT64 local-use
+		"192.0.0.171",        // IETF protocol assignments (NAT64)
+		"198.18.0.1",         // benchmarking
+		"192.0.2.1",          // TEST-NET-1
+		"198.51.100.1",       // TEST-NET-2
+		"203.0.113.1",        // TEST-NET-3
+		"240.0.0.1",          // class E reserved
+		"0.1.2.3",            // this-network 0.0.0.0/8
+		"2001:db8::1",        // IPv6 documentation
+	}
+	for _, s := range denied {
+		t.Run(s, func(t *testing.T) {
+			reason, ok := IsUnconditionallyDenied(netip.MustParseAddr(s))
+			assert.True(t, ok, "%s must be unconditionally denied (SEC-04/T9)", s)
+			assert.NotEmpty(t, reason)
+		})
+	}
+}
+
 // TestUnconditionalDeny_EdgeCases covers the remaining classifications: an
 // invalid address fails closed, and interface-local multicast is denied.
 // Refs: SEC-04

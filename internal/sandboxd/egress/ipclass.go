@@ -18,18 +18,37 @@ import (
 // it is already link-local, so the audit trail names it explicitly.
 var metadataIP = netip.MustParseAddr("169.254.169.254")
 
-// cgnatPrefix is RFC6598 carrier-grade-NAT space (100.64.0.0/10): not
-// RFC1918, but shared LAN-adjacent address space that must never be a
-// sandbox egress target (T9 lateral movement).
-var cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")
+// deniedPrefixes are reserved / special-use ranges denied unconditionally,
+// beyond what the netip method checks (loopback, private, link-local,
+// multicast, unspecified) already cover. Each is LAN-adjacent, non-routable,
+// or a translation prefix that re-embeds a denied IPv4 — so a (mis)configured
+// allowlist or a DNS64 answer must never reach them (SEC-04 / T9). The NAT64
+// prefixes matter because a host with a NAT64 gateway translates
+// 64:ff9b::<v4> to that IPv4: an allowlisted name resolving to
+// 64:ff9b::169.254.169.254 would otherwise look like a public IPv6.
+// Refs: SEC-04, ADR-005 (T9)
+var deniedPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"),   // RFC6598 carrier-grade NAT (LAN-adjacent)
+	netip.MustParsePrefix("0.0.0.0/8"),       // "this network" (RFC1122)
+	netip.MustParsePrefix("192.0.0.0/24"),    // IETF protocol assignments (incl. NAT64 192.0.0.170/.171)
+	netip.MustParsePrefix("192.0.2.0/24"),    // TEST-NET-1 documentation
+	netip.MustParsePrefix("198.18.0.0/15"),   // benchmarking (RFC2544)
+	netip.MustParsePrefix("198.51.100.0/24"), // TEST-NET-2 documentation
+	netip.MustParsePrefix("203.0.113.0/24"),  // TEST-NET-3 documentation
+	netip.MustParsePrefix("240.0.0.0/4"),     // reserved (class E), incl. 255.255.255.255 broadcast
+	netip.MustParsePrefix("64:ff9b::/96"),    // NAT64 well-known (RFC6052) — re-embeds an IPv4
+	netip.MustParsePrefix("64:ff9b:1::/48"),  // NAT64 local-use (RFC8215)
+	netip.MustParsePrefix("2001:db8::/32"),   // IPv6 documentation
+	netip.MustParsePrefix("100::/64"),        // IPv6 discard-only (RFC6666)
+}
 
 // IsUnconditionallyDenied reports whether an egress destination IP must be
 // refused regardless of any allowlist entry, and an audit reason when so.
-// These are the SEC-04 / T9 denials: a payload must not reach host
-// loopback, the LAN (RFC1918 / unique-local / CGNAT), link-local space, or
-// the cloud metadata endpoint — even if a (mis)configured allowlist names
-// them. An IPv4-mapped IPv6 address is unmapped first so a denied IPv4
-// cannot be smuggled in v6 clothing. Refs: SEC-04, FR-17.8, ADR-005 (T9)
+// These are the SEC-04 / T9 denials: a payload must not reach host loopback,
+// the LAN (RFC1918 / unique-local / CGNAT), link-local space, the cloud
+// metadata endpoint, or reserved / NAT64 ranges — even if a (mis)configured
+// allowlist names them. An IPv4-mapped IPv6 address is unmapped first so a
+// denied IPv4 cannot be smuggled in v6 clothing. Refs: SEC-04, FR-17.8, ADR-005 (T9)
 func IsUnconditionallyDenied(ip netip.Addr) (string, bool) {
 	ip = ip.Unmap()
 	switch {
@@ -50,10 +69,11 @@ func IsUnconditionallyDenied(ip netip.Addr) (string, bool) {
 	case ip.IsPrivate():
 		// RFC1918 (10/8, 172.16/12, 192.168/16) and IPv6 ULA (fc00::/7).
 		return "private (RFC1918/ULA)", true
-	case cgnatPrefix.Contains(ip):
-		return "carrier-grade NAT (RFC6598)", true
-	case ip.Is4() && ip == netip.AddrFrom4([4]byte{255, 255, 255, 255}):
-		return "broadcast", true
+	}
+	for _, p := range deniedPrefixes {
+		if p.Contains(ip) {
+			return "reserved/special-use range " + p.String(), true
+		}
 	}
 	return "", false
 }

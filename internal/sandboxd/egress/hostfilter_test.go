@@ -64,6 +64,28 @@ func TestTapPlan_AllowlistDefaultDenyNoNAT(t *testing.T) {
 		"the proxy ACCEPT must come before the default DROP")
 }
 
+// TestTapPlan_AllowlistUsesPrivateChainAtTop verifies the rules live in a
+// dedicated per-sandbox chain jumped to from the TOP (-I ... 1) of INPUT and
+// FORWARD, so they take precedence over any pre-existing host ACCEPT (e.g.
+// Docker/libvirt) and cannot be bypassed. Refs: SEC-04 (review finding 2)
+func TestTapPlan_AllowlistUsesPrivateChainAtTop(t *testing.T) {
+	plan := allowlistPlan()
+	cmds, err := plan.SetupCommands()
+	require.NoError(t, err)
+	out := flatten(cmds)
+	chain := "f" + plan.TapDev
+
+	assert.Contains(t, out, "-N "+chain, "a private per-sandbox chain is created")
+	assert.Contains(t, out, "-I INPUT 1 -i "+plan.TapDev+" -j "+chain, "INPUT jump inserted at the top")
+	assert.Contains(t, out, "-I FORWARD 1 -i "+plan.TapDev+" -j "+chain, "FORWARD jump inserted at the top")
+
+	// teardown removes the jumps and deletes the chain (no stale rules).
+	tout := flatten(plan.TeardownCommands())
+	assert.Contains(t, tout, "-D INPUT -i "+plan.TapDev+" -j "+chain, "INPUT jump removed")
+	assert.Contains(t, tout, "-D FORWARD -i "+plan.TapDev+" -j "+chain, "FORWARD jump removed")
+	assert.Contains(t, tout, "-X "+chain, "the chain is deleted (no residue)")
+}
+
 // TestTapPlan_OpenMasquerades verifies open mode NATs the guest to the host
 // network (full egress) — the explicitly risky posture. Refs: FR-17.7
 func TestTapPlan_OpenMasquerades(t *testing.T) {
