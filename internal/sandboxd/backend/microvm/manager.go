@@ -65,6 +65,7 @@ type VMConfig struct {
 	WorktreePath   string // shared at the identical guest path (FR-17.3)
 	WorktreeTag    string // mount tag
 	AttachNIC      bool   // false in none mode (FR-17.7)
+	NetworkMode    string // model.NetworkMode*: backend wires NAT (open) vs proxy-route (allowlist) vs no NIC (none) (FR-17.7, FR-17.8)
 	VsockEnabled   bool
 	BalloonEnabled bool
 }
@@ -242,6 +243,7 @@ func vmConfig(id string, opts model.SandboxLaunchOptions, images ImagePaths, ove
 		WorktreePath:   opts.WorktreePath,
 		WorktreeTag:    "work",
 		AttachNIC:      opts.Network.Mode != model.NetworkModeNone,
+		NetworkMode:    opts.Network.Mode,
 		VsockEnabled:   true,
 		BalloonEnabled: true,
 	}

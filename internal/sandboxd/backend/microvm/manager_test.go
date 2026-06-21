@@ -150,6 +150,51 @@ func TestManager_Launch_IsolationContract(t *testing.T) {
 	})
 }
 
+// TestNetNone_NoNIC_NoEgress verifies that none mode attaches no NIC to
+// the VM, so the guest has no network device and therefore no egress
+// path — the host-side guarantee, independent of any in-guest config
+// (FR-17.7). The companion backend test asserts the concrete absence of a
+// network interface in the hypervisor configuration. Refs: MGIT-11.7.1
+func TestNetNone_NoNIC_NoEgress(t *testing.T) {
+	hv := &fakeHypervisor{}
+	mgr, _ := testManager(t, hv)
+
+	_, err := mgr.Launch(context.Background(), launchOpts("MGIT-11.7.1", model.NetworkModeNone))
+	require.NoError(t, err)
+
+	require.Len(t, hv.configs, 1)
+	assert.False(t, hv.configs[0].AttachNIC,
+		"none mode: no NIC attached, so the guest cannot egress (FR-17.7)")
+}
+
+// TestNetModes_NICAttachment verifies the host-side NIC seam per mode:
+// none gets no NIC; allowlist and open both get a NIC (the host egress
+// proxy enforces allowlist, host NAT serves open). Refs: FR-17.7, FR-17.8
+func TestNetModes_NICAttachment(t *testing.T) {
+	tests := []struct {
+		mode      string
+		attachNIC bool
+	}{
+		{model.NetworkModeNone, false},
+		{model.NetworkModeAllowlist, true},
+		{model.NetworkModeOpen, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			hv := &fakeHypervisor{}
+			mgr, _ := testManager(t, hv)
+			opts := launchOpts("MGIT-11.7.1", tt.mode)
+			_, err := mgr.Launch(context.Background(), opts)
+			require.NoError(t, err)
+			require.Len(t, hv.configs, 1)
+			assert.Equal(t, tt.attachNIC, hv.configs[0].AttachNIC,
+				"%s mode NIC attachment", tt.mode)
+			assert.Equal(t, tt.mode, hv.configs[0].NetworkMode,
+				"%s mode propagated so the backend can wire NAT (open) vs proxy-route (allowlist)", tt.mode)
+		})
+	}
+}
+
 // TestManager_Teardown_NoResidue verifies FR-17.19.
 func TestManager_Teardown_NoResidue(t *testing.T) {
 	hv := &fakeHypervisor{}

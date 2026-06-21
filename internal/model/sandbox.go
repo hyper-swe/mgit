@@ -105,6 +105,25 @@ func ValidateImageRef(ref string) error {
 	return nil
 }
 
+// NetworkOpenRiskNote is the risk recorded whenever a sandbox is launched
+// in open-network mode. Open NATs to the host network and therefore
+// explicitly disables the exfiltration (T3) and lateral-movement (T9)
+// defenses — a user-accepted risk, never an auto-selected default.
+// Refs: FR-17.7, ADR-005 (threats T3, T9)
+const NetworkOpenRiskNote = "open network NATs to the host network; the T3 (exfiltration) and T9 (lateral-movement) defenses are disabled — user-accepted risk, never a default"
+
+// NetworkRiskNote reports the audit risk note for a network mode and
+// whether that mode is a risk-bearing posture. Only open mode carries a
+// note: none has no NIC and allowlist is host-proxy-confined, so neither
+// weakens T3/T9. The note is recorded in the append-only created event so
+// every open-mode sandbox is permanently attributable. Refs: FR-17.7
+func NetworkRiskNote(mode string) (string, bool) {
+	if mode == NetworkModeOpen {
+		return NetworkOpenRiskNote, true
+	}
+	return "", false
+}
+
 // NetworkPolicy declares a sandbox's network posture at launch. It is
 // recorded immutably in the audit record and enforced on the host.
 // Refs: FR-17.7, FR-17.8

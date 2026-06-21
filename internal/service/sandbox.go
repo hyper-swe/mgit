@@ -102,11 +102,17 @@ func (s *SandboxService) Register(ctx context.Context, opts model.SandboxLaunchO
 	digest := imageDigestOf(opts.ImageRef)
 
 	// The created event is the registration audit and must succeed before
-	// the sandbox is considered registered (no unaudited sandbox).
-	if err := s.events.AppendSandboxEvent(ctx, &model.SandboxEvent{
+	// the sandbox is considered registered (no unaudited sandbox). Open
+	// network mode carries a recorded risk note (T3/T9 disabled) so the
+	// user-accepted risk is permanently attributable (FR-17.7).
+	created := &model.SandboxEvent{
 		SandboxID: id, TaskID: opts.TaskID, EventType: model.EventCreated,
 		ImageDigest: digest, NetworkMode: opts.Network.Mode,
-	}); err != nil {
+	}
+	if note, risky := model.NetworkRiskNote(opts.Network.Mode); risky {
+		created.Detail = fmt.Sprintf(`{"network_risk":%q}`, note)
+	}
+	if err := s.events.AppendSandboxEvent(ctx, created); err != nil {
 		return nil, fmt.Errorf("sandbox register: audit: %w", err)
 	}
 

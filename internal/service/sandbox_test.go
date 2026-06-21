@@ -147,6 +147,51 @@ func TestProvision_LazyNoBootUntilExec(t *testing.T) {
 	assert.Equal(t, []string{model.EventCreated, model.EventResumed}, ev.types())
 }
 
+// TestNetOpen_NotDefault_RiskRecorded verifies that open-network mode is
+// never the auto-selected default and that registering an open-mode
+// sandbox records a risk note in the append-only created event (open NATs
+// to the host network, disabling T3/T9). Refs: FR-17.7, MGIT-11.7.1
+func TestNetOpen_NotDefault_RiskRecorded(t *testing.T) {
+	// open is never auto-selected: the safe default posture is allowlist.
+	assert.NotEqual(t, model.NetworkModeOpen, model.DefaultSandboxPolicy().Network.Mode,
+		"open network must never be a default (T3 exfiltration / T9 lateral movement disabled)")
+
+	mgr := &fakeSandboxManager{}
+	ev := &fakeEventAppender{}
+	svc := newSvc(t, mgr, ev)
+
+	opts := regOpts("MGIT-11.7.1", "/work/open")
+	opts.Network = model.NetworkPolicy{Mode: model.NetworkModeOpen}
+	_, err := svc.Register(context.Background(), opts)
+	require.NoError(t, err)
+
+	require.Len(t, ev.events, 1, "registration appends exactly the created event")
+	created := ev.events[0]
+	assert.Equal(t, model.EventCreated, created.EventType)
+	assert.Equal(t, model.NetworkModeOpen, created.NetworkMode, "the network mode is recorded")
+	assert.Contains(t, created.Detail, "network_risk",
+		"open mode emits a recorded risk note in the audit event")
+	assert.Contains(t, created.Detail, "T3", "the risk note names the disabled defenses (T3/T9)")
+}
+
+// TestNetNonOpen_NoRiskNote verifies the host-confined modes (none,
+// allowlist) record no risk note — the note is specific to open's
+// user-accepted risk. Refs: FR-17.7, MGIT-11.7.1
+func TestNetNonOpen_NoRiskNote(t *testing.T) {
+	for _, mode := range []string{model.NetworkModeNone, model.NetworkModeAllowlist} {
+		t.Run(mode, func(t *testing.T) {
+			ev := &fakeEventAppender{}
+			svc := newSvc(t, &fakeSandboxManager{}, ev)
+			opts := regOpts("MGIT-11.7.1", "/work/"+mode)
+			opts.Network = model.NetworkPolicy{Mode: mode}
+			_, err := svc.Register(context.Background(), opts)
+			require.NoError(t, err)
+			require.Len(t, ev.events, 1)
+			assert.Empty(t, ev.events[0].Detail, "%s is host-confined; no risk note", mode)
+		})
+	}
+}
+
 // TestProvision_DuplicateTask_Rejected verifies one-task/one-worktree
 // exclusivity. Refs: FR-17.1
 func TestProvision_DuplicateTask_Rejected(t *testing.T) {
