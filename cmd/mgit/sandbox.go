@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mgit/internal/controlproto"
 	"github.com/hyper-swe/mgit/internal/model"
 )
 
@@ -21,6 +22,7 @@ type sandboxClient interface {
 	List(ctx context.Context) ([]model.SandboxInfo, error)
 	Status(ctx context.Context, taskID string) (*model.SandboxInfo, error)
 	Remove(ctx context.Context, taskID string, force bool) error
+	Land(ctx context.Context, taskID string) (*controlproto.LandResult, error)
 }
 
 // connectFunc resolves a live daemon (activation + greeting-verified) and
@@ -52,11 +54,57 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 	cmd.AddCommand(
 		sandboxLaunchCmd(connect),
 		sandboxExecCmd(connect),
+		sandboxLandCmd(connect),
 		sandboxListCmd(connect),
 		sandboxStatusCmd(connect),
 		sandboxRemoveCmd(connect),
 	)
 	return cmd
+}
+
+// sandboxLandCmd pulls a task's guest commits over the land channel and
+// imports them host-side through the verified land path. Refs: FR-17.5, MGIT-11.10.10
+func sandboxLandCmd(connect connectFunc) *cobra.Command {
+	var task string
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "land --task <id>",
+		Short: "Land a task's sandbox commits onto the host branch (verified host-side)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if task == "" {
+				return fmt.Errorf("--task is required")
+			}
+			cl, err := connect(cmd.Context())
+			if err != nil {
+				return err
+			}
+			res, err := cl.Land(cmd.Context(), task)
+			if err != nil {
+				return err
+			}
+			return writeLandResult(cmd.OutOrStdout(), res, asJSON, task)
+		},
+	}
+	cmd.Flags().StringVar(&task, "task", "", "task ID whose sandbox commits to land (required)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
+	return cmd
+}
+
+// writeLandResult renders a land outcome as JSON or a human summary.
+func writeLandResult(w io.Writer, res *controlproto.LandResult, asJSON bool, task string) error {
+	if res == nil {
+		res = &controlproto.LandResult{}
+	}
+	if asJSON {
+		return json.NewEncoder(w).Encode(res)
+	}
+	if res.Commits == 0 {
+		_, _ = fmt.Fprintf(w, "Nothing to land for task %s (no new commits)\n", task)
+		return nil
+	}
+	_, _ = fmt.Fprintf(w, "Landed %d commit(s) for task %s onto %s\n", res.Commits, task, res.Branch)
+	return nil
 }
 
 // sandboxLaunchCmd registers (lazily provisions) a sandbox for a task.

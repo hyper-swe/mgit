@@ -151,3 +151,52 @@ func TestClient_Squatter_NoGreeting_Rejected(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, strings.ToLower(err.Error()), "greet")
 }
+
+// fakeLander records the landed task and returns a canned result/error.
+type fakeLander struct {
+	task    string
+	commits int
+	branch  string
+	err     error
+}
+
+func (f *fakeLander) Land(_ context.Context, taskID string) (int, string, error) {
+	f.task = taskID
+	return f.commits, f.branch, f.err
+}
+
+// TestClient_Land_RoundTrip verifies the land verb completes a full
+// request/response against a live daemon and returns the landed summary.
+func TestClient_Land_RoundTrip(t *testing.T) {
+	skipUnsupportedHostIPC(t)
+	cfg, _ := dispatchConfig(t, &fakeDispatcher{})
+	lander := &fakeLander{commits: 3, branch: "task/MGIT-7"}
+	cfg.Lander = lander
+	ctx, cancel := context.WithCancel(context.Background())
+	done := runDaemon(ctx, t, cfg)
+	defer func() { cancel(); <-done }()
+	_ = waitForSocket(t, cfg.SocketPath).Close()
+
+	client := NewClient(cfg.SocketPath, time.Now)
+	res, err := client.Land(context.Background(), "MGIT-7")
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, 3, res.Commits)
+	assert.Equal(t, "task/MGIT-7", res.Branch)
+	assert.Equal(t, "MGIT-7", lander.task, "the task routed to the lander")
+}
+
+// TestClient_Land_Error verifies a land failure surfaces as a client error.
+func TestClient_Land_Error(t *testing.T) {
+	skipUnsupportedHostIPC(t)
+	cfg, _ := dispatchConfig(t, &fakeDispatcher{})
+	cfg.Lander = &fakeLander{err: model.ErrLandVerificationFailed}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := runDaemon(ctx, t, cfg)
+	defer func() { cancel(); <-done }()
+	_ = waitForSocket(t, cfg.SocketPath).Close()
+
+	client := NewClient(cfg.SocketPath, time.Now)
+	_, err := client.Land(context.Background(), "MGIT-7")
+	assert.Error(t, err)
+}

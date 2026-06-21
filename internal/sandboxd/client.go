@@ -113,6 +113,21 @@ func (c *Client) Remove(ctx context.Context, taskID string, force bool) error {
 	return err
 }
 
+// Land pulls the task's guest commit objects over the dedicated land
+// channel, verifies them host-side, and atomically imports + fast-forwards
+// the task branch. It returns the number of new commits landed and the
+// branch advanced. The whole verified path runs in the daemon; the client
+// only names the task. Refs: FR-17.5, MGIT-11.10.10
+func (c *Client) Land(ctx context.Context, taskID string) (*controlproto.LandResult, error) {
+	resp, err := c.roundTrip(ctx, &controlproto.Request{
+		Kind: controlproto.KindLand, Land: &controlproto.TaskRef{TaskID: taskID},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Landed, nil
+}
+
 // Exec runs one command in a task's sandbox, copying stdout/stderr to the
 // supplied writers as frames arrive and returning the guest exit code. A
 // supervisor-level failure (the guest could not start the command) is

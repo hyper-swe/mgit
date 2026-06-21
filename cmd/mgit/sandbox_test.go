@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mgit/internal/controlproto"
 	"github.com/hyper-swe/mgit/internal/model"
 )
 
@@ -32,6 +33,9 @@ type fakeSandboxClient struct {
 	execCode   int
 	execErr    error
 	opErr      error
+
+	landedTID  string
+	landResult *controlproto.LandResult
 }
 
 func (f *fakeSandboxClient) Launch(_ context.Context, opts model.SandboxLaunchOptions) (*model.SandboxInfo, error) {
@@ -66,6 +70,16 @@ func (f *fakeSandboxClient) Remove(_ context.Context, taskID string, force bool)
 	f.removedTID, f.removeForce = taskID, force
 	return f.opErr
 }
+func (f *fakeSandboxClient) Land(_ context.Context, taskID string) (*controlproto.LandResult, error) {
+	f.landedTID = taskID
+	if f.opErr != nil {
+		return nil, f.opErr
+	}
+	if f.landResult != nil {
+		return f.landResult, nil
+	}
+	return &controlproto.LandResult{Commits: 1, Branch: "task/" + taskID}, nil
+}
 
 // runSandbox executes the sandbox command tree with the given args and a
 // connector, capturing stdout+stderr.
@@ -88,9 +102,42 @@ func okConnect(c sandboxClient) connectFunc {
 func TestSandboxCmd_Help(t *testing.T) {
 	out, err := runSandbox(okConnect(&fakeSandboxClient{}), "--help")
 	require.NoError(t, err)
-	for _, sub := range []string{"launch", "exec", "list", "remove", "status"} {
+	for _, sub := range []string{"launch", "exec", "land", "list", "remove", "status"} {
 		assert.Contains(t, out, sub, "help lists the %s subcommand", sub)
 	}
+}
+
+// TestSandboxLand_ReportsResult verifies the land command requires --task,
+// routes the task to the client, and reports the landed commit count/branch.
+func TestSandboxLand_ReportsResult(t *testing.T) {
+	t.Run("lands", func(t *testing.T) {
+		fc := &fakeSandboxClient{landResult: &controlproto.LandResult{Commits: 2, Branch: "task/MGIT-1"}}
+		out, err := runSandbox(okConnect(fc), "land", "--task", "MGIT-1")
+		require.NoError(t, err)
+		assert.Equal(t, "MGIT-1", fc.landedTID)
+		assert.Contains(t, out, "Landed 2 commit(s)")
+		assert.Contains(t, out, "task/MGIT-1")
+	})
+	t.Run("nothing_new", func(t *testing.T) {
+		fc := &fakeSandboxClient{landResult: &controlproto.LandResult{Commits: 0}}
+		out, err := runSandbox(okConnect(fc), "land", "--task", "MGIT-1")
+		require.NoError(t, err)
+		assert.Contains(t, out, "Nothing to land")
+	})
+	t.Run("json", func(t *testing.T) {
+		fc := &fakeSandboxClient{landResult: &controlproto.LandResult{Commits: 1, Branch: "task/MGIT-1"}}
+		out, err := runSandbox(okConnect(fc), "land", "--task", "MGIT-1", "--json")
+		require.NoError(t, err)
+		assert.Contains(t, out, `"commits":1`)
+	})
+	t.Run("requires_task", func(t *testing.T) {
+		_, err := runSandbox(okConnect(&fakeSandboxClient{}), "land")
+		assert.Error(t, err)
+	})
+	t.Run("op_error", func(t *testing.T) {
+		_, err := runSandbox(okConnect(&fakeSandboxClient{opErr: model.ErrSandboxNotFound}), "land", "--task", "MGIT-1")
+		assert.Error(t, err)
+	})
 }
 
 // TestSandboxExec_StreamsAndPropagatesExit verifies exec streams stdout/
