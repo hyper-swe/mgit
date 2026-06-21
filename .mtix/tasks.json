@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-21T05:02:58Z",
+  "exported_at": "2026-06-21T05:20:15Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -470,7 +470,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.5925824175824176,
+      "progress": 0.5859390609390609,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -619,7 +619,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.4,
+      "progress": 0.36363636363636365,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -676,6 +676,30 @@
       "created_at": "2026-06-20T16:55:55Z",
       "updated_at": "2026-06-21T05:02:20Z",
       "closed_at": "2026-06-21T05:02:20Z"
+    },
+    {
+      "id": "MGIT-11.10.11",
+      "parent_id": "MGIT-11.10",
+      "depth": 2,
+      "seq": 11,
+      "project": "MGIT",
+      "title": "Guest→host land-ready notification channel (auto-land trigger)",
+      "description": "",
+      "prompt": "Add the SECOND land transport direction the owner asked for (2026-06-21): a guest→host NOTIFICATION channel so the host auto-lands \"as soon as a task is done\", complementing the host-initiated pull shipped in MGIT-11.10.10.\n\nCONTEXT: MGIT-11.10.10 shipped the host-initiated land DATA path: `mgit sandbox land --task \u003cid\u003e` → daemon → service.LandService → verified LandOrchestrator → host dials the guest land vsock port (1025) and pulls the object pool (single peer-authorized read, replayed to the orchestrator; SEC-06/SEC-10). The land MECHANISM is correct and reusable as-is.\n\nWHAT TO BUILD: the guest signals the host \"I committed work, ready to land for task X\"; the host then runs the EXISTING host-initiated land pull (LandService.Land). The notify channel carries NO land data and asserts NO provenance — it is only a trigger; the verified host pull does all the work. Two viable shapes (decide + justify):\n  (a) guest dials the host (firecracker guest→host vsock: host listens on a per-VM socket; daemon accept loop reads the source CID, authorizes it via Config.PeerBinder.Authorize(addressedSandboxID, sourceCID), then invokes LandService.Land); or\n  (b) a lightweight host poll of guest land-readiness.\nPrefer (a) for \"as soon as done\" latency. The daemon already owns PeerBinder; the LandChannel comment already notes the inbound-CID compare path. mgit-guest must emit the notify (it still holds NO signing key — SEC-01). The host MUST NOT trust the guest for the task id beyond using it to look up the host-bound sandbox; require_sandbox + all verification stay host-side via the orchestrator.\n\nSECURITY: SEC-10 — authorize the inbound source peer against the addressed sandbox's binding BEFORE acting; fail closed on unbound/torn-down. SEC-05 — log only host-observed identity. No-bypass — the trigger calls LandService.Land ONLY; it never imports objects itself.",
+      "acceptance": "A guest that finishes task work causes the host to auto-land it within a bounded delay, going through the same verified LandOrchestrator path as `mgit sandbox land`. The notify channel carries no object/provenance data and cannot influence verification or require_sandbox. The daemon authorizes the inbound source peer via PeerBinder before acting and fails closed on an unbound/torn-down sandbox. Unit-tested with a fake notify source; KVM-gated e2e for the real guest→host trigger.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "a61b51dc2a72a5c2f75e241e651e298739bbd67135fb7420e32b06d7d5fac835",
+      "created_at": "2026-06-21T05:19:10Z",
+      "updated_at": "2026-06-21T05:19:10Z"
     },
     {
       "id": "MGIT-11.10.2",
@@ -1151,7 +1175,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "blocked",
-      "progress": 0.25,
+      "progress": 0.2,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1256,6 +1280,30 @@
       "created_at": "2026-06-20T13:39:50Z",
       "updated_at": "2026-06-20T15:43:30Z",
       "closed_at": "2026-06-20T15:43:30Z"
+    },
+    {
+      "id": "MGIT-11.13.5",
+      "parent_id": "MGIT-11.13",
+      "depth": 2,
+      "seq": 5,
+      "project": "MGIT",
+      "title": "Land path concurrency + buffered-memory budget cap",
+      "description": "",
+      "prompt": "Bound the land path's worst-case host memory. CROSS item carried over from the MGIT-11.10.10 security annotation: \\\"max concurrent land ops; stream-to-store (bounded memory) — DefaultLimits 4GiB x concurrency must fit a documented host budget.\\\"\n\nCURRENT STATE (MGIT-11.10.10): sandboxd.LandChannel reads each guest pool ONCE into an in-memory buffer bounded per-pool by land.DefaultLimits().MaxTotalBytes (4 GiB), keyed by sandbox id, replayed to the orchestrator and dropped after (Discard on every abandoned-land path). There is NO cap on CONCURRENT in-flight lands: the daemon's MaxConns (default 64) bounds connections, not land memory — so the theoretical worst case is MaxConns × 4 GiB buffered at once. In practice lands are single-client/serialized today, so this is latent, not live.\n\nWHAT TO DO:\n- Add an explicit concurrent-land cap (a small semaphore around the land path, separate from MaxConns) and a documented host memory budget = cap × MaxTotalBytes; surface both as daemon config with safe defaults.\n- Consider streaming the pool to a temp object store instead of a full in-RAM buffer if a larger pool ceiling is ever needed (keeps the single-read SEC-06 property — verify the bytes you import — while bounding RAM). Document the tradeoff if kept in-RAM.\n- log() what is bounded/rejected (no silent truncation).\n- Reconcile with land.DefaultLimits (per-object/count/total ceilings already enforced in DecodeObjects).",
+      "acceptance": "The daemon enforces a documented maximum concurrent-land count and a derived host memory budget (cap × per-pool ceiling); exceeding the concurrency cap rejects/queues rather than over-allocating. The per-pool ceiling and the concurrency cap are config with safe defaults and are logged. A test demonstrates the cap rejects/queues beyond the limit and that buffered memory is bounded.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "2b1821149e2a94cdad43aa157aa39b66626d5f469270e3215da957b756f002da",
+      "created_at": "2026-06-21T05:19:26Z",
+      "updated_at": "2026-06-21T05:19:26Z"
     },
     {
       "id": "MGIT-11.2",
@@ -2829,6 +2877,30 @@
       "content_hash": "6bd920a1cf107954cdb92449007d91d575daf8962211b55332d482c3e9319d75",
       "created_at": "2026-06-20T13:39:20Z",
       "updated_at": "2026-06-20T13:39:20Z"
+    },
+    {
+      "id": "MGIT-13.1.1",
+      "parent_id": "MGIT-13.1",
+      "depth": 2,
+      "seq": 1,
+      "project": "MGIT",
+      "title": "vzf (macOS) land-channel dialer",
+      "description": "",
+      "prompt": "Provide the macOS (vzf / Virtualization.framework) land-channel dialer so `mgit sandbox land` works on macOS, not just Linux KVM.\n\nCONTEXT: MGIT-11.10.10 shipped the host-initiated land path with a firecracker-specific dialer: firecracker.NewLandDialer(workDir) dials the guest land vsock port (1025) over the per-VM firecracker unix socket. sandboxd.LandChannel takes any dialer satisfying microvm.GuestDialer (DialGuest). cmd/mgit-sandboxd/land_wiring.go currently wires firecracker.NewLandDialer unconditionally, so v1 land transport is Linux-KVM only. The guest land server (mgit-guest, internal/guest.ServeLandHead) is platform-agnostic and already serves port 1025.\n\nWHAT TO DO: add a vzf land dialer analogous to MGIT-13.1's exec GuestDialer (VZVirtioSocketDevice.Connect to port 1025) and select it in the daemon land wiring based on the active backend (firecracker vs vzf), instead of hardcoding firecracker. Keep the dialer behind the microvm.GuestDialer seam so LandChannel is unchanged. Pairs with MGIT-13.1 (exec dialer) — share the connect mechanism; only the port differs.\n\nRefs: FR-17 v1 platform scope (Linux+macOS); see memory note fr17-land-transport-directions.",
+      "acceptance": "On macOS (vzf backend) `mgit sandbox land --task \u003cid\u003e` pulls the guest land pool over the Virtualization.framework vsock land port and runs the same verified land path as on KVM. The daemon land wiring selects the dialer by active backend rather than hardcoding firecracker. Unit-tested against a fake vsock; gated real-VM e2e on macOS.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "3c65bacb875486c3556f62531f3ee6db37eaf115bf8da11f7d0c339dfedda460",
+      "created_at": "2026-06-21T05:19:41Z",
+      "updated_at": "2026-06-21T05:19:41Z"
     },
     {
       "id": "MGIT-2",
@@ -6104,6 +6176,18 @@
       "created_at": "2026-06-20T17:01:06Z"
     },
     {
+      "from_id": "MGIT-11.10.11",
+      "to_id": "MGIT-11.10.10",
+      "dep_type": "related",
+      "created_at": "2026-06-21T05:19:54Z"
+    },
+    {
+      "from_id": "MGIT-11.10.11",
+      "to_id": "MGIT-11.11",
+      "dep_type": "related",
+      "created_at": "2026-06-21T05:19:56Z"
+    },
+    {
       "from_id": "MGIT-11.10.2",
       "to_id": "MGIT-11.11.1",
       "dep_type": "blocks",
@@ -6390,6 +6474,12 @@
       "to_id": "MGIT-11.13.3",
       "dep_type": "blocks",
       "created_at": "2026-06-12T11:42:51Z"
+    },
+    {
+      "from_id": "MGIT-11.13.5",
+      "to_id": "MGIT-11.10.10",
+      "dep_type": "related",
+      "created_at": "2026-06-21T05:19:59Z"
     },
     {
       "from_id": "MGIT-11.2",
@@ -7262,6 +7352,12 @@
       "created_at": "2026-06-15T15:28:44Z"
     },
     {
+      "from_id": "MGIT-13.1.1",
+      "to_id": "MGIT-11.10.10",
+      "dep_type": "related",
+      "created_at": "2026-06-21T05:20:02Z"
+    },
+    {
       "from_id": "MGIT-2.1.3",
       "to_id": "MGIT-8.1.1",
       "dep_type": "blocks",
@@ -7443,6 +7539,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 241,
-  "checksum": "8ab7ff752d1c3b4b3c4312b699d14485856672220d6f06697cfdf6b8df59ecc6"
+  "node_count": 244,
+  "checksum": "9335a495846cc8e74db4bfc42366f392639d20bc18c41cce119c9519297d3578"
 }
