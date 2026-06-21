@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-21T05:20:15Z",
+  "exported_at": "2026-06-21T05:31:53Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -470,7 +470,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.5859390609390609,
+      "progress": 0.592932067932068,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -619,7 +619,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.36363636363636365,
+      "progress": 0.45454545454545453,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -811,15 +811,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "45af757e0b0f8bcbc916213516d57e890101912230adaf1c356d8e2bf0f74650",
       "created_at": "2026-06-20T15:43:11Z",
-      "updated_at": "2026-06-20T15:43:11Z"
+      "updated_at": "2026-06-21T05:31:42Z",
+      "closed_at": "2026-06-21T05:31:42Z"
     },
     {
       "id": "MGIT-11.10.7",
@@ -7513,7 +7514,7 @@
       "agent_id": "",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-11.9.6",
+      "current_node_id": "MGIT-11.10.6",
       "last_heartbeat": "2026-06-17T08:16:40Z"
     },
     {
@@ -7540,5 +7541,5 @@
   ],
   "sessions": null,
   "node_count": 244,
-  "checksum": "9335a495846cc8e74db4bfc42366f392639d20bc18c41cce119c9519297d3578"
+  "checksum": "695caca5309e9379c675e7e280ced25f4249a31eda88192112262fed13958fbd"
 }
