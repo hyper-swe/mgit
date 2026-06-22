@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-21T06:00:04Z",
+  "exported_at": "2026-06-22T09:31:24Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -470,7 +470,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.592932067932068,
+      "progress": 0.6416500166500166,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -911,15 +911,15 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
+      "status": "open",
+      "progress": 0.6666666666666666,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
       "weight": 1,
       "content_hash": "cffb064b3e3600d501ac64823e4b5f6e9385547c22b712f52e8c6e1a62a5d474",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:41Z"
+      "updated_at": "2026-06-22T03:39:19Z"
     },
     {
       "id": "MGIT-11.11.1",
@@ -935,15 +935,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "c70344e5edba7976f107b9ed6c45381231bb9b172392ee207e4ee6bcae8aec2a",
       "created_at": "2026-06-12T11:16:41Z",
-      "updated_at": "2026-06-12T11:42:51Z"
+      "updated_at": "2026-06-22T03:40:42Z",
+      "closed_at": "2026-06-22T03:40:42Z"
     },
     {
       "id": "MGIT-11.11.2",
@@ -959,15 +960,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "19dba3dd5392afc2013006136495e71015bb5edde96fbad4f144f5f464b100ee",
       "created_at": "2026-06-12T11:16:41Z",
-      "updated_at": "2026-06-12T11:42:51Z"
+      "updated_at": "2026-06-22T03:47:06Z",
+      "closed_at": "2026-06-22T03:47:06Z"
     },
     {
       "id": "MGIT-11.11.3",
@@ -983,15 +985,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent-01",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "018efb0003f76caf0284d145faf656edd71a9a8d9ba24f5dcafa77c26cab005b",
       "created_at": "2026-06-12T11:16:41Z",
-      "updated_at": "2026-06-12T11:42:51Z"
+      "updated_at": "2026-06-22T03:56:25Z",
+      "closed_at": "2026-06-22T03:56:25Z"
     },
     {
       "id": "MGIT-11.11.4",
@@ -1007,7 +1010,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -1015,7 +1018,56 @@
       "weight": 1,
       "content_hash": "e240a9d8aae81208094756784bb9d9855ed82a76fefde3768b818807a84fe4b0",
       "created_at": "2026-06-12T11:47:32Z",
-      "updated_at": "2026-06-12T11:47:32Z"
+      "updated_at": "2026-06-22T04:11:43Z"
+    },
+    {
+      "id": "MGIT-11.11.5",
+      "parent_id": "MGIT-11.11",
+      "depth": 2,
+      "seq": 5,
+      "project": "MGIT",
+      "title": "mgit run — task-bound sandbox command routing (foundation)",
+      "description": "",
+      "prompt": "Build `mgit run [--] \u003ccommand...\u003e`, the host-side routing primitive the rest of MGIT-11.11 rests on (the Claude PreToolUse hook in 11.11.1 rewrites Bash to `mgit run -- bash -lc \u003corig\u003e`; the 11.11.3 shims call `mgit run`). It auto-routes a task command into that task's bound sandbox, FAIL-CLOSED: if no sandbox is bound for the cwd or the daemon is unavailable, it errors with a non-zero exit and NEVER runs the command on the host.\n\nDESIGN (decided in scout): `mgit run` is a PURE daemon client — it never touches Store/Manager (CLI-is-thin-client rule). Resolution: connect via the same productionSandboxConnect as `mgit sandbox`; call List(); pick the sandbox whose WorktreePath is the nearest ancestor of (or equals) the cwd; Exec into it with ExecRequest{Command: args, Dir: cwd}. Identical-path mount =\u003e guest Dir == host cwd. Host environment is NEVER forwarded (FR-17.3); only explicit --env KEY=VALUE injections pass, mirroring `mgit sandbox exec`. SEC-05: surface only host-observed identity in errors. Propagate the guest exit code verbatim via exitError (like sandbox exec). There is NO host-exec code path in this command at all — fail-closed is structural.\n\nAdd a hidden/health surface the 11.11.1 hook uses to decide allow-vs-ask: a way to answer \"is a sandbox available for this cwd?\" without running anything (resolve cwd-\u003esandbox via List + check State is created/running/suspended; not-found or daemon-unreachable =\u003e unavailable).\n\nARCH: cmd/mgit/run.go, registered in rootCmd; reuse the sandboxClient interface + connectFunc injection from cmd/mgit/sandbox.go so it is unit-testable with the existing fakeSandboxClient. No new service/store layers.\n\nDEFINITION OF DONE: TDD red-\u003egreen-\u003erefactor; coverage gates (cmd 90%/85%); zero linter/vet/race/vuln. AFTER GREEN run /simplify and re-run the full Verification Checklist. COMMIT: {type}({scope}): {desc} + 'Refs: MGIT-11.11.x'; no Co-authored-by / agent / Generated-with trailer.\n\nACCEPTANCE CRITERIA:\n- `mgit run -- \u003ccmd\u003e` routes the command into the sandbox bound to the cwd's worktree and propagates its exit code.\n- cwd inside a subdirectory of a worktree still resolves to that worktree's sandbox (nearest-ancestor match).\n- Daemon unavailable OR no sandbox bound for cwd =\u003e clear error, non-zero exit, command NOT run on host (fail-closed).\n- Host env never forwarded; only --env injections pass.\n- Health query reports available/unavailable for the cwd without executing anything.\n\nREQUIRED TESTS:\n  - TestRun_RoutesCommandToBoundSandbox\n  - TestRun_SubdirResolvesToWorktreeSandbox\n  - TestRun_PropagatesGuestExitCode\n  - TestRun_DaemonUnavailable_FailsClosedNoHostExec\n  - TestRun_NoSandboxBound_FailsClosed\n  - TestRun_HostEnvNotForwarded_OnlyExplicitEnv\n  - TestRun_HealthQuery_ReportsAvailability",
+      "acceptance": "`mgit run -- \u003ccmd\u003e` routes into the cwd's bound sandbox and propagates exit code; subdir resolves via nearest-ancestor; daemon-down or no-sandbox =\u003e non-zero error with no host execution (fail-closed); host env never forwarded; health query reports availability without executing.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent-01",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "9d224d06731a2aacd5ba8ea3e495b999dc8607326e20e680a58164d11fe25105",
+      "created_at": "2026-06-22T03:18:42Z",
+      "updated_at": "2026-06-22T03:23:45Z",
+      "closed_at": "2026-06-22T03:23:45Z"
+    },
+    {
+      "id": "MGIT-11.11.6",
+      "parent_id": "MGIT-11.11",
+      "depth": 2,
+      "seq": 6,
+      "project": "MGIT",
+      "title": "T2 interactive shell transport — guest vsock-PTY backend + bidirectional stdin (KVM-gated)",
+      "description": "",
+      "prompt": "Follow-up to MGIT-11.11.4 (T2 confined agent). The host-side T2 core shipped in 11.11.4: confine_agent opt-in policy/launch option (default T1), ConfinedSessionService (per-session credential injection via GuestCredentialSink + credentials_injected audit flagged by name only, secret never serialized), the no-credentials-in-image guarantee, and the `mgit sandbox shell --task \u003cid\u003e` CLI command + sandboxClient.Shell seam (fail-closed, proxies stdin/stdout/stderr, propagates exit). The production *sandboxd.Client.Shell currently reports model.ErrShellTransportUnavailable rather than degrade to a non-interactive session.\n\nWHAT REMAINS (KVM-gated guest infrastructure — same gating as exec/land guest sides):\n1. CONTROL PLANE: add a KindShell control-plane request (controlproto) + daemon serveShell dispatch. serveShell resolves the sandbox, runs ConfinedSessionService.Start (inject creds + audit) when confine_agent is on, then bridges the client conn \u003c-\u003e an interactive guest session. Preserve the fuzz-hardened invariants (size ceilings before alloc, payload-matches-kind, DisallowUnknownFields, read deadlines) and add a FuzzReadRequest case for the new kind.\n2. BIDIRECTIONAL RELAY: extend execwire (or a sibling) with an inbound stdin frame (client-\u003edaemon-\u003eguest) alongside the existing O/E/R output frames; the client pumps stdin frames concurrently while relaying output and returns the exit code. Bounded buffering; idle/wall-clock deadlines.\n3. GUEST PTY: mgit-guest serves an interactive shell/agent CLI over a PTY on a dedicated vsock port; SEC-01 (guest holds no signing key); SEC-10 peer-binding authorize before any byte.\n4. GUEST IMAGE (confine_agent=true): bundle the agent CLI in the guest image (scripts/build-guest-image.sh); credentials injected per session via the sink, NEVER baked into the image (assert in the image build/e2e).\n5. PRODUCTION WIRING: construct ConfinedSessionService + the interactive runner in cmd/mgit-sandboxd and wire into the daemon; replace the ErrShellTransportUnavailable path with the real attach.\n\nDEFINITION OF DONE: TDD; host\u003c-\u003edaemon interactive relay unit-tested in-process against a fake echo PTY runner; KVM-gated e2e for the real guest PTY round-trip (attach -\u003e type -\u003e see output -\u003e exit) like the exec/land e2e; coverage gates; zero lint/vet/race/vuln; /simplify. Commit format + no co-authored-by/agent/Generated-with trailer.\n\nACCEPTANCE: `mgit sandbox shell --task \u003cid\u003e` attaches a real interactive session into the confine_agent guest (agent CLI available), credentials injected per-session + audit-flagged (never in the image), bidirectional I/O + exit code over the verified control plane; SEC-01/SEC-10 upheld; default topology remains T1.\n\nREQUIRED TESTS:\n  - TestDaemon_Shell_InjectsCredsThenRelays\n  - TestShellRelay_BidirectionalStdinAndOutput\n  - TestGuestShell_PTYRoundTrip (KVM-gated)\n  - TestT2_NoCredentialsInImage_E2E (KVM-gated)",
+      "acceptance": "`mgit sandbox shell` attaches a real interactive session into the confine_agent guest (bundled agent CLI), per-session creds injected + audit-flagged (never in image), bidirectional stdin/output + exit over the verified control plane (SEC-01/SEC-10 upheld); default stays T1. Host\u003c-\u003edaemon relay unit-tested vs a fake PTY; real guest PTY KVM-gated e2e.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "494b670048a834cd8970e2f2dac455a489c2ee3c92b20b90443eb755a0b9fc61",
+      "created_at": "2026-06-22T04:11:14Z",
+      "updated_at": "2026-06-22T04:12:19Z"
     },
     {
       "id": "MGIT-11.12",
@@ -1176,7 +1228,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "blocked",
-      "progress": 0.2,
+      "progress": 0.16666666666666666,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1305,6 +1357,30 @@
       "content_hash": "2b1821149e2a94cdad43aa157aa39b66626d5f469270e3215da957b756f002da",
       "created_at": "2026-06-21T05:19:26Z",
       "updated_at": "2026-06-21T05:19:26Z"
+    },
+    {
+      "id": "MGIT-11.13.6",
+      "parent_id": "MGIT-11.13",
+      "depth": 2,
+      "seq": 6,
+      "project": "MGIT",
+      "title": "MGIT-11.7 network enforcement: KVM e2e round-trip + open-mode extIface",
+      "description": "",
+      "prompt": "Validate the MGIT-11.7 network policy enforcement end-to-end on a real guest (the KVM box at the dev runner), and close the two non-portable gaps. The host-side engine + firecracker tap/NIC/firewall + daemon-\u003eservice-\u003eegress.Runner wiring are all implemented, unit-tested, cross-compiled and linux-lint-clean (commits 6b6aeb0..4a06420); what remains is the live round-trip that can only run on KVM with a guest image, plus open-mode external-interface plumbing.\n\nDO (gate like the exec/land e2e — MGIT_E2E_GUEST_ROOTFS + /dev/kvm + root):\n1. allowlist round-trip: launch an allowlist sandbox; from the guest, a TCP connect + DNS resolve to an allowlisted host (e.g. registry.npmjs.org) SUCCEEDS through the host proxy/DNS on the tap gateway; a connect to a non-allowlisted host, a raw-IP connect to a non-allowlisted IP, a QUIC/UDP attempt, and any RFC1918/link-local/metadata (169.254.169.254) destination are DENIED; every allow/deny lands in sandbox_egress_log. Verify the guest has no direct route (tap firewall default-deny) and DNS resolves only allowlisted names (rate-limited; NXDOMAIN burst flagged).\n2. none round-trip: the guest has no NIC and cannot egress at all.\n3. open-mode extIface: the firecracker backend's fcHypervisor.extIface is currently always \"\" so open mode fails closed (TapPlan.validate needs an external interface to MASQUERADE through). Wire it: either auto-detect the host default-route interface on Linux, or expose it via firecracker.Config / a daemon flag, then prove an open-mode guest reaches an arbitrary host (NAT) and the open risk note is recorded.\n4. one-way port publish (SEC-09): a guest dev server is reachable at host 127.0.0.1:\u003cport\u003e; the guest cannot reach a host loopback service.\n5. DNS-server fuzz: fuzz egress.DNSServer.handleQuery against malformed/hostile packets (it parses guest input via x/net/dnsmessage) — pairs with the land-parser fuzz in 11.13.3.\n\nRefs: FR-17.7, FR-17.8, SEC-04, SEC-07, SEC-09; memory note fr17-network-enforcement. No co-authored-by/agent/Generated-with trailer.",
+      "acceptance": "On the KVM box: an allowlist guest reaches allowlisted hosts via the host proxy/DNS and is denied for non-allowlisted/raw-IP/QUIC/RFC1918/link-local/metadata destinations (all audited); none guest cannot egress; open guest reaches arbitrary hosts via host NAT with the risk note recorded (extIface wired); one-way port publish works and the guest cannot reach host loopback; DNSServer fuzz passes. Gated like the exec/land e2e.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "38dcbbb00a53c63a1d6981542f758c5adf3fdaeeac2b15212770ae889d2d5d09",
+      "created_at": "2026-06-22T06:48:47Z",
+      "updated_at": "2026-06-22T06:48:47Z"
     },
     {
       "id": "MGIT-11.2",
@@ -2903,6 +2979,174 @@
       "content_hash": "3c65bacb875486c3556f62531f3ee6db37eaf115bf8da11f7d0c339dfedda460",
       "created_at": "2026-06-21T05:19:41Z",
       "updated_at": "2026-06-21T05:19:41Z"
+    },
+    {
+      "id": "MGIT-14",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 14,
+      "project": "MGIT",
+      "title": "mgit must operate over an existing git repository (.mgit self-contained; never touch project .git)",
+      "description": "",
+      "prompt": "FOUNDATIONAL / RELEASE-BLOCKER. mgit's first-level requirement is that it runs INSIDE a git-managed project and works OVER AND ABOVE the existing git repo — adding task-tagged micro-commits without owning, replacing, reading, or mutating the project's normal git history. Today it does NOT: mgit cannot initialize or run in any existing git project.\n\nROOT CAUSE (verified, reproducible 2026-06-22): internal/store/git/repository.go Init/Open open the go-git repo with storage=.mgit/ but pass the PROJECT ROOT as the go-git worktree; and commit/staging/merge/checkout are built on go-git's Worktree+index (wt.Add/wt.Commit/wt.Checkout/wt.Status/wt.Clean — 7 sites: repository.go:191, commit.go:47, worktree.go:60/85/102/121, merge.go:98). go-git writes a `.git` gitfile at any worktree root, so mgit (a) in an empty dir writes `.git -\u003e .mgit` (hijacks the .git slot), and (b) in a REAL project FAILS at init: `init go-git repo: open \u003croot\u003e/.git: is a directory`, then `resolve HEAD: reference not found` on every later command. mgit only works in an empty directory.\n\nWHY MISSED: every test inits in a fresh EMPTY t.TempDir() (only greenfield ran; line coverage can't detect a missing scenario); mgit never dogfooded on a real repo (mgit-dev has no .mgit); FR-17 audits were scoped to the sandbox guest threat model, not core git coexistence; the requirement was never an encoded acceptance criterion.\n\nDESIGN (ADR-001 amendment 2026-06-22): .mgit/ is a self-contained go-git store mgit drives PURELY via plumbing, COEXISTING with — never touching — the project .git. (1) never create/open/read/mutate project .git or write a root .git gitfile; project history is sacrosanct. (2) .mgit/ opened bare/storer-only (worktree=nil). (3) read project files via Repository.Root()+osfs, build blob/tree/commit via plumbing, manage refs (HEAD, task/\u003cid\u003e) directly. (4) mgit-owned staging (stateless build-from-FileDiffs + file content, or SQLite index) replacing .git/index. (5) FR-16 checkout writes files via plumbing/osfs, not wt.Checkout(). TreeStore.BuildTree already does plumbing tree-building (migration target).\n\nBLAST RADIUS: repository.go, commit.go, worktree.go, merge.go; ~28 test files; the sandbox quarantine bind-mount of worktreePath/.git.\n\nSEQUENCING (owner-approved): spec now (ADR amendment done; skipped spec test landed; this epic). Implementation = dedicated, ISOLATED, INDEPENDENTLY-REVIEWED effort (sits under everything in internal/store/git); do NOT interleave with other feature work.\n\nCLOSURE GATES: skipped spec test TestInit_OverExistingGitRepo_* green; a dogfooding e2e (full lifecycle init/add/commit/squash/rollback/worktree over a REAL git repo, project .git + history byte-for-byte intact) in CI; independent story-closure + security review of the never-mutate-project-git invariant. Commit Refs: MGIT-\u003cid\u003e; NO co-authored-by/agent/Generated-with trailer.",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "8838b41e19f1fac27983619fdbe44f0a90609bd9852aa84c78eca33d2d3bf5cb",
+      "created_at": "2026-06-22T09:28:51Z",
+      "updated_at": "2026-06-22T09:28:51Z"
+    },
+    {
+      "id": "MGIT-14.1",
+      "parent_id": "MGIT-14",
+      "depth": 1,
+      "seq": 1,
+      "project": "MGIT",
+      "title": "Requirement + ADR-001 amendment + skipped spec test (the coexistence spec)",
+      "description": "",
+      "prompt": "Encode the missing requirement so the fix is traceable. DONE in the spec session (2026-06-22): ADR-001 amended with \"mgit coexists with the project's git repository\" (self-contained .mgit, plumbing-driven, never touch project .git); a SKIPPED spec test landed in internal/store/git (TestInit_OverExistingGitRepo_*) that, in a temp dir with a REAL .git + history, asserts mgit init/add/commit/worktree succeed AND the project .git + history are byte-for-byte unchanged. The test is t.Skip'd referencing MGIT-14 until the implementation lands. REMAINING: when 14.2-14.4 land, remove the t.Skip (red) and drive it green; ensure REQUIREMENTS.md carries the explicit FR (mgit operates over an existing git repo; project .git never mutated). ACCEPTANCE: ADR-001 amended (done); skipped spec test present (done); explicit FR written; the test un-skips green at epic close.",
+      "acceptance": "",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "8708b274562f7dd6d40b01cf667f675d7ee24ec4891fda6b2dd7db440ad325a8",
+      "created_at": "2026-06-22T09:29:09Z",
+      "updated_at": "2026-06-22T09:29:09Z"
+    },
+    {
+      "id": "MGIT-14.2",
+      "parent_id": "MGIT-14",
+      "depth": 1,
+      "seq": 2,
+      "project": "MGIT",
+      "title": "Init/Open/createInitialCommit: self-contained .mgit store (no root .git)",
+      "description": "",
+      "prompt": "Make internal/store/git/repository.go open .mgit/ as a bare/storer-only go-git repo (worktree=nil) so go-git NEVER writes a `.git` gitfile at the project root. createInitialCommit must build the empty initial commit + set HEAD/refs via plumbing (object.Tree + commit object + ref update), not wt.Commit(). Open mirrors it. This is the foundation 14.3/14.4 build on. ACCEPTANCE: Init/Open succeed in a dir that already has a real `.git` directory; no root `.git` gitfile is ever created; the project `.git` is untouched; HEAD is valid after init. REQUIRED TESTS: TestInit_OverExistingGitRepo_NoRootGitWritten, TestInit_OverExistingGitRepo_ProjectGitUntouched, TestInit_InitialCommitViaPlumbing_HEADValid, TestOpen_SelfContainedStore. Commit Refs: MGIT-14; no co-authored-by/agent/Generated-with trailer.",
+      "acceptance": "",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "b0e00374f4d9ec850e8e1a7472dae5c30342a23935d06d7c7df725bb799f9229",
+      "created_at": "2026-06-22T09:29:14Z",
+      "updated_at": "2026-06-22T09:29:14Z"
+    },
+    {
+      "id": "MGIT-14.3",
+      "parent_id": "MGIT-14",
+      "depth": 1,
+      "seq": 3,
+      "project": "MGIT",
+      "title": "Commit + staging via plumbing + mgit-owned staging (off go-git index)",
+      "description": "",
+      "prompt": "Migrate CommitStore.CreateCommit (commit.go) off go-git's wt.Commit()/.git index onto plumbing: build blob/tree/commit objects from explicit FileDiffs + project file content read via Repository.Root()+osfs (TreeStore.BuildTree already does plumbing tree-building — reuse/extend it), then advance the task ref directly. Replace WorktreeStore.Add/Status reliance on go-git's index with an mgit-owned staging model (recommended: stateless — staging recorded in the SQLite index, commit builds the tree from it + content). The host environment / project .git are never touched. ACCEPTANCE: a commit is created entirely in .mgit via plumbing with no .git/index and no project-.git access; FileDiffs map to the landed tree; existing commit/squash/rollback behavior preserved. REQUIRED TESTS: TestCreateCommit_ViaPlumbing_NoGitIndex, TestStaging_MgitOwned_NoGogitIndex, TestCreateCommit_TreeMatchesFileDiffs, plus the existing commit-service suite still green. Commit Refs: MGIT-14; no trailers.",
+      "acceptance": "",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "6efb5f2026467e6ff6702809cd86018d7093c75466bd109a66b66808edec6784",
+      "created_at": "2026-06-22T09:29:21Z",
+      "updated_at": "2026-06-22T09:29:21Z"
+    },
+    {
+      "id": "MGIT-14.4",
+      "parent_id": "MGIT-14",
+      "depth": 1,
+      "seq": 4,
+      "project": "MGIT",
+      "title": "Worktree checkout + merge-commit via plumbing (off go-git worktree)",
+      "description": "",
+      "prompt": "Migrate WorktreeStore.Checkout/Clean (worktree.go) and MergeStore.CreateMergeCommit (merge.go) off go-git's Worktree. Checkout/materialization writes files to the target dir via plumbing (read the task-branch tree, write blobs to disk via osfs) rather than wt.Checkout(); the merge commit is built as a 2-parent commit object via plumbing rather than wt.Commit(). FR-16 worktree materialization must produce the task/\u003cid\u003e branch checkout without a go-git worktree on the project root. ACCEPTANCE: mgit worktree add materializes a checkout (files on disk on the task branch) and mgit merge creates a 2-parent commit, both via plumbing, with no project-.git access; existing worktree/merge suites green. REQUIRED TESTS: TestWorktreeCheckout_ViaPlumbing_MaterializesFiles, TestMergeCommit_TwoParents_ViaPlumbing, TestWorktree_OverExistingGitRepo. Commit Refs: MGIT-14; no trailers.",
+      "acceptance": "",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "9ffa0c3595a1f8049c1f7a666b7d82cfbaeeae373e180fcc639e457ceab51ebb",
+      "created_at": "2026-06-22T09:29:26Z",
+      "updated_at": "2026-06-22T09:29:26Z"
+    },
+    {
+      "id": "MGIT-14.5",
+      "parent_id": "MGIT-14",
+      "depth": 1,
+      "seq": 5,
+      "project": "MGIT",
+      "title": "Sandbox quarantine: stop assuming a project .git bind-mount",
+      "description": "",
+      "prompt": "internal/sandboxd/quarantine bind-mounts worktreePath/.git into the guest (private object store, SEC-03). Once mgit no longer puts a `.git` at the project/worktree root (MGIT-14.2), this assumption breaks. Revisit: the guest's private store must be sourced from mgit's .mgit/ (or a purpose-built private store), not a root `.git` gitfile that no longer exists. Verify against the FR-17 quarantine requirements (private store, NOT the ADR-004 shared store). ACCEPTANCE: sandbox quarantine works with the self-contained .mgit layout (no dependency on a root .git in the worktree); SEC-03 private-store property preserved; quarantine tests green. REQUIRED TESTS: TestQuarantine_NoRootGitDependency, plus existing quarantine suite. Commit Refs: MGIT-14; no trailers.",
+      "acceptance": "",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "15ada0b8fd795d9fc72ac3fad2aca07863a8bedd31136c063dbbe69b320972ac",
+      "created_at": "2026-06-22T09:29:32Z",
+      "updated_at": "2026-06-22T09:29:32Z"
+    },
+    {
+      "id": "MGIT-14.6",
+      "parent_id": "MGIT-14",
+      "depth": 1,
+      "seq": 6,
+      "project": "MGIT",
+      "title": "Dogfood e2e over a real git repo + CI guardrail + independent review",
+      "description": "",
+      "prompt": "The check that would have caught this on day one. Add an e2e that drives the FULL mgit lifecycle (init -\u003e add -\u003e commit -\u003e squash -\u003e rollback -\u003e worktree add/checkout) inside a REAL git repository with pre-existing history, and asserts the project's .git directory + history are BYTE-FOR-BYTE unchanged afterward (mgit never mutates the user's git — a security property). Wire it into CI so the coexistence requirement can't silently regress. Then commission an INDEPENDENT story-closure + security review (reviewer != implementer) of the whole MGIT-14 change, focused on the never-touch-project-.git invariant and requirement-\u003ecode-\u003etest traceability; log + resolve findings before MGIT-14 closes. ACCEPTANCE: dogfood e2e green in CI; real .git/history provably untouched; independent review complete with findings resolved. REQUIRED TESTS: TestE2E_FullLifecycle_OverRealGitRepo_HistoryIntact. Commit Refs: MGIT-14; no trailers.",
+      "acceptance": "",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "9d7ecc231dda615242334402272749bcbf7a6c9b9bb405a8663287eda01728e3",
+      "created_at": "2026-06-22T09:29:37Z",
+      "updated_at": "2026-06-22T09:29:37Z"
     },
     {
       "id": "MGIT-2",
@@ -6131,36 +6375,6 @@
       "created_at": "2026-06-12T11:47:32Z"
     },
     {
-      "from_id": "MGIT-11.10",
-      "to_id": "MGIT-11.11",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:16:41Z"
-    },
-    {
-      "from_id": "MGIT-11.10.1",
-      "to_id": "MGIT-11.11.1",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.10.1",
-      "to_id": "MGIT-11.11.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.10.1",
-      "to_id": "MGIT-11.11.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.10.1",
-      "to_id": "MGIT-11.11.4",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
       "from_id": "MGIT-11.10.10",
       "to_id": "MGIT-11.10.8",
       "dep_type": "blocks",
@@ -6189,102 +6403,6 @@
       "to_id": "MGIT-11.11",
       "dep_type": "related",
       "created_at": "2026-06-21T05:19:56Z"
-    },
-    {
-      "from_id": "MGIT-11.10.2",
-      "to_id": "MGIT-11.11.1",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.10.2",
-      "to_id": "MGIT-11.11.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.10.2",
-      "to_id": "MGIT-11.11.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.10.2",
-      "to_id": "MGIT-11.11.4",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
-      "from_id": "MGIT-11.10.3",
-      "to_id": "MGIT-11.11.1",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.10.3",
-      "to_id": "MGIT-11.11.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.10.3",
-      "to_id": "MGIT-11.11.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.10.3",
-      "to_id": "MGIT-11.11.4",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
-      "from_id": "MGIT-11.10.4",
-      "to_id": "MGIT-11.11.1",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.10.4",
-      "to_id": "MGIT-11.11.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.10.4",
-      "to_id": "MGIT-11.11.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.10.4",
-      "to_id": "MGIT-11.11.4",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
-      "from_id": "MGIT-11.10.5",
-      "to_id": "MGIT-11.11.1",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
-      "from_id": "MGIT-11.10.5",
-      "to_id": "MGIT-11.11.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
-      "from_id": "MGIT-11.10.5",
-      "to_id": "MGIT-11.11.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
-      "from_id": "MGIT-11.10.5",
-      "to_id": "MGIT-11.11.4",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:47:32Z"
     },
     {
       "from_id": "MGIT-11.10.8",
@@ -6375,6 +6493,12 @@
       "to_id": "MGIT-11.12.4",
       "dep_type": "blocks",
       "created_at": "2026-06-12T11:42:51Z"
+    },
+    {
+      "from_id": "MGIT-11.11.4",
+      "to_id": "MGIT-11.11.6",
+      "dep_type": "blocks",
+      "created_at": "2026-06-22T04:12:19Z"
     },
     {
       "from_id": "MGIT-11.11.4",
@@ -6977,6 +7101,12 @@
       "created_at": "2026-06-12T11:42:50Z"
     },
     {
+      "from_id": "MGIT-11.7",
+      "to_id": "MGIT-11.13.6",
+      "dep_type": "related",
+      "created_at": "2026-06-22T06:49:01Z"
+    },
+    {
       "from_id": "MGIT-11.8",
       "to_id": "MGIT-11.9",
       "dep_type": "blocks",
@@ -7544,11 +7674,11 @@
       "agent_id": "opus-agent-01",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-11.10.10",
+      "current_node_id": "MGIT-11.11.3",
       "last_heartbeat": "2026-04-07T05:58:03Z"
     }
   ],
   "sessions": null,
-  "node_count": 244,
-  "checksum": "ce0a2aa1c2e3e84e089d53004e062bb60f4f32e4300048bc563eb52580ad8af9"
+  "node_count": 254,
+  "checksum": "7c9a5d53828b7bf6b27a6fafc1820e7b7091c00cb4927a02d09722c66df382d1"
 }
