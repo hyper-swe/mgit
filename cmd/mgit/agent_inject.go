@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/hyper-swe/mgit/internal/agentadapter"
+	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // claudeHookCommand is the shell command Claude Code runs for the Bash
@@ -22,5 +23,24 @@ func injectAgentAdapters(warn io.Writer, worktreePath string) {
 	if err := agentadapter.WriteClaudeSettings(worktreePath, claudeHookCommand); err != nil {
 		_, _ = fmt.Fprintf(warn, "warning: could not write Claude sandbox routing config (%v); "+
 			"agent commands will prompt instead of auto-routing\n", err)
+	}
+}
+
+// writeSandboxEnvDoc (re)generates the worktree's CLAUDE.md environment
+// section to match a sandbox's current network posture. Called after
+// launch so the agent's knowledge layer regenerates on every policy
+// change. Best-effort: a write failure warns but never fails the launch.
+// Refs: MGIT-11.11.2
+func writeSandboxEnvDoc(warn io.Writer, info *model.SandboxInfo) {
+	if info == nil || info.WorktreePath == "" {
+		return
+	}
+	env := agentadapter.SandboxEnv{
+		WorktreePath: info.WorktreePath,
+		NetworkMode:  info.NetworkMode,
+		Allowlist:    info.NetworkAllowlist,
+	}
+	if err := agentadapter.UpsertClaudeMd(info.WorktreePath, env); err != nil {
+		_, _ = fmt.Fprintf(warn, "warning: could not update CLAUDE.md sandbox section (%v)\n", err)
 	}
 }

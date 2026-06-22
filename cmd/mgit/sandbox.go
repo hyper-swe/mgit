@@ -133,6 +133,9 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Regenerate the worktree's CLAUDE.md env section to match this
+			// sandbox's network posture (MGIT-11.11.2).
+			writeSandboxEnvDoc(cmd.ErrOrStderr(), info)
 			return writeSandbox(cmd.OutOrStdout(), info, asJSON,
 				fmt.Sprintf("Launched sandbox %s for task %s (%s)\n", info.ID, info.TaskID, info.State))
 		},
