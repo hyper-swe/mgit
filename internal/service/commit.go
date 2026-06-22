@@ -31,6 +31,7 @@ type CommitService struct {
 	commitStore *gitstore.CommitStore
 	indexStore  *index.Store
 	repo        *gitstore.Repository
+	audit       *AuditService
 }
 
 // NewCommitService creates a CommitService with injected dependencies.
@@ -40,6 +41,15 @@ func NewCommitService(repo *gitstore.Repository, cs *gitstore.CommitStore, idx *
 		indexStore:  idx,
 		repo:        repo,
 	}
+}
+
+// WithAudit attaches an AuditService so successful commits are recorded in the
+// append-only audit trail surfaced by `mgit audit`. Returns the receiver for
+// fluent wiring. If unset, commits proceed without an audit entry.
+// Refs: FR-12, MGIT-20
+func (s *CommitService) WithAudit(a *AuditService) *CommitService {
+	s.audit = a
+	return s
 }
 
 // CreateCommit creates a new micro-commit, storing it in both go-git
@@ -93,7 +103,26 @@ func (s *CommitService) CreateCommit(ctx context.Context, req CreateCommitReques
 		return nil, fmt.Errorf("index commit: %w", err)
 	}
 
+	// Record the operation in the append-only audit trail (MGIT-20).
+	if err := s.logAudit(commit); err != nil {
+		return nil, fmt.Errorf("audit commit: %w", err)
+	}
+
 	return commit, nil
+}
+
+// logAudit appends a CREATE_COMMIT entry to the audit trail. No-op when no
+// AuditService is wired. Refs: FR-12, MGIT-20
+func (s *CommitService) logAudit(c *model.Commit) error {
+	if s.audit == nil {
+		return nil
+	}
+	return s.audit.LogOperation(AuditEntry{
+		Operation: AuditCreateCommit,
+		AgentID:   c.AgentID,
+		TaskID:    c.TaskID.String(),
+		CommitID:  c.CommitID,
+	})
 }
 
 // GetCommit retrieves a commit by hash.

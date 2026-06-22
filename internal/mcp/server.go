@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -36,15 +38,19 @@ func NewServer(
 	cs := gitstore.NewCommitStore(repo)
 	bs := gitstore.NewBranchStore(repo)
 
+	// Audit trail shared so commit/squash/rollback record operations (MGIT-20).
+	auditPath := filepath.Join(repo.MgitDir(), "audit.log")
+	audit := service.NewAuditService(auditPath, func() time.Time { return time.Now().UTC() })
+
 	s := &Server{
 		mcpServer: mcpserver.NewMCPServer(
 			"mgit",
 			"1.0.0",
 			mcpserver.WithToolCapabilities(true),
 		),
-		commit:   service.NewCommitService(repo, cs, idx),
-		squash:   service.NewSquashService(repo, cs, idx),
-		rollback: service.NewRollbackService(repo, cs, idx),
+		commit:   service.NewCommitService(repo, cs, idx).WithAudit(audit),
+		squash:   service.NewSquashService(repo, cs, idx).WithAudit(audit),
+		rollback: service.NewRollbackService(repo, cs, idx).WithAudit(audit),
 		branch:   service.NewBranchService(repo, bs, idx),
 		verify:   service.NewVerifyService(cs, idx),
 	}

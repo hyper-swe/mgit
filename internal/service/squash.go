@@ -25,6 +25,7 @@ type SquashService struct {
 	commitStore *gitstore.CommitStore
 	indexStore  *index.Store
 	repo        *gitstore.Repository
+	audit       *AuditService
 }
 
 // NewSquashService creates a SquashService with injected dependencies.
@@ -34,6 +35,15 @@ func NewSquashService(repo *gitstore.Repository, cs *gitstore.CommitStore, idx *
 		indexStore:  idx,
 		repo:        repo,
 	}
+}
+
+// WithAudit attaches an AuditService so successful squashes are recorded in the
+// append-only audit trail surfaced by `mgit audit`. Returns the receiver for
+// fluent wiring. If unset, squashes proceed without an audit entry.
+// Refs: FR-12, MGIT-20
+func (s *SquashService) WithAudit(a *AuditService) *SquashService {
+	s.audit = a
+	return s
 }
 
 // SquashTask consolidates all commits for a task into a single squash commit.
@@ -116,7 +126,27 @@ func (s *SquashService) SquashTask(ctx context.Context, req SquashRequest) (*mod
 		return nil, fmt.Errorf("squash task %s: index squash commit: %w", req.TaskID, err)
 	}
 
+	// Record the operation in the append-only audit trail (MGIT-20).
+	if err := s.logAudit(squashCommit, req.TaskID, len(records)); err != nil {
+		return nil, fmt.Errorf("squash task %s: audit: %w", req.TaskID, err)
+	}
+
 	return squashCommit, nil
+}
+
+// logAudit appends a SQUASH entry to the audit trail. No-op when no
+// AuditService is wired. Refs: FR-12, MGIT-20
+func (s *SquashService) logAudit(c *model.Commit, taskID string, n int) error {
+	if s.audit == nil {
+		return nil
+	}
+	return s.audit.LogOperation(AuditEntry{
+		Operation: AuditSquash,
+		AgentID:   c.AgentID,
+		TaskID:    taskID,
+		CommitID:  c.CommitID,
+		Details:   fmt.Sprintf("squashed %d commits", n),
+	})
 }
 
 // ExportToGitPatch renders a squash commit as a standard git format-patch

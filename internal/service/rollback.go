@@ -24,6 +24,7 @@ type RollbackService struct {
 	commitStore *gitstore.CommitStore
 	indexStore  *index.Store
 	repo        *gitstore.Repository
+	audit       *AuditService
 }
 
 // NewRollbackService creates a RollbackService with injected dependencies.
@@ -33,6 +34,15 @@ func NewRollbackService(repo *gitstore.Repository, cs *gitstore.CommitStore, idx
 		indexStore:  idx,
 		repo:        repo,
 	}
+}
+
+// WithAudit attaches an AuditService so successful rollbacks are recorded in the
+// append-only audit trail surfaced by `mgit audit`. Returns the receiver for
+// fluent wiring. If unset, rollbacks proceed without an audit entry.
+// Refs: FR-12, MGIT-20
+func (s *RollbackService) WithAudit(a *AuditService) *RollbackService {
+	s.audit = a
+	return s
 }
 
 // RollbackTask creates a revert commit that undoes all changes from a task.
@@ -100,7 +110,27 @@ func (s *RollbackService) RollbackTask(ctx context.Context, req RollbackRequest)
 		return nil, fmt.Errorf("rollback task %s: index revert commit: %w", req.TaskID, err)
 	}
 
+	// Record the operation in the append-only audit trail (MGIT-20).
+	if err := s.logAudit(revertCommit, req.TaskID, reason); err != nil {
+		return nil, fmt.Errorf("rollback task %s: audit: %w", req.TaskID, err)
+	}
+
 	return revertCommit, nil
+}
+
+// logAudit appends a ROLLBACK entry to the audit trail. No-op when no
+// AuditService is wired. Refs: FR-12, MGIT-20
+func (s *RollbackService) logAudit(c *model.Commit, taskID, reason string) error {
+	if s.audit == nil {
+		return nil
+	}
+	return s.audit.LogOperation(AuditEntry{
+		Operation: AuditRollback,
+		AgentID:   c.AgentID,
+		TaskID:    taskID,
+		CommitID:  c.CommitID,
+		Details:   reason,
+	})
 }
 
 // invertDiffs computes the inverse of a set of file diffs.

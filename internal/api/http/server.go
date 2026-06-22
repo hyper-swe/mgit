@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -40,11 +41,15 @@ func NewServer(
 	cs := gitstore.NewCommitStore(repo)
 	bs := gitstore.NewBranchStore(repo)
 
+	// Audit trail shared so commit/squash/rollback record operations (MGIT-20).
+	auditPath := filepath.Join(repo.MgitDir(), "audit.log")
+	audit := service.NewAuditService(auditPath, clock)
+
 	s := &Server{
 		echo:     echo.New(),
-		commit:   service.NewCommitService(repo, cs, idx),
-		squash:   service.NewSquashService(repo, cs, idx),
-		rollback: service.NewRollbackService(repo, cs, idx),
+		commit:   service.NewCommitService(repo, cs, idx).WithAudit(audit),
+		squash:   service.NewSquashService(repo, cs, idx).WithAudit(audit),
+		rollback: service.NewRollbackService(repo, cs, idx).WithAudit(audit),
 		branch:   service.NewBranchService(repo, bs, idx),
 		verify:   service.NewVerifyService(cs, idx),
 		clock:    clock,

@@ -83,15 +83,19 @@ func OpenApp(path string) (*App, error) {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
+	// Audit trail is shared so commit/squash/rollback can record operations
+	// surfaced by `mgit audit` (MGIT-20).
+	audit := service.NewAuditService(auditPath, clock)
+
 	return &App{
 		Repo:     repo,
 		Index:    idx,
-		Commit:   service.NewCommitService(repo, cs, idx),
-		Squash:   service.NewSquashService(repo, cs, idx),
-		Rollback: service.NewRollbackService(repo, cs, idx),
+		Commit:   service.NewCommitService(repo, cs, idx).WithAudit(audit),
+		Squash:   service.NewSquashService(repo, cs, idx).WithAudit(audit),
+		Rollback: service.NewRollbackService(repo, cs, idx).WithAudit(audit),
 		Branch:   service.NewBranchService(repo, bs, idx),
 		Verify:   service.NewVerifyService(cs, idx),
-		Audit:    service.NewAuditService(auditPath, clock),
+		Audit:    audit,
 		Config:   cfgSvc,
 		Diff:     service.NewDiffService(ds, cs, idx),
 		Restore:  service.NewRestoreService(cs, path),
