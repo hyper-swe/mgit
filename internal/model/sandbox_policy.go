@@ -31,6 +31,11 @@ type SandboxPolicy struct {
 	// the host.
 	MaxConcurrentSandboxes int `json:"max_concurrent_sandboxes"`
 	MaxTotalMemoryPercent  int `json:"max_total_memory_percent"`
+	// ConfineAgent selects the T2 fully-confined-agent topology (ADR-005):
+	// the guest bundles the agent CLI and the user attaches via
+	// `mgit sandbox shell`. Strictly opt-in; defaults false (T1, the agent
+	// runs on the host and commands are routed in). Refs: MGIT-11.11.4
+	ConfineAgent bool `json:"confine_agent"`
 }
 
 // DefaultSandboxPolicy returns the safe defaults: require_sandbox on,

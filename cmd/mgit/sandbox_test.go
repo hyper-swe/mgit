@@ -36,6 +36,9 @@ type fakeSandboxClient struct {
 
 	landedTID  string
 	landResult *controlproto.LandResult
+
+	shellTask  string
+	shellStdin string
 }
 
 func (f *fakeSandboxClient) Launch(_ context.Context, opts model.SandboxLaunchOptions) (*model.SandboxInfo, error) {
@@ -69,6 +72,19 @@ func (f *fakeSandboxClient) Status(_ context.Context, taskID string) (*model.San
 func (f *fakeSandboxClient) Remove(_ context.Context, taskID string, force bool) error {
 	f.removedTID, f.removeForce = taskID, force
 	return f.opErr
+}
+func (f *fakeSandboxClient) Shell(_ context.Context, taskID string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	f.shellTask = taskID
+	if f.execErr != nil {
+		return -1, f.execErr
+	}
+	// Echo the supplied stdin to stdout to model an interactive session, so
+	// command tests can assert the stream is proxied.
+	b, _ := io.ReadAll(stdin)
+	f.shellStdin = string(b)
+	_, _ = io.WriteString(stdout, f.execStdout)
+	_, _ = io.WriteString(stderr, f.execStderr)
+	return f.execCode, nil
 }
 func (f *fakeSandboxClient) Land(_ context.Context, taskID string) (*controlproto.LandResult, error) {
 	f.landedTID = taskID

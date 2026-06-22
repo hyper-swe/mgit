@@ -23,6 +23,10 @@ type sandboxClient interface {
 	Status(ctx context.Context, taskID string) (*model.SandboxInfo, error)
 	Remove(ctx context.Context, taskID string, force bool) error
 	Land(ctx context.Context, taskID string) (*controlproto.LandResult, error)
+	// Shell attaches an interactive session to a task's sandbox (T2
+	// confined-agent, MGIT-11.11.4), proxying the supplied stdin/stdout/
+	// stderr and returning the session exit code.
+	Shell(ctx context.Context, taskID string, stdin io.Reader, stdout, stderr io.Writer) (int, error)
 }
 
 // connectFunc resolves a live daemon (activation + greeting-verified) and
@@ -58,6 +62,7 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 		sandboxListCmd(connect),
 		sandboxStatusCmd(connect),
 		sandboxRemoveCmd(connect),
+		sandboxShellCmd(connect),      // T2 confined-agent interactive attach (MGIT-11.11.4)
 		sandboxImageCmd(),             // host-local image registry (no daemon)
 		sandboxClaudeHookCmd(connect), // hidden: Claude Code PreToolUse hook (MGIT-11.11.1)
 	)
@@ -186,6 +191,41 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&task, "task", "", "task ID whose sandbox runs the command (required)")
 	cmd.Flags().StringArrayVar(&env, "env", nil, "explicit KEY=VALUE injected into the guest (repeatable; host env is never forwarded)")
+	return cmd
+}
+
+// sandboxShellCmd attaches an interactive session to a task's sandbox, the
+// T2 fully-confined-agent attach surface (ADR-005, MGIT-11.11.4). It
+// proxies stdin/stdout/stderr to the guest session and propagates the exit
+// code. Fail-closed: an unavailable daemon is a clear error, never a local
+// shell. Refs: MGIT-11.11.4
+func sandboxShellCmd(connect connectFunc) *cobra.Command {
+	var task string
+	cmd := &cobra.Command{
+		Use:           "shell --task <id>",
+		Short:         "Attach an interactive session to a task's sandbox (T2 confined agent)",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if task == "" {
+				return printErr(cmd.ErrOrStderr(), fmt.Errorf("--task is required"))
+			}
+			cl, err := connect(cmd.Context())
+			if err != nil {
+				return printErr(cmd.ErrOrStderr(), err)
+			}
+			code, err := cl.Shell(cmd.Context(), task, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+			if err != nil {
+				return printErr(cmd.ErrOrStderr(), err)
+			}
+			if code != 0 {
+				return &exitError{code: code}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&task, "task", "", "task ID whose sandbox to attach (required)")
 	return cmd
 }
 

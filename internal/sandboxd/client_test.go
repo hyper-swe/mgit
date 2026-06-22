@@ -200,3 +200,13 @@ func TestClient_Land_Error(t *testing.T) {
 	_, err := client.Land(context.Background(), "MGIT-7")
 	assert.Error(t, err)
 }
+
+// TestClient_Shell_TransportGated verifies the interactive shell attach
+// reports the KVM-gated guest PTY transport gap rather than silently
+// degrading to a non-interactive session. Refs: MGIT-11.11.4
+func TestClient_Shell_TransportGated(t *testing.T) {
+	c := NewClient("/nonexistent.sock", time.Now)
+	code, err := c.Shell(context.Background(), "MGIT-4.2", strings.NewReader(""), nil, nil)
+	assert.Equal(t, -1, code)
+	assert.ErrorIs(t, err, model.ErrShellTransportUnavailable)
+}

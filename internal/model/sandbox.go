@@ -173,6 +173,11 @@ type SandboxLaunchOptions struct {
 	MemoryMB     int           `json:"memory_mb,omitempty"`     // 0 = policy default
 	DiskQuotaMB  int           `json:"disk_quota_mb,omitempty"` // 0 = policy default
 	TTL          time.Duration `json:"ttl_ns,omitempty"`        // nanoseconds; 0 = policy default
+	// ConfineAgent opts this sandbox into the T2 fully-confined-agent
+	// topology (ADR-005, MGIT-11.11.4). Defaults false (T1). Carries NO
+	// credential material — secrets are injected per session, never baked
+	// into the launch/image config (the no-credentials-in-image guarantee).
+	ConfineAgent bool `json:"confine_agent,omitempty"`
 }
 
 // Validate checks launch options: task binding, worktree path,

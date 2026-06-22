@@ -140,6 +140,21 @@ var (
 	// sandbox channel it addresses — one guest may never reach another's
 	// land/attestation channel. Refs: FR-17.27, SEC-10
 	ErrPeerBindingMismatch = errors.New("sandbox channel peer identity mismatch")
+
+	// ErrConfineAgentDisabled indicates a T2 fully-confined-agent session
+	// (credential injection / shell attach) was requested for a sandbox
+	// whose policy has confine_agent off. T2 is strictly opt-in; the
+	// default topology is T1 (agent on the host, commands routed in).
+	// Refs: FR-17, ADR-005, MGIT-11.11.4
+	ErrConfineAgentDisabled = errors.New("confine_agent is disabled (T2 is opt-in; default is T1)")
+
+	// ErrShellTransportUnavailable indicates an interactive `mgit sandbox
+	// shell` attach was requested but the bidirectional vsock-PTY guest
+	// transport is not served by this daemon build (it is KVM-gated guest
+	// infrastructure). The host-side T2 orchestration is in place; this is
+	// the remaining guest-backend gap, reported rather than degraded to a
+	// non-interactive session. Refs: MGIT-11.11.4
+	ErrShellTransportUnavailable = errors.New("interactive shell requires the KVM guest PTY transport; use `mgit sandbox exec` for non-interactive commands")
 )
 
 // ValidationError provides structured context for validation failures.

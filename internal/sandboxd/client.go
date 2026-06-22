@@ -149,6 +149,19 @@ func (c *Client) Exec(ctx context.Context, taskID string, req model.ExecRequest,
 	return relayFrames(conn, stdout, stderr)
 }
 
+// Shell attaches an interactive session to a task's sandbox (T2
+// fully-confined agent, MGIT-11.11.4). The host-side orchestration —
+// per-session credential injection and audit flagging — is implemented in
+// service.ConfinedSessionService; the bidirectional vsock-PTY transport
+// that carries an interactive session to the guest is KVM-gated guest
+// infrastructure not served by this daemon build. Rather than silently
+// degrade to a non-interactive session (which would mislead a caller
+// expecting a shell), Shell reports ErrShellTransportUnavailable.
+// Refs: MGIT-11.11.4
+func (c *Client) Shell(_ context.Context, _ string, _ io.Reader, _, _ io.Writer) (int, error) {
+	return -1, fmt.Errorf("%w", model.ErrShellTransportUnavailable)
+}
+
 // relayFrames copies the daemon's exec frame stream to the writers and
 // returns the exit code from the terminal result frame.
 func relayFrames(conn net.Conn, stdout, stderr io.Writer) (int, error) {

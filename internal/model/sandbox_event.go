@@ -18,6 +18,10 @@ const (
 	EventResumed = "resumed"
 	// EventPolicyGranted records a capability grant (FR-17.12).
 	EventPolicyGranted = "policy_granted"
+	// EventCredentialsInjected records that per-session credentials were
+	// injected into a T2 confined-agent guest (MGIT-11.11.4). Audit-only
+	// (no state change); Detail carries credential NAMES only, never values.
+	EventCredentialsInjected = "credentials_injected"
 	// EventLanded records a verified land import (FR-17.5).
 	EventLanded = "landed"
 	// EventDestroyed records teardown.
@@ -33,7 +37,7 @@ const (
 // plus the one audit-only event, policy_granted.
 func isValidEventType(eventType string) bool {
 	_, stateBearing := eventStates[eventType]
-	return stateBearing || eventType == EventPolicyGranted
+	return stateBearing || eventType == EventPolicyGranted || eventType == EventCredentialsInjected
 }
 
 // eventStates maps each state-bearing event type to the sandbox state
