@@ -65,30 +65,50 @@ func (m *MergeStore) IsAncestor(_ context.Context, ancestor, descendant string) 
 	return ok, nil
 }
 
-// FastForward advances branchName to point at targetHash without creating
-// a new commit. Returns ErrBranchNotFound if branchName does not exist.
-// Refs: FR-8.4
-func (m *MergeStore) FastForward(_ context.Context, branchName, targetHash string) error {
+// FastForward advances branchName to point at targetHash without creating a new
+// commit, and MATERIALIZES targetHash's tree onto the working tree on disk so
+// the working copy reflects the advanced tip rather than being left stale. It
+// refuses to overwrite uncommitted tracked changes (ErrRollbackConflict) and
+// materializes BEFORE moving the ref, so a failure leaves the branch unmoved.
+// The ref move is CAS-guarded against the value just read so a concurrent move
+// fails loudly rather than clobbering the branch tip. Returns ErrBranchNotFound
+// if branchName does not exist. Refs: FR-8.4, MGIT-15
+func (m *MergeStore) FastForward(ctx context.Context, branchName, targetHash string) error {
 	refName := plumbing.NewBranchReferenceName(branchName)
 	cur, err := m.repo.repo.Storer.Reference(refName)
 	if err != nil {
 		return fmt.Errorf("%w: %s", model.ErrBranchNotFound, branchName)
 	}
+	// Materialize the advanced tip BEFORE moving the ref, with a deletion pass
+	// keyed off the current (pre-move) HEAD tree, so the working tree reflects
+	// the fast-forward (MGIT-15).
+	currentHead, err := m.repo.headFiles()
+	if err != nil {
+		return fmt.Errorf("fast-forward: %w", err)
+	}
+	if err := m.materializeMerge(ctx, plumbing.NewHash(targetHash), currentHead); err != nil {
+		return fmt.Errorf("fast-forward: %w", err)
+	}
 	// CAS against the value we just read: a concurrent move fails loudly rather
-	// than clobbering the branch tip (#5).
+	// than clobbering the branch tip.
 	if err := advanceBranchRefCAS(m.repo.repo.Storer, refName, plumbing.NewHash(targetHash), cur.Hash()); err != nil {
 		return fmt.Errorf("fast-forward: %w", err)
 	}
 	return nil
 }
 
-// CreateMergeCommit creates a commit on the current HEAD with two parents
+// CreateMergeCommit creates a two-parent merge commit on the current HEAD
 // (HEAD's previous commit + the source commit), built entirely via plumbing —
-// no go-git worktree. The merge commit reuses HEAD's tree, so the merge is
-// metadata-only (useful for --no-ff merges where the materialized working
-// state already reflects the desired result). Returns the merge commit's hash.
-// Refs: FR-8.4, MGIT-14.4
-func (m *MergeStore) CreateMergeCommit(_ context.Context, message, sourceHash string) (string, error) {
+// no go-git worktree. The merge commit's tree REFLECTS THE MERGE: a
+// non-conflicting union of both sides' changes against their merge base (HEAD's
+// version where only HEAD changed a path, the source's version where only the
+// source changed it, the base's otherwise). The caller (MergeService) detects
+// any path changed on both sides via ConflictingPaths before calling this, so
+// the union is well-defined. The merged tree is materialized onto disk so the
+// working tree reflects the merge; the merge refuses to clobber uncommitted
+// tracked changes (ErrRollbackConflict). Returns the merge commit's hash.
+// Refs: FR-8.4, MGIT-14.4, MGIT-15
+func (m *MergeStore) CreateMergeCommit(ctx context.Context, message, sourceHash string) (string, error) {
 	goRepo := m.repo.repo
 
 	headRef, err := goRepo.Head()
@@ -97,14 +117,21 @@ func (m *MergeStore) CreateMergeCommit(_ context.Context, message, sourceHash st
 	}
 	headHash := headRef.Hash()
 
-	// Reuse HEAD's tree for the merge commit.
-	headCommit, err := goRepo.CommitObject(headHash)
+	// Capture the PRE-merge HEAD tree NOW, for the deletion pass during
+	// materialization. Reading it after the ref moves would resolve to the merge
+	// commit's own tree, so files the merge removed would never be deleted.
+	currentHead, err := m.repo.headFiles()
 	if err != nil {
-		return "", fmt.Errorf("merge commit: load HEAD commit: %w", err)
+		return "", fmt.Errorf("merge commit: %w", err)
+	}
+
+	treeHash, err := m.mergedTree(headHash.String(), sourceHash)
+	if err != nil {
+		return "", fmt.Errorf("merge commit: %w", err)
 	}
 
 	commitHash, err := writeCommit(goRepo.Storer, commitParams{
-		tree:    headCommit.TreeHash,
+		tree:    treeHash,
 		parents: []plumbing.Hash{headHash, plumbing.NewHash(sourceHash)},
 		message: message,
 		authorAt: object.Signature{
@@ -117,13 +144,130 @@ func (m *MergeStore) CreateMergeCommit(_ context.Context, message, sourceHash st
 		return "", fmt.Errorf("merge commit: create: %w", err)
 	}
 
+	// Materialize the merged tree onto disk BEFORE moving the ref (so a failure
+	// leaves the branch unmoved), refusing to clobber uncommitted tracked work.
+	if err := m.materializeMerge(ctx, commitHash, currentHead); err != nil {
+		return "", fmt.Errorf("merge commit: %w", err)
+	}
+
 	// Advance the current branch ref to the new merge commit with a CAS against
 	// the HEAD we read, so a concurrent move fails loudly instead of orphaning
-	// the merge commit (#5).
+	// the merge commit.
 	if err := advanceBranchRefCAS(goRepo.Storer, headRef.Name(), commitHash, headHash); err != nil {
 		return "", fmt.Errorf("merge commit: update ref: %w", err)
 	}
 	return commitHash.String(), nil
+}
+
+// materializeMerge writes target's tree onto the working tree (with a deletion
+// pass keyed off preHead) after refusing to clobber uncommitted changes to
+// tracked files — a merge must not silently destroy a dirty working tree, the
+// same guard Checkout applies. Returns ErrRollbackConflict when the tree is
+// dirty. Refs: FR-8.4, MGIT-15
+func (m *MergeStore) materializeMerge(ctx context.Context, target plumbing.Hash, preHead map[string]blobEntry) error {
+	ws := NewWorktreeStore(m.repo)
+	dirty, err := ws.dirtyTrackedPaths(ctx)
+	if err != nil {
+		return fmt.Errorf("check working tree: %w", err)
+	}
+	if len(dirty) > 0 {
+		return fmt.Errorf("%w: merge would overwrite uncommitted changes: %v", model.ErrRollbackConflict, dirty)
+	}
+	return ws.materializeCommit(target, preHead)
+}
+
+// mergedTree builds and stores the tree for a two-parent merge of headHash and
+// sourceHash and returns its hash. The result is the base tree with each side's
+// own net delta layered on: a path changed only by HEAD takes HEAD's entry, a
+// path changed only by the source takes the source's entry, and an unchanged
+// path keeps the base's entry. Modes (executable/symlink) are carried through
+// via blobEntry, never hardcoded. Paths changed on BOTH sides are the caller's
+// responsibility to reject as conflicts beforehand; if any reach here, the
+// source's entry wins (last delta applied), which is safe but not relied upon.
+// Refs: MGIT-15, MGIT-14.7 (#3)
+func (m *MergeStore) mergedTree(headHash, sourceHash string) (plumbing.Hash, error) {
+	baseHash, err := m.MergeBase(context.Background(), headHash, sourceHash)
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("merge base: %w", err)
+	}
+	var baseFiles map[string]blobEntry
+	if baseHash == "" {
+		baseFiles = make(map[string]blobEntry)
+	} else if baseFiles, err = m.commitFiles(baseHash); err != nil {
+		return plumbing.ZeroHash, err
+	}
+
+	headDelta, err := m.netDelta(baseHash, headHash)
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	sourceDelta, err := m.netDelta(baseHash, sourceHash)
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+
+	merged := make(map[string]blobEntry, len(baseFiles))
+	for path, e := range baseFiles {
+		merged[path] = e
+	}
+	applyMergeDelta(merged, headDelta)
+	applyMergeDelta(merged, sourceDelta)
+
+	treeHash, err := writeNestedTree(m.repo.repo.Storer, merged)
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("write merged tree: %w", err)
+	}
+	return treeHash, nil
+}
+
+// netDelta returns one side's net change from base to target as a map of path →
+// *blobEntry: a non-nil entry for a path the side added or modified, and nil for
+// a path the side deleted. A zero baseHash means base is the empty tree (no
+// common ancestor / root). Refs: MGIT-15
+func (m *MergeStore) netDelta(baseHash, targetHash string) (map[string]*blobEntry, error) {
+	var base map[string]blobEntry
+	if baseHash == "" {
+		base = make(map[string]blobEntry)
+	} else {
+		var err error
+		if base, err = m.commitFiles(baseHash); err != nil {
+			return nil, err
+		}
+	}
+	target, err := m.commitFiles(targetHash)
+	if err != nil {
+		return nil, err
+	}
+	delta := make(map[string]*blobEntry)
+	applyTreeDelta(delta, base, target)
+	return delta, nil
+}
+
+// applyMergeDelta applies one side's net delta onto the accumulating merged file
+// set: a non-nil entry sets/replaces the path, a nil entry deletes it.
+// Refs: MGIT-15
+func applyMergeDelta(merged map[string]blobEntry, delta map[string]*blobEntry) {
+	for path, e := range delta {
+		if e == nil {
+			delete(merged, path)
+			continue
+		}
+		merged[path] = *e
+	}
+}
+
+// commitFiles returns the flattened file set (path → blob+mode) of a commit's
+// tree, identified by hex hash. Refs: MGIT-15
+func (m *MergeStore) commitFiles(hash string) (map[string]blobEntry, error) {
+	obj, err := m.commitObject(hash)
+	if err != nil {
+		return nil, err
+	}
+	tree, err := obj.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("read tree for %s: %w", hash, err)
+	}
+	return flattenTree(tree)
 }
 
 // ConflictingPaths returns the list of paths that were modified on both

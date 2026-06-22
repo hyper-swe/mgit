@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -237,4 +239,58 @@ func TestMergeService_Merge_SquashCustomMessage(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "squashed", result.Status)
+}
+
+// TestMergeService_Merge_NoFF_IncorporatesSourceContent verifies end-to-end
+// through the service that a no-ff merge produces a merge commit whose tree
+// contains the source branch's file content, and materializes it onto the
+// working tree on disk. Pins the MGIT-15 fix at the service boundary.
+// Refs: MGIT-15, FR-8.4
+func TestMergeService_Merge_NoFF_IncorporatesSourceContent(t *testing.T) {
+	env, mergeSvc := setupMergeEnv(t)
+	ctx := context.Background()
+
+	// Source branch: add a source-only file and commit it there.
+	_, err := env.branch.CreateBranch(ctx, "MGIT-15.1")
+	require.NoError(t, err)
+	require.NoError(t, env.branch.SwitchBranch(ctx, "task/MGIT-15.1"))
+
+	srcFile := filepath.Join(env.repo.Root(), "src_only.txt")
+	require.NoError(t, os.WriteFile(srcFile, []byte("from source\n"), 0o600))
+	require.NoError(t, env.wt.Add(ctx, "src_only.txt"))
+	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
+		TaskID: "MGIT-15.1", AgentID: "a", Message: "add source file",
+	})
+	require.NoError(t, err)
+
+	// main diverges with its own file so a fast-forward is impossible.
+	require.NoError(t, env.branch.SwitchBranch(ctx, "main"))
+	require.NoError(t, os.Remove(srcFile)) // source-only file is not on main's tree
+	mainFile := filepath.Join(env.repo.Root(), "main_only.txt")
+	require.NoError(t, os.WriteFile(mainFile, []byte("from main\n"), 0o600))
+	require.NoError(t, env.wt.Add(ctx, "main_only.txt"))
+	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
+		TaskID: "MGIT-15.2", AgentID: "a", Message: "add main file",
+	})
+	require.NoError(t, err)
+
+	result, err := mergeSvc.Merge(ctx, MergeRequest{
+		SourceBranch: "task/MGIT-15.1",
+		Strategy:     MergeNoFF,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "merged", result.Status)
+
+	// The merge commit's tree must contain BOTH files.
+	merged, err := env.cs.GetCommit(ctx, result.MergedHash)
+	require.NoError(t, err)
+	assert.NotEmpty(t, merged.TreeHash)
+
+	// The working tree on disk must now reflect the merge.
+	got, err := os.ReadFile(srcFile) //nolint:gosec // test-controlled path under t.TempDir
+	require.NoError(t, err, "no-ff merge must materialize the source-only file onto disk")
+	assert.Equal(t, "from source\n", string(got))
+	gotMain, err := os.ReadFile(mainFile) //nolint:gosec // test-controlled path under t.TempDir
+	require.NoError(t, err)
+	assert.Equal(t, "from main\n", string(gotMain))
 }
