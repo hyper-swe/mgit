@@ -363,6 +363,8 @@ mgit squash --task PROJ-4.2.1
 6. Update the branch status to `squashed`
 7. Update the task-commit mapping with the new squash commit
 
+**FR-7.2a** (task-isolation invariant — append-only) The squash commit created in FR-7.2 step 4 MUST land on the dedicated `task/<ID>` branch, parented off the task's **base** (the parent of the task's first micro-commit), and MUST capture **only that task's net changes** (a sibling task's commits interleaved on the shared branch MUST NOT appear in the squash tree). Squash MUST NOT advance the integration branch (`main`/HEAD) — promotion to `main` happens only via the explicit `--to-main` step (FR-7.2 step 5) — and MUST NOT rewrite or remove the original micro-commits, which remain the audit trail (FR-12 append-only). The squash is the task's clean, exportable deliverable (FR-7.5 `--to-git` / `git am`). Enforced by `internal/service` `TestSquashService_SquashTask_LandsOnTaskBranch_MainUntouched` and `internal/store/git` squash tests. (History: dogfooding found the squash being appended directly on top of an unrelated task's commit on the integration branch while the originals stayed in place — a divergence from FR-7.2 step 4 that shipped because no test pinned the resulting branch shape; MGIT-22.)
+
 **FR-7.3** The squash commit message format:
 ```
 [PROJ-4.2.1] {consolidated_summary}

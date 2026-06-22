@@ -46,9 +46,13 @@ func (s *SquashService) WithAudit(a *AuditService) *SquashService {
 	return s
 }
 
-// SquashTask consolidates all commits for a task into a single squash commit.
-// Original commits remain in history (append-only per FR-12).
-// Refs: FR-7
+// SquashTask consolidates a task's micro-commits into a single squash commit
+// capturing only that task's net changes, placed on a dedicated task/<ID>
+// branch parented off the task's base. It does NOT advance the integration
+// branch and does NOT remove the originals: per the append-only law (FR-12)
+// the micro-commits remain the audit trail and the squash is the task's clean,
+// exportable deliverable (consumable via ExportToGitPatch / `git am`). The
+// squash is indexed and audited like any commit. Refs: FR-7, FR-12, MGIT-22
 func (s *SquashService) SquashTask(ctx context.Context, req SquashRequest) (*model.Commit, error) {
 	// Retrieve all commits for this task
 	records, err := s.indexStore.GetTaskCommits(ctx, req.TaskID)
@@ -114,7 +118,18 @@ func (s *SquashService) SquashTask(ctx context.Context, req SquashRequest) (*mod
 		Branch:     "task/" + req.TaskID,
 	}
 
-	hash, err := s.commitStore.CreateCommit(ctx, squashCommit)
+	// The squash captures only this task's net changes on a dedicated task
+	// branch, parented off the task's base — it never advances the integration
+	// branch and never removes the originals (append-only, FR-12). MGIT-22.
+	taskHashes := make([]string, len(records))
+	for i, rec := range records {
+		taskHashes[i] = rec.CommitHash
+	}
+	hash, err := s.commitStore.CreateSquashCommit(ctx, gitstore.SquashCommitParams{
+		Commit:      squashCommit,
+		TaskCommits: taskHashes,
+		Branch:      squashCommit.Branch,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("squash task %s: create squash commit: %w", req.TaskID, err)
 	}

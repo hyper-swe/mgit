@@ -46,12 +46,22 @@ func squashCmd() *cobra.Command {
 				return fmt.Errorf("squash: %w", err)
 			}
 
-			// --to-main: fast-forward merge the squash commit to main.
+			// --to-main: integrate the task's squash into main (FR-7.2 step 5).
+			// The squash lives on its own task branch parented off the task base,
+			// so this fast-forwards main when possible or creates a merge commit
+			// otherwise — main is genuinely advanced, not just checked out.
 			if toMain && !dryRun {
 				if err := app.Branch.SwitchBranch(ctx, "main"); err != nil {
 					return fmt.Errorf("squash --to-main: switch to main: %w", err)
 				}
-				_, _ = fmt.Fprintf(os.Stdout, "Merged squash commit to main\n")
+				res, err := app.Merge.Merge(ctx, service.MergeRequest{
+					SourceBranch: squashed.Branch,
+					Strategy:     service.MergeAuto,
+				})
+				if err != nil {
+					return fmt.Errorf("squash --to-main: %w", err)
+				}
+				_, _ = fmt.Fprintf(os.Stdout, "Promoted squash to main (%s): %s\n", res.Status, res.MergedHash)
 			}
 
 			if toGit {
@@ -75,6 +85,15 @@ func squashCmd() *cobra.Command {
 				_, _ = fmt.Fprintf(os.Stdout, "[dry-run] Would create squash commit:\n%s\n", squashed.Message)
 			} else {
 				_, _ = fmt.Fprintf(os.Stdout, "[%s] %s\n", squashed.ShortID(), squashed.Message)
+				// Make the resulting branch state unambiguous (MGIT-22): the squash
+				// lands on its own task branch; main is untouched and the originals
+				// are retained until the user promotes (--to-main) or exports
+				// (--to-git). Suppressed when --to-main already promoted it.
+				if !toMain {
+					_, _ = fmt.Fprintf(os.Stdout,
+						"squashed onto %s (main unchanged; --to-main to promote, --to-git to export)\n",
+						squashed.Branch)
+				}
 			}
 			return nil
 		},
