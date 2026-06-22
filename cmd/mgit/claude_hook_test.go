@@ -158,7 +158,7 @@ func TestInjectAgentAdapters_WritesClaudeSettings(t *testing.T) {
 	var warn bytes.Buffer
 	injectAgentAdapters(&warn, wt)
 
-	b, err := os.ReadFile(filepath.Join(wt, ".claude", "settings.json"))
+	b, err := os.ReadFile(filepath.Join(wt, ".claude", "settings.json")) //nolint:gosec // test-owned temp path
 	require.NoError(t, err)
 	assert.Contains(t, string(b), claudeHookCommand)
 	assert.Empty(t, warn.String(), "no warning on success")

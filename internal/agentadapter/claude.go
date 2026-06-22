@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // Permission decisions a PreToolUse hook may return. "ask" defers to the
@@ -83,13 +82,7 @@ func Decide(in HookInput, sandboxAvailable, denied bool) HookOutput {
 // inside single quotes with embedded single quotes escaped, so arbitrary
 // shell text survives intact. Refs: MGIT-11.11.1
 func RewriteCommand(command string) string {
-	return "mgit run -- bash -lc " + singleQuote(command)
-}
-
-// singleQuote wraps s in single quotes for POSIX shells, escaping any
-// embedded single quote as the standard '\” sequence.
-func singleQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	return "mgit run -- bash -lc " + shellQuote(command)
 }
 
 // WriteClaudeSettings writes (or merges into) the worktree's

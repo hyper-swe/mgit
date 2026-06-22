@@ -2,7 +2,6 @@ package agentadapter
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -30,30 +29,7 @@ type SandboxEnv struct {
 // content. CLAUDE.md is created if absent. Refs: MGIT-11.11.2
 func UpsertClaudeMd(worktreePath string, env SandboxEnv) error {
 	path := filepath.Join(worktreePath, "CLAUDE.md")
-	existing, err := os.ReadFile(path) //nolint:gosec // worktree-owned doc path
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read CLAUDE.md: %w", err)
-	}
-	updated := upsertSection(string(existing), RenderClaudeMdSection(env))
-	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil { //nolint:gosec // worktree-owned doc path
-		return fmt.Errorf("write CLAUDE.md: %w", err)
-	}
-	return nil
-}
-
-// upsertSection replaces the marked block in body with section, or appends
-// it (separated by a blank line) when no marked block is present.
-func upsertSection(body, section string) string {
-	start := strings.Index(body, claudeMdBeginMarker)
-	end := strings.Index(body, claudeMdEndMarker)
-	if start >= 0 && end > start {
-		end += len(claudeMdEndMarker)
-		return body[:start] + section + body[end:]
-	}
-	if body == "" {
-		return section + "\n"
-	}
-	return strings.TrimRight(body, "\n") + "\n\n" + section + "\n"
+	return upsertMarkedFile(path, claudeMdBeginMarker, claudeMdEndMarker, RenderClaudeMdSection(env))
 }
 
 // RenderClaudeMdSection renders the marked CLAUDE.md knowledge section

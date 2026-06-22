@@ -22,7 +22,7 @@ func TestWriteSandboxEnvDoc_WritesPosture(t *testing.T) {
 		WorktreePath: wt, NetworkMode: model.NetworkModeAllowlist, NetworkAllowlist: []string{"github.com"},
 	})
 
-	b, err := os.ReadFile(filepath.Join(wt, "CLAUDE.md"))
+	b, err := os.ReadFile(filepath.Join(wt, "CLAUDE.md")) //nolint:gosec // test-owned temp path
 	require.NoError(t, err)
 	assert.Contains(t, string(b), "microVM")
 	assert.Contains(t, string(b), "github.com")
