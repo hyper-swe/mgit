@@ -20,6 +20,32 @@ import (
 // these helpers so the plumbing logic lives in one place.
 // Refs: MGIT-14, ADR-001 (amendment 2026-06-22)
 
+// blobEntry pairs a stored blob's hash with the git file mode that should be
+// recorded for it in a tree (and restored on checkout). Carrying the mode
+// alongside the hash through the staging→tree→disk pipeline preserves git's
+// regular/executable/symlink distinction, so mgit's tree hash equals git's
+// for a mode-varied tree (the reproducible-provenance guarantee).
+// Refs: MGIT-14.7
+type blobEntry struct {
+	hash plumbing.Hash
+	mode filemode.FileMode
+}
+
+// advanceBranchRefCAS atomically advances branch from oldHash to newHash via
+// go-git's CheckAndSetReference: the update is applied only if the stored value
+// still matches oldHash. A concurrent move (the stored value already advanced)
+// fails loudly instead of silently orphaning the losing commit. This is the
+// single place branch tips are advanced after a new commit/merge.
+// Refs: MGIT-14.7 (#5)
+func advanceBranchRefCAS(st storer.ReferenceStorer, branch plumbing.ReferenceName, newHash, oldHash plumbing.Hash) error {
+	newRef := plumbing.NewHashReference(branch, newHash)
+	oldRef := plumbing.NewHashReference(branch, oldHash)
+	if err := st.CheckAndSetReference(newRef, oldRef); err != nil {
+		return fmt.Errorf("advance ref %s: %w", branch.Short(), err)
+	}
+	return nil
+}
+
 // writeBlob stores raw file content as a git blob object and returns its
 // SHA-1 hash. It is idempotent: the object store is content-addressed.
 func writeBlob(st storer.EncodedObjectStorer, content []byte) (plumbing.Hash, error) {
@@ -64,32 +90,34 @@ func writeFlatTree(st storer.EncodedObjectStorer, entries []object.TreeEntry) (p
 }
 
 // writeNestedTree builds a full hierarchical tree from a flat map of
-// slash-separated project-relative paths → blob hashes, recursively creating
-// and storing one tree object per directory level. Returns the root tree hash.
-// A git tree cannot hold a slash in an entry name, so paths like
-// "sub/dir/nested.txt" must become nested `sub` → `dir` → `nested.txt` trees;
-// this function is the single place that materializes that hierarchy.
-func writeNestedTree(st storer.EncodedObjectStorer, files map[string]plumbing.Hash) (plumbing.Hash, error) {
-	// fileChildren: immediate file entries at this level (name → blob hash).
-	fileChildren := make(map[string]plumbing.Hash)
+// slash-separated project-relative paths → blobEntry (hash + git mode),
+// recursively creating and storing one tree object per directory level.
+// Returns the root tree hash. A git tree cannot hold a slash in an entry name,
+// so paths like "sub/dir/nested.txt" must become nested `sub` → `dir` →
+// `nested.txt` trees; this is the single place that materializes that
+// hierarchy. Each leaf carries its own mode (100644/100755/120000) so the tree
+// hash is git-faithful for mode-varied trees. Refs: MGIT-14.7 (#2, #3)
+func writeNestedTree(st storer.EncodedObjectStorer, files map[string]blobEntry) (plumbing.Hash, error) {
+	// fileChildren: immediate file entries at this level (name → blob+mode).
+	fileChildren := make(map[string]blobEntry)
 	// dirChildren: subtrees at this level (dir name → its flattened files).
-	dirChildren := make(map[string]map[string]plumbing.Hash)
+	dirChildren := make(map[string]map[string]blobEntry)
 
-	for path, blob := range files {
+	for path, entry := range files {
 		name, rest, nested := strings.Cut(path, "/")
 		if !nested {
-			fileChildren[name] = blob
+			fileChildren[name] = entry
 			continue
 		}
 		if dirChildren[name] == nil {
-			dirChildren[name] = make(map[string]plumbing.Hash)
+			dirChildren[name] = make(map[string]blobEntry)
 		}
-		dirChildren[name][rest] = blob
+		dirChildren[name][rest] = entry
 	}
 
 	entries := make([]object.TreeEntry, 0, len(fileChildren)+len(dirChildren))
-	for name, blob := range fileChildren {
-		entries = append(entries, object.TreeEntry{Name: name, Mode: filemode.Regular, Hash: blob})
+	for name, e := range fileChildren {
+		entries = append(entries, object.TreeEntry{Name: name, Mode: e.mode, Hash: e.hash})
 	}
 	for name, sub := range dirChildren {
 		subHash, err := writeNestedTree(st, sub)
@@ -139,9 +167,11 @@ func emptyTree(st storer.EncodedObjectStorer) (plumbing.Hash, error) {
 }
 
 // flattenTree walks a tree recursively and returns a flat map of full
-// slash-separated paths → blob hashes for every file (blob) it contains.
-func flattenTree(tree *object.Tree) (map[string]plumbing.Hash, error) {
-	out := make(map[string]plumbing.Hash)
+// slash-separated paths → blobEntry (hash + mode) for every file (blob and
+// symlink) it contains. The mode is preserved so checkout can restore the
+// executable bit and recreate symlinks. Refs: MGIT-14.7 (#2, #3)
+func flattenTree(tree *object.Tree) (map[string]blobEntry, error) {
+	out := make(map[string]blobEntry)
 	walker := object.NewTreeWalker(tree, true, nil)
 	defer walker.Close()
 	for {
@@ -152,7 +182,7 @@ func flattenTree(tree *object.Tree) (map[string]plumbing.Hash, error) {
 		if entry.Mode == filemode.Dir {
 			continue
 		}
-		out[name] = entry.Hash
+		out[name] = blobEntry{hash: entry.Hash, mode: entry.Mode}
 	}
 	return out, nil
 }

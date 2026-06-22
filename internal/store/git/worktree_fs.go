@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 )
 
 // This file is the bridge between mgit's bare .mgit/ object store and the
@@ -25,9 +26,11 @@ var excludedRoots = map[string]bool{
 	".git":      true,
 }
 
-// headFiles returns a flat map of every file path → blob hash tracked at HEAD,
-// recursing into subtrees. This is the baseline for status and commit-building.
-func (r *Repository) headFiles() (map[string]plumbing.Hash, error) {
+// headFiles returns a flat map of every file path → blobEntry (hash + mode)
+// tracked at HEAD, recursing into subtrees. This is the baseline for status
+// and commit-building; the mode is carried so commits and checkouts preserve
+// git's regular/executable/symlink distinction. Refs: MGIT-14.7
+func (r *Repository) headFiles() (map[string]blobEntry, error) {
 	headRef, err := r.repo.Head()
 	if err != nil {
 		return nil, fmt.Errorf("resolve HEAD: %w", err)
@@ -43,23 +46,46 @@ func (r *Repository) headFiles() (map[string]plumbing.Hash, error) {
 	return flattenTree(tree)
 }
 
-// readWorkingFile reads a single project file by its project-relative path,
-// rejecting paths that escape the root or reach into excluded directories.
-func (r *Repository) readWorkingFile(rel string) ([]byte, error) {
+// workingFileContent reads a single project file by its project-relative path
+// and returns the bytes that should be stored as its git blob together with the
+// git file mode to record for it. It uses os.Lstat (NOT os.Stat) so a symlink
+// is detected rather than dereferenced: for a symlink the returned content is
+// the LINK TEXT (the target path string) and the mode is 120000 — git-faithful,
+// and it prevents committing an out-of-tree target's content as a regular blob
+// (the exfiltration defect). Regular files return their content with mode
+// 100644, or 100755 when the owner-executable bit is set. Refs: MGIT-14.7 (#2, #3)
+func (r *Repository) workingFileContent(rel string) ([]byte, filemode.FileMode, error) {
 	if err := validateRelPath(rel); err != nil {
-		return nil, err
+		return nil, filemode.Empty, err
 	}
 	abs := filepath.Join(r.root, filepath.FromSlash(rel))
+	info, err := os.Lstat(abs)
+	if err != nil {
+		return nil, filemode.Empty, fmt.Errorf("stat working file %s: %w", rel, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, rerr := os.Readlink(abs)
+		if rerr != nil {
+			return nil, filemode.Empty, fmt.Errorf("read symlink %s: %w", rel, rerr)
+		}
+		return []byte(target), filemode.Symlink, nil
+	}
 	data, err := os.ReadFile(abs) //nolint:gosec // path validated against root and excluded dirs
 	if err != nil {
-		return nil, fmt.Errorf("read working file %s: %w", rel, err)
+		return nil, filemode.Empty, fmt.Errorf("read working file %s: %w", rel, err)
 	}
-	return data, nil
+	mode := filemode.Regular
+	if info.Mode().Perm()&0o100 != 0 {
+		mode = filemode.Executable
+	}
+	return data, mode, nil
 }
 
 // listWorkingFiles walks the project root and returns the sorted set of
 // project-relative file paths, excluding .mgit/ and .git/. Directories are not
-// included; symlinks are followed only as plain files by os.ReadFile callers.
+// included. Symlinks are NOT followed by filepath.WalkDir, so a symlink entry
+// is reported as a non-directory file path and tracked as a symlink (its link
+// text), never traversed into. Refs: MGIT-14.7 (#2)
 func (r *Repository) listWorkingFiles() ([]string, error) {
 	var paths []string
 	err := filepath.WalkDir(r.root, func(abs string, d fs.DirEntry, walkErr error) error {
@@ -93,10 +119,12 @@ func (r *Repository) listWorkingFiles() ([]string, error) {
 	return paths, nil
 }
 
-// blobHashOfWorkingFile reads a working file and returns the git blob hash its
-// content would have, WITHOUT storing it. Used by Status to detect changes.
+// blobHashOfWorkingFile returns the git blob hash a working file's content
+// would have, WITHOUT storing it. Used by Status to detect changes. It hashes
+// the SAME bytes that would be committed (link text for a symlink, raw content
+// otherwise) so a symlink does not perpetually appear modified. Refs: MGIT-14.7
 func (r *Repository) blobHashOfWorkingFile(rel string) (plumbing.Hash, error) {
-	data, err := r.readWorkingFile(rel)
+	data, _, err := r.workingFileContent(rel)
 	if err != nil {
 		return plumbing.ZeroHash, err
 	}
@@ -108,34 +136,62 @@ func (r *Repository) blobHashOfWorkingFile(rel string) (plumbing.Hash, error) {
 	return obj.Hash(), nil
 }
 
-// writeBlobToDisk reads the blob object at blobHash from the .mgit store and
-// writes its content to the working file at the given project-relative path,
-// creating parent directories as needed. Used by checkout materialization.
-func (r *Repository) writeBlobToDisk(rel string, blobHash plumbing.Hash) error {
+// writeEntryToDisk materializes a single tree entry (blob + git mode) onto the
+// working file at the given project-relative path, creating parent directories
+// as needed. A symlink entry (120000) is recreated as an actual symlink whose
+// target is the blob's link text; a regular/executable entry is written as a
+// file with the matching permission bits (so the executable bit survives a
+// round-trip). Any pre-existing file at the path is replaced. Refs: MGIT-14.7 (#2, #3)
+func (r *Repository) writeEntryToDisk(rel string, entry blobEntry) error {
 	if err := validateRelPath(rel); err != nil {
 		return err
 	}
-	blob, err := r.repo.BlobObject(blobHash)
+	data, err := r.blobContent(entry.hash)
 	if err != nil {
-		return fmt.Errorf("load blob %s for %s: %w", blobHash, rel, err)
-	}
-	reader, err := blob.Reader()
-	if err != nil {
-		return fmt.Errorf("read blob %s: %w", blobHash, err)
-	}
-	defer reader.Close() //nolint:errcheck // best-effort close after copy
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return fmt.Errorf("read blob %s: %w", blobHash, err)
+		return fmt.Errorf("materialize %s: %w", rel, err)
 	}
 	abs := filepath.Join(r.root, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(abs), 0o750); err != nil {
 		return fmt.Errorf("mkdir for %s: %w", rel, err)
 	}
-	if err := os.WriteFile(abs, data, 0o600); err != nil {
+	// Remove any existing path first so we can switch a regular file ↔ symlink
+	// cleanly and apply fresh permissions.
+	if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("replace working file %s: %w", rel, err)
+	}
+	if entry.mode == filemode.Symlink {
+		if err := os.Symlink(string(data), abs); err != nil {
+			return fmt.Errorf("write symlink %s: %w", rel, err)
+		}
+		return nil
+	}
+	perm := os.FileMode(0o600)
+	if entry.mode == filemode.Executable {
+		perm = 0o700
+	}
+	if err := os.WriteFile(abs, data, perm); err != nil {
 		return fmt.Errorf("write working file %s: %w", rel, err)
 	}
 	return nil
+}
+
+// blobContent loads and returns the raw content of the blob at blobHash from
+// the .mgit object store. Callers add path context to any returned error.
+func (r *Repository) blobContent(blobHash plumbing.Hash) ([]byte, error) {
+	blob, err := r.repo.BlobObject(blobHash)
+	if err != nil {
+		return nil, fmt.Errorf("load blob %s: %w", blobHash, err)
+	}
+	reader, err := blob.Reader()
+	if err != nil {
+		return nil, fmt.Errorf("read blob %s: %w", blobHash, err)
+	}
+	defer reader.Close() //nolint:errcheck // best-effort close after copy
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("read blob %s: %w", blobHash, err)
+	}
+	return data, nil
 }
 
 // validateRelPath rejects empty, absolute, parent-escaping, or excluded paths.

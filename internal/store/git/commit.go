@@ -74,9 +74,10 @@ func (cs *CommitStore) CreateCommit(_ context.Context, c *model.Commit) (string,
 	// Compute SHA-256 content hash (mgit integrity per ADR-002).
 	c.ContentHash = c.ComputeContentHash()
 
-	// Advance the current branch ref to the new commit.
-	ref := plumbing.NewHashReference(headRef.Name(), commitHash)
-	if err := goRepo.Storer.SetReference(ref); err != nil {
+	// Advance the current branch ref to the new commit with a compare-and-set
+	// against the parent we read: a concurrent commit that already moved the ref
+	// makes this fail loudly rather than orphaning the earlier commit (#5).
+	if err := advanceBranchRefCAS(goRepo.Storer, headRef.Name(), commitHash, parentHash); err != nil {
 		return "", fmt.Errorf("update ref: %w", err)
 	}
 
@@ -108,7 +109,7 @@ func (cs *CommitStore) buildTreeFromStaging() (plumbing.Hash, error) {
 	}
 
 	for _, rel := range staged {
-		content, err := cs.repo.readWorkingFile(rel)
+		content, mode, err := cs.repo.workingFileContent(rel)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				delete(files, rel)
@@ -120,7 +121,7 @@ func (cs *CommitStore) buildTreeFromStaging() (plumbing.Hash, error) {
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
-		files[rel] = blobHash
+		files[rel] = blobEntry{hash: blobHash, mode: mode}
 	}
 
 	return writeNestedTree(cs.repo.repo.Storer, files)

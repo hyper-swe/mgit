@@ -70,11 +70,13 @@ func (m *MergeStore) IsAncestor(_ context.Context, ancestor, descendant string) 
 // Refs: FR-8.4
 func (m *MergeStore) FastForward(_ context.Context, branchName, targetHash string) error {
 	refName := plumbing.NewBranchReferenceName(branchName)
-	if _, err := m.repo.repo.Storer.Reference(refName); err != nil {
+	cur, err := m.repo.repo.Storer.Reference(refName)
+	if err != nil {
 		return fmt.Errorf("%w: %s", model.ErrBranchNotFound, branchName)
 	}
-	newRef := plumbing.NewHashReference(refName, plumbing.NewHash(targetHash))
-	if err := m.repo.repo.Storer.SetReference(newRef); err != nil {
+	// CAS against the value we just read: a concurrent move fails loudly rather
+	// than clobbering the branch tip (#5).
+	if err := advanceBranchRefCAS(m.repo.repo.Storer, refName, plumbing.NewHash(targetHash), cur.Hash()); err != nil {
 		return fmt.Errorf("fast-forward: %w", err)
 	}
 	return nil
@@ -115,9 +117,10 @@ func (m *MergeStore) CreateMergeCommit(_ context.Context, message, sourceHash st
 		return "", fmt.Errorf("merge commit: create: %w", err)
 	}
 
-	// Update the current branch ref to point at the new merge commit.
-	newRef := plumbing.NewHashReference(headRef.Name(), commitHash)
-	if err := goRepo.Storer.SetReference(newRef); err != nil {
+	// Advance the current branch ref to the new merge commit with a CAS against
+	// the HEAD we read, so a concurrent move fails loudly instead of orphaning
+	// the merge commit (#5).
+	if err := advanceBranchRefCAS(goRepo.Storer, headRef.Name(), commitHash, headHash); err != nil {
 		return "", fmt.Errorf("merge commit: update ref: %w", err)
 	}
 	return commitHash.String(), nil

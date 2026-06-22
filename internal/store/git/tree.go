@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -33,8 +34,9 @@ func NewTreeStore(repo *Repository) *TreeStore {
 // BuildTree creates a tree object by applying the given file diffs to the
 // current HEAD tree, built entirely via plumbing (nested subtrees are created
 // for slash-separated paths). Added/modified diffs set the path's blob to
-// NewHash; deleted diffs remove the path. Returns the new tree's SHA-1 hash.
-// Refs: FR-11, MGIT-14.3
+// NewHash with a regular file mode (FileDiff carries no mode); deleted diffs
+// remove the path. Existing HEAD entries retain their recorded mode. Returns
+// the new tree's SHA-1 hash. Refs: FR-11, MGIT-14.3, MGIT-14.7
 func (ts *TreeStore) BuildTree(_ context.Context, diffs []model.FileDiff) (string, error) {
 	files, err := ts.repo.headFiles()
 	if err != nil {
@@ -47,7 +49,7 @@ func (ts *TreeStore) BuildTree(_ context.Context, diffs []model.FileDiff) (strin
 			delete(files, path)
 			continue
 		}
-		files[path] = plumbing.NewHash(d.NewHash)
+		files[path] = blobEntry{hash: plumbing.NewHash(d.NewHash), mode: filemode.Regular}
 	}
 
 	hash, err := writeNestedTree(ts.repo.repo.Storer, files)

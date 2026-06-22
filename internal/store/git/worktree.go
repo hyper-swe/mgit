@@ -71,6 +71,31 @@ func (ws *WorktreeStore) IsClean(ctx context.Context) (bool, []string, error) {
 	return len(dirty) == 0, dirty, nil
 }
 
+// dirtyTrackedPaths returns user-visible paths whose tracked content carries
+// uncommitted changes that a checkout would CLOBBER: a worktree modification of
+// a tracked file, or any staged change. Untracked files are excluded (checkout
+// neither removes nor overwrites them); a pure worktree deletion is also
+// excluded, because restoring a tracked file the user deleted loses no
+// uncommitted content — matching git, which silently restores it on switch.
+// This is the overwrite-protection signal for the store-level checkout guard.
+// Refs: MGIT-14.7 (#4)
+func (ws *WorktreeStore) dirtyTrackedPaths(ctx context.Context) ([]string, error) {
+	files, err := ws.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var dirty []string
+	for _, f := range files {
+		// Status never emits a .mgit/ path (listWorkingFiles excludes it and the
+		// HEAD tree never contains it), so no .mgit filtering is needed here.
+		staged := f.Staging != statusUnmodified
+		if staged || f.Worktree == statusModified {
+			dirty = append(dirty, f.Path)
+		}
+	}
+	return dirty, nil
+}
+
 // Status returns the status of all user-visible files by comparing the working
 // tree on disk against the HEAD tree and the mgit-owned staging set. It is
 // computed purely via plumbing + filesystem reads (no go-git index/worktree).
@@ -122,13 +147,13 @@ func (ws *WorktreeStore) Status(_ context.Context) ([]FileStatus, error) {
 
 // classifyWorkingPath returns the status of a single on-disk path, or nil when
 // the path is unmodified relative to HEAD and not staged.
-func (ws *WorktreeStore) classifyWorkingPath(path string, head map[string]plumbing.Hash, stagedSet map[string]bool) (*FileStatus, error) {
-	headHash, inHead := head[path]
+func (ws *WorktreeStore) classifyWorkingPath(path string, head map[string]blobEntry, stagedSet map[string]bool) (*FileStatus, error) {
+	headEntry, inHead := head[path]
 	wtHash, err := ws.repo.blobHashOfWorkingFile(path)
 	if err != nil {
 		return nil, err
 	}
-	changed := !inHead || headHash != wtHash
+	changed := !inHead || headEntry.hash != wtHash
 
 	switch {
 	case stagedSet[path]:
@@ -214,16 +239,35 @@ func (ws *WorktreeStore) addAll(ctx context.Context) error {
 // tree onto disk via plumbing: every blob in the branch tree is written to the
 // project root, and tracked files no longer present in the target tree are
 // removed. It never uses a go-git worktree. Returns ErrBranchNotFound if the
-// branch does not exist.
-// Refs: FR-5, FR-8, MGIT-14.4
-func (ws *WorktreeStore) Checkout(_ context.Context, branchName string) error {
+// branch does not exist, or ErrRollbackConflict if the worktree has
+// uncommitted user changes (a store-level clean-or-fail guard, defense in depth
+// over the service layer's IsClean check — #4). Refs: FR-5, FR-8, MGIT-14.4, MGIT-14.7
+func (ws *WorktreeStore) Checkout(ctx context.Context, branchName string) error {
 	refName := plumbing.NewBranchReferenceName(branchName)
 	ref, err := ws.repo.repo.Storer.Reference(refName)
 	if err != nil {
 		return fmt.Errorf("%w: %s", model.ErrBranchNotFound, branchName)
 	}
 
-	if err := ws.materializeCommit(ref.Hash()); err != nil {
+	// Defense in depth: refuse to clobber uncommitted changes to TRACKED content
+	// even when called directly (the service layer also guards with IsClean).
+	// Untracked files are not at risk — materialize never removes them and only
+	// overwrites tracked paths — so they do not block, matching git's checkout.
+	dirty, err := ws.dirtyTrackedPaths(ctx)
+	if err != nil {
+		return fmt.Errorf("checkout %s: %w", branchName, err)
+	}
+	if len(dirty) > 0 {
+		return fmt.Errorf("%w: checkout would overwrite uncommitted changes: %v", model.ErrRollbackConflict, dirty)
+	}
+
+	// Flatten the current HEAD tree once here; materializeCommit reuses it for
+	// its deletion pass rather than re-reading and re-flattening HEAD.
+	currentHead, err := ws.repo.headFiles()
+	if err != nil {
+		return fmt.Errorf("checkout %s: %w", branchName, err)
+	}
+	if err := ws.materializeCommit(ref.Hash(), currentHead); err != nil {
 		return fmt.Errorf("checkout %s: %w", branchName, err)
 	}
 
@@ -239,14 +283,13 @@ func (ws *WorktreeStore) Checkout(_ context.Context, branchName string) error {
 }
 
 // materializeCommit writes the tree of the given commit onto the project root
-// and removes tracked files that are absent from the target tree. Untracked
-// files (never committed) are left in place. Refs: MGIT-14.4
-func (ws *WorktreeStore) materializeCommit(commitHash plumbing.Hash) error {
-	currentHead, err := ws.repo.headFiles()
-	if err != nil {
-		return err
-	}
-
+// (preserving each entry's git mode — executable bit and symlinks) and removes
+// tracked files that are absent from the target tree. Untracked files (never
+// committed) are left in place. ALL target paths are validated up front, before
+// any file is written, so a single crafted/escaping path cannot leave a partial
+// checkout on disk (#7). currentHead is the caller's already-flattened HEAD
+// tree, used for the deletion pass. Refs: MGIT-14.4, MGIT-14.7
+func (ws *WorktreeStore) materializeCommit(commitHash plumbing.Hash, currentHead map[string]blobEntry) error {
 	commit, err := ws.repo.repo.CommitObject(commitHash)
 	if err != nil {
 		return fmt.Errorf("load commit %s: %w", commitHash, err)
@@ -260,8 +303,16 @@ func (ws *WorktreeStore) materializeCommit(commitHash plumbing.Hash) error {
 		return fmt.Errorf("flatten target tree: %w", err)
 	}
 
-	for path, blob := range target {
-		if err := ws.repo.writeBlobToDisk(path, blob); err != nil {
+	// Validate every target path BEFORE mutating disk: an invalid (escaping or
+	// excluded) path aborts the whole checkout with nothing written.
+	for path := range target {
+		if err := validateRelPath(path); err != nil {
+			return fmt.Errorf("invalid target path %s: %w", path, err)
+		}
+	}
+
+	for path, entry := range target {
+		if err := ws.repo.writeEntryToDisk(path, entry); err != nil {
 			return err
 		}
 	}
