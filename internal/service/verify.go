@@ -86,8 +86,13 @@ func (s *VerifyService) VerifyIndexIntegrity(ctx context.Context) ([]string, err
 		return nil, fmt.Errorf("verify index: list git commits: %w", err)
 	}
 
-	// Check each git commit has an index entry
+	// Check each git commit has an index entry. The parentless genesis
+	// commit is created by mgit itself (FR-1.2) and is not task-tagged, so
+	// it legitimately has no index entry and must not be flagged.
 	for _, gc := range gitCommits {
+		if gc.ParentID == "" {
+			continue
+		}
 		_, err := s.indexStore.GetCommitTask(ctx, gc.CommitID)
 		if err != nil {
 			issues = append(issues,

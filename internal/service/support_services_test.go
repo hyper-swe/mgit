@@ -130,15 +130,34 @@ func TestVerifyService_VerifyTaskCommits(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestVerifyService_VerifyIndexIntegrity(t *testing.T) {
+func TestVerifyService_VerifyIndexIntegrity_CleanRepo_NoIssues(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
 	verifySvc := NewVerifyService(env.cs, env.idx)
 	issues, err := verifySvc.VerifyIndexIntegrity(ctx)
 	require.NoError(t, err)
-	// Initial commit won't be in index, so there should be issues
-	assert.NotNil(t, issues)
+	// A freshly initialized repo contains only the genesis (parentless)
+	// commit, which mgit creates itself and which legitimately has no
+	// index entry. It must NOT be flagged as a verification issue.
+	assert.Empty(t, issues, "genesis commit must not be flagged")
+}
+
+func TestVerifyService_VerifyIndexIntegrity_IndexedCommits_NoIssues(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
+		TaskID: "MGIT-4.1", AgentID: "agent-01", Message: "commit",
+	})
+	require.NoError(t, err)
+
+	verifySvc := NewVerifyService(env.cs, env.idx)
+	issues, err := verifySvc.VerifyIndexIntegrity(ctx)
+	require.NoError(t, err)
+	// Genesis commit is skipped and the real commit is indexed, so a
+	// well-formed repo reports zero issues.
+	assert.Empty(t, issues, "indexed commits over genesis report no issues")
 }
 
 func TestVerifyService_VerifyIndexIntegrity_DetectsMissing(t *testing.T) {

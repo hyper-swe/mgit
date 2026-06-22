@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 
 	"github.com/spf13/cobra"
 )
@@ -17,7 +17,11 @@ func verifyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "verify",
 		Short: "Verify commit chain and index integrity",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		// Issues are reported as a clean summary; the non-zero exit is
+		// carried by an exitError, so cobra must not also print "Error:".
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			app, err := openAppFromCwd()
 			if err != nil {
 				return err
@@ -25,12 +29,13 @@ func verifyCmd() *cobra.Command {
 			defer app.Close()
 
 			ctx := context.Background()
+			out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
 
 			if taskID != "" {
 				if err := app.Verify.VerifyTaskCommits(ctx, taskID); err != nil {
 					return fmt.Errorf("verify task: %w", err)
 				}
-				_, _ = fmt.Fprintf(os.Stdout, "Task %s: all commits verified\n", taskID)
+				_, _ = fmt.Fprintf(out, "Task %s: all commits verified\n", taskID)
 				return nil
 			}
 
@@ -41,7 +46,7 @@ func verifyCmd() *cobra.Command {
 
 			// --fix: attempt auto-repair on verification failures.
 			if fix && len(issues) > 0 {
-				_, _ = fmt.Fprintf(os.Stdout, "Attempting auto-repair for %d issues...\n", len(issues))
+				_, _ = fmt.Fprintf(out, "Attempting auto-repair for %d issues...\n", len(issues))
 				// Re-run verification after repair attempt to report final state.
 				repaired, err := app.Verify.VerifyIndexIntegrity(ctx)
 				if err != nil {
@@ -49,27 +54,12 @@ func verifyCmd() *cobra.Command {
 				}
 				fixed := len(issues) - len(repaired)
 				if fixed > 0 {
-					_, _ = fmt.Fprintf(os.Stdout, "Repaired %d issues\n", fixed)
+					_, _ = fmt.Fprintf(out, "Repaired %d issues\n", fixed)
 				}
 				issues = repaired
 			}
 
-			if formatJSON {
-				return json.NewEncoder(os.Stdout).Encode(map[string]any{
-					"issues": issues,
-					"ok":     len(issues) == 0,
-				})
-			}
-
-			if len(issues) == 0 {
-				_, _ = fmt.Fprintln(os.Stdout, "All checks passed")
-			} else {
-				for _, issue := range issues {
-					_, _ = fmt.Fprintf(os.Stderr, "WARNING: %s\n", issue)
-				}
-				_, _ = fmt.Fprintf(os.Stdout, "%d issues found\n", len(issues))
-			}
-			return nil
+			return reportVerifyResult(out, errOut, issues, formatJSON)
 		},
 	}
 
@@ -77,4 +67,32 @@ func verifyCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&formatJSON, "json", false, "Output as JSON")
 	cmd.Flags().BoolVar(&fix, "fix", false, "Attempt auto-repair on verification failures")
 	return cmd
+}
+
+// reportVerifyResult renders the verification outcome and returns a non-zero
+// exitError when any issue remains, so CI and scripts can detect failures.
+// A clean verify prints the success summary and returns nil (exit 0).
+// Refs: FR-8.12, MGIT-21
+func reportVerifyResult(out, errOut io.Writer, issues []string, formatJSON bool) error {
+	switch {
+	case formatJSON:
+		if err := json.NewEncoder(out).Encode(map[string]any{
+			"issues": issues,
+			"ok":     len(issues) == 0,
+		}); err != nil {
+			return fmt.Errorf("verify json: %w", err)
+		}
+	case len(issues) == 0:
+		_, _ = fmt.Fprintln(out, "All checks passed")
+	default:
+		for _, issue := range issues {
+			_, _ = fmt.Fprintf(errOut, "WARNING: %s\n", issue)
+		}
+		_, _ = fmt.Fprintf(out, "%d issues found\n", len(issues))
+	}
+
+	if len(issues) > 0 {
+		return &exitError{code: 1}
+	}
+	return nil
 }
