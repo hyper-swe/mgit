@@ -45,6 +45,7 @@ func worktreeCmd() *cobra.Command {
 				return fmt.Errorf("worktree add: %w", err)
 			}
 			_, _ = fmt.Fprintf(os.Stdout, "Created worktree %s -> task %s (branch %s)\n", wt.Path, wt.TaskID, wt.Branch)
+			injectAgentAdapters(os.Stderr, wt.Path)
 			return nil
 		},
 	}

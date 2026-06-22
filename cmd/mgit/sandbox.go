@@ -58,7 +58,8 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 		sandboxListCmd(connect),
 		sandboxStatusCmd(connect),
 		sandboxRemoveCmd(connect),
-		sandboxImageCmd(), // host-local image registry (no daemon)
+		sandboxImageCmd(),             // host-local image registry (no daemon)
+		sandboxClaudeHookCmd(connect), // hidden: Claude Code PreToolUse hook (MGIT-11.11.1)
 	)
 	return cmd
 }
