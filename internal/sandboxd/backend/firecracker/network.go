@@ -77,6 +77,16 @@ func subnetFor(sandboxID string) (gateway, guest netip.Addr, guestNet net.IPNet)
 	return gateway, guest, guestNet
 }
 
+// GatewayFor reports the host tap gateway IP for a sandbox — the address
+// the egress proxy and DNS server bind, and the guest's default gateway. It
+// is derived deterministically from the sandbox ID (the same /30 the backend
+// configures), so the daemon's egress controller can resolve it without the
+// backend reporting it. Refs: FR-17.7, FR-17.8
+func GatewayFor(sandboxID string) netip.Addr {
+	gateway, _, _ := subnetFor(sandboxID)
+	return gateway
+}
+
 // guestMAC derives a stable, locally-administered (02:..) unicast MAC for a
 // sandbox's guest NIC. Refs: FR-17.7
 func guestMAC(sandboxID string) string {

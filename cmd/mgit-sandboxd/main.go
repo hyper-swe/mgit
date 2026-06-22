@@ -134,6 +134,11 @@ func run(args []string, logSink io.Writer) int {
 		defer func() { _ = closeAudit() }()
 		dcfg.Service = svc
 
+		// Wire host egress enforcement (allowlist proxy + restricted DNS) so
+		// the service starts/stops it across each allowlist sandbox's
+		// lifecycle. No-op off Linux and for none/open sandboxes. Refs: FR-17.8
+		wireEgress(svc, events, clock, logger)
+
 		// Wire the land path when the host repo is reachable. A failure here is
 		// non-fatal: the daemon still serves launch/exec/list/remove/status,
 		// but `mgit sandbox land` reports "not served" until land is wired.

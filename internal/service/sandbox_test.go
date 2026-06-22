@@ -47,6 +47,7 @@ func (m *fakeSandboxManager) Launch(_ context.Context, opts model.SandboxLaunchO
 	return &model.SandboxInfo{
 		ID: opts.SandboxID, TaskID: opts.TaskID, WorktreePath: opts.WorktreePath,
 		Backend: model.BackendKVM, State: model.StateRunning, MemoryMB: opts.MemoryMB,
+		NetworkMode: opts.Network.Mode, NetworkAllowlist: opts.Network.Allowlist,
 	}, nil
 }
 func (m *fakeSandboxManager) List(context.Context) ([]model.SandboxInfo, error) {
@@ -190,6 +191,64 @@ func TestNetNonOpen_NoRiskNote(t *testing.T) {
 			assert.Empty(t, ev.events[0].Detail, "%s is host-confined; no risk note", mode)
 		})
 	}
+}
+
+// fakeEgress records StartEgress/StopEgress calls.
+type fakeEgress struct {
+	started  []model.SandboxInfo
+	stopped  []string
+	startErr error
+}
+
+func (e *fakeEgress) StartEgress(_ context.Context, info model.SandboxInfo) error {
+	if e.startErr != nil {
+		return e.startErr
+	}
+	e.started = append(e.started, info)
+	return nil
+}
+func (e *fakeEgress) StopEgress(sandboxID string) { e.stopped = append(e.stopped, sandboxID) }
+
+// TestEgress_StartedOnBoot_StoppedOnRemove verifies the service drives the
+// egress controller across the sandbox lifecycle, handing it the launched
+// info (carrying the network mode + allowlist). Refs: FR-17.8, MGIT-11.7
+func TestEgress_StartedOnBoot_StoppedOnRemove(t *testing.T) {
+	mgr := &fakeSandboxManager{}
+	eg := &fakeEgress{}
+	svc := newSvc(t, mgr, &fakeEventAppender{})
+	svc.SetEgressController(eg)
+
+	opts := regOpts("MGIT-11.7", "/work/a")
+	opts.Network = model.NetworkPolicy{Mode: model.NetworkModeAllowlist, Allowlist: []string{"registry.npmjs.org"}}
+	reg, err := svc.Register(context.Background(), opts)
+	require.NoError(t, err)
+	assert.Empty(t, eg.started, "egress is not started until the VM boots")
+
+	_, err = svc.EnsureRunning(context.Background(), "MGIT-11.7")
+	require.NoError(t, err)
+	require.Len(t, eg.started, 1, "egress starts on boot")
+	assert.Equal(t, reg.ID, eg.started[0].ID)
+	assert.Equal(t, model.NetworkModeAllowlist, eg.started[0].NetworkMode)
+
+	require.NoError(t, svc.Remove(context.Background(), "MGIT-11.7", false))
+	assert.Equal(t, []string{reg.ID}, eg.stopped, "egress stops on remove")
+}
+
+// TestEgress_StartFailure_RollsBackBoot verifies a failed egress start fails
+// closed: the VM is rolled back and no resumed event is recorded. Refs: SEC-04
+func TestEgress_StartFailure_RollsBackBoot(t *testing.T) {
+	mgr := &fakeSandboxManager{}
+	ev := &fakeEventAppender{}
+	eg := &fakeEgress{startErr: errors.New("proxy bind failed")}
+	svc := newSvc(t, mgr, ev)
+	svc.SetEgressController(eg)
+
+	_, err := svc.Register(context.Background(), regOpts("MGIT-11.7", "/work/a"))
+	require.NoError(t, err)
+	_, err = svc.EnsureRunning(context.Background(), "MGIT-11.7")
+	require.Error(t, err, "a failed egress start fails the boot")
+	assert.Equal(t, 1, mgr.removes, "the VM is rolled back")
+	assert.Equal(t, []string{model.EventCreated}, ev.types(), "no resumed event when egress fails")
 }
 
 // TestProvision_DuplicateTask_Rejected verifies one-task/one-worktree

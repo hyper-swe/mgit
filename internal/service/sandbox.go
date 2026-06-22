@@ -24,6 +24,19 @@ type SandboxPolicyReader interface {
 	Load(ctx context.Context) (model.SandboxPolicy, error)
 }
 
+// EgressController starts and stops a sandbox's host-side network
+// enforcement (the allowlist proxy + restricted DNS) around its lifecycle.
+// It is an OPTIONAL collaborator wired at the daemon: StartEgress is a no-op
+// for none/open sandboxes (they run no proxy) and for backends without a
+// host tap. The implementation (over egress.Runner) derives the per-sandbox
+// gateway the proxy/DNS bind from the launched SandboxInfo. The service
+// stays backend-agnostic: it only signals the boot/teardown transitions.
+// Refs: FR-17.7, FR-17.8, SEC-04
+type EgressController interface {
+	StartEgress(ctx context.Context, info model.SandboxInfo) error
+	StopEgress(sandboxID string)
+}
+
 // SandboxService is the lifecycle orchestrator: handlers go through it,
 // never the manager or stores directly (architecture rule). It owns the
 // sandbox ID, provisions lazily (register without booting; boot on first
@@ -36,6 +49,7 @@ type SandboxService struct {
 	policy  SandboxPolicyReader
 	clock   func() time.Time
 	newID   func() (string, error)
+	egress  EgressController // optional; nil disables host egress orchestration
 
 	// byTask holds LIVE sandbox registrations, keyed by task ID. This is
 	// in-memory by design, not a duplicate of the sandbox_events audit
@@ -76,6 +90,15 @@ func NewSandboxService(manager model.SandboxManager, events SandboxEventAppender
 		manager: manager, events: events, policy: policy,
 		clock: clock, newID: newID, byTask: make(map[string]*sandboxReg),
 	}, nil
+}
+
+// SetEgressController wires the optional host egress controller (the
+// allowlist proxy + DNS lifecycle). It is set once at daemon wiring time,
+// before the service handles any request; nil leaves egress orchestration
+// disabled. Kept off the constructor to respect the parameter-count limit
+// and because it is an optional collaborator. Refs: FR-17.8
+func (s *SandboxService) SetEgressController(c EgressController) {
+	s.egress = c
 }
 
 // Register binds a sandbox to a task+worktree and records it WITHOUT
@@ -153,13 +176,29 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 	if err != nil {
 		return nil, fmt.Errorf("sandbox ensure-running: %w", err)
 	}
+	// Start host egress enforcement (the allowlist proxy + DNS) before the
+	// sandbox is considered up, so an allowlist guest never runs without its
+	// host-side controls. A failure rolls the VM back (fail closed); none/
+	// open are no-ops in the controller. Refs: FR-17.7, FR-17.8, SEC-04
+	if s.egress != nil {
+		if egErr := s.egress.StartEgress(ctx, *launched); egErr != nil {
+			return nil, errors.Join(
+				fmt.Errorf("sandbox ensure-running: egress: %w", egErr),
+				s.manager.Stop(ctx, launched.ID, true),
+				s.manager.Remove(ctx, launched.ID, true),
+			)
+		}
+	}
 	if auditErr := s.events.AppendSandboxEvent(ctx, &model.SandboxEvent{
 		SandboxID: launched.ID, TaskID: taskID, EventType: model.EventResumed,
 	}); auditErr != nil {
 		// A booted-but-unaudited VM must never survive (an unaudited
 		// sandbox is an audit-trail gap, FR-17.18). Roll back the VM we
-		// just launched before returning; the registration stays un-booted
-		// and retryable. Rollback errors are joined so none is swallowed.
+		// just launched (and its egress) before returning; the registration
+		// stays un-booted and retryable. Errors are joined so none is swallowed.
+		if s.egress != nil {
+			s.egress.StopEgress(launched.ID)
+		}
 		return nil, errors.Join(
 			fmt.Errorf("sandbox ensure-running: audit: %w", auditErr),
 			s.manager.Stop(ctx, launched.ID, true),
@@ -239,6 +278,11 @@ func (s *SandboxService) Remove(ctx context.Context, taskID string, force bool) 
 		return fmt.Errorf("%w: task %q", model.ErrSandboxNotFound, taskID)
 	}
 	if reg.booted {
+		// Stop host egress first so its proxy/DNS listeners are released
+		// before the VM and its tap go away (best-effort; teardown proceeds).
+		if s.egress != nil {
+			s.egress.StopEgress(reg.info.ID)
+		}
 		if err := s.manager.Stop(ctx, reg.info.ID, force); err != nil {
 			return fmt.Errorf("sandbox remove: stop: %w", err)
 		}
