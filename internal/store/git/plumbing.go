@@ -69,13 +69,31 @@ func writeBlob(st storer.EncodedObjectStorer, content []byte) (plumbing.Hash, er
 	return h, nil
 }
 
+// treeEntryLess orders entries in git's canonical tree order: names compared
+// byte-wise, but a directory (tree) entry compares as if its name had a
+// trailing "/". This differs from a plain name sort whenever a directory name
+// is a prefix-relative sibling of a file (e.g. dir "land" vs file "land.go":
+// git puts "land.go" before "land/"). go-git's tree encoder rejects entries
+// not in this exact order ("entries in tree are not sorted"). Refs: MGIT-14
+func treeEntryLess(a, b object.TreeEntry) bool {
+	an, bn := a.Name, b.Name
+	if a.Mode == filemode.Dir {
+		an += "/"
+	}
+	if b.Mode == filemode.Dir {
+		bn += "/"
+	}
+	return an < bn
+}
+
 // writeFlatTree encodes a single tree level (its direct entries) as a tree
-// object and stores it. Entries are sorted by name as go-git requires. Callers
-// that have hierarchical paths must use writeNestedTree instead.
+// object and stores it. Entries are sorted in git's canonical tree order (see
+// treeEntryLess) as go-git's encoder requires. Callers with hierarchical paths
+// must use writeNestedTree instead.
 func writeFlatTree(st storer.EncodedObjectStorer, entries []object.TreeEntry) (plumbing.Hash, error) {
 	sorted := make([]object.TreeEntry, len(entries))
 	copy(sorted, entries)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	sort.Slice(sorted, func(i, j int) bool { return treeEntryLess(sorted[i], sorted[j]) })
 
 	tree := &object.Tree{Entries: sorted}
 	obj := st.NewEncodedObject()
