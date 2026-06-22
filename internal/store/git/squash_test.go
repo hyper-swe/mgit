@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -143,6 +144,49 @@ func TestCreateSquashCommit_TaskDeletesBaseFile_OmittedFromSquash(t *testing.T) 
 	_, err = cs.GetFileFromCommit(ctx, hash, "keep.go")
 	assert.ErrorIs(t, err, model.ErrFileNotFound,
 		"a base file the task deleted must be omitted from the squash tree")
+}
+
+// TestCreateSquashCommit_TaskChangesMode_PreservedInSquash covers a mode-only
+// change: when the task flips a base file's executable bit without editing its
+// bytes, the squash tree must carry the NEW mode (the blob hash is unchanged,
+// so a hash-only diff would drop it). Refs: MGIT-22
+func TestCreateSquashCommit_TaskChangesMode_PreservedInSquash(t *testing.T) {
+	repo := initTestRepo(t)
+	cs := NewCommitStore(repo)
+	ctx := context.Background()
+
+	// A non-executable script lands before the task starts (in the base).
+	stageCommitFile(t, repo, cs, "MGIT-0", "build.sh", "#!/bin/sh\necho hi\n")
+
+	// The task's only change: chmod +x — identical bytes, new mode.
+	scriptPath := filepath.Join(repo.Root(), "build.sh")
+	require.NoError(t, os.Chmod(scriptPath, 0o755)) //nolint:gosec // the executable bit IS the change under test
+	require.NoError(t, NewWorktreeStore(repo).Add(ctx, "build.sh"))
+	chmod := makeTestModelCommit(t, "MGIT-3")
+	chmod.FileDiffs = nil
+	hChmod, err := cs.CreateCommit(ctx, chmod)
+	require.NoError(t, err)
+
+	squash := makeTestModelCommit(t, "MGIT-3")
+	squash.FileDiffs = nil
+	squash.CommitType = model.CommitTypeSquash
+	hash, err := cs.CreateSquashCommit(ctx, SquashCommitParams{
+		Commit:      squash,
+		TaskCommits: []string{hChmod},
+		Branch:      "task/MGIT-3",
+	})
+	require.NoError(t, err)
+
+	// The squash tree's build.sh entry must be executable (100755), not the
+	// base's 100644.
+	commitObj, err := repo.repo.CommitObject(plumbing.NewHash(hash))
+	require.NoError(t, err)
+	tree, err := commitObj.Tree()
+	require.NoError(t, err)
+	entry, err := tree.FindEntry("build.sh")
+	require.NoError(t, err)
+	assert.Equal(t, filemode.Executable, entry.Mode,
+		"a task's mode-only change must survive the squash")
 }
 
 // TestCreateSquashCommit_Validation rejects empty inputs.

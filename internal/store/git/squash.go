@@ -110,7 +110,12 @@ func (cs *CommitStore) CreateSquashCommit(_ context.Context, p SquashCommitParam
 
 // squashBase returns the base commit hash and its flattened tree for the task's
 // first micro-commit: the parent of that commit, or the zero hash and an empty
-// tree when the task began at a root (parentless) commit. Refs: MGIT-22
+// tree when the task began at a root (parentless) commit. ParentHashes[0] is
+// safe here (and in taskNetChanges): task_commits only ever indexes
+// single-parent commits — normal commits, squashes, and rollbacks (see the
+// AddCommitToTask call sites); two-parent merge commits are never task-indexed,
+// so a task's micro-commits never have a second parent to account for.
+// Refs: MGIT-22
 func (cs *CommitStore) squashBase(first plumbing.Hash) (plumbing.Hash, map[string]blobEntry, error) {
 	obj, err := cs.repo.repo.CommitObject(first)
 	if err != nil {
@@ -159,12 +164,16 @@ func (cs *CommitStore) taskNetChanges(commits []plumbing.Hash) (map[string]*blob
 }
 
 // applyTreeDelta records, into net, the changes from parent to cur: a path
-// added or whose blob hash changed is set to its cur entry; a path present in
-// parent but absent from cur is marked deleted (nil). Refs: MGIT-22
+// added, or whose blob hash OR file mode changed, is set to its cur entry; a
+// path present in parent but absent from cur is marked deleted (nil). The mode
+// is compared as well as the hash so a mode-only change (chmod +x, or a
+// regular file replaced by a symlink with identical bytes) is not dropped —
+// mgit tracks the executable/symlink distinction faithfully (worktree_fs.go),
+// so it must survive a squash. Refs: MGIT-22
 func applyTreeDelta(net map[string]*blobEntry, parent, cur map[string]blobEntry) {
 	for path, e := range cur {
 		prev, existed := parent[path]
-		if !existed || prev.hash != e.hash {
+		if !existed || prev.hash != e.hash || prev.mode != e.mode {
 			entry := e
 			net[path] = &entry
 		}
