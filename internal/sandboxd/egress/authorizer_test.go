@@ -64,6 +64,27 @@ func TestAllowlist_RawIPBypass_Denied(t *testing.T) {
 	assert.False(t, d.Allow)
 }
 
+// TestAllowlist_PinnedIP_AllowedAfterResolve verifies the resolve-then-
+// connect-by-IP path: once an allowlisted name has been resolved host-side
+// (pinning its IP), a raw-IP connection to that pinned IP is admitted — but
+// the same IP is denied if it was never resolved (raw-IP bypass). Refs: SEC-04
+func TestAllowlist_PinnedIP_AllowedAfterResolve(t *testing.T) {
+	aud := &fakeAuditor{}
+	az := buildAuthorizer(t, []string{"registry.npmjs.org"}, resolvesTo("140.82.112.3"), aud)
+
+	// Before any resolution, the raw IP is a bypass attempt → denied.
+	_, err := az.Authorize(context.Background(), Flow{Protocol: "tcp", Host: "140.82.112.3", Port: 443})
+	require.ErrorIs(t, err, ErrEgressDenied)
+
+	// Resolve the allowlisted name (pins 140.82.112.3), then connect by IP.
+	_, err = az.Authorize(context.Background(), Flow{Protocol: "tcp", Host: "registry.npmjs.org", Port: 443})
+	require.NoError(t, err)
+	d, err := az.Authorize(context.Background(), Flow{Protocol: "tcp", Host: "140.82.112.3", Port: 443})
+	require.NoError(t, err)
+	assert.True(t, d.Allow, "a pinned IP (resolved from an allowlisted name) is admitted on raw connect")
+	assert.Contains(t, d.Rule, "pinned")
+}
+
 // TestAllowlist_AllowsListedNameAndIP verifies the positive paths: an
 // allowlisted name resolves and connects, and an explicitly allowlisted IP
 // connects raw. Refs: SEC-04, FR-17.8

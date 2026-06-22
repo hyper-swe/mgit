@@ -125,6 +125,25 @@ func (r *Resolver) Pinned(name string) ([]netip.Addr, bool) {
 	return ips, ok
 }
 
+// IsPinned reports whether an IP was returned by a prior host-side
+// resolution of an allowlisted name (and thus pinned). The egress proxy
+// consults this so a client that resolved a name and then connects to the
+// returned IP — or a transparent redirect that only sees the IP — is
+// admitted, while an IP that was never resolved from an allowlisted name is
+// not. Refs: SEC-04
+func (r *Resolver) IsPinned(ip netip.Addr) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, ips := range r.pins {
+		for _, p := range ips {
+			if p == ip {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // NXDOMAINBurst reports whether an NXDOMAIN burst has been flagged in the
 // current window. Refs: SEC-07
 func (r *Resolver) NXDOMAINBurst() bool {

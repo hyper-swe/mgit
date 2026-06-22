@@ -79,16 +79,25 @@ func (a *Authorizer) Authorize(ctx context.Context, f Flow) (Decision, error) {
 	return a.authorizeName(ctx, f)
 }
 
-// authorizeRawIP admits a literal-IP connection only via an IP/CIDR entry,
-// after the unconditional denials. Refs: SEC-04
+// authorizeRawIP admits a literal-IP connection after the unconditional
+// denials, either via an explicit IP/CIDR allowlist entry or because the IP
+// was PINNED by a prior host-side resolution of an allowlisted name. The
+// latter is what makes a normal "resolve-then-connect-by-IP" client (and a
+// transparent proxy that only sees the destination IP) work: the IP is only
+// pinned if the host itself resolved it from an allowlisted name, so a
+// hardcoded C2 IP that was never resolved is still denied (SEC-04 raw-IP
+// bypass). Refs: SEC-04
 func (a *Authorizer) authorizeRawIP(ctx context.Context, f Flow, ip netip.Addr) (Decision, error) {
 	if reason, denied := IsUnconditionallyDenied(ip); denied {
 		return a.deny(ctx, f, ip, "denied range: "+reason)
 	}
-	if !a.cfg.Allowlist.AllowsIP(ip, f.Port) {
-		return a.deny(ctx, f, ip, "raw-ip not allowlisted (host-side DNS bypassed)")
+	if a.cfg.Allowlist.AllowsIP(ip, f.Port) {
+		return a.allow(ctx, f, ip, "ip allowlisted")
 	}
-	return a.allow(ctx, f, ip, "ip allowlisted")
+	if a.cfg.Resolver.IsPinned(ip) {
+		return a.allow(ctx, f, ip, "pinned by a prior allowlisted resolution")
+	}
+	return a.deny(ctx, f, ip, "raw-ip not allowlisted (host-side DNS bypassed)")
 }
 
 // authorizeName resolves an allowlisted name host-side and targets a
