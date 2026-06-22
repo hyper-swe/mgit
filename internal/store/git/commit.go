@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -12,6 +14,23 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 )
+
+// fullHashLen is the length of a full hex SHA-1 git object ID.
+const fullHashLen = 40
+
+// minAbbrevLen is the shortest commit-hash prefix mgit will resolve. Below
+// this an abbreviation is too collision-prone to be a meaningful reference.
+const minAbbrevLen = 4
+
+// hexPrefixPattern matches a (possibly abbreviated) lowercased hex object-ID
+// prefix; resolution is hex-only so non-hash arguments fail fast.
+var hexPrefixPattern = regexp.MustCompile(`^[0-9a-f]+$`)
+
+// taskPrefixPattern extracts the task ID from a commit message's structured
+// `[MGIT:TASK_ID]` prefix — the authoritative on-object task tag written by
+// the commit service (FR-2). Reading it here lets the read path surface
+// provenance from the self-contained git object. Refs: FR-2, MGIT-19
+var taskPrefixPattern = regexp.MustCompile(`^\[MGIT:([^\]]+)\]`)
 
 // CommitStore manages commit objects in the go-git store.
 // It creates go-git commit objects and computes SHA-256 content hashes
@@ -128,18 +147,79 @@ func (cs *CommitStore) buildTreeFromStaging() (plumbing.Hash, error) {
 }
 
 // GetCommit retrieves a commit by its SHA-1 hash from the go-git store.
-// Returns ErrCommitNotFound if the hash does not exist.
-// Refs: FR-3
+// The hash may be a full 40-char SHA-1 or an unambiguous abbreviated prefix
+// (matching what `mgit log` prints). Returns ErrCommitNotFound if no commit
+// matches and ErrAmbiguousHash if a short prefix matches more than one.
+// Refs: FR-3, FR-8.7, MGIT-18
 func (cs *CommitStore) GetCommit(_ context.Context, hash string) (*model.Commit, error) {
-	goRepo := cs.repo.repo
-
-	h := plumbing.NewHash(hash)
-	obj, err := goRepo.CommitObject(h)
+	h, err := cs.resolveCommitHash(hash)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := cs.repo.repo.CommitObject(h)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", model.ErrCommitNotFound, hash)
 	}
-
 	return commitFromGitObject(obj), nil
+}
+
+// resolveCommitHash resolves a full or abbreviated hex commit-hash reference to
+// a concrete object hash, mirroring git's prefix semantics. A full 40-char hash
+// is returned as-is. A shorter hex prefix (>= minAbbrevLen) is matched against
+// every commit reachable in the store: exactly one match is returned, zero
+// yields ErrCommitNotFound, and more than one yields ErrAmbiguousHash. A
+// non-hex or too-short reference is rejected as not found.
+// Refs: FR-3, FR-8.7, MGIT-18
+func (cs *CommitStore) resolveCommitHash(ref string) (plumbing.Hash, error) {
+	ref = strings.ToLower(strings.TrimSpace(ref))
+	if len(ref) < minAbbrevLen || len(ref) > fullHashLen || !hexPrefixPattern.MatchString(ref) {
+		return plumbing.ZeroHash, fmt.Errorf("%w: %s", model.ErrCommitNotFound, ref)
+	}
+	// A full-length hash needs no scan — address the object directly.
+	if len(ref) == fullHashLen {
+		return plumbing.NewHash(ref), nil
+	}
+
+	iter, err := cs.repo.repo.Storer.IterEncodedObjects(plumbing.CommitObject)
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("iterate commits: %w", err)
+	}
+	defer iter.Close()
+
+	var candidates []string
+	if err := iter.ForEach(func(obj plumbing.EncodedObject) error {
+		candidates = append(candidates, obj.Hash().String())
+		return nil
+	}); err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("scan commits: %w", err)
+	}
+
+	match, err := matchHashPrefix(candidates, ref)
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("%w: %s", err, ref)
+	}
+	return plumbing.NewHash(match), nil
+}
+
+// matchHashPrefix returns the single candidate hash that begins with ref.
+// Zero matches yields ErrCommitNotFound; more than one yields ErrAmbiguousHash.
+// It is the pure resolution rule (git's prefix semantics) factored out of the
+// store iteration so it can be exercised deterministically. Refs: MGIT-18
+func matchHashPrefix(candidates []string, ref string) (string, error) {
+	match := ""
+	for _, h := range candidates {
+		if !strings.HasPrefix(h, ref) {
+			continue
+		}
+		if match != "" {
+			return "", model.ErrAmbiguousHash
+		}
+		match = h
+	}
+	if match == "" {
+		return "", model.ErrCommitNotFound
+	}
+	return match, nil
 }
 
 // ListCommits returns all commits reachable from HEAD.
@@ -185,7 +265,11 @@ func (cs *CommitStore) GetFileFromCommit(_ context.Context, hash, path string) (
 
 	goRepo := cs.repo.repo
 
-	commitObj, err := goRepo.CommitObject(plumbing.NewHash(hash))
+	h, err := cs.resolveCommitHash(hash)
+	if err != nil {
+		return nil, err
+	}
+	commitObj, err := goRepo.CommitObject(h)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", model.ErrCommitNotFound, hash)
 	}
@@ -209,7 +293,14 @@ func (cs *CommitStore) GetFileFromCommit(_ context.Context, hash, path string) (
 }
 
 // commitFromGitObject converts a go-git commit object to a model.Commit.
-// This wraps the go-git type so it is never exposed to callers.
+// This wraps the go-git type so it is never exposed to callers. Provenance is
+// recovered from the object itself: the task ID is parsed from the structured
+// `[MGIT:TASK_ID]` message prefix (FR-2) so read paths (show/log) and
+// task-derived operations (cherry-pick) surface a non-empty task_id without a
+// round-trip to the index. CommitType defaults to normal — the only type
+// persisted in a plain commit object. ContentHash is the authoritative
+// SHA-256 from the index and is bound separately by the service read path
+// (it depends on file diffs not present in the object). Refs: FR-2, FR-3, MGIT-19
 func commitFromGitObject(obj *object.Commit) *model.Commit {
 	parentID := ""
 	if obj.NumParents() > 0 {
@@ -217,14 +308,32 @@ func commitFromGitObject(obj *object.Commit) *model.Commit {
 	}
 
 	return &model.Commit{
-		CommitID:  obj.Hash.String(),
-		Message:   obj.Message,
-		CreatedAt: obj.Author.When,
-		ParentID:  parentID,
-		TreeHash:  obj.TreeHash.String(),
-		AgentID:   obj.Author.Name,
-		CreatedBy: obj.Author.Name,
+		CommitID:   obj.Hash.String(),
+		Message:    obj.Message,
+		CreatedAt:  obj.Author.When,
+		ParentID:   parentID,
+		TreeHash:   obj.TreeHash.String(),
+		AgentID:    obj.Author.Name,
+		CreatedBy:  obj.Author.Name,
+		TaskID:     taskIDFromMessage(obj.Message),
+		CommitType: model.CommitTypeNormal,
 	}
+}
+
+// taskIDFromMessage parses the task ID out of a commit message's structured
+// `[MGIT:TASK_ID]` prefix. Returns the zero TaskID when the prefix is absent
+// or malformed (e.g. mgit's own initial system commit), so non-task commits
+// read back with an empty — never garbage — task_id. Refs: FR-2, MGIT-19
+func taskIDFromMessage(message string) model.TaskID {
+	m := taskPrefixPattern.FindStringSubmatch(message)
+	if m == nil {
+		return model.TaskID{}
+	}
+	tid, err := model.ParseTaskID(m[1])
+	if err != nil {
+		return model.TaskID{}
+	}
+	return tid
 }
 
 // CommitFromObjectData decodes a canonical git commit object (the raw
