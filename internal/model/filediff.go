@@ -22,6 +22,27 @@ var validOperations = map[DiffOperation]bool{
 	DiffRenamed:  true,
 }
 
+// FileDiffMode identifies the git file mode an added or modified diff entry
+// should be recorded with. Its zero value is FileModeRegular, so a FileDiff
+// constructed without setting Mode behaves exactly as a regular 100644 file —
+// preserving backward compatibility with every existing construction site.
+// Refs: FR-11, MGIT-16
+type FileDiffMode int
+
+// Supported file modes for a diff-applied entry. The zero value
+// (FileModeRegular) maps to git mode 100644; FileModeExecutable maps to 100755
+// and FileModeSymlink to 120000. Refs: FR-11, MGIT-16
+const (
+	// FileModeRegular is a regular file (git mode 100644). It is the zero
+	// value, so an unset FileDiff.Mode means a regular file.
+	FileModeRegular FileDiffMode = iota
+	// FileModeExecutable is an executable file (git mode 100755).
+	FileModeExecutable
+	// FileModeSymlink is a symbolic link (git mode 120000); its blob content
+	// is the link target text.
+	FileModeSymlink
+)
+
 // Hunk represents a contiguous block of changes within a file diff.
 // Refs: FR-11, MGIT-2.1.4
 type Hunk struct {
@@ -48,6 +69,12 @@ type FileDiff struct {
 	NewHash    string        `json:"new_hash,omitempty"`
 	Hunks      []Hunk        `json:"hunks,omitempty"`
 	BinaryDiff bool          `json:"binary_diff,omitempty"`
+	// Mode is the git file mode for an added/modified entry. Its zero value
+	// (FileModeRegular) means a regular 100644 file, so leaving it unset keeps
+	// pre-existing behavior; set it to thread an executable (100755) or symlink
+	// (120000) entry through the diff-apply path. Ignored for deletions.
+	// Refs: FR-11, MGIT-16
+	Mode FileDiffMode `json:"mode,omitempty"`
 }
 
 // Validate checks that the FileDiff has a non-empty path and valid operation.

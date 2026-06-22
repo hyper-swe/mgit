@@ -34,9 +34,10 @@ func NewTreeStore(repo *Repository) *TreeStore {
 // BuildTree creates a tree object by applying the given file diffs to the
 // current HEAD tree, built entirely via plumbing (nested subtrees are created
 // for slash-separated paths). Added/modified diffs set the path's blob to
-// NewHash with a regular file mode (FileDiff carries no mode); deleted diffs
-// remove the path. Existing HEAD entries retain their recorded mode. Returns
-// the new tree's SHA-1 hash. Refs: FR-11, MGIT-14.3, MGIT-14.7
+// NewHash with the diff's Mode (regular 100644 by default, or executable
+// 100755 / symlink 120000 when the diff carries one); deleted diffs remove the
+// path. Existing HEAD entries retain their recorded mode. Returns the new
+// tree's SHA-1 hash. Refs: FR-11, MGIT-14.3, MGIT-14.7, MGIT-16
 func (ts *TreeStore) BuildTree(_ context.Context, diffs []model.FileDiff) (string, error) {
 	files, err := ts.repo.headFiles()
 	if err != nil {
@@ -49,7 +50,7 @@ func (ts *TreeStore) BuildTree(_ context.Context, diffs []model.FileDiff) (strin
 			delete(files, path)
 			continue
 		}
-		files[path] = blobEntry{hash: plumbing.NewHash(d.NewHash), mode: filemode.Regular}
+		files[path] = blobEntry{hash: plumbing.NewHash(d.NewHash), mode: gitModeFromDiff(d.Mode)}
 	}
 
 	hash, err := writeNestedTree(ts.repo.repo.Storer, files)
@@ -57,6 +58,20 @@ func (ts *TreeStore) BuildTree(_ context.Context, diffs []model.FileDiff) (strin
 		return "", err
 	}
 	return hash.String(), nil
+}
+
+// gitModeFromDiff maps a model.FileDiffMode to its go-git filemode, defaulting
+// to filemode.Regular (100644) for the zero value and any unknown value so an
+// unset Mode is always a regular file. Refs: MGIT-16
+func gitModeFromDiff(m model.FileDiffMode) filemode.FileMode {
+	switch m {
+	case model.FileModeExecutable:
+		return filemode.Executable
+	case model.FileModeSymlink:
+		return filemode.Symlink
+	default:
+		return filemode.Regular
+	}
 }
 
 // GetTree retrieves a tree by its SHA-1 hash.
