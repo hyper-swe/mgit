@@ -109,6 +109,8 @@ mgit and mtix are **independent binaries** that communicate via MCP tools and RE
 
 **FR-1.3a** If `.mgit/` already exists, `mgit init` MUST return an error: `"mgit repository already initialized in {path}"`
 
+**FR-1.3b** (coexistence — first-level requirement) mgit runs *inside a git-managed project* and operates **over and above** the project's own git repository. The `.mgit/` store MUST be self-contained (a bare/worktree-less go-git store per FR-1.3.2) and mgit MUST NOT create, open, read, or mutate the project's `.git` (nor write any `.git` gitfile at the project root). `mgit init` MUST succeed in a directory that **already contains a `.git`**, and a full mgit lifecycle (init/add/commit/worktree/squash/rollback) MUST leave the project's `.git` byte-for-byte unchanged. Rationale + history: ADR-001 (amendment 2026-06-22), MGIT-14. Enforced by `internal/store/git` `TestInit_OverExistingGitRepo_Coexists` and the CI dogfood e2e `e2e.TestE2E_FullLifecycle_OverRealGitRepo_HistoryIntact`. (The pre-amendment implementation passed the project root as the go-git worktree, which made go-git write a colliding root `.git` and broke this invariant — a requirement↔implementation divergence that shipped because every test inited mgit only in an empty directory.)
+
 **FR-1.4** mgit MUST support a PID lock file (`.mgit/locks/mgit.lock`) to prevent concurrent write access. The lock file contains the PID of the owning process and a timestamp. Stale locks (process not running) MUST be automatically cleaned up.
 
 **FR-1.5** mgit MUST auto-detect the `.mgit/` directory by walking up the directory tree from the current working directory, identical to how git finds `.git/`.
