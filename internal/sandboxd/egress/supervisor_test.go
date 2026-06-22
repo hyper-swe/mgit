@@ -47,6 +47,10 @@ func TestSupervisor_AllowlistEndToEnd(t *testing.T) {
 	require.NotNil(t, sup.Resolver())
 	_, err = sup.Resolver().Resolve(context.Background(), "registry.npmjs.org")
 	assert.NoError(t, err)
+
+	// the DNS server is assembled over the same restricted resolver.
+	require.NotNil(t, sup.DNS())
+	assert.Same(t, sup.Resolver(), sup.DNS().resolver, "DNS and proxy share one allowlist/resolver")
 }
 
 // TestSystemLookup_ResolvesLocalhost exercises the production adapter's

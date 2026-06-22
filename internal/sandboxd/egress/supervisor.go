@@ -33,6 +33,7 @@ type SupervisorConfig struct {
 type Supervisor struct {
 	resolver *Resolver
 	proxy    *Proxy
+	dns      *DNSServer
 }
 
 // NewSupervisor builds the allowlist-mode egress stack. It is an error to
@@ -81,7 +82,11 @@ func NewSupervisor(cfg SupervisorConfig) (*Supervisor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("egress supervisor: %w", err)
 	}
-	return &Supervisor{resolver: resolver, proxy: proxy}, nil
+	dns, err := NewDNSServer(resolver, cfg.Logger)
+	if err != nil {
+		return nil, fmt.Errorf("egress supervisor: %w", err)
+	}
+	return &Supervisor{resolver: resolver, proxy: proxy, dns: dns}, nil
 }
 
 // Proxy returns the assembled egress proxy (served on the sandbox's egress
@@ -91,6 +96,10 @@ func (s *Supervisor) Proxy() *Proxy { return s.proxy }
 // Resolver returns the host-side restricted resolver (driven for the
 // guest's DNS). Refs: SEC-07
 func (s *Supervisor) Resolver() *Resolver { return s.resolver }
+
+// DNS returns the restricted DNS server (served on the sandbox gateway's
+// :53 so the guest resolves only allowlisted names). Refs: SEC-07
+func (s *Supervisor) DNS() *DNSServer { return s.dns }
 
 // SystemLookup adapts a *net.Resolver to LookupFunc, resolving on the HOST
 // and mapping a not-found result to ErrNXDOMAIN so the resolver can count
