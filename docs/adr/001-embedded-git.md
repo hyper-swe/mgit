@@ -83,6 +83,71 @@ The pure Go implementation produces a single self-contained binary that can be d
 - **Testing**: Unit tests must verify all critical Git operations (clone, fetch, push, merge, status)
 - **Error Handling**: Implement comprehensive error handling for safety-critical operations
 
+## Amendment (2026-06-22): mgit coexists with the project's git repository
+
+### Context
+
+This ADR adopted go-git but never specified how mgit's store relates to the
+**project's own git repository**. mgit's first-level requirement is that it
+runs *inside a git-managed project* and operates **over and above** the
+existing git repo — it adds task-tagged micro-commits without owning,
+replacing, or disturbing the project's normal git history.
+
+The original `internal/store/git` implementation violated this. `Init`/`Open`
+opened the go-git repo with `storage = .mgit/` but passed the **project root
+as the go-git worktree**, and the commit/staging/merge/checkout paths were
+built on go-git's `Worktree` + index (`wt.Add`/`wt.Commit`/`wt.Checkout`/
+`wt.Status`). Because go-git writes a `.git` gitfile at any worktree root,
+this:
+
+- in an empty directory, wrote `.git → .mgit`, making plain `git` and `mgit`
+  share one store (mgit *hijacks* the `.git` slot); and
+- in a real project (which already has a `.git` directory), **failed** at
+  `init` with `open <root>/.git: is a directory`, leaving a half-created
+  `.mgit` and a cryptic `resolve HEAD: reference not found` on every later
+  command.
+
+Net effect: **mgit could not run in any existing git project** — it only
+worked in an empty dir. This was missed because every test inits mgit in a
+fresh empty `t.TempDir()` (so only the greenfield path ran; line coverage
+cannot detect a missing input scenario), mgit was never dogfooded on a real
+repo, and the sandbox security audits were scoped to the guest threat model,
+not to core git coexistence. The requirement itself was never encoded as a
+traceable acceptance criterion.
+
+### Decision
+
+mgit's `.mgit/` store is a **self-contained go-git object store that mgit
+drives purely via the plumbing API**, and it **coexists with — never touches
+— the project's `.git`**:
+
+1. mgit MUST NOT create, open, read, or mutate the project's `.git` (or write
+   any `.git` gitfile at the project root). The project's git history is
+   sacrosanct host state.
+2. `.mgit/` is opened as a bare/storer-only repo (no go-git worktree), so
+   go-git never writes a root `.git`.
+3. mgit reads the project's working files via its own filesystem access at
+   `Repository.Root()` and builds blob/tree/commit objects via plumbing;
+   refs (HEAD, `task/<id>`) are managed directly in `.mgit/`.
+4. mgit owns its **own staging model** (mgit-managed, e.g. the SQLite index)
+   rather than relying on go-git's `.git/index`.
+5. Worktree materialization (FR-16 checkout) writes files via plumbing/osfs,
+   not `wt.Checkout()`.
+
+This keeps the go-git decision (pure-Go, plumbing-first per the original
+"Plumbing API access" mitigation) and aligns the storage layer with the
+coexistence requirement.
+
+### Status of the amendment
+
+Accepted; re-architecture tracked as a dedicated foundational epic (the
+commit/staging/merge/checkout + init/open paths are coupled to go-git's
+worktree and must move to plumbing). A skipped spec test
+(`TestInit_OverExistingGitRepo_*`) encodes the requirement until implemented.
+Closure requires: the spec test green, a dogfooding e2e (full mgit lifecycle
+over a real git repo with its history left byte-for-byte intact, run in CI),
+and an independent review of the "never mutate the project git" invariant.
+
 ## References
 
 - [go-git GitHub Repository](https://github.com/go-git/go-git)
