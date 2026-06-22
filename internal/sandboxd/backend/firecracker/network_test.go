@@ -1,10 +1,13 @@
 package firecracker
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 )
@@ -47,12 +50,74 @@ func TestGuestMAC_DeterministicLocallyAdministered(t *testing.T) {
 
 // TestTapPlanFor_UsesSharedEgressPlan verifies the backend builds its host
 // tap plan from the shared egress package (one definition of the firewall
-// invariants). Refs: SEC-04, MGIT-11.7.2
+// invariants) at the fixed gateway ports the egress.Runner binds.
+// Refs: SEC-04, MGIT-11.7.2
 func TestTapPlanFor_UsesSharedEgressPlan(t *testing.T) {
-	plan := tapPlanFor("01JABCDEF0123456789KLMNOPQ", "allowlist", 1080, 53, "eth0")
+	plan := tapPlanFor("01JABCDEF0123456789KLMNOPQ", "allowlist", "eth0")
 	assert.Equal(t, egress.TapName("01JABCDEF0123456789KLMNOPQ"), plan.TapDev)
 	assert.Equal(t, "allowlist", plan.Mode)
+	assert.Equal(t, hostProxyPort, plan.ProxyPort)
+	assert.Equal(t, hostDNSPort, plan.DNSPort)
 	cmds, err := plan.SetupCommands()
 	assert.NoError(t, err)
 	assert.NotEmpty(t, cmds, "allowlist mode yields host network commands")
+}
+
+// fakeNetRunner records the commands it is asked to run, optionally failing
+// when an argument contains a marker substring.
+type fakeNetRunner struct {
+	cmds   [][]string
+	failOn string
+}
+
+func (f *fakeNetRunner) Run(_ context.Context, name string, args ...string) error {
+	cmd := append([]string{name}, args...)
+	f.cmds = append(f.cmds, cmd)
+	if f.failOn != "" {
+		for _, a := range cmd {
+			if a == f.failOn {
+				return errAtMarker
+			}
+		}
+	}
+	return nil
+}
+
+var errAtMarker = fmt.Errorf("runner failed at marker")
+
+// TestApplyTapPlan_ExecsSetupInOrder verifies applyTapPlan runs exactly the
+// plan's setup commands, in order. Refs: SEC-04, FR-17.7
+func TestApplyTapPlan_ExecsSetupInOrder(t *testing.T) {
+	plan := tapPlanFor("01JABCDEF0123456789KLMNOPQ", "allowlist", "eth0")
+	want, err := plan.SetupCommands()
+	require.NoError(t, err)
+
+	runner := &fakeNetRunner{}
+	require.NoError(t, applyTapPlan(context.Background(), runner, plan))
+	assert.Equal(t, want, runner.cmds, "applyTapPlan execs the setup commands verbatim, in order")
+}
+
+// TestApplyTapPlan_NoneNoCommands verifies none mode runs nothing.
+func TestApplyTapPlan_NoneNoCommands(t *testing.T) {
+	runner := &fakeNetRunner{}
+	require.NoError(t, applyTapPlan(context.Background(), runner, tapPlanFor("01SB", "none", "")))
+	assert.Empty(t, runner.cmds)
+}
+
+// TestApplyTapPlan_FailClosed verifies a failed setup command aborts (fail
+// closed — no half-applied policy fronting a guest). Refs: SEC-04
+func TestApplyTapPlan_FailClosed(t *testing.T) {
+	runner := &fakeNetRunner{failOn: "iptables"}
+	err := applyTapPlan(context.Background(), runner, tapPlanFor("01SB", "allowlist", "eth0"))
+	assert.Error(t, err, "a failed firewall command aborts setup")
+}
+
+// TestRemoveTapPlan_BestEffort verifies teardown attempts every command even
+// when one fails (maximal residue removal). Refs: FR-17.19
+func TestRemoveTapPlan_BestEffort(t *testing.T) {
+	plan := tapPlanFor("01SB", "allowlist", "eth0")
+	runner := &fakeNetRunner{failOn: "-F"} // fail mid-teardown
+	removeTapPlan(context.Background(), runner, plan)
+	assert.Equal(t, len(plan.TeardownCommands()), len(runner.cmds),
+		"every teardown command is attempted despite a failure")
 }

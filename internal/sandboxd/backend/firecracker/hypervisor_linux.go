@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/hyper-swe/mgit/internal/guestboot"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
+	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 )
 
 // guestVsockCID is the guest-side context ID for the control plane. The
@@ -60,7 +62,7 @@ func newPlatformHypervisor(bin string) (microvm.Hypervisor, error) {
 	if _, err := os.Stat(kvmDevice); err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", model.ErrSandboxBackendUnavailable, kvmDevice, err)
 	}
-	return &fcHypervisor{bin: resolved, mkfs: mke2fsExecRunner{}}, nil
+	return &fcHypervisor{bin: resolved, mkfs: mke2fsExecRunner{}, net: ipRunner{}}, nil
 }
 
 // fcHypervisor builds Firecracker VMs. The pure-Go SDK drives the VMM
@@ -68,6 +70,12 @@ func newPlatformHypervisor(bin string) (microvm.Hypervisor, error) {
 type fcHypervisor struct {
 	bin  string
 	mkfs mkfsRunner // builds the worktree ext4 image (copy-and-land, ADR-005)
+	net  NetRunner  // execs host tap + firewall setup/teardown (ip/iptables)
+	// extIface is the host external interface NATed in open mode. Empty for
+	// the default-safe modes (none/allowlist), where no NAT is configured;
+	// open mode requires the daemon to supply it (TapPlan fails closed if
+	// unset). Refs: FR-17.7
+	extIface string
 }
 
 // mke2fsExecRunner is the real worktree-image builder: it execs mke2fs to
@@ -136,6 +144,26 @@ func buildConfig(cfg microvm.VMConfig, p vmPaths, worktreeImg string) fc.Config 
 	if cfg.VsockEnabled {
 		out.VsockDevices = []fc.VsockDevice{{ID: "vsock0", Path: p.vsock, CID: guestVsockCID}}
 	}
+	// Attach a NIC in every mode except none (FR-17.7). The guest gets a
+	// static IP on its per-sandbox /30 with the host tap as gateway and the
+	// host resolver (on the gateway) as its only nameserver — so DNS is
+	// host-side and, in allowlist mode, the tap firewall gives the guest no
+	// route except to the proxy and resolver. The host-side tap + firewall
+	// are created in CreateVM before boot. Refs: FR-17.7, FR-17.8, SEC-04
+	if cfg.AttachNIC {
+		gw, _, guestNet := subnetFor(cfg.SandboxID)
+		out.NetworkInterfaces = fc.NetworkInterfaces{{
+			StaticConfiguration: &fc.StaticNetworkConfiguration{
+				HostDevName: egress.TapName(cfg.SandboxID),
+				MacAddress:  guestMAC(cfg.SandboxID),
+				IPConfiguration: &fc.IPConfiguration{
+					IPAddr:      guestNet,
+					Gateway:     net.IP(gw.AsSlice()),
+					Nameservers: []string{gw.String()},
+				},
+			},
+		}}
+	}
 	return out
 }
 
@@ -162,8 +190,25 @@ func (h *fcHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
 	if err := fcfg.Validate(); err != nil {
 		return nil, fmt.Errorf("firecracker config invalid: %w", err)
 	}
+
+	// Create the host tap + per-mode firewall BEFORE the VMM starts (the
+	// NIC's HostDevName must already exist, and allowlist mode must be
+	// default-deny before the guest can send a packet). none mode is a
+	// no-op. Stored on the VM so teardown removes it (no residue). The tap
+	// is host-side only — the egress proxy/DNS bind its gateway IP.
+	// Refs: FR-17.7, FR-17.8, SEC-04
+	var tapPlan *egress.TapPlan
+	if cfg.AttachNIC {
+		plan := tapPlanFor(cfg.SandboxID, cfg.NetworkMode, h.extIface)
+		if err := applyTapPlan(context.Background(), h.net, plan); err != nil {
+			return nil, fmt.Errorf("firecracker network setup: %w", err)
+		}
+		tapPlan = &plan
+	}
+
 	console, err := os.OpenFile(p.console, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // manager-owned dir
 	if err != nil {
+		h.removeTap(tapPlan)
 		return nil, fmt.Errorf("firecracker console: %w", err)
 	}
 
@@ -178,9 +223,18 @@ func (h *fcHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
 	if err != nil {
 		cancel()
 		_ = console.Close()
+		h.removeTap(tapPlan)
 		return nil, fmt.Errorf("firecracker new machine: %w", err)
 	}
-	return &fcVM{machine: machine, cancel: cancel, console: console}, nil
+	return &fcVM{machine: machine, cancel: cancel, console: console, net: h.net, tapPlan: tapPlan}, nil
+}
+
+// removeTap best-effort tears down a sandbox's host tap + firewall, guarding
+// the none-mode (nil) case.
+func (h *fcHypervisor) removeTap(plan *egress.TapPlan) {
+	if plan != nil {
+		removeTapPlan(context.Background(), h.net, *plan)
+	}
 }
 
 // fcVM adapts a Firecracker machine to the manager's lifecycle seam.
@@ -188,6 +242,8 @@ type fcVM struct {
 	machine *fc.Machine
 	cancel  context.CancelFunc // cancels the VMM's detached lifetime
 	console *os.File
+	net     NetRunner       // host network runner, for tap teardown
+	tapPlan *egress.TapPlan // the applied tap plan; nil in none mode
 }
 
 // PeerIdentity reports the host-observed vsock peer identity. Over
@@ -200,10 +256,14 @@ func (v *fcVM) PeerIdentity() string {
 	return fmt.Sprintf("cid:%d", guestVsockCID)
 }
 
-// teardown cancels the VMM lifetime and closes the console capture.
+// teardown cancels the VMM lifetime, closes the console capture, and removes
+// the host tap + firewall so no network residue remains (FR-17.19).
 func (v *fcVM) teardown() {
 	v.cancel()
 	_ = v.console.Close()
+	if v.tapPlan != nil {
+		removeTapPlan(context.Background(), v.net, *v.tapPlan)
+	}
 }
 
 // Start boots the guest. The VMM runs under the detached lifetime

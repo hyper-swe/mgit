@@ -1,6 +1,7 @@
 package firecracker
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -9,6 +10,47 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 )
+
+// Host gateway ports the egress runtime listens on per sandbox, and the
+// ports the allowlist tap firewall steers the guest to. Fixed conventions so
+// the backend's firewall plan and the daemon's egress.Runner agree without
+// extra plumbing. Refs: SEC-04, FR-17.8
+const (
+	hostProxyPort = 1080
+	hostDNSPort   = 53
+)
+
+// NetRunner execs one privileged host network command (ip/iptables).
+// Injected so the tap orchestration is testable without root and the real
+// exec is confined to the linux build. Refs: FR-17.7
+type NetRunner interface {
+	Run(ctx context.Context, name string, args ...string) error
+}
+
+// applyTapPlan execs a tap plan's setup commands in order, stopping at the
+// first failure so a half-applied policy never fronts a booting guest
+// (fail closed). none mode yields no commands. Refs: SEC-04, FR-17.7
+func applyTapPlan(ctx context.Context, runner NetRunner, plan egress.TapPlan) error {
+	cmds, err := plan.SetupCommands()
+	if err != nil {
+		return fmt.Errorf("tap setup plan: %w", err)
+	}
+	for _, c := range cmds {
+		if err := runner.Run(ctx, c[0], c[1:]...); err != nil {
+			return fmt.Errorf("tap setup %v: %w", c, err)
+		}
+	}
+	return nil
+}
+
+// removeTapPlan execs a tap plan's teardown commands best-effort: it keeps
+// going past individual failures so a partial teardown still removes as much
+// host state as possible (no residue, FR-17.19). Refs: FR-17.19
+func removeTapPlan(ctx context.Context, runner NetRunner, plan egress.TapPlan) {
+	for _, c := range plan.TeardownCommands() {
+		_ = runner.Run(ctx, c[0], c[1:]...)
+	}
+}
 
 // sandboxNetBase is the host-only supernet from which each sandbox gets its
 // own /30 point-to-point link to the host tap. It is RFC1918 space — never a
@@ -44,17 +86,19 @@ func guestMAC(sandboxID string) string {
 }
 
 // tapPlanFor builds the shared egress TapPlan for a sandbox's host tap,
-// single-sourcing the per-mode firewall invariants from the egress package.
+// single-sourcing the per-mode firewall invariants from the egress package
+// and the fixed gateway ports the egress.Runner binds. extIface is the host
+// external interface to NAT through in open mode (empty otherwise).
 // Refs: SEC-04, FR-17.7, FR-17.8
-func tapPlanFor(sandboxID, mode string, proxyPort, dnsPort int, extIface string) egress.TapPlan {
+func tapPlanFor(sandboxID, mode, extIface string) egress.TapPlan {
 	gateway, guest, _ := subnetFor(sandboxID)
 	return egress.TapPlan{
 		Mode:      mode,
 		TapDev:    egress.TapName(sandboxID),
 		GuestIP:   guest,
 		GatewayIP: gateway,
-		ProxyPort: proxyPort,
-		DNSPort:   dnsPort,
+		ProxyPort: hostProxyPort,
+		DNSPort:   hostDNSPort,
 		ExtIface:  extIface,
 	}
 }
