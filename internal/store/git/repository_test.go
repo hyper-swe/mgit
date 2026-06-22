@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,14 +20,41 @@ func fixedClock() func() time.Time {
 	return func() time.Time { return fixed }
 }
 
-// initTestRepo creates a Repository in a temp dir and returns it with cleanup.
+// initTestRepo creates a Repository OVER a real, pre-existing project `.git`
+// and returns it with cleanup. This is the production substrate: mgit always
+// runs inside a git-managed project (FR-1, ADR-001). Seeding a real `.git`
+// with an EMPTY initial commit (clean worktree) — rather than running in an
+// empty temp dir — is what every store/git test now exercises, so the
+// read/coexistence paths that the greenfield harness never touched are
+// covered. The greenfield-only harness is why MGIT-18 and MGIT-19 shipped.
+// Refs: MGIT-14, MGIT-18, MGIT-19, ADR-001
 func initTestRepo(t *testing.T) *Repository {
 	t.Helper()
 	tmpDir := t.TempDir()
+	seedProjectGit(t, tmpDir)
 	repo, err := Init(tmpDir, fixedClock())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = repo.Close() })
 	return repo
+}
+
+// seedProjectGit initializes a real project `.git` at dir with a single EMPTY
+// commit, leaving the worktree clean. mgit must coexist with this `.git` and
+// never touch it (TestInit_OverExistingGitRepo_Coexists). The empty commit
+// keeps mgit's own staging/commit paths independent of project file state.
+func seedProjectGit(t *testing.T, dir string) {
+	t.Helper()
+	projGit, err := gogit.PlainInit(dir, false)
+	require.NoError(t, err)
+	wt, err := projGit.Worktree()
+	require.NoError(t, err)
+	sig := &object.Signature{Name: "dev", Email: "dev@x", When: fixedClock()()}
+	_, err = wt.Commit("project: initial", &gogit.CommitOptions{
+		Author:            sig,
+		Committer:         sig,
+		AllowEmptyCommits: true,
+	})
+	require.NoError(t, err)
 }
 
 func TestRepository_Init(t *testing.T) {

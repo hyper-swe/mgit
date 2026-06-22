@@ -29,9 +29,12 @@ func TestCreateCommit_ViaPlumbing_NoGitIndex(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, hash, 40)
 
-	// No project-root `.git` was created.
-	_, err = os.Stat(filepath.Join(repo.Root(), ".git"))
-	assert.True(t, os.IsNotExist(err), "mgit must not create a project-root .git")
+	// mgit drives only its own .mgit store: the project's pre-existing `.git`
+	// (seeded by the harness) is still a real git directory, never replaced
+	// with a go-git gitfile. mgit must never own the project `.git` slot.
+	gitInfo, err := os.Stat(filepath.Join(repo.Root(), ".git"))
+	require.NoError(t, err)
+	assert.True(t, gitInfo.IsDir(), "mgit must not turn the project .git into a gitfile")
 
 	// No go-git index inside the .mgit store.
 	_, err = os.Stat(filepath.Join(repo.MgitDir(), "index"))
