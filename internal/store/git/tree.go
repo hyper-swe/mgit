@@ -3,10 +3,9 @@ package git
 import (
 	"context"
 	"fmt"
-	"sort"
+	"path/filepath"
 
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -31,68 +30,30 @@ func NewTreeStore(repo *Repository) *TreeStore {
 	return &TreeStore{repo: repo}
 }
 
-// BuildTree creates a tree object from file diffs by modifying
-// the current HEAD tree. Returns the new tree's SHA-1 hash.
-// Refs: FR-11
+// BuildTree creates a tree object by applying the given file diffs to the
+// current HEAD tree, built entirely via plumbing (nested subtrees are created
+// for slash-separated paths). Added/modified diffs set the path's blob to
+// NewHash; deleted diffs remove the path. Returns the new tree's SHA-1 hash.
+// Refs: FR-11, MGIT-14.3
 func (ts *TreeStore) BuildTree(_ context.Context, diffs []model.FileDiff) (string, error) {
-	goRepo := ts.repo.repo
-
-	// Get current HEAD tree as base
-	headRef, err := goRepo.Head()
+	files, err := ts.repo.headFiles()
 	if err != nil {
-		return "", fmt.Errorf("resolve HEAD: %w", err)
-	}
-	headCommit, err := goRepo.CommitObject(headRef.Hash())
-	if err != nil {
-		return "", fmt.Errorf("get HEAD commit: %w", err)
-	}
-	tree, err := headCommit.Tree()
-	if err != nil {
-		return "", fmt.Errorf("get HEAD tree: %w", err)
+		return "", err
 	}
 
-	// Build new tree entries based on current tree + diffs
-	entries := make([]object.TreeEntry, 0, len(tree.Entries)+len(diffs))
-
-	// Copy existing entries (excluding deleted/modified paths)
-	modifiedPaths := make(map[string]bool)
 	for _, d := range diffs {
-		modifiedPaths[d.Path] = true
-	}
-	for _, e := range tree.Entries {
-		if !modifiedPaths[e.Name] {
-			entries = append(entries, e)
-		}
-	}
-
-	// Add new/modified entries from diffs
-	for _, d := range diffs {
+		path := filepath.ToSlash(d.Path)
 		if d.Operation == model.DiffDeleted {
+			delete(files, path)
 			continue
 		}
-		entries = append(entries, object.TreeEntry{
-			Name: d.Path,
-			Mode: filemode.Regular,
-			Hash: plumbing.NewHash(d.NewHash),
-		})
+		files[path] = plumbing.NewHash(d.NewHash)
 	}
 
-	// Sort entries by name (go-git requires sorted tree entries)
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Name < entries[j].Name
-	})
-
-	// Create new tree object
-	newTree := &object.Tree{Entries: entries}
-	obj := ts.repo.repo.Storer.NewEncodedObject()
-	if err := newTree.Encode(obj); err != nil {
-		return "", fmt.Errorf("encode tree: %w", err)
-	}
-	hash, err := ts.repo.repo.Storer.SetEncodedObject(obj)
+	hash, err := writeNestedTree(ts.repo.repo.Storer, files)
 	if err != nil {
-		return "", fmt.Errorf("store tree: %w", err)
+		return "", err
 	}
-
 	return hash.String(), nil
 }
 

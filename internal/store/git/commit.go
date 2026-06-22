@@ -2,7 +2,9 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -24,18 +26,21 @@ func NewCommitStore(repo *Repository) *CommitStore {
 	return &CommitStore{repo: repo}
 }
 
-// CreateCommit creates a new commit in the go-git object store.
-// It populates the commit's CommitID (SHA-1) and ContentHash (SHA-256),
-// sets the timestamp from the injected clock, and stores the commit.
-// The commit is created on the current HEAD.
-// Refs: FR-2, FR-3, ADR-002
+// CreateCommit creates a new commit in the .mgit object store entirely via
+// plumbing — it builds the tree from the current HEAD tree plus mgit's own
+// staging set (reading staged file content from disk via Repository.Root()),
+// writes the blob/tree/commit objects directly, and advances the current
+// branch ref. It NEVER uses a go-git worktree or the project's `.git`/index.
+// It populates the commit's CommitID (SHA-1), ContentHash (SHA-256), and the
+// timestamp from the injected clock. Staging is cleared on success.
+// Refs: FR-2, FR-3, ADR-002, MGIT-14.3
 func (cs *CommitStore) CreateCommit(_ context.Context, c *model.Commit) (string, error) {
 	goRepo := cs.repo.repo
 
-	// Set timestamp from injected clock
+	// Set timestamp from injected clock.
 	c.CreatedAt = cs.repo.Now()
 
-	// Get current HEAD to set as parent
+	// Resolve the current branch ref and parent commit.
 	headRef, err := goRepo.Head()
 	if err != nil {
 		return "", fmt.Errorf("resolve HEAD: %w", err)
@@ -43,42 +48,82 @@ func (cs *CommitStore) CreateCommit(_ context.Context, c *model.Commit) (string,
 	parentHash := headRef.Hash()
 	c.ParentID = parentHash.String()
 
-	// Create go-git commit using worktree
-	wt, err := goRepo.Worktree()
+	// Build the new tree from HEAD + staged working files via plumbing.
+	treeHash, err := cs.buildTreeFromStaging()
 	if err != nil {
-		return "", fmt.Errorf("get worktree: %w", err)
+		return "", err
 	}
+	c.TreeHash = treeHash.String()
 
-	commitHash, err := wt.Commit(c.Message, &gogit.CommitOptions{
-		Author: &object.Signature{
+	commitHash, err := writeCommit(goRepo.Storer, commitParams{
+		tree:    treeHash,
+		parents: []plumbing.Hash{parentHash},
+		message: c.Message,
+		authorAt: object.Signature{
 			Name:  c.AgentID,
 			Email: c.AgentID + "@mgit",
 			When:  c.CreatedAt,
 		},
-		Parents:           []plumbing.Hash{parentHash},
-		AllowEmptyCommits: true,
 	})
 	if err != nil {
-		return "", fmt.Errorf("create go-git commit: %w", err)
+		return "", fmt.Errorf("create commit: %w", err)
 	}
 
-	// Set SHA-1 commit ID (go-git native)
 	sha1Hex := commitHash.String()
 	c.CommitID = sha1Hex
-
-	// Compute SHA-256 content hash (mgit integrity per ADR-002)
+	// Compute SHA-256 content hash (mgit integrity per ADR-002).
 	c.ContentHash = c.ComputeContentHash()
 
-	// Update HEAD ref
-	ref := plumbing.NewHashReference(
-		headRef.Name(),
-		commitHash,
-	)
+	// Advance the current branch ref to the new commit.
+	ref := plumbing.NewHashReference(headRef.Name(), commitHash)
 	if err := goRepo.Storer.SetReference(ref); err != nil {
 		return "", fmt.Errorf("update ref: %w", err)
 	}
 
+	// Staged changes are now committed; reset the staging area.
+	if err := cs.repo.clearStaging(); err != nil {
+		return "", fmt.Errorf("clear staging: %w", err)
+	}
+
 	return sha1Hex, nil
+}
+
+// buildTreeFromStaging constructs the next commit's tree by starting from the
+// HEAD tree and applying mgit's staged paths: a staged path present on disk is
+// written as a blob and added/updated; a staged path absent on disk is treated
+// as a deletion. Unstaged working-tree changes are intentionally NOT committed,
+// matching git's index semantics. Returns the new tree's hash.
+// Refs: MGIT-14.3
+func (cs *CommitStore) buildTreeFromStaging() (plumbing.Hash, error) {
+	// Start from the complete flattened HEAD tree, then layer staged changes on
+	// top: a staged path present on disk overwrites/adds its blob; a staged path
+	// absent on disk is removed (a deletion).
+	files, err := cs.repo.headFiles()
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	staged, err := cs.repo.stagedPaths()
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+
+	for _, rel := range staged {
+		content, err := cs.repo.readWorkingFile(rel)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				delete(files, rel)
+				continue
+			}
+			return plumbing.ZeroHash, err
+		}
+		blobHash, err := writeBlob(cs.repo.repo.Storer, content)
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		files[rel] = blobHash
+	}
+
+	return writeNestedTree(cs.repo.repo.Storer, files)
 }
 
 // GetCommit retrieves a commit by its SHA-1 hash from the go-git store.

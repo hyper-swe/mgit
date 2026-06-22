@@ -61,13 +61,17 @@ func Init(path string, clock func() time.Time) (*Repository, error) {
 		return nil, fmt.Errorf("create .mgit dir: %w", err)
 	}
 
-	// Initialize go-git storage at .mgit/ (HEAD, objects/, refs/ inside)
-	// with worktree at project root
+	// Initialize go-git storage at .mgit/ (HEAD, objects/, refs/ inside) as a
+	// BARE/worktree-less store (worktree=nil). go-git writes a `.git` gitfile
+	// at any worktree root, so passing the project root as the worktree would
+	// (a) hijack the `.git` slot in an empty dir and (b) fail outright in a
+	// real project whose `.git` is already a directory. mgit drives the store
+	// purely via plumbing and reads/writes project files itself via Root().
+	// Refs: MGIT-14, ADR-001 (amendment 2026-06-22)
 	dotFS := osfs.New(mgitPath)
 	storage := filesystem.NewStorage(dotFS, cache.NewObjectLRUDefault())
-	wtFS := osfs.New(path)
 
-	repo, err := gogit.Init(storage, wtFS)
+	repo, err := gogit.Init(storage, nil)
 	if err != nil {
 		return nil, fmt.Errorf("init go-git repo: %w", err)
 	}
@@ -104,11 +108,13 @@ func Open(path string, clock func() time.Time) (*Repository, error) {
 		return nil, fmt.Errorf("%w: .mgit is not a directory", model.ErrStorageError)
 	}
 
+	// Open the self-contained .mgit store as bare (worktree=nil) — the same
+	// worktree-less model used by Init. Never opens or reads the project .git.
+	// Refs: MGIT-14, ADR-001 (amendment 2026-06-22)
 	dotFS := osfs.New(mgitPath)
 	storage := filesystem.NewStorage(dotFS, cache.NewObjectLRUDefault())
-	wtFS := osfs.New(path)
 
-	repo, err := gogit.Open(storage, wtFS)
+	repo, err := gogit.Open(storage, nil)
 	if err != nil {
 		return nil, fmt.Errorf("open go-git repo: %w", err)
 	}
@@ -185,38 +191,40 @@ func (r *Repository) CurrentBranch() (string, error) {
 	return ref.Name().Short(), nil
 }
 
-// createInitialCommit creates an empty initial commit so HEAD is valid.
-// Sets HEAD to point to the main branch.
+// createInitialCommit creates an empty initial commit so HEAD is valid, built
+// entirely via plumbing (empty tree object + parentless commit object) — never
+// via a go-git worktree. Sets the main branch ref and points HEAD at it.
+// Refs: FR-1.2, MGIT-14, ADR-001 (amendment 2026-06-22)
 func (r *Repository) createInitialCommit() error {
-	wt, err := r.repo.Worktree()
+	st := r.repo.Storer
+
+	treeHash, err := emptyTree(st)
 	if err != nil {
-		return fmt.Errorf("get worktree: %w", err)
+		return fmt.Errorf("init empty tree: %w", err)
 	}
 
-	commitHash, err := wt.Commit("mgit: initial commit", &gogit.CommitOptions{
-		Author: &object.Signature{
+	commitHash, err := writeCommit(st, commitParams{
+		tree:    treeHash,
+		message: "mgit: initial commit",
+		authorAt: object.Signature{
 			Name:  "mgit",
 			Email: "mgit@system",
 			When:  r.clock(),
 		},
-		AllowEmptyCommits: true,
 	})
 	if err != nil {
-		return fmt.Errorf("create commit: %w", err)
+		return fmt.Errorf("init commit: %w", err)
 	}
 
-	// Ensure main branch ref exists pointing to initial commit
-	mainRef := plumbing.NewHashReference(
-		plumbing.NewBranchReferenceName("main"),
-		commitHash,
-	)
-	if err := r.repo.Storer.SetReference(mainRef); err != nil {
+	// Ensure main branch ref exists pointing to the initial commit.
+	mainRef := plumbing.NewHashReference(plumbing.NewBranchReferenceName("main"), commitHash)
+	if err := st.SetReference(mainRef); err != nil {
 		return fmt.Errorf("set main ref: %w", err)
 	}
 
-	// Point HEAD to main branch
+	// Point HEAD to the main branch.
 	headRef := plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main"))
-	if err := r.repo.Storer.SetReference(headRef); err != nil {
+	if err := st.SetReference(headRef); err != nil {
 		return fmt.Errorf("set HEAD to main: %w", err)
 	}
 

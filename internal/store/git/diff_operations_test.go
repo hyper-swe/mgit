@@ -84,12 +84,9 @@ func TestDiffStore_DiffCommits_DeletedFile(t *testing.T) {
 	hash1, err := cs.CreateCommit(ctx, c1)
 	require.NoError(t, err)
 
-	// Delete the file and stage
+	// Delete the file and stage the deletion via mgit's own staging model.
 	require.NoError(t, os.Remove(filepath.Join(repo.Root(), "to_delete.go")))
-	wt, err := repo.repo.Worktree()
-	require.NoError(t, err)
-	_, err = wt.Add("to_delete.go")
-	require.NoError(t, err)
+	require.NoError(t, ws.Add(ctx, "to_delete.go"))
 
 	c2 := makeTestModelCommit(t, "MGIT-1.2")
 	hash2, err := cs.CreateCommit(ctx, c2)

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
@@ -82,10 +81,11 @@ func (m *MergeStore) FastForward(_ context.Context, branchName, targetHash strin
 }
 
 // CreateMergeCommit creates a commit on the current HEAD with two parents
-// (HEAD's previous commit + the source commit). The commit reuses HEAD's
-// tree, so the merge is metadata-only — useful for --no-ff merges where
-// the worktree state already reflects the desired result.
-// Refs: FR-8.4
+// (HEAD's previous commit + the source commit), built entirely via plumbing —
+// no go-git worktree. The merge commit reuses HEAD's tree, so the merge is
+// metadata-only (useful for --no-ff merges where the materialized working
+// state already reflects the desired result). Returns the merge commit's hash.
+// Refs: FR-8.4, MGIT-14.4
 func (m *MergeStore) CreateMergeCommit(_ context.Context, message, sourceHash string) (string, error) {
 	goRepo := m.repo.repo
 
@@ -95,19 +95,21 @@ func (m *MergeStore) CreateMergeCommit(_ context.Context, message, sourceHash st
 	}
 	headHash := headRef.Hash()
 
-	wt, err := goRepo.Worktree()
+	// Reuse HEAD's tree for the merge commit.
+	headCommit, err := goRepo.CommitObject(headHash)
 	if err != nil {
-		return "", fmt.Errorf("merge commit: get worktree: %w", err)
+		return "", fmt.Errorf("merge commit: load HEAD commit: %w", err)
 	}
 
-	commitHash, err := wt.Commit(message, &gogit.CommitOptions{
-		Author: &object.Signature{
+	commitHash, err := writeCommit(goRepo.Storer, commitParams{
+		tree:    headCommit.TreeHash,
+		parents: []plumbing.Hash{headHash, plumbing.NewHash(sourceHash)},
+		message: message,
+		authorAt: object.Signature{
 			Name:  "mgit-merge",
 			Email: "mgit-merge@mgit",
 			When:  m.repo.Now(),
 		},
-		Parents:           []plumbing.Hash{headHash, plumbing.NewHash(sourceHash)},
-		AllowEmptyCommits: true,
 	})
 	if err != nil {
 		return "", fmt.Errorf("merge commit: create: %w", err)
