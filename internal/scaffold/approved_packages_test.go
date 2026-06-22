@@ -128,7 +128,11 @@ func TestImports_SandboxDepsConfinedToSandboxd(t *testing.T) {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if name == ".git" || name == "dist" || name == "node_modules" {
+			// Skip non-source trees, including .claude/ (which holds
+			// isolated agent worktrees — full repo copies that would
+			// otherwise be double-scanned and produce false confinement
+			// failures while a worktree-isolated agent is active).
+			if name == ".git" || name == ".claude" || name == "dist" || name == "node_modules" {
 				return filepath.SkipDir
 			}
 			return nil
