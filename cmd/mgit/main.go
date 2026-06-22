@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -80,5 +81,28 @@ func openAppFromCwd() (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get working directory: %w", err)
 	}
-	return OpenApp(cwd)
+	root, err := findRepoRoot(cwd)
+	if err != nil {
+		return nil, err
+	}
+	return OpenApp(root)
+}
+
+// findRepoRoot walks up from start to the nearest ancestor directory that
+// contains a .mgit DIRECTORY, mirroring how git locates .git — so mgit commands
+// work from any subdirectory of the repo rather than only its root. A plain
+// file named .mgit does not count (only the store directory does). Returns an
+// error if no .mgit directory is found up to the filesystem root. Refs: MGIT-24
+func findRepoRoot(start string) (string, error) {
+	dir := start
+	for {
+		if info, err := os.Stat(filepath.Join(dir, ".mgit")); err == nil && info.IsDir() {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("not an mgit repository (or any parent up to %s): no .mgit directory found", dir)
+		}
+		dir = parent
+	}
 }
