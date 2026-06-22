@@ -99,6 +99,37 @@ func TestCommitService_ListCommits_PopulatesContentHash(t *testing.T) {
 	assert.Equal(t, "MGIT-3.4", found.TaskID.String())
 }
 
+// TestCommitService_GetCommit_NotFound verifies the store-error branch:
+// an unknown hash surfaces ErrCommitNotFound from the read path. Refs: MGIT-18
+func TestCommitService_GetCommit_NotFound(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	_, err := env.commit.GetCommit(ctx, "0000000000000000000000000000000000000000")
+	assert.ErrorIs(t, err, model.ErrCommitNotFound)
+}
+
+// TestCommitService_GetCommit_IndexFailurePropagates verifies that a genuine
+// index/DB failure during provenance enrichment is propagated (not silently
+// swallowed as blank provenance) on the audit read path. A closed index turns
+// the join into a real error rather than a not-found. Refs: MGIT-19
+func TestCommitService_GetCommit_IndexFailurePropagates(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	created, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
+		TaskID: "MGIT-3.5", AgentID: "a", Message: "will fail enrich",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, env.idx.Close()) // force a real DB error on the next query
+
+	_, err = env.commit.GetCommit(ctx, created.CommitID)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, model.ErrTaskNotFound,
+		"a real DB failure must not be reported as a missing index row")
+}
+
 func TestCommitService_ListCommits(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
