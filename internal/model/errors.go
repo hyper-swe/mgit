@@ -85,6 +85,11 @@ var (
 	// Refs: FR-6.7
 	ErrFileNotFound = errors.New("file not found in commit")
 
+	// ErrAmbiguousHash indicates an abbreviated commit hash prefix matched
+	// more than one commit and so could not be resolved unambiguously.
+	// Refs: FR-3, FR-8.7, MGIT-18
+	ErrAmbiguousHash = errors.New("ambiguous commit hash prefix")
+
 	// ErrSandboxNotFound indicates a sandbox ID or task resolves to no
 	// registered sandbox. Refs: FR-17.20
 	ErrSandboxNotFound = errors.New("sandbox not found")
