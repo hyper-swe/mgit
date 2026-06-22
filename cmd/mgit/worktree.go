@@ -10,6 +10,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/service"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // worktreeCmd implements mgit worktree. Refs: FR-16, MGIT-8.3.1
@@ -36,7 +37,7 @@ func worktreeCmd() *cobra.Command {
 			defer app.Close()
 
 			ctx := context.Background()
-			wtSvc := service.NewWorktreeService(app.Index, app.Branch, func() time.Time { return time.Now().UTC() })
+			wtSvc := service.NewWorktreeService(app.Index, app.Branch, gitstore.NewWorktreeStore(app.Repo), func() time.Time { return time.Now().UTC() })
 
 			wt, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
 				Path: args[0], TaskID: wtTaskID, AgentID: wtAgentID, Branch: wtBranch,
@@ -66,7 +67,7 @@ func worktreeCmd() *cobra.Command {
 			defer app.Close()
 
 			ctx := context.Background()
-			wtSvc := service.NewWorktreeService(app.Index, app.Branch, func() time.Time { return time.Now().UTC() })
+			wtSvc := service.NewWorktreeService(app.Index, app.Branch, gitstore.NewWorktreeStore(app.Repo), func() time.Time { return time.Now().UTC() })
 
 			wts, err := wtSvc.List(ctx)
 			if err != nil {
@@ -104,7 +105,7 @@ func worktreeCmd() *cobra.Command {
 			defer app.Close()
 
 			ctx := context.Background()
-			wtSvc := service.NewWorktreeService(app.Index, app.Branch, func() time.Time { return time.Now().UTC() })
+			wtSvc := service.NewWorktreeService(app.Index, app.Branch, gitstore.NewWorktreeStore(app.Repo), func() time.Time { return time.Now().UTC() })
 
 			if err := wtSvc.Remove(ctx, args[0], wtForce); err != nil {
 				return fmt.Errorf("worktree remove: %w", err)
@@ -128,7 +129,7 @@ func worktreeCmd() *cobra.Command {
 			defer app.Close()
 
 			ctx := context.Background()
-			wtSvc := service.NewWorktreeService(app.Index, app.Branch, func() time.Time { return time.Now().UTC() })
+			wtSvc := service.NewWorktreeService(app.Index, app.Branch, gitstore.NewWorktreeStore(app.Repo), func() time.Time { return time.Now().UTC() })
 
 			stale, err := wtSvc.Prune(ctx, wtDryRun, 0)
 			if err != nil {

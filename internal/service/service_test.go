@@ -26,6 +26,7 @@ type testEnv struct {
 	repo   *gitstore.Repository
 	cs     *gitstore.CommitStore
 	bs     *gitstore.BranchStore
+	wt     *gitstore.WorktreeStore
 	idx    *index.Store
 	commit *CommitService
 	squash *SquashService
@@ -49,11 +50,13 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 	cs := gitstore.NewCommitStore(repo)
 	bs := gitstore.NewBranchStore(repo)
+	wt := gitstore.NewWorktreeStore(repo)
 
 	return &testEnv{
 		repo:   repo,
 		cs:     cs,
 		bs:     bs,
+		wt:     wt,
 		idx:    idx,
 		commit: NewCommitService(repo, cs, idx),
 		squash: NewSquashService(repo, cs, idx),

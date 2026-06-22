@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -213,14 +214,34 @@ func TestWorktreeService_Add(t *testing.T) {
 	ctx := context.Background()
 	clock := fixedClock()
 
-	wtSvc := NewWorktreeService(env.idx, env.branch, clock)
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, clock)
 
 	wt, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
-		Path: "/tmp/test-wt", TaskID: "MGIT-8.1", AgentID: "agent-01",
+		Path: filepath.Join(t.TempDir(), "test-wt"), TaskID: "MGIT-8.1", AgentID: "agent-01",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "MGIT-8.1", wt.TaskID)
 	assert.Equal(t, "task/MGIT-8.1", wt.Branch)
+}
+
+// TestWorktreeService_Add_MaterializesBranchSource asserts the MGIT-17 fix at
+// the service layer: `worktree add` produces a working copy of the branch
+// source, not an empty dir. Refs: FR-16, MGIT-17
+func TestWorktreeService_Add_MaterializesBranchSource(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	// Commit source to HEAD; the auto-created task branch points at it.
+	stageAndCommit(t, env, "MGIT-8.5", "src.go", "package src\n")
+
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, fixedClock())
+	dir := filepath.Join(t.TempDir(), "wt")
+	_, err := wtSvc.Add(ctx, model.WorktreeAddOptions{Path: dir, TaskID: "MGIT-8.6", AgentID: "a1"})
+	require.NoError(t, err)
+
+	got, err := os.ReadFile(filepath.Join(dir, "src.go")) //nolint:gosec // test-controlled path under t.TempDir()
+	require.NoError(t, err, "worktree add must materialize the branch source")
+	assert.Equal(t, "package src\n", string(got))
 }
 
 func TestWorktreeService_List(t *testing.T) {
@@ -228,7 +249,7 @@ func TestWorktreeService_List(t *testing.T) {
 	ctx := context.Background()
 	clock := fixedClock()
 
-	wtSvc := NewWorktreeService(env.idx, env.branch, clock)
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, clock)
 
 	wts, err := wtSvc.List(ctx)
 	require.NoError(t, err)
@@ -240,10 +261,10 @@ func TestWorktreeService_AddAndList(t *testing.T) {
 	ctx := context.Background()
 	clock := fixedClock()
 
-	wtSvc := NewWorktreeService(env.idx, env.branch, clock)
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, clock)
 
 	_, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
-		Path: "/tmp/wt1", TaskID: "MGIT-8.2", AgentID: "a1",
+		Path: filepath.Join(t.TempDir(), "wt1"), TaskID: "MGIT-8.2", AgentID: "a1",
 	})
 	require.NoError(t, err)
 
@@ -257,14 +278,15 @@ func TestWorktreeService_Remove(t *testing.T) {
 	ctx := context.Background()
 	clock := fixedClock()
 
-	wtSvc := NewWorktreeService(env.idx, env.branch, clock)
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, clock)
 
+	wtPath := filepath.Join(t.TempDir(), "wt-rm")
 	_, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
-		Path: "/tmp/wt-rm", TaskID: "MGIT-8.3", AgentID: "a1",
+		Path: wtPath, TaskID: "MGIT-8.3", AgentID: "a1",
 	})
 	require.NoError(t, err)
 
-	err = wtSvc.Remove(ctx, "/tmp/wt-rm", false)
+	err = wtSvc.Remove(ctx, wtPath, false)
 	assert.NoError(t, err)
 }
 
@@ -273,14 +295,15 @@ func TestWorktreeService_Resolve(t *testing.T) {
 	ctx := context.Background()
 	clock := fixedClock()
 
-	wtSvc := NewWorktreeService(env.idx, env.branch, clock)
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, clock)
 
+	wtPath := filepath.Join(t.TempDir(), "wt-res")
 	_, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
-		Path: "/tmp/wt-res", TaskID: "MGIT-8.4", AgentID: "a1",
+		Path: wtPath, TaskID: "MGIT-8.4", AgentID: "a1",
 	})
 	require.NoError(t, err)
 
-	wt, err := wtSvc.Resolve(ctx, "/tmp/wt-res")
+	wt, err := wtSvc.Resolve(ctx, wtPath)
 	require.NoError(t, err)
 	assert.Equal(t, "MGIT-8.4", wt.TaskID)
 }
@@ -290,10 +313,10 @@ func TestWorktreeService_Add_InvalidTaskID(t *testing.T) {
 	ctx := context.Background()
 	clock := fixedClock()
 
-	wtSvc := NewWorktreeService(env.idx, env.branch, clock)
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, clock)
 
 	_, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
-		Path: "/tmp/wt-bad", TaskID: "invalid",
+		Path: filepath.Join(t.TempDir(), "wt-bad"), TaskID: "invalid",
 	})
 	assert.Error(t, err)
 }
@@ -305,19 +328,22 @@ func TestWorktreeService_Prune_NonexistentPath(t *testing.T) {
 	ctx := context.Background()
 	clock := fixedClock()
 
-	wtSvc := NewWorktreeService(env.idx, env.branch, clock)
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, clock)
 
-	// Add a worktree with a path that does not exist on disk.
+	// Add a worktree (Add now materializes the source, MGIT-17), then delete the
+	// directory out from under the registry to simulate a stale worktree.
+	wtPath := filepath.Join(t.TempDir(), "gone-wt")
 	_, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
-		Path: "/tmp/nonexistent-wt-prune-test", TaskID: "MGIT-15.1", AgentID: "a1",
+		Path: wtPath, TaskID: "MGIT-15.1", AgentID: "a1",
 	})
 	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(wtPath))
 
 	// Prune should detect the stale worktree.
 	stale, err := wtSvc.Prune(ctx, true, 0) // dryRun
 	require.NoError(t, err)
 	assert.Len(t, stale, 1)
-	assert.Equal(t, "/tmp/nonexistent-wt-prune-test", stale[0])
+	assert.Equal(t, wtPath, stale[0])
 
 	// Actual prune (not dry run).
 	stale, err = wtSvc.Prune(ctx, false, 0)
@@ -335,7 +361,7 @@ func TestWorktreeService_Prune_NoStale(t *testing.T) {
 	ctx := context.Background()
 	clock := fixedClock()
 
-	wtSvc := NewWorktreeService(env.idx, env.branch, clock)
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, clock)
 
 	// No worktrees registered, so prune should return empty.
 	stale, err := wtSvc.Prune(ctx, false, 0)
@@ -354,7 +380,7 @@ func TestWorktreeService_Prune_StaleAfterDuration(t *testing.T) {
 		return fixedTime.Add(48 * time.Hour)
 	}
 
-	wtSvc := NewWorktreeService(env.idx, env.branch, fixedClock())
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, fixedClock())
 
 	// Create a temp directory that actually exists.
 	tmpPath := t.TempDir()
@@ -364,7 +390,7 @@ func TestWorktreeService_Prune_StaleAfterDuration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Switch to future clock for pruning.
-	wtSvcFuture := NewWorktreeService(env.idx, env.branch, futureClock)
+	wtSvcFuture := NewWorktreeService(env.idx, env.branch, env.wt, futureClock)
 
 	// Prune with a staleAfter of 1 hour — worktree was created 48 hours ago.
 	stale, err := wtSvcFuture.Prune(ctx, true, 1*time.Hour)

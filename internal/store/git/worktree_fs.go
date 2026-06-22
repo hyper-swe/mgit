@@ -136,13 +136,23 @@ func (r *Repository) blobHashOfWorkingFile(rel string) (plumbing.Hash, error) {
 	return obj.Hash(), nil
 }
 
-// writeEntryToDisk materializes a single tree entry (blob + git mode) onto the
-// working file at the given project-relative path, creating parent directories
-// as needed. A symlink entry (120000) is recreated as an actual symlink whose
-// target is the blob's link text; a regular/executable entry is written as a
-// file with the matching permission bits (so the executable bit survives a
-// round-trip). Any pre-existing file at the path is replaced. Refs: MGIT-14.7 (#2, #3)
+// writeEntryToDisk materializes a single tree entry onto the working file at
+// the given project-relative path under the project root. See writeEntryToDir
+// for the materialization semantics. Refs: MGIT-14.7 (#2, #3)
 func (r *Repository) writeEntryToDisk(rel string, entry blobEntry) error {
+	return r.writeEntryToDir(r.root, rel, entry)
+}
+
+// writeEntryToDir materializes a single tree entry (blob + git mode) onto the
+// file at the given relative path UNDER root, creating parent directories as
+// needed. root is the destination FS root: the project root for an in-place
+// checkout, or a linked worktree's path for `mgit worktree add` (MGIT-17). A
+// symlink entry (120000) is recreated as an actual symlink whose target is the
+// blob's link text; a regular/executable entry is written as a file with the
+// matching permission bits (so the executable bit survives a round-trip). Any
+// pre-existing file at the path is replaced. rel is validated so it can never
+// escape root. Refs: MGIT-14.7 (#2, #3), MGIT-17
+func (r *Repository) writeEntryToDir(root, rel string, entry blobEntry) error {
 	if err := validateRelPath(rel); err != nil {
 		return err
 	}
@@ -150,7 +160,7 @@ func (r *Repository) writeEntryToDisk(rel string, entry blobEntry) error {
 	if err != nil {
 		return fmt.Errorf("materialize %s: %w", rel, err)
 	}
-	abs := filepath.Join(r.root, filepath.FromSlash(rel))
+	abs := filepath.Join(root, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(abs), 0o750); err != nil {
 		return fmt.Errorf("mkdir for %s: %w", rel, err)
 	}

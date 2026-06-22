@@ -330,6 +330,54 @@ func (ws *WorktreeStore) materializeCommit(commitHash plumbing.Hash, currentHead
 	return nil
 }
 
+// MaterializeBranchTo writes the tree of branchName's tip commit into destRoot
+// — a SEPARATE filesystem root (a linked worktree's path), not the project
+// root. It is the materialization `mgit worktree add` was missing (MGIT-17):
+// every blob in the branch tree is written under destRoot with its git mode
+// preserved, so the linked worktree is a usable working copy rather than an
+// empty dir. Unlike Checkout/materializeCommit it does NOT switch HEAD, run a
+// deletion pass (the destination is a fresh worktree), or touch the project's
+// .git — it only reads the .mgit object store and writes plain files under
+// destRoot. Every relative path is validated up front so nothing can escape
+// destRoot. Returns ErrBranchNotFound if the branch does not exist.
+// Refs: FR-16, MGIT-17
+func (ws *WorktreeStore) MaterializeBranchTo(_ context.Context, branchName, destRoot string) error {
+	refName := plumbing.NewBranchReferenceName(branchName)
+	ref, err := ws.repo.repo.Storer.Reference(refName)
+	if err != nil {
+		return fmt.Errorf("%w: %s", model.ErrBranchNotFound, branchName)
+	}
+	commit, err := ws.repo.repo.CommitObject(ref.Hash())
+	if err != nil {
+		return fmt.Errorf("materialize branch %s: load commit: %w", branchName, err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return fmt.Errorf("materialize branch %s: load tree: %w", branchName, err)
+	}
+	target, err := flattenTree(tree)
+	if err != nil {
+		return fmt.Errorf("materialize branch %s: flatten tree: %w", branchName, err)
+	}
+
+	// Validate every path BEFORE writing anything: one escaping path aborts the
+	// whole materialization with nothing written.
+	for path := range target {
+		if err := validateRelPath(path); err != nil {
+			return fmt.Errorf("materialize branch %s: invalid path %s: %w", branchName, path, err)
+		}
+	}
+	if err := os.MkdirAll(destRoot, 0o750); err != nil {
+		return fmt.Errorf("materialize branch %s: mkdir %s: %w", branchName, destRoot, err)
+	}
+	for path, entry := range target {
+		if err := ws.repo.writeEntryToDir(destRoot, path, entry); err != nil {
+			return fmt.Errorf("materialize branch %s: %w", branchName, err)
+		}
+	}
+	return nil
+}
+
 // Clean removes untracked user-visible files from the working tree (files not
 // present in the HEAD tree), mirroring `git clean -d`. It never touches .mgit/
 // or the project .git.

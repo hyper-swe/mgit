@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/model"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
@@ -16,14 +17,18 @@ import (
 type WorktreeService struct {
 	indexStore *index.Store
 	branch     *BranchService
+	worktree   *gitstore.WorktreeStore
 	clock      func() time.Time
 }
 
-// NewWorktreeService creates a WorktreeService with injected dependencies.
-func NewWorktreeService(idx *index.Store, branch *BranchService, clock func() time.Time) *WorktreeService {
+// NewWorktreeService creates a WorktreeService with injected dependencies. The
+// WorktreeStore is used to materialize a new worktree's branch source onto disk
+// (MGIT-17).
+func NewWorktreeService(idx *index.Store, branch *BranchService, wt *gitstore.WorktreeStore, clock func() time.Time) *WorktreeService {
 	return &WorktreeService{
 		indexStore: idx,
 		branch:     branch,
+		worktree:   wt,
 		clock:      clock,
 	}
 }
@@ -60,9 +65,18 @@ func (s *WorktreeService) Add(ctx context.Context, opts model.WorktreeAddOptions
 		CreatedAt: s.clock(),
 	}
 
-	// Register in SQLite (UNIQUE constraints enforce isolation)
+	// Register in SQLite (UNIQUE constraints enforce isolation) BEFORE touching
+	// disk, so a duplicate path/task is rejected without materializing anything.
 	if err := s.indexStore.InsertWorktree(ctx, wt); err != nil {
 		return nil, fmt.Errorf("worktree add: %w", err)
+	}
+
+	// Materialize the branch's source into the linked worktree path so it is a
+	// usable working copy, not an empty dir (MGIT-17). On failure, roll back the
+	// registration so we never leave a registered-but-empty worktree behind.
+	if err := s.worktree.MaterializeBranchTo(ctx, branchName, opts.Path); err != nil {
+		_ = s.indexStore.DeleteWorktree(ctx, opts.Path)
+		return nil, fmt.Errorf("worktree add: materialize source: %w", err)
 	}
 
 	return wt, nil

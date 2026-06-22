@@ -124,9 +124,9 @@ func TestWorktreeService_Add_ExistingBranch(t *testing.T) {
 	_, err := env.branch.CreateBranch(ctx, "MGIT-9.1")
 	require.NoError(t, err)
 
-	wtSvc := NewWorktreeService(env.idx, env.branch, fixedClock())
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, fixedClock())
 	wt, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
-		Path: "/tmp/wt-existing", TaskID: "MGIT-9.1",
+		Path: filepath.Join(t.TempDir(), "wt-existing"), TaskID: "MGIT-9.1",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "task/MGIT-9.1", wt.Branch)

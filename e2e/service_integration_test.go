@@ -75,7 +75,7 @@ func setupServiceEnv(t *testing.T) *serviceEnv {
 		merge:    service.NewMergeService(repo, bs, ms, cs),
 		gc:       service.NewGCService(gcs),
 		bundle:   service.NewBundleService(idx, clock),
-		wtSvc:    service.NewWorktreeService(idx, service.NewBranchService(repo, bs, idx), clock),
+		wtSvc:    service.NewWorktreeService(idx, service.NewBranchService(repo, bs, idx), ws, clock),
 		clock:    clock,
 	}
 }
