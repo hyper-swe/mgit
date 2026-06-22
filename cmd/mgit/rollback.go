@@ -30,15 +30,20 @@ func rollbackCmd() *cobra.Command {
 			// `mgit show <hash>`; the positional wins if both are supplied.
 			commitHash = firstNonEmpty(argAt(args, 0), commitHash)
 
-			// --commit: resolve task ID from a specific commit hash.
-			if commitHash != "" && taskID == "" {
-				app, err := openAppFromCwd()
-				if err != nil {
-					return err
-				}
-				defer app.Close()
+			// Open the App ONCE and reuse it for both resolving the task from a
+			// commit hash and performing the rollback. Opening twice would make the
+			// second open contend with the first's still-held process file lock
+			// (held until the deferred Close), stalling for the lock timeout. MGIT-25
+			app, err := openAppFromCwd()
+			if err != nil {
+				return err
+			}
+			defer app.Close()
 
-				ctx := context.Background()
+			ctx := context.Background()
+
+			// --commit / positional hash: resolve the task ID from that commit.
+			if commitHash != "" && taskID == "" {
 				c, err := app.Commit.GetCommit(ctx, commitHash)
 				if err != nil {
 					return fmt.Errorf("rollback --commit: resolve commit: %w", err)
@@ -50,12 +55,6 @@ func rollbackCmd() *cobra.Command {
 				return fmt.Errorf("a commit hash (positional or --commit) or --task-id is required")
 			}
 
-			app, err := openAppFromCwd()
-			if err != nil {
-				return err
-			}
-			defer app.Close()
-
 			// In a linked worktree the revert lands on the bound branch, so a
 			// rollback there is constrained to the bound task — rolling back a
 			// different task would mis-attribute the revert. Refs: MGIT-24
@@ -64,7 +63,6 @@ func rollbackCmd() *cobra.Command {
 					model.ErrTaskMismatch, app.BoundTask, taskID)
 			}
 
-			ctx := context.Background()
 			revert, err := app.Rollback.RollbackTask(ctx, service.RollbackRequest{
 				TaskID: taskID,
 				Reason: reason,
