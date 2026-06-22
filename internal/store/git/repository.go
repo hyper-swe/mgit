@@ -33,6 +33,10 @@ type Repository struct {
 	root  string            // Project root directory
 	repo  *gogit.Repository // Underlying go-git repository (never exposed)
 	clock func() time.Time  // Injected clock for deterministic timestamps
+	// branchOverride, when non-empty, is the branch a linked worktree is bound
+	// to; it is used as HEAD instead of the shared .mgit/HEAD so a worktree
+	// commits to its own branch without touching the parent's HEAD (ADR-007).
+	branchOverride string
 }
 
 // Init initializes a new mgit repository at the given path.
@@ -126,6 +130,54 @@ func Open(path string, clock func() time.Time) (*Repository, error) {
 	}, nil
 }
 
+// OpenLinked opens a linked worktree: it opens the SHARED parent .mgit store at
+// parentMgitPath (objects + refs) but roots working-file reads and
+// materialization at worktreeRoot, and binds HEAD to branch instead of the
+// shared .mgit/HEAD (per-worktree HEAD, ADR-007). The parent .mgit and the
+// project .git are never written by virtue of this open — only the worktree's
+// own files and the shared object store the parent already owns. Refs: FR-16, MGIT-24
+func OpenLinked(worktreeRoot, parentMgitPath, branch string, clock func() time.Time) (*Repository, error) {
+	if clock == nil {
+		return nil, errors.New("clock must not be nil")
+	}
+	if branch == "" {
+		return nil, fmt.Errorf("%w: linked worktree branch must not be empty", model.ErrStorageError)
+	}
+	info, err := os.Stat(parentMgitPath)
+	if err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("%w: parent store not found at %s", model.ErrStorageError, parentMgitPath)
+	}
+	dotFS := osfs.New(parentMgitPath)
+	storage := filesystem.NewStorage(dotFS, cache.NewObjectLRUDefault())
+	repo, err := gogit.Open(storage, nil)
+	if err != nil {
+		return nil, fmt.Errorf("open parent go-git repo: %w", err)
+	}
+	return &Repository{
+		root:           worktreeRoot,
+		repo:           repo,
+		clock:          clock,
+		branchOverride: branch,
+	}, nil
+}
+
+// currentRef resolves the reference that acts as HEAD for this repository. For a
+// linked worktree (branchOverride set) it resolves the bound branch directly
+// from the shared store, NEVER reading the parent's .mgit/HEAD; otherwise it is
+// the store's real HEAD. This is the single point all current-branch resolution
+// funnels through so per-worktree HEAD is honored everywhere. Refs: FR-16, MGIT-24
+func (r *Repository) currentRef() (*plumbing.Reference, error) {
+	if r.branchOverride != "" {
+		name := plumbing.NewBranchReferenceName(r.branchOverride)
+		ref, err := r.repo.Storer.Reference(name)
+		if err != nil {
+			return nil, fmt.Errorf("resolve worktree branch %s: %w", r.branchOverride, err)
+		}
+		return ref, nil
+	}
+	return r.repo.Head()
+}
+
 // Close performs cleanup of the repository.
 func (r *Repository) Close() error {
 	r.repo = nil
@@ -170,7 +222,7 @@ func (r *Repository) WriteRawObject(typ plumbing.ObjectType, content []byte) (st
 // Head returns the SHA-1 hash of the current HEAD commit.
 // Refs: FR-1.4
 func (r *Repository) Head() (string, error) {
-	ref, err := r.repo.Head()
+	ref, err := r.currentRef()
 	if err != nil {
 		return "", fmt.Errorf("resolve HEAD: %w", err)
 	}
@@ -181,6 +233,9 @@ func (r *Repository) Head() (string, error) {
 // points at. Returns an error if HEAD is detached.
 // Refs: FR-1.4, FR-8.4
 func (r *Repository) CurrentBranch() (string, error) {
+	if r.branchOverride != "" {
+		return r.branchOverride, nil
+	}
 	ref, err := r.repo.Head()
 	if err != nil {
 		return "", fmt.Errorf("resolve HEAD: %w", err)

@@ -24,6 +24,12 @@ func checkoutCmd() *cobra.Command {
 			}
 			defer app.Close()
 
+			// A linked worktree is bound to one branch for its lifetime; switching
+			// branches there would mutate the shared parent HEAD. Reject it. MGIT-24
+			if app.BoundTask != "" {
+				return fmt.Errorf("cannot switch branches in a linked worktree (bound to task %s)", app.BoundTask)
+			}
+
 			ctx := context.Background()
 
 			// -b/--create: git-familiar create-and-switch. Create a branch

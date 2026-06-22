@@ -33,6 +33,10 @@ type App struct {
 	GC       *service.GCService
 	Bundle   *service.BundleService
 
+	// BoundTask is the task ID a linked worktree is bound to (empty for a normal
+	// repository). Commands run from inside a worktree default to it. Refs: MGIT-24
+	BoundTask string
+
 	fileLock *lock.FileLock
 }
 
@@ -43,21 +47,42 @@ type App struct {
 func OpenApp(path string) (*App, error) {
 	clock := func() time.Time { return time.Now().UTC() }
 
-	mgitDir := filepath.Join(path, ".mgit")
+	// A linked worktree carries a marker pointing at the shared parent store; a
+	// normal repo opens its own .mgit. In both cases storeDir is the directory
+	// holding the shared objects/refs/index.db/audit/config and the file lock,
+	// while repo's root stays at `path` so working files target this dir. ADR-007.
+	marker, isWorktree, err := gitstore.ReadWorktreeMarker(path)
+	if err != nil {
+		return nil, fmt.Errorf("read worktree marker: %w", err)
+	}
 
-	// Acquire process-level lock before opening any stores.
-	// This prevents races between concurrent CLI processes on the same repo.
-	fileLock, err := lock.Acquire(mgitDir, lock.DefaultTimeout)
+	storeDir := filepath.Join(path, ".mgit")
+	boundTask := ""
+	if isWorktree {
+		storeDir = marker.Store
+		boundTask = marker.Task
+	}
+
+	// Acquire process-level lock before opening any stores. For a worktree the
+	// lock is on the SHARED parent store, so the parent and all its worktrees
+	// serialize on one lock (single-writer invariant).
+	fileLock, err := lock.Acquire(storeDir, lock.DefaultTimeout)
 	if err != nil {
 		return nil, err
 	}
 
-	repo, err := gitstore.Open(path, clock)
+	var repo *gitstore.Repository
+	if isWorktree {
+		repo, err = gitstore.OpenLinked(path, marker.Store, marker.Branch, clock)
+	} else {
+		repo, err = gitstore.Open(path, clock)
+	}
 	if err != nil {
 		_ = fileLock.Release()
 		return nil, fmt.Errorf("open repository: %w", err)
 	}
 
+	mgitDir := storeDir
 	dbPath := filepath.Join(mgitDir, "index.db")
 	idx, err := index.New(dbPath, clock)
 	if err != nil {
@@ -88,22 +113,23 @@ func OpenApp(path string) (*App, error) {
 	audit := service.NewAuditService(auditPath, clock)
 
 	return &App{
-		Repo:     repo,
-		Index:    idx,
-		Commit:   service.NewCommitService(repo, cs, idx).WithAudit(audit),
-		Squash:   service.NewSquashService(repo, cs, idx).WithAudit(audit),
-		Rollback: service.NewRollbackService(repo, cs, idx).WithAudit(audit),
-		Branch:   service.NewBranchService(repo, bs, idx),
-		Verify:   service.NewVerifyService(cs, idx),
-		Audit:    audit,
-		Config:   cfgSvc,
-		Diff:     service.NewDiffService(ds, cs, idx),
-		Restore:  service.NewRestoreService(cs, path),
-		Checkout: service.NewCheckoutService(bs, ws),
-		Merge:    service.NewMergeService(repo, bs, ms, cs),
-		GC:       service.NewGCService(gcs),
-		Bundle:   service.NewBundleService(idx, clock),
-		fileLock: fileLock,
+		Repo:      repo,
+		Index:     idx,
+		Commit:    service.NewCommitService(repo, cs, idx).WithAudit(audit),
+		Squash:    service.NewSquashService(repo, cs, idx).WithAudit(audit),
+		Rollback:  service.NewRollbackService(repo, cs, idx).WithAudit(audit),
+		Branch:    service.NewBranchService(repo, bs, idx),
+		Verify:    service.NewVerifyService(cs, idx),
+		Audit:     audit,
+		Config:    cfgSvc,
+		Diff:      service.NewDiffService(ds, cs, idx),
+		Restore:   service.NewRestoreService(cs, path),
+		Checkout:  service.NewCheckoutService(bs, ws),
+		Merge:     service.NewMergeService(repo, bs, ms, cs),
+		GC:        service.NewGCService(gcs),
+		Bundle:    service.NewBundleService(idx, clock),
+		BoundTask: boundTask,
+		fileLock:  fileLock,
 	}, nil
 }
 

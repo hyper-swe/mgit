@@ -31,7 +31,7 @@ var excludedRoots = map[string]bool{
 // and commit-building; the mode is carried so commits and checkouts preserve
 // git's regular/executable/symlink distinction. Refs: MGIT-14.7
 func (r *Repository) headFiles() (map[string]blobEntry, error) {
-	headRef, err := r.repo.Head()
+	headRef, err := r.currentRef()
 	if err != nil {
 		return nil, fmt.Errorf("resolve HEAD: %w", err)
 	}

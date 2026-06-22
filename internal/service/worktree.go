@@ -79,6 +79,13 @@ func (s *WorktreeService) Add(ctx context.Context, opts model.WorktreeAddOptions
 		return nil, fmt.Errorf("worktree add: materialize source: %w", err)
 	}
 
+	// Write the linked-worktree marker so `mgit` run from inside the worktree
+	// binds to the shared parent store on this task branch (ADR-007, MGIT-24).
+	if err := s.worktree.WriteWorktreeMarker(opts.Path, branchName, opts.TaskID); err != nil {
+		_ = s.indexStore.DeleteWorktree(ctx, opts.Path)
+		return nil, fmt.Errorf("worktree add: write marker: %w", err)
+	}
+
 	return wt, nil
 }
 

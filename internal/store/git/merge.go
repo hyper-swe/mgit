@@ -111,7 +111,7 @@ func (m *MergeStore) FastForward(ctx context.Context, branchName, targetHash str
 func (m *MergeStore) CreateMergeCommit(ctx context.Context, message, sourceHash string) (string, error) {
 	goRepo := m.repo.repo
 
-	headRef, err := goRepo.Head()
+	headRef, err := m.repo.currentRef()
 	if err != nil {
 		return "", fmt.Errorf("merge commit: resolve HEAD: %w", err)
 	}

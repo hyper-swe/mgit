@@ -59,8 +59,9 @@ func (cs *CommitStore) CreateCommit(_ context.Context, c *model.Commit) (string,
 	// Set timestamp from injected clock.
 	c.CreatedAt = cs.repo.Now()
 
-	// Resolve the current branch ref and parent commit.
-	headRef, err := goRepo.Head()
+	// Resolve the current branch ref and parent commit. For a linked worktree
+	// this is the bound branch (per-worktree HEAD), not the shared .mgit/HEAD.
+	headRef, err := cs.repo.currentRef()
 	if err != nil {
 		return "", fmt.Errorf("resolve HEAD: %w", err)
 	}
@@ -227,7 +228,15 @@ func matchHashPrefix(candidates []string, ref string) (string, error) {
 func (cs *CommitStore) ListCommits(_ context.Context) ([]*model.Commit, error) {
 	goRepo := cs.repo.repo
 
+	// Start the walk from the current ref — for a linked worktree this is the
+	// bound branch, not the shared .mgit/HEAD, so `mgit log` in a worktree shows
+	// the worktree's branch history. Refs: FR-16, MGIT-24
+	head, err := cs.repo.currentRef()
+	if err != nil {
+		return nil, fmt.Errorf("list commits: %w", err)
+	}
 	iter, err := goRepo.Log(&gogit.LogOptions{
+		From:  head.Hash(),
 		Order: gogit.LogOrderCommitterTime,
 	})
 	if err != nil {

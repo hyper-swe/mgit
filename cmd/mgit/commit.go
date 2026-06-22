@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/service"
 )
 
@@ -20,15 +21,28 @@ func commitCmd() *cobra.Command {
 		Use:   "commit",
 		Short: "Create a task-tagged micro-commit",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if taskID == "" {
-				return fmt.Errorf("--task-id is required")
-			}
-
 			app, err := openAppFromCwd()
 			if err != nil {
 				return err
 			}
 			defer app.Close()
+
+			// Inside a linked worktree, commits auto-inherit the bound task ID
+			// (CLAUDE.md); an explicit --task-id that contradicts the binding is
+			// rejected. Refs: FR-16, MGIT-24
+			if app.BoundTask != "" {
+				switch taskID {
+				case "":
+					taskID = app.BoundTask
+				case app.BoundTask:
+				default:
+					return fmt.Errorf("%w: worktree is bound to task %s, not %s",
+						model.ErrTaskMismatch, app.BoundTask, taskID)
+				}
+			}
+			if taskID == "" {
+				return fmt.Errorf("--task-id is required")
+			}
 
 			ctx := context.Background()
 
