@@ -10,10 +10,15 @@ import (
 	"github.com/hyper-swe/mgit/internal/service"
 )
 
-// cherryPickCmd implements mgit cherry-pick. Refs: FR-8.16, MGIT-4.2.7
+// cherryPickCmd implements mgit cherry-pick. The task ID for the new commit
+// is, by default, DERIVED from the source commit's provenance (its
+// [MGIT:TASK_ID] tag, now surfaced on read per MGIT-19) and may be overridden
+// with --task-id. Cherry-picking a commit with no derivable task fails with a
+// clear message rather than the opaque `invalid task ID: ""`.
+// Refs: FR-8.16, MGIT-4.2.7, MGIT-19
 func cherryPickCmd() *cobra.Command {
 	var noCommit bool
-	var onto string
+	var onto, taskID string
 
 	cmd := &cobra.Command{
 		Use:   "cherry-pick [commit-hash]",
@@ -47,9 +52,19 @@ func cherryPickCmd() *cobra.Command {
 				return nil
 			}
 
+			// Resolve the task for the new commit: explicit --task-id wins,
+			// otherwise derive it from the source commit's provenance.
+			pickTask := taskID
+			if pickTask == "" {
+				pickTask = source.TaskID.String()
+			}
+			if pickTask == "" {
+				return fmt.Errorf("cherry-pick: source commit %s has no task ID; pass --task-id", source.ShortID())
+			}
+
 			// Create a new commit with the same content on current branch
 			c, err := app.Commit.CreateCommit(ctx, service.CreateCommitRequest{
-				TaskID:    source.TaskID.String(),
+				TaskID:    pickTask,
 				AgentID:   "mgit-cherry-pick",
 				Message:   fmt.Sprintf("cherry-pick %s: %s", source.ShortID(), source.Message),
 				FileDiffs: source.FileDiffs,
@@ -65,5 +80,6 @@ func cherryPickCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&noCommit, "no-commit", false, "Print what would be cherry-picked without committing")
 	cmd.Flags().StringVar(&onto, "onto", "", "Switch to branch before cherry-picking")
+	cmd.Flags().StringVar(&taskID, "task-id", "", "Override the task ID for the cherry-picked commit (default: derived from source)")
 	return cmd
 }

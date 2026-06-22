@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -151,17 +152,30 @@ func (s *Store) queryCommitRecords(ctx context.Context, querySQL string, args ..
 // Returns ErrTaskNotFound if no mapping exists.
 // Refs: FR-4 (commit -> task query)
 func (s *Store) GetCommitTask(ctx context.Context, commitHash string) (string, error) {
-	// Parameterized query for commit -> task reverse lookup
-	const querySQL = `SELECT task_id FROM task_commits WHERE commit_hash = ? LIMIT 1`
+	taskID, _, err := s.GetCommitProvenance(ctx, commitHash)
+	return taskID, err
+}
 
-	var taskID string
-	err := s.ReadTx(ctx, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, querySQL, commitHash).Scan(&taskID)
+// GetCommitProvenance returns the indexed task_id and authoritative ADR-002
+// content_hash (SHA-256) for a commit hash. This is the read-path join that
+// lets show/log surface a commit's provenance — the content_hash is recorded
+// at create time and cannot be recomputed from the git object alone (it covers
+// the file diffs, which the object does not carry). Returns ErrTaskNotFound if
+// the commit was never indexed. Refs: FR-4, ADR-002, MGIT-19
+func (s *Store) GetCommitProvenance(ctx context.Context, commitHash string) (taskID, contentHash string, err error) {
+	// Parameterized commit -> (task_id, content_hash) reverse lookup.
+	const querySQL = `SELECT task_id, content_hash FROM task_commits WHERE commit_hash = ? LIMIT 1`
+
+	err = s.ReadTx(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, querySQL, commitHash).Scan(&taskID, &contentHash)
 	})
-	if err != nil {
-		return "", fmt.Errorf("%w: no task for commit %s", model.ErrTaskNotFound, commitHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", fmt.Errorf("%w: no task for commit %s", model.ErrTaskNotFound, commitHash)
 	}
-	return taskID, nil
+	if err != nil {
+		return "", "", fmt.Errorf("query commit provenance %s: %w", commitHash, err)
+	}
+	return taskID, contentHash, nil
 }
 
 // DeleteFromTask always returns ErrAppendOnlyViolation.

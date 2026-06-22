@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -125,16 +126,62 @@ func (s *CommitService) logAudit(c *model.Commit) error {
 	})
 }
 
-// GetCommit retrieves a commit by hash.
-// Refs: FR-3
+// GetCommit retrieves a commit by hash (full or unambiguous abbreviated
+// prefix) and enriches it with authoritative provenance from the index: the
+// ADR-002 content_hash recorded at create time, plus the task_id as a fallback
+// when the git message carried no [MGIT:] tag. show/log/cherry-pick rely on
+// these fields being populated. Refs: FR-3, FR-4, ADR-002, MGIT-18, MGIT-19
 func (s *CommitService) GetCommit(ctx context.Context, hash string) (*model.Commit, error) {
-	return s.commitStore.GetCommit(ctx, hash)
+	c, err := s.commitStore.GetCommit(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.enrichProvenance(ctx, c); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
-// ListCommits returns all commits reachable from HEAD.
-// Refs: FR-3
+// ListCommits returns all commits reachable from HEAD, each enriched with its
+// indexed content_hash and task_id so `mgit log` surfaces full provenance.
+// Refs: FR-3, FR-4, ADR-002, MGIT-19
 func (s *CommitService) ListCommits(ctx context.Context) ([]*model.Commit, error) {
-	return s.commitStore.ListCommits(ctx)
+	commits, err := s.commitStore.ListCommits(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range commits {
+		if err := s.enrichProvenance(ctx, c); err != nil {
+			return nil, err
+		}
+	}
+	return commits, nil
+}
+
+// enrichProvenance binds a commit's authoritative ADR-002 content_hash (and,
+// when missing, its task_id) from the SQLite index. A commit simply absent
+// from the index (ErrTaskNotFound — e.g. mgit's own initial system commit) is
+// left as-is and is not an error. A genuine index/DB failure IS propagated:
+// on this audit/provenance read path, silently returning blank provenance for
+// a corrupt index would hide an integrity problem. The content_hash cannot be
+// recomputed from the git object alone (it covers the file diffs the object
+// does not carry), so the index is its sole authoritative source on read.
+// Refs: FR-4, ADR-002, MGIT-19
+func (s *CommitService) enrichProvenance(ctx context.Context, c *model.Commit) error {
+	taskID, contentHash, err := s.indexStore.GetCommitProvenance(ctx, c.CommitID)
+	if errors.Is(err, model.ErrTaskNotFound) {
+		return nil // not indexed (e.g. initial system commit); leave parsed fields
+	}
+	if err != nil {
+		return fmt.Errorf("enrich provenance for %s: %w", c.CommitID, err)
+	}
+	c.ContentHash = contentHash
+	if c.TaskID.IsZero() {
+		if tid, perr := model.ParseTaskID(taskID); perr == nil {
+			c.TaskID = tid
+		}
+	}
+	return nil
 }
 
 // GetTaskCommits returns all commits for a given task ID.

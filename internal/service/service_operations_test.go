@@ -29,6 +29,76 @@ func TestCommitService_GetCommit(t *testing.T) {
 	assert.Equal(t, c.CommitID, got.CommitID)
 }
 
+// TestCommitService_GetCommit_PopulatesProvenance is the service-layer
+// regression for MGIT-19: GetCommit must surface the task_id (from the message
+// prefix) and the AUTHORITATIVE ADR-002 content_hash (joined from the index)
+// that CreateCommit recorded — neither may read back blank. This is the
+// provenance that show/log/cherry-pick depend on. Refs: MGIT-19, ADR-002
+func TestCommitService_GetCommit_PopulatesProvenance(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	created, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
+		TaskID:  "MGIT-3.2",
+		AgentID: "agent-01",
+		Message: "implement provenance",
+		FileDiffs: []model.FileDiff{
+			{Path: "main.go", Operation: model.DiffAdded, NewHash: "abc"},
+		},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, created.ContentHash)
+
+	got, err := env.commit.GetCommit(ctx, created.CommitID)
+	require.NoError(t, err)
+	assert.Equal(t, "MGIT-3.2", got.TaskID.String(), "task_id must not read back blank")
+	assert.Equal(t, created.ContentHash, got.ContentHash,
+		"content_hash must equal the authoritative value recorded at create time")
+}
+
+// TestCommitService_GetCommit_AbbreviatedHash is the service-layer regression
+// for MGIT-18: the abbreviated hash `mgit log` prints must resolve via the
+// service read path. Refs: MGIT-18
+func TestCommitService_GetCommit_AbbreviatedHash(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	created, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
+		TaskID: "MGIT-3.3", AgentID: "a", Message: "abbrev",
+	})
+	require.NoError(t, err)
+
+	got, err := env.commit.GetCommit(ctx, created.CommitID[:8])
+	require.NoError(t, err)
+	assert.Equal(t, created.CommitID, got.CommitID)
+}
+
+// TestCommitService_ListCommits_PopulatesContentHash verifies the list read
+// path binds the authoritative content_hash from the index for task commits
+// (so `mgit log --json` no longer emits empty content_hash). Refs: MGIT-19
+func TestCommitService_ListCommits_PopulatesContentHash(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	created, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
+		TaskID: "MGIT-3.4", AgentID: "a", Message: "listed",
+	})
+	require.NoError(t, err)
+
+	commits, err := env.commit.ListCommits(ctx)
+	require.NoError(t, err)
+	var found *model.Commit
+	for _, c := range commits {
+		if c.CommitID == created.CommitID {
+			found = c
+			break
+		}
+	}
+	require.NotNil(t, found, "created commit must appear in the log")
+	assert.Equal(t, created.ContentHash, found.ContentHash)
+	assert.Equal(t, "MGIT-3.4", found.TaskID.String())
+}
+
 func TestCommitService_ListCommits(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
