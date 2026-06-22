@@ -62,3 +62,35 @@ func TestE2E_CommitFromWorktree_LandsOnBoundBranch(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, info.IsDir(), "project .git must remain a real directory")
 }
+
+// TestE2E_Worktree_GuardsAgainstSharedHeadMutation verifies a linked worktree
+// rejects operations that would mutate the shared parent HEAD or touch a task
+// other than the one it is bound to. Refs: MGIT-24
+func TestE2E_Worktree_GuardsAgainstSharedHeadMutation(t *testing.T) {
+	bin := buildMgitBinary(t)
+	repoDir := t.TempDir()
+	gitCmd(t, repoDir, "init")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600))
+	mustMgit(t, bin, repoDir, "init")
+	mustMgit(t, bin, repoDir, "add", "main.go")
+	mustMgit(t, bin, repoDir, "commit", "--task-id", "MGIT-1", "-m", "seed")
+
+	wt := filepath.Join(repoDir, "wt")
+	mustMgit(t, bin, repoDir, "worktree", "add", "--task", "MGIT-2", wt)
+
+	// Each of these would mutate the shared HEAD or a foreign task; all must fail.
+	for _, args := range [][]string{
+		{"checkout", "main"},
+		{"branch", "main"},
+		{"squash", "--task-id", "MGIT-2", "--to-main"},
+		{"cherry-pick", "deadbeef", "--onto", "main"},
+		{"rollback", "--task-id", "MGIT-1"}, // foreign task
+	} {
+		_, err := runMgit(t, bin, wt, args...)
+		assert.Error(t, err, "worktree must reject: mgit %v", args)
+	}
+
+	// The parent's HEAD/main is intact and still resolves after the rejections.
+	out := mustMgit(t, bin, repoDir, "status")
+	assert.Contains(t, out, "main", "parent HEAD must still be on main after worktree rejections")
+}

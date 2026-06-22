@@ -233,10 +233,9 @@ func (r *Repository) Head() (string, error) {
 // points at. Returns an error if HEAD is detached.
 // Refs: FR-1.4, FR-8.4
 func (r *Repository) CurrentBranch() (string, error) {
-	if r.branchOverride != "" {
-		return r.branchOverride, nil
-	}
-	ref, err := r.repo.Head()
+	// Funnel through currentRef() so the per-worktree override is honored in one
+	// place (ADR-007); for a worktree this resolves the bound branch ref.
+	ref, err := r.currentRef()
 	if err != nil {
 		return "", fmt.Errorf("resolve HEAD: %w", err)
 	}

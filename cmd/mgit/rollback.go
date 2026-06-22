@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/service"
 )
 
@@ -54,6 +55,14 @@ func rollbackCmd() *cobra.Command {
 				return err
 			}
 			defer app.Close()
+
+			// In a linked worktree the revert lands on the bound branch, so a
+			// rollback there is constrained to the bound task — rolling back a
+			// different task would mis-attribute the revert. Refs: MGIT-24
+			if app.BoundTask != "" && taskID != app.BoundTask {
+				return fmt.Errorf("%w: worktree is bound to task %s, not %s",
+					model.ErrTaskMismatch, app.BoundTask, taskID)
+			}
 
 			ctx := context.Background()
 			revert, err := app.Rollback.RollbackTask(ctx, service.RollbackRequest{

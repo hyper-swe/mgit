@@ -33,6 +33,13 @@ func cherryPickCmd() *cobra.Command {
 
 			ctx := context.Background()
 
+			// --onto switches the shared HEAD; from a linked worktree that would
+			// corrupt the parent's HEAD while the pick still lands on the bound
+			// branch via the override. Reject it in a worktree. Refs: MGIT-24
+			if onto != "" && app.BoundTask != "" {
+				return fmt.Errorf("cannot cherry-pick --onto from a linked worktree (bound to task %s)", app.BoundTask)
+			}
+
 			// --onto: switch to the target branch before cherry-picking.
 			if onto != "" {
 				if err := app.Branch.SwitchBranch(ctx, onto); err != nil {

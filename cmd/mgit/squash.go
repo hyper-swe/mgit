@@ -30,6 +30,13 @@ func squashCmd() *cobra.Command {
 			}
 			defer app.Close()
 
+			// --to-main switches the shared HEAD to main; from a linked worktree
+			// that would corrupt the parent's HEAD (and the merge would target the
+			// bound branch, not main). Promote from the parent. Refs: MGIT-24
+			if toMain && app.BoundTask != "" {
+				return fmt.Errorf("cannot --to-main from a linked worktree (bound to task %s); run it from the parent repository", app.BoundTask)
+			}
+
 			ctx := context.Background()
 
 			// --apply implies --to-git behavior.
