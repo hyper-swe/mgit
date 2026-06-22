@@ -68,6 +68,7 @@ func rootCmd() *cobra.Command {
 		diffCmd(),
 		sandboxCmd(),
 		serveCmd(),
+		runCmd(),
 	)
 
 	return root
