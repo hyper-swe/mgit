@@ -27,6 +27,11 @@ import-to-mtix.py
 # Guest VM images + other large local test fixtures (downloaded per-host)
 .testdata/
 
+# mgit's own self-contained store when dogfooding mgit on this repo. mgit
+# coexists with the project's git repo (MGIT-14) and its store must never be
+# committed to git — it is local, per-checkout state.
+.mgit/
+
 # mtix runtime artifacts (not portable)
 .mtix/data/*.db
 .mtix/data/*.db-shm
