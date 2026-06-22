@@ -201,10 +201,10 @@ func repoLayout(t *testing.T) (worktree, shared, private string) {
 	return worktree, shared, private
 }
 
-// TestQuarantine_GuestGitUsesPrivateStore verifies the bound plan maps the
-// guest's .git to the sandbox-local private store (read-write), so guest
-// commits land in the private store, never the shared one. Refs: SEC-03
-func TestQuarantine_GuestGitUsesPrivateStore(t *testing.T) {
+// TestQuarantine_GuestStoreUsesPrivateStore verifies the bound plan maps the
+// guest's mgit store (.mgit) to the sandbox-local private store (read-write),
+// so guest commits land in the private store, never the shared one. Refs: SEC-03
+func TestQuarantine_GuestStoreUsesPrivateStore(t *testing.T) {
 	wt, shared, priv := repoLayout(t)
 	base, err := BuildPlan(wt, defaultPatterns())
 	require.NoError(t, err)
@@ -215,8 +215,45 @@ func TestQuarantine_GuestGitUsesPrivateStore(t *testing.T) {
 	assert.Equal(t, priv, plan.PrivateStorePath)
 	m := plan.mountFor(priv)
 	require.NotNil(t, m, "the private store must be mounted")
-	assert.Equal(t, filepath.Join(wt, ".git"), m.GuestPath, "the guest .git resolves to the private store")
+	assert.Equal(t, filepath.Join(wt, ".mgit"), m.GuestPath, "the guest .mgit store resolves to the private store")
 	assert.False(t, m.ReadOnly, "the guest writes its micro-commits to the private store")
+}
+
+// TestQuarantine_NoRootGitDependency verifies the SEC-03 private store binds
+// with no dependency on a project/worktree .git: with the self-contained
+// .mgit layout (MGIT-14), a sandbox worktree holds only checked-out files and
+// no .git at all. The plan must still bind the private store at the guest's
+// .mgit path, keep the worktree writable, and never target a root .git that no
+// longer exists. Refs: SEC-03, MGIT-14, ADR-001 (amendment 2026-06-22)
+func TestQuarantine_NoRootGitDependency(t *testing.T) {
+	wt, shared, priv := repoLayout(t)
+	writeFile(t, wt, "src/main.go") // self-contained worktree: files only, no .git
+
+	// Precondition: no .git anywhere in the worktree (the MGIT-14 layout).
+	_, statErr := os.Lstat(filepath.Join(wt, ".git"))
+	require.True(t, os.IsNotExist(statErr), "precondition: the worktree has no .git (self-contained layout)")
+
+	base, err := BuildPlan(wt, defaultPatterns())
+	require.NoError(t, err)
+
+	plan, err := base.BindPrivateStore(priv, shared)
+	require.NoError(t, err, "binding must not depend on a worktree .git existing")
+
+	m := plan.mountFor(priv)
+	require.NotNil(t, m, "the private store is mounted even with no worktree .git")
+	assert.Equal(t, filepath.Join(wt, ".mgit"), m.GuestPath,
+		"the guest's mgit store (.mgit) is sourced from the private store, not a root .git")
+	assert.False(t, m.ReadOnly, "the guest writes its micro-commits to the private store")
+
+	// The worktree stays the read-write working tree, and no mount targets a
+	// root .git gitfile that no longer exists.
+	root := plan.WorktreeMount()
+	require.NotNil(t, root)
+	assert.False(t, root.ReadOnly)
+	for _, mnt := range plan.Mounts {
+		assert.NotEqual(t, filepath.Join(wt, ".git"), mnt.GuestPath,
+			"no mount may target the obsolete worktree .git path")
+	}
 }
 
 // TestQuarantine_SharedStoreUnreachable verifies no mount resolves into the
@@ -268,25 +305,28 @@ func TestQuarantine_CrossTaskObjectsHidden(t *testing.T) {
 		"only this sandbox's worktree and private store are writable; no shared/cross-task store")
 }
 
-// TestQuarantine_PrivateStoreOwnsGitSubtree verifies the private store
-// supersedes any mount BuildPlan layered inside .git (e.g. a read-only
-// .git/hooks): host .git/* must not resolve inside the guest's private
-// .git. Refs: SEC-03, FR-17.14
-func TestQuarantine_PrivateStoreOwnsGitSubtree(t *testing.T) {
+// TestQuarantine_PrivateStoreOwnsStoreSubtree verifies the private store
+// supersedes any mount BuildPlan layered inside the guest's .mgit store path:
+// no host path may resolve inside the guest's private .mgit. A worktree's own
+// .git is unaffected — it belongs to the project working tree, not mgit's
+// store, so the private store does not own or drop it. Refs: SEC-03, FR-17.14
+func TestQuarantine_PrivateStoreOwnsStoreSubtree(t *testing.T) {
 	wt, shared, priv := repoLayout(t)
-	writeFile(t, wt, ".git/hooks/pre-commit") // BuildPlan layers a RO .git/hooks mount
-	base, err := BuildPlan(wt, defaultPatterns())
+	// A stray host file inside the guest's .mgit path (e.g. a leftover dir).
+	writeFile(t, wt, ".mgit/objects/pack/keep")
+	base, err := BuildPlan(wt, []string{".mgit/objects/"})
 	require.NoError(t, err)
-	require.NotNil(t, base.mountFor(filepath.Join(wt, ".git", "hooks")), "precondition: BuildPlan mounts .git/hooks")
+	require.NotNil(t, base.mountFor(filepath.Join(wt, ".mgit", "objects")),
+		"precondition: BuildPlan mounts the .mgit/objects path")
 
 	plan, err := base.BindPrivateStore(priv, shared)
 	require.NoError(t, err)
 
-	assert.Nil(t, plan.mountFor(filepath.Join(wt, ".git", "hooks")),
-		"the host .git/hooks mount is dropped — the private store owns the .git subtree")
+	assert.Nil(t, plan.mountFor(filepath.Join(wt, ".mgit", "objects")),
+		"the host .mgit/objects mount is dropped — the private store owns the .mgit subtree")
 	m := plan.mountFor(priv)
 	require.NotNil(t, m)
-	assert.Equal(t, filepath.Join(wt, ".git"), m.GuestPath)
+	assert.Equal(t, filepath.Join(wt, ".mgit"), m.GuestPath)
 }
 
 // TestBindPrivateStore_Rejections covers the SEC-03 guards: a relative

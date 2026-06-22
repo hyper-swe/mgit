@@ -18,6 +18,13 @@ import (
 	"github.com/hyper-swe/mgit/internal/model"
 )
 
+// guestStoreName is the directory, relative to the worktree, where the guest's
+// mgit finds its self-contained object store. Per the ADR-001 amendment
+// (2026-06-22, MGIT-14) mgit's store lives in `.mgit/` and mgit never owns or
+// writes a `.git` at the worktree root, so the SEC-03 private store is bound
+// here — not at a `.git` gitfile that no longer exists. Refs: SEC-03, MGIT-14
+const guestStoreName = ".mgit"
+
 // Mount is one host→guest filesystem mapping in the plan.
 type Mount struct {
 	HostPath  string // absolute host source (always within the worktree, FR-17.3)
@@ -33,8 +40,9 @@ type Mount struct {
 type Plan struct {
 	WorktreePath string
 	// PrivateStorePath is the host directory backing the guest's private,
-	// sandbox-local .git object store, set by BindPrivateStore. Empty until
-	// bound. The shared store is never part of the plan (SEC-03).
+	// sandbox-local mgit object store (mounted at the guest's .mgit), set by
+	// BindPrivateStore. Empty until bound. The shared store is never part of
+	// the plan (SEC-03).
 	PrivateStorePath string
 	Mounts           []Mount
 }
@@ -68,12 +76,17 @@ func BuildPlan(worktreePath string, sensitive []string) (Plan, error) {
 }
 
 // BindPrivateStore adds the SEC-03 private object store to the plan: the
-// guest's .git is mapped read-write to a sandbox-local store
-// (privateStoreDir) at the worktree's identical-path .git, so guest
+// guest's mgit store (.mgit) is mapped read-write to a sandbox-local store
+// (privateStoreDir) at the worktree's identical-path .mgit, so guest
 // commits go to the private store and the host shared store
 // (sharedStoreDir — .mgit objects/refs/index) is never mounted and never
 // resolvable from inside the guest. Only `mgit sandbox land` bridges the
 // private store to the shared one.
+//
+// The guest target is .mgit, not .git: per the ADR-001 amendment (MGIT-14)
+// mgit keeps a self-contained .mgit store and never owns a .git at the
+// worktree root, so there is no `<worktree>/.git` to bind — the private store
+// is sourced independently of any project/worktree .git.
 //
 // It enforces the layout invariants that make the guarantee real: the
 // shared store must sit OUTSIDE the mounted worktree (else the guest would
@@ -107,21 +120,22 @@ func (p Plan) BindPrivateStore(privateStoreDir, sharedStoreDir string) (Plan, er
 			model.ErrSharedStoreReachable, priv, shared)
 	}
 
-	// The private store fully owns the guest's .git subtree. Build a fresh
-	// mount list (never mutating the receiver's backing array) that drops
-	// any mount BuildPlan layered inside .git — e.g. a read-only .git/hooks
-	// from the host-trusted set: host .git/* must not resolve inside the
-	// guest's private .git, and the private store, not the host worktree,
-	// owns it. Refs: SEC-03, FR-17.14
-	gitGuestPath := filepath.Join(p.WorktreePath, ".git")
+	// The private store fully owns the guest's .mgit store subtree. Build a
+	// fresh mount list (never mutating the receiver's backing array) that
+	// drops any mount BuildPlan layered inside .mgit: no host .mgit/* may
+	// resolve inside the guest's private store, which the private store, not
+	// the host worktree, owns. A worktree's own .git (the project working
+	// tree, e.g. a host-trusted .git/hooks) is untouched — it is not mgit's
+	// store. Refs: SEC-03, FR-17.14
+	storeGuestPath := filepath.Join(p.WorktreePath, guestStoreName)
 	mounts := make([]Mount, 0, len(p.Mounts)+1)
 	for _, m := range p.Mounts {
-		if isWithin(m.GuestPath, gitGuestPath) {
+		if isWithin(m.GuestPath, storeGuestPath) {
 			continue // superseded by the private store
 		}
 		mounts = append(mounts, m)
 	}
-	mounts = append(mounts, Mount{HostPath: priv, GuestPath: gitGuestPath, ReadOnly: false})
+	mounts = append(mounts, Mount{HostPath: priv, GuestPath: storeGuestPath, ReadOnly: false})
 	p.Mounts, p.PrivateStorePath = mounts, priv
 
 	// Defense in depth: no mount may resolve into the shared store.

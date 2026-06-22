@@ -139,9 +139,9 @@ func storageDevices(cfg microvm.VMConfig) ([]vz.StorageDeviceConfiguration, erro
 
 // worktreeShare wires the virtiofs device that maps the worktree subtree
 // into the guest at the identical path. It only constructs the share
-// device; the SEC-03 quarantine guarantees — rebinding the guest .git to
-// a private sandbox-local object store, rejecting symlinks/.git pointers
-// that resolve into the shared store, and mounting host-trusted paths
+// device; the SEC-03 quarantine guarantees — rebinding the guest .mgit
+// store to a private sandbox-local object store, rejecting symlinks/store
+// pointers that resolve into the shared store, and mounting host-trusted paths
 // read-only — are enforced at the guest-filesystem layer (MGIT-11.6,
 // FR-17.3/4/14) and are NOT yet in place. No real hostile guest is driven
 // against a worktree until that lands (exec/land routing is a later
