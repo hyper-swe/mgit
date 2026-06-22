@@ -38,6 +38,29 @@ func TestMergeService_Merge_NonexistentBranch(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestMergeService_Merge_SelfMerge_AlreadyUpToDate(t *testing.T) {
+	env, mergeSvc := setupMergeEnv(t)
+	ctx := context.Background()
+
+	headBefore, err := env.repo.Head()
+	require.NoError(t, err)
+
+	// Merging the current branch into itself is a no-op, not a fast-forward.
+	result, err := mergeSvc.Merge(ctx, MergeRequest{
+		SourceBranch: "main",
+		Strategy:     MergeAuto,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "already up to date", result.Status)
+	assert.False(t, result.FastFwd, "self-merge must not report a fast-forward")
+	assert.Equal(t, "main", result.Source)
+	assert.Equal(t, "main", result.Target)
+
+	headAfter, err := env.repo.Head()
+	require.NoError(t, err)
+	assert.Equal(t, headBefore, headAfter, "self-merge must not move HEAD")
+}
+
 func TestMergeService_Merge_FastForward(t *testing.T) {
 	env, mergeSvc := setupMergeEnv(t)
 	ctx := context.Background()

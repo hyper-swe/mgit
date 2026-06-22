@@ -17,13 +17,17 @@ func rollbackCmd() *cobra.Command {
 	var dryRun, formatJSON bool
 
 	cmd := &cobra.Command{
-		Use:   "rollback",
+		Use:   "rollback [commit-hash]",
 		Short: "Rollback task commits (creates revert commit)",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
 			// --to-commit is an alias for --commit.
 			if toCommit != "" && commitHash == "" {
 				commitHash = toCommit
 			}
+			// A positional commit hash is equivalent to --commit, mirroring
+			// `mgit show <hash>`; the positional wins if both are supplied.
+			commitHash = firstNonEmpty(argAt(args, 0), commitHash)
 
 			// --commit: resolve task ID from a specific commit hash.
 			if commitHash != "" && taskID == "" {
@@ -42,7 +46,7 @@ func rollbackCmd() *cobra.Command {
 			}
 
 			if taskID == "" {
-				return fmt.Errorf("--task-id or --commit is required")
+				return fmt.Errorf("a commit hash (positional or --commit) or --task-id is required")
 			}
 
 			app, err := openAppFromCwd()

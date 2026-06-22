@@ -62,6 +62,38 @@ func (s *BranchService) CreateBranch(ctx context.Context, taskID string) (*model
 	return branch, nil
 }
 
+// CreateNamedBranch creates a branch with an explicit name pointing at the
+// current HEAD, without the task/ auto-naming convention. It backs the
+// git-familiar `mgit checkout -b <name>` create-and-switch idiom, where the
+// caller supplies a literal branch name rather than a task ID.
+//
+// Unlike CreateBranch, the branch is written only to go-git and is
+// intentionally NOT recorded in the SQLite index: a named branch carries no
+// task mapping, so there is no task_commits entry to create. ListBranches and
+// GetBranch read from go-git, so the branch is fully usable.
+// Refs: FR-5, MGIT-23
+func (s *BranchService) CreateNamedBranch(ctx context.Context, name string) (*model.Branch, error) {
+	if name == "" {
+		return nil, fmt.Errorf("create branch: name must not be empty")
+	}
+
+	head, err := s.repo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("create branch: resolve HEAD: %w", err)
+	}
+
+	branch := &model.Branch{
+		Name:       name,
+		HeadCommit: head,
+		CreatedAt:  s.repo.Now(),
+	}
+	if err := s.gitBranches.CreateBranch(ctx, branch); err != nil {
+		return nil, fmt.Errorf("create branch in git: %w", err)
+	}
+
+	return branch, nil
+}
+
 // GetBranch retrieves a branch by name.
 // Refs: FR-5
 func (s *BranchService) GetBranch(ctx context.Context, name string) (*model.Branch, error) {

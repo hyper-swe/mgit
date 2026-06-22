@@ -93,6 +93,20 @@ func (s *MergeService) Merge(ctx context.Context, req MergeRequest) (*MergeResul
 		return nil, fmt.Errorf("merge: current branch: %w", err)
 	}
 
+	// Self-merge is a no-op: merging the current branch into itself can
+	// never advance HEAD, so report "already up to date" rather than a
+	// spurious fast-forward ref operation.
+	if req.SourceBranch == currentBranch {
+		return &MergeResult{
+			Strategy:   strategy,
+			Source:     req.SourceBranch,
+			Target:     currentBranch,
+			MergedHash: headHash,
+			FastFwd:    false,
+			Status:     "already up to date",
+		}, nil
+	}
+
 	// Conflict detection (skipped only for fast-forward, where there is
 	// nothing to merge — HEAD is already an ancestor of the source).
 	canFF, err := s.merge.IsAncestor(ctx, headHash, src.HeadCommit)

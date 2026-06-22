@@ -15,12 +15,15 @@ func restoreCmd() *cobra.Command {
 	var formatJSON bool
 
 	cmd := &cobra.Command{
-		Use:   "restore [file]",
+		Use:   "restore [file] [commit]",
 		Short: "Restore a file from a specific commit",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(_ *cobra.Command, args []string) error {
+			// The source commit may be given as a second positional
+			// (`restore <file> <commit>`) or via --commit; positional wins.
+			commitHash = firstNonEmpty(argAt(args, 1), commitHash)
 			if commitHash == "" {
-				return fmt.Errorf("--commit is required")
+				return fmt.Errorf("a source commit (positional or --commit) is required")
 			}
 
 			app, err := openAppFromCwd()

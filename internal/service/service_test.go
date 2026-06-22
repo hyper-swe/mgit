@@ -322,6 +322,31 @@ func TestBranchService_CreateBranch(t *testing.T) {
 	assert.Equal(t, "task/MGIT-1.2", branch.Name)
 }
 
+func TestBranchService_CreateNamedBranch_AtHead(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	head, err := env.repo.Head()
+	require.NoError(t, err)
+
+	branch, err := env.branch.CreateNamedBranch(ctx, "feature-x")
+	require.NoError(t, err)
+	assert.Equal(t, "feature-x", branch.Name, "branch keeps the literal name")
+	assert.Equal(t, head, branch.HeadCommit, "new branch points at current HEAD")
+
+	got, err := env.branch.GetBranch(ctx, "feature-x")
+	require.NoError(t, err)
+	assert.Equal(t, head, got.HeadCommit)
+}
+
+func TestBranchService_CreateNamedBranch_Empty(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	_, err := env.branch.CreateNamedBranch(ctx, "")
+	assert.Error(t, err, "empty branch name must be rejected")
+}
+
 func TestBranchService_CreateBranch_Naming(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()

@@ -16,11 +16,15 @@ func exportCmd() *cobra.Command {
 	var taskID, output, format string
 
 	cmd := &cobra.Command{
-		Use:   "export",
+		Use:   "export [task-id]",
 		Short: "Export task data as JSON, git format-patch, or audit-log",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			// A positional task ID is equivalent to --task-id; the positional
+			// wins if both are supplied.
+			taskID = firstNonEmpty(argAt(args, 0), taskID)
 			if taskID == "" {
-				return fmt.Errorf("--task-id is required")
+				return fmt.Errorf("a task ID (positional or --task-id) is required")
 			}
 
 			app, err := openAppFromCwd()

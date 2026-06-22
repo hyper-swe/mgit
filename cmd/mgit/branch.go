@@ -65,8 +65,10 @@ func branchCmd() *cobra.Command {
 				return nil
 			}
 
-			// Switch mode (with arg, no other flags)
-			if len(args) > 0 {
+			// Switch mode (with arg, no other flags). The bare-list aliases
+			// fall through to list mode for consistency with
+			// `mgit worktree list` / `mgit sandbox list`.
+			if len(args) > 0 && !isBranchListArg(args) {
 				if err := app.Branch.SwitchBranch(ctx, args[0]); err != nil {
 					return fmt.Errorf("branch switch: %w", err)
 				}
@@ -114,4 +116,19 @@ func branchCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "Force delete unmerged branch")
 	cmd.Flags().BoolVar(&formatJSON, "json", false, "Output as JSON")
 	return cmd
+}
+
+// isBranchListArg reports whether the positional args request a branch
+// listing rather than a branch switch. Bare `mgit branch`, `mgit branch
+// list`, and `mgit branch ls` all list, mirroring `worktree list` /
+// `sandbox list`. Any other single positional is a branch name to switch to.
+//
+// Known limitation: a branch literally named "list" or "ls" cannot be
+// switched to via `mgit branch <name>` — use `mgit checkout <name>` instead.
+// Refs: MGIT-23
+func isBranchListArg(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	return len(args) == 1 && (args[0] == "list" || args[0] == "ls")
 }
