@@ -33,7 +33,7 @@ const (
 // allowlist-widening granter, and the CapabilityService is installed as the
 // sandbox service's grant revoker so grants die with the sandbox (SEC-05).
 // Refs: FR-17.7, FR-17.8, FR-17.12, SEC-04, SEC-05
-func wireEgress(svc *service.SandboxService, events *index.Store, clock func() time.Time, logger *slog.Logger) {
+func wireEgress(svc *service.SandboxService, events *index.Store, clock func() time.Time, logger *slog.Logger) *service.CapabilityService {
 	runner, err := egress.NewRunner(egress.RunnerConfig{
 		Audit:     events,
 		Lookup:    egress.SystemLookup(nil),
@@ -45,7 +45,7 @@ func wireEgress(svc *service.SandboxService, events *index.Store, clock func() t
 	})
 	if err != nil {
 		logger.Error("sandbox egress wiring failed; allowlist mode will fail closed", "error", err.Error())
-		return
+		return nil
 	}
 	svc.SetEgressController(fcEgressController{runner: runner})
 
@@ -55,11 +55,17 @@ func wireEgress(svc *service.SandboxService, events *index.Store, clock func() t
 	capSvc, err := service.NewCapabilityService(events, runner, clock)
 	if err != nil {
 		logger.Error("capability escalation wiring failed; escalation disabled", "error", err.Error())
-	} else {
-		svc.SetCapabilityRevoker(capSvc)
+		logger.Info("sandbox egress enforcement wired", "event", "egress_wired",
+			"proxy_port", egressProxyPort, "dns_port", egressDNSPort)
+		return nil
 	}
+	svc.SetCapabilityRevoker(capSvc)
+	// Close the deny->prompt->Grant loop: a host-observed egress denial is
+	// recorded as a pending capability request the operator can approve.
+	runner.SetDenialObserver(capSvc.RecordDenial)
 	logger.Info("sandbox egress enforcement wired", "event", "egress_wired",
 		"proxy_port", egressProxyPort, "dns_port", egressDNSPort)
+	return capSvc
 }
 
 // fcEgressController adapts egress.Runner to service.EgressController,

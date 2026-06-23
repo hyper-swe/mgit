@@ -41,6 +41,11 @@ type Config struct {
 	// has is "land this task", which cannot import objects without
 	// host-side verification. When nil, land is not served. Refs: MGIT-11.10.10, SEC-01
 	Lander SandboxLander
+	// Grants serves the capability-escalation control verbs (list pending
+	// requests derived from observed denials; approve one into a live grant).
+	// When nil those verbs report unserved (e.g. off Linux, where there is no
+	// host egress runner to widen). Refs: FR-17.12, SEC-05
+	Grants GrantCoordinator
 	// MaxConns bounds concurrent in-flight connections; beyond it the
 	// daemon rejects fast (accept-then-close) rather than spawning an
 	// unbounded number of goroutines. Refs: MGIT-11.10.8 (security audit)

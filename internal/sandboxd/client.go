@@ -128,6 +128,30 @@ func (c *Client) Land(ctx context.Context, taskID string) (*controlproto.LandRes
 	return resp.Landed, nil
 }
 
+// Grants lists a task's pending capability requests awaiting operator approval
+// (derived host-side from observed egress denials, SEC-05). Refs: FR-17.12
+func (c *Client) Grants(ctx context.Context, taskID string) ([]controlproto.PendingGrant, error) {
+	resp, err := c.roundTrip(ctx, &controlproto.Request{
+		Kind: controlproto.KindGrants, Grants: &controlproto.TaskRef{TaskID: taskID},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Pending, nil
+}
+
+// Grant approves one pending capability request (by its host-observed key) for
+// a task's sandbox, returning the granted destination. Refs: FR-17.12
+func (c *Client) Grant(ctx context.Context, taskID, key string) (*controlproto.GrantResult, error) {
+	resp, err := c.roundTrip(ctx, &controlproto.Request{
+		Kind: controlproto.KindGrant, Grant: &controlproto.GrantArgs{TaskID: taskID, Key: key},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Granted, nil
+}
+
 // Exec runs one command in a task's sandbox, copying stdout/stderr to the
 // supplied writers as frames arrive and returning the guest exit code. A
 // supervisor-level failure (the guest could not start the command) is

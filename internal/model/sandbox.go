@@ -490,3 +490,23 @@ type CapabilityGrant struct {
 func (g CapabilityGrant) AllowlistEntry() string {
 	return fmt.Sprintf("%s:%d", g.ObservedDestIP, g.ObservedDestPort)
 }
+
+// Key identifies a grant/request for dedup and operator approval: the
+// host-observed "ip:port" for egress, else the capability name. It derives
+// only from host-observed fields (SEC-05) and is stable across the request
+// (pending) and grant (live) forms of the same capability. Refs: FR-17.12, SEC-05
+func (g CapabilityGrant) Key() string {
+	if g.Capability == CapabilityEgress {
+		return fmt.Sprintf("%s:%d", g.ObservedDestIP, g.ObservedDestPort)
+	}
+	return g.Capability
+}
+
+// Key identifies a pending capability request for operator approval; see
+// CapabilityGrant.Key. Refs: FR-17.12
+func (c CapabilityRequest) Key() string {
+	if c.Capability == CapabilityEgress {
+		return fmt.Sprintf("%s:%d", c.ObservedDestIP, c.ObservedDestPort)
+	}
+	return c.Capability
+}

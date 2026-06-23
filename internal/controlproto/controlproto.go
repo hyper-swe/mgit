@@ -37,6 +37,8 @@ const (
 	KindList   byte = 'I'
 	KindRemove byte = 'R'
 	KindStatus byte = 'S'
+	KindGrants byte = 'G' // list a task's pending capability requests
+	KindGrant  byte = 'A' // approve one pending capability request
 )
 
 // Ceilings enforced before allocation (the daemon supervises all VMs; a
@@ -81,6 +83,30 @@ type ExecArgs struct {
 	Exec   model.ExecRequest `json:"exec"`
 }
 
+// GrantArgs approves one pending capability request for a task's sandbox,
+// identified by its key (the host-observed "ip:port" for egress). Refs: FR-17.12
+type GrantArgs struct {
+	TaskID string `json:"task_id"`
+	Key    string `json:"key"`
+}
+
+// PendingGrant is one capability request awaiting operator approval, carrying
+// only host-observed facts (SEC-05): the capability, the real destination the
+// host saw, and the Key to approve it with. Refs: FR-17.12, SEC-05
+type PendingGrant struct {
+	Capability string `json:"capability"`
+	DestIP     string `json:"dest_ip,omitempty"`
+	DestPort   int    `json:"dest_port,omitempty"`
+	Key        string `json:"key"`
+}
+
+// GrantResult confirms an approved grant (host-observed destination). Refs: FR-17.12
+type GrantResult struct {
+	Capability string `json:"capability"`
+	DestIP     string `json:"dest_ip,omitempty"`
+	DestPort   int    `json:"dest_port,omitempty"`
+}
+
 // Request is one control-plane request: a kind tag plus exactly the one
 // payload that matches the kind (List carries none). The kind is the
 // frame tag, not a JSON field.
@@ -91,6 +117,8 @@ type Request struct {
 	Land   *TaskRef                    `json:"land,omitempty"`
 	Remove *RemoveArgs                 `json:"remove,omitempty"`
 	Status *TaskRef                    `json:"status,omitempty"`
+	Grants *TaskRef                    `json:"grants,omitempty"`
+	Grant  *GrantArgs                  `json:"grant,omitempty"`
 }
 
 // LandResult summarizes a completed land.
@@ -107,12 +135,14 @@ type Response struct {
 	Sandbox *model.SandboxInfo  `json:"sandbox,omitempty"` // launch, status
 	List    []model.SandboxInfo `json:"list,omitempty"`    // list
 	Landed  *LandResult         `json:"landed,omitempty"`  // land
+	Pending []PendingGrant      `json:"pending,omitempty"` // grants
+	Granted *GrantResult        `json:"granted,omitempty"` // grant
 }
 
 // validKind reports whether k is a known request kind.
 func validKind(k byte) bool {
 	switch k {
-	case KindLaunch, KindExec, KindLand, KindList, KindRemove, KindStatus:
+	case KindLaunch, KindExec, KindLand, KindList, KindRemove, KindStatus, KindGrants, KindGrant:
 		return true
 	default:
 		return false
@@ -166,6 +196,8 @@ func (req *Request) Validate() error {
 		KindLand:   req.Land != nil,
 		KindRemove: req.Remove != nil,
 		KindStatus: req.Status != nil,
+		KindGrants: req.Grants != nil,
+		KindGrant:  req.Grant != nil,
 	}
 	for k, present := range set {
 		if present && k != req.Kind {
@@ -189,6 +221,13 @@ func (req *Request) Validate() error {
 		return nil
 	case KindStatus:
 		return requireTask(req.Status)
+	case KindGrants:
+		return requireTask(req.Grants)
+	case KindGrant:
+		if req.Grant == nil || req.Grant.TaskID == "" || req.Grant.Key == "" {
+			return fmt.Errorf("controlproto: grant request missing task_id or key")
+		}
+		return nil
 	case KindList:
 		return nil // no payload
 	default:

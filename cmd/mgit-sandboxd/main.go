@@ -136,8 +136,11 @@ func run(args []string, logSink io.Writer) int {
 
 		// Wire host egress enforcement (allowlist proxy + restricted DNS) so
 		// the service starts/stops it across each allowlist sandbox's
-		// lifecycle. No-op off Linux and for none/open sandboxes. Refs: FR-17.8
-		wireEgress(svc, events, clock, logger)
+		// lifecycle, and capability escalation (deny->prompt->grant). No-op off
+		// Linux and for none/open sandboxes. Refs: FR-17.8, FR-17.12
+		if capSvc := wireEgress(svc, events, clock, logger); capSvc != nil {
+			dcfg.Grants = capSvc
+		}
 
 		// Wire the land path when the host repo is reachable. A failure here is
 		// non-fatal: the daemon still serves launch/exec/list/remove/status,

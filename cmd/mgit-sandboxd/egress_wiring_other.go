@@ -17,4 +17,6 @@ import (
 // so capability escalation's egress-widening is Linux-only too; the service
 // runs without an egress controller or capability revoker (both nil-safe).
 // Refs: FR-17.7, FR-17.12
-func wireEgress(_ *service.SandboxService, _ *index.Store, _ func() time.Time, _ *slog.Logger) {}
+func wireEgress(_ *service.SandboxService, _ *index.Store, _ func() time.Time, _ *slog.Logger) *service.CapabilityService {
+	return nil
+}

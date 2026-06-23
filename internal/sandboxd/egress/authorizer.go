@@ -35,6 +35,11 @@ type AuthorizerConfig struct {
 	Allowlist *Allowlist
 	Resolver  *Resolver
 	Audit     Auditor
+	// OnDenial, when set, is notified of each denial that names a concrete
+	// host-observed destination IP, so it can be escalated to a capability
+	// request (the deny->prompt trigger, FR-17.12). It carries only
+	// host-observed facts (SEC-05) and must not block the deny path. Optional.
+	OnDenial func(model.ObservedDenial)
 }
 
 // Authorizer decides each guest egress flow against the host allowlist,
@@ -128,9 +133,19 @@ func (a *Authorizer) allow(ctx context.Context, f Flow, ip netip.Addr, rule stri
 	return Decision{Allow: true, DestIP: ip, Rule: rule}, nil
 }
 
-// deny records and returns a deny decision wrapping ErrEgressDenied.
+// deny records and returns a deny decision wrapping ErrEgressDenied. When a
+// concrete host-observed destination IP was resolved/parsed, it also notifies
+// the optional escalation observer (the deny->prompt trigger) with host-only
+// facts (SEC-05); a name denied before host resolution has no IP and is not
+// escalatable. Refs: SEC-04, SEC-05, FR-17.12
 func (a *Authorizer) deny(ctx context.Context, f Flow, ip netip.Addr, rule string) (Decision, error) {
 	a.audit(ctx, model.EgressDeny, f, ip, rule)
+	if a.cfg.OnDenial != nil && ip.IsValid() {
+		a.cfg.OnDenial(model.ObservedDenial{
+			SandboxID: a.cfg.SandboxID, TaskID: a.cfg.TaskID,
+			DestIP: ip, DestPort: f.Port, Rule: rule,
+		})
+	}
 	return Decision{Allow: false, Rule: rule}, fmt.Errorf("%w: %s:%d (%s)", ErrEgressDenied, f.Host, f.Port, rule)
 }
 

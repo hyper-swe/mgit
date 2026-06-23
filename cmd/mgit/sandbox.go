@@ -23,6 +23,10 @@ type sandboxClient interface {
 	Status(ctx context.Context, taskID string) (*model.SandboxInfo, error)
 	Remove(ctx context.Context, taskID string, force bool) error
 	Land(ctx context.Context, taskID string) (*controlproto.LandResult, error)
+	// Grants lists a task's pending capability requests; Grant approves one by
+	// its host-observed key (the deny->prompt->grant flow, FR-17.12).
+	Grants(ctx context.Context, taskID string) ([]controlproto.PendingGrant, error)
+	Grant(ctx context.Context, taskID, key string) (*controlproto.GrantResult, error)
 	// Shell attaches an interactive session to a task's sandbox (T2
 	// confined-agent, MGIT-11.11.4), proxying the supplied stdin/stdout/
 	// stderr and returning the session exit code.
@@ -62,6 +66,8 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 		sandboxListCmd(connect),
 		sandboxStatusCmd(connect),
 		sandboxRemoveCmd(connect),
+		sandboxGrantsCmd(connect),     // list pending capability requests (deny->prompt, MGIT-11.9.4)
+		sandboxGrantCmd(connect),      // approve one pending capability request
 		sandboxShellCmd(connect),      // T2 confined-agent interactive attach (MGIT-11.11.4)
 		sandboxImageCmd(),             // host-local image registry (no daemon)
 		sandboxClaudeHookCmd(connect), // hidden: Claude Code PreToolUse hook (MGIT-11.11.1)

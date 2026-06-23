@@ -38,6 +38,16 @@ type SandboxLander interface {
 	Land(ctx context.Context, taskID string) (commits int, branch string, err error)
 }
 
+// GrantCoordinator serves the capability-escalation control verbs: list a
+// sandbox's pending capability requests (derived host-side from observed
+// denials, SEC-05) and approve one into a live, audited grant.
+// *service.CapabilityService satisfies it; keyed by host-owned sandbox ID
+// (the dispatch resolves task->sandbox). Refs: FR-17.12, SEC-05
+type GrantCoordinator interface {
+	PendingRequests(sandboxID string) []model.CapabilityRequest
+	Approve(ctx context.Context, sandboxID, key string) (*model.CapabilityGrant, error)
+}
+
 // execRelayChunkBytes bounds one exec output frame relayed to the client.
 // Output is forwarded in chunks no larger than this so a single frame can
 // never approach the execwire ceiling and the client sees output
@@ -92,6 +102,10 @@ func (d *Daemon) dispatch(ctx context.Context, conn net.Conn, req *controlproto.
 		d.reply(conn, &controlproto.Response{Sandbox: info}, err)
 	case controlproto.KindLand:
 		d.serveLand(ctx, conn, req.Land)
+	case controlproto.KindGrants:
+		d.serveGrants(ctx, conn, req.Grants)
+	case controlproto.KindGrant:
+		d.serveGrant(ctx, conn, req.Grant)
 	default:
 		d.reply(conn, &controlproto.Response{},
 			fmt.Errorf("controlproto kind %#x not served by this daemon", req.Kind))
@@ -112,6 +126,54 @@ func (d *Daemon) serveLand(ctx context.Context, conn net.Conn, ref *controlproto
 	}
 	commits, branch, err := d.cfg.Lander.Land(ctx, ref.TaskID)
 	d.reply(conn, &controlproto.Response{Landed: &controlproto.LandResult{Commits: commits, Branch: branch}}, err)
+}
+
+// serveGrants lists a task's pending capability requests for operator review.
+// It resolves task->sandbox via the service (host-anchored, never guest text),
+// then returns the host-observed pending requests. A nil coordinator (grants
+// not wired, e.g. off Linux) reports the verb as unserved. Refs: FR-17.12, SEC-05
+func (d *Daemon) serveGrants(ctx context.Context, conn net.Conn, ref *controlproto.TaskRef) {
+	if d.cfg.Grants == nil || d.cfg.Service == nil {
+		d.reply(conn, &controlproto.Response{},
+			fmt.Errorf("controlproto kind %#x not served by this daemon", controlproto.KindGrants))
+		return
+	}
+	info, err := d.cfg.Service.Status(ctx, ref.TaskID)
+	if err != nil {
+		d.reply(conn, &controlproto.Response{}, err)
+		return
+	}
+	reqs := d.cfg.Grants.PendingRequests(info.ID)
+	pending := make([]controlproto.PendingGrant, 0, len(reqs))
+	for _, r := range reqs {
+		pending = append(pending, controlproto.PendingGrant{
+			Capability: r.Capability, DestIP: r.ObservedDestIP, DestPort: r.ObservedDestPort, Key: r.Key(),
+		})
+	}
+	d.reply(conn, &controlproto.Response{Pending: pending}, nil)
+}
+
+// serveGrant approves one pending capability request, turning it into a live,
+// audited, sandbox-lifetime-scoped grant. Refs: FR-17.12, SEC-05
+func (d *Daemon) serveGrant(ctx context.Context, conn net.Conn, args *controlproto.GrantArgs) {
+	if d.cfg.Grants == nil || d.cfg.Service == nil {
+		d.reply(conn, &controlproto.Response{},
+			fmt.Errorf("controlproto kind %#x not served by this daemon", controlproto.KindGrant))
+		return
+	}
+	info, err := d.cfg.Service.Status(ctx, args.TaskID)
+	if err != nil {
+		d.reply(conn, &controlproto.Response{}, err)
+		return
+	}
+	grant, err := d.cfg.Grants.Approve(ctx, info.ID, args.Key)
+	if err != nil {
+		d.reply(conn, &controlproto.Response{}, err)
+		return
+	}
+	d.reply(conn, &controlproto.Response{Granted: &controlproto.GrantResult{
+		Capability: grant.Capability, DestIP: grant.ObservedDestIP, DestPort: grant.ObservedDestPort,
+	}}, nil)
 }
 
 // reply writes a success response, or an error response carrying a

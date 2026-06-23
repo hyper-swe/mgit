@@ -55,6 +55,11 @@ type Runner struct {
 
 	mu     sync.Mutex
 	active map[string]*activeEgress
+	// denialObserver, when set, is forwarded to each sandbox's authorizer so a
+	// host-observed egress denial can be escalated to a capability request (the
+	// deny->prompt trigger). Set once at daemon wiring (SetDenialObserver),
+	// before any Start; guarded by mu. Refs: FR-17.12, SEC-05
+	denialObserver func(model.ObservedDenial)
 }
 
 // activeEgress holds the running listeners for one sandbox plus its
@@ -85,6 +90,17 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	return &Runner{cfg: cfg, active: make(map[string]*activeEgress)}, nil
 }
 
+// SetDenialObserver installs the escalation observer notified of each
+// host-observed egress denial, so denials can be turned into capability
+// requests (the deny->prompt trigger, FR-17.12). Set once at daemon wiring,
+// before any sandbox starts; it is forwarded to every per-sandbox authorizer.
+// Refs: FR-17.12, SEC-05
+func (r *Runner) SetDenialObserver(fn func(model.ObservedDenial)) {
+	r.mu.Lock()
+	r.denialObserver = fn
+	r.mu.Unlock()
+}
+
 // Start brings up the egress stack for one allowlist-mode sandbox and
 // returns where it is listening. For none/open modes it is a no-op (no
 // proxy) returning empty endpoints. It is an error to start the same
@@ -103,7 +119,7 @@ func (r *Runner) Start(ctx context.Context, b Binding) (Endpoints, error) {
 	sup, err := NewSupervisor(SupervisorConfig{
 		SandboxID: b.SandboxID, TaskID: b.TaskID, Policy: b.Policy,
 		Audit: r.cfg.Audit, Lookup: r.cfg.Lookup, Dial: r.cfg.Dial,
-		Clock: r.cfg.Clock, Logger: r.cfg.Logger,
+		Clock: r.cfg.Clock, Logger: r.cfg.Logger, OnDenial: r.denialObserver,
 	})
 	if err != nil {
 		return Endpoints{}, fmt.Errorf("egress runner: %w", err)

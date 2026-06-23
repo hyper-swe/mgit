@@ -24,6 +24,9 @@ type SupervisorConfig struct {
 	Dial      DialFunc   // host-side dialer to authorized destinations
 	Clock     func() time.Time
 	Logger    *slog.Logger
+	// OnDenial, when set, is forwarded to the authorizer to escalate denials
+	// with a host-observed destination into capability requests (FR-17.12).
+	OnDenial func(model.ObservedDenial)
 }
 
 // Supervisor owns one sandbox's egress stack: the compiled allowlist, the
@@ -75,6 +78,7 @@ func NewSupervisor(cfg SupervisorConfig) (*Supervisor, error) {
 	authorizer, err := NewAuthorizer(AuthorizerConfig{
 		SandboxID: cfg.SandboxID, TaskID: cfg.TaskID,
 		Allowlist: al, Resolver: resolver, Audit: cfg.Audit,
+		OnDenial: cfg.OnDenial,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("egress supervisor: %w", err)

@@ -37,6 +37,12 @@ type fakeSandboxClient struct {
 	landedTID  string
 	landResult *controlproto.LandResult
 
+	grantsTID   string
+	grantTID    string
+	grantKey    string
+	pending     []controlproto.PendingGrant
+	grantResult *controlproto.GrantResult
+
 	shellTask  string
 	shellStdin string
 }
@@ -95,6 +101,25 @@ func (f *fakeSandboxClient) Land(_ context.Context, taskID string) (*controlprot
 		return f.landResult, nil
 	}
 	return &controlproto.LandResult{Commits: 1, Branch: "task/" + taskID}, nil
+}
+
+func (f *fakeSandboxClient) Grants(_ context.Context, taskID string) ([]controlproto.PendingGrant, error) {
+	f.grantsTID = taskID
+	if f.opErr != nil {
+		return nil, f.opErr
+	}
+	return f.pending, nil
+}
+
+func (f *fakeSandboxClient) Grant(_ context.Context, taskID, key string) (*controlproto.GrantResult, error) {
+	f.grantTID, f.grantKey = taskID, key
+	if f.opErr != nil {
+		return nil, f.opErr
+	}
+	if f.grantResult != nil {
+		return f.grantResult, nil
+	}
+	return &controlproto.GrantResult{Capability: "egress", DestIP: "203.0.113.7", DestPort: 443}, nil
 }
 
 // runSandbox executes the sandbox command tree with the given args and a

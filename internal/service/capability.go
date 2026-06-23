@@ -42,6 +42,11 @@ type CapabilityService struct {
 	// only the live enforcement view.
 	mu   sync.Mutex
 	live map[string][]model.CapabilityGrant
+	// pending holds capability requests derived from observed denials that
+	// await operator approval, keyed by sandbox ID. A request is recorded at
+	// most once per (capability, destination) for the sandbox's lifetime ("one
+	// prompt per capability", FR-17.12) and is cleared on approval or teardown.
+	pending map[string][]model.CapabilityRequest
 }
 
 // NewCapabilityService wires the escalation engine. All dependencies are
@@ -58,7 +63,8 @@ func NewCapabilityService(events SandboxEventAppender, granter EgressGranter, cl
 	}
 	return &CapabilityService{
 		events: events, granter: granter, clock: clock,
-		live: make(map[string][]model.CapabilityGrant),
+		live:    make(map[string][]model.CapabilityGrant),
+		pending: make(map[string][]model.CapabilityRequest),
 	}, nil
 }
 
@@ -105,6 +111,94 @@ func (s *CapabilityService) Grant(ctx context.Context, req model.CapabilityReque
 	return &grant, nil
 }
 
+// RecordDenial registers a capability request derived from a host-observed
+// egress denial, for later operator approval — the deny->prompt half of the
+// escalation flow. The host egress engine calls it from its deny path with
+// ONLY host-observed facts (SEC-05). A denial that cannot form a valid request
+// (e.g. a name denied before host resolution, so no pinned destination IP) is
+// skipped: an egress grant needs a concrete host destination. Recording is
+// idempotent per (capability, destination) for the sandbox lifetime — one
+// prompt per capability (FR-17.12) — and an already-granted destination is not
+// re-recorded. Refs: FR-17.12, SEC-05
+func (s *CapabilityService) RecordDenial(d model.ObservedDenial) {
+	req, err := d.RequestFromObservedDenial()
+	if err != nil {
+		return // not a grantable denial (no host-observed destination)
+	}
+	key := req.Key()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, g := range s.live[req.SandboxID] {
+		if g.Key() == key {
+			return // already granted and live
+		}
+	}
+	for _, p := range s.pending[req.SandboxID] {
+		if p.Key() == key {
+			return // already pending
+		}
+	}
+	s.pending[req.SandboxID] = append(s.pending[req.SandboxID], req)
+}
+
+// PendingRequests returns the capability requests awaiting approval for a
+// sandbox (a copy, oldest first). It is the list an operator reviews before
+// approving. Refs: FR-17.12
+func (s *CapabilityService) PendingRequests(sandboxID string) []model.CapabilityRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reqs := s.pending[sandboxID]
+	if len(reqs) == 0 {
+		return nil
+	}
+	out := make([]model.CapabilityRequest, len(reqs))
+	copy(out, reqs)
+	return out
+}
+
+// Approve turns one pending request (identified by its key — the host-observed
+// "ip:port" for egress) into a live, audited grant via Grant. The pending entry
+// is dropped only AFTER the grant succeeds, so a transient grant failure leaves
+// it approvable again. Returns ErrCapabilityGrantNotFound if nothing matches.
+// Refs: FR-17.12, SEC-05
+func (s *CapabilityService) Approve(ctx context.Context, sandboxID, key string) (*model.CapabilityGrant, error) {
+	s.mu.Lock()
+	var found *model.CapabilityRequest
+	for i := range s.pending[sandboxID] {
+		if s.pending[sandboxID][i].Key() == key {
+			r := s.pending[sandboxID][i]
+			found = &r
+			break
+		}
+	}
+	s.mu.Unlock()
+	if found == nil {
+		return nil, fmt.Errorf("%w: sandbox %s, key %q", model.ErrCapabilityGrantNotFound, sandboxID, key)
+	}
+	grant, err := s.Grant(ctx, *found)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.pending[sandboxID] = removeRequest(s.pending[sandboxID], key)
+	if len(s.pending[sandboxID]) == 0 {
+		delete(s.pending, sandboxID)
+	}
+	s.mu.Unlock()
+	return grant, nil
+}
+
+// removeRequest returns reqs without the entry whose key matches.
+func removeRequest(reqs []model.CapabilityRequest, key string) []model.CapabilityRequest {
+	out := make([]model.CapabilityRequest, 0, len(reqs))
+	for _, r := range reqs {
+		if r.Key() != key {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // LiveGrants returns the capability grants currently in force for a running
 // sandbox (a copy; the caller may not mutate the registry). After Revoke
 // (teardown) the result is empty — grants are scoped to the sandbox lifetime.
@@ -128,6 +222,7 @@ func (s *CapabilityService) LiveGrants(sandboxID string) []model.CapabilityGrant
 func (s *CapabilityService) Revoke(sandboxID string) {
 	s.mu.Lock()
 	delete(s.live, sandboxID)
+	delete(s.pending, sandboxID)
 	s.mu.Unlock()
 	s.granter.RevokeAll(sandboxID)
 }
