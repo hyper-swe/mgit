@@ -166,11 +166,14 @@ func TestE2E_Land_RealGuest_RoundTrip(t *testing.T) {
 }
 
 // cloneAndCommit clones the host repo into wtPath and adds one new commit
-// (the agent's work) on top of the shared base, returning its hash.
+// (the agent's work) on top of the shared base, returning its hash. The clone
+// source is the self-contained .mgit store: post-MGIT-14 mgit no longer writes
+// a .git at the project root (it coexists with the project's git via a bare
+// .mgit store), so the worktree is cloned from that store. Refs: MGIT-14
 func cloneAndCommit(t *testing.T, hostRepoRoot, wtPath string) string {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Dir(wtPath), 0o750))
-	repo, err := gogit.PlainClone(wtPath, false, &gogit.CloneOptions{URL: hostRepoRoot})
+	repo, err := gogit.PlainClone(wtPath, false, &gogit.CloneOptions{URL: filepath.Join(hostRepoRoot, ".mgit")})
 	require.NoError(t, err)
 	wt, err := repo.Worktree()
 	require.NoError(t, err)
