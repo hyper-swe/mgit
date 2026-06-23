@@ -193,13 +193,17 @@ func TestE2E_HostileGuest_SharedStoreUnreachable(t *testing.T) {
 	assert.Contains(t, out, "SHARED_ABSENT", "the host shared .mgit store is not reachable from the guest")
 	assert.NotContains(t, out, "SHARED_LEAK")
 
-	// The other task's secret content appears NOWHERE in the guest filesystem.
-	// A POSITIVE CONTROL proves the grep actually works (else a missing/broken
-	// grep would make the negative result vacuously pass): the worktree marker
-	// content MUST be found, the foreign secret MUST NOT.
+	// The other task's secret content appears NOWHERE the guest can reach. The
+	// grep is scoped to the worktree subtree — which CONTAINS the guest's
+	// private .mgit store — because that (and its store) is the only place a
+	// packed shared store or a cross-task object could surface; grepping `/`
+	// would hang traversing /proc, /sys, and /dev virtual files. A POSITIVE
+	// CONTROL proves the grep actually works (else a missing/broken grep would
+	// make the negative result vacuously pass): the worktree marker MUST be
+	// found, the foreign secret MUST NOT.
 	res = guestExec(t, mgr, id,
 		"grep -rl 'work area' "+fx.wtPath+" 2>/dev/null | head -n1; echo ---; "+
-			"grep -rl 'OTHER-TASK-SECRET' / 2>/dev/null | head -n1 || true")
+			"grep -rl 'OTHER-TASK-SECRET' "+fx.wtPath+" 2>/dev/null | head -n1 || true")
 	parts := strings.SplitN(string(res.Stdout), "---", 2)
 	require.Len(t, parts, 2, "probe produced both halves")
 	assert.NotEmpty(t, strings.TrimSpace(parts[0]),
