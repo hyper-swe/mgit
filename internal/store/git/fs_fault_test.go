@@ -68,8 +68,8 @@ func TestCreateInitialCommit_StoreFault_Errors(t *testing.T) {
 func TestSaveStaging_ReadOnlyDir_Errors(t *testing.T) {
 	repo := initTestRepo(t)
 	// Make .mgit read-only so writing staging.json.tmp fails.
-	require.NoError(t, os.Chmod(repo.MgitDir(), 0o500))
-	t.Cleanup(func() { _ = os.Chmod(repo.MgitDir(), 0o750) })
+	require.NoError(t, os.Chmod(repo.MgitDir(), 0o500))                   //nolint:gosec // dir needs exec bit; read-only is the fault under test
+	t.Cleanup(func() { _ = os.Chmod(repo.MgitDir(), 0o750) })            //nolint:gosec // restore dir perms
 	err := repo.stagePaths([]string{"a.go"})
 	assert.Error(t, err, "staging under a read-only .mgit must fail")
 }
