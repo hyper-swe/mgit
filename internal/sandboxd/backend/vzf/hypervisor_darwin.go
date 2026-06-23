@@ -6,13 +6,22 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"path/filepath"
 
 	"github.com/Code-Hex/vz/v3"
 
 	"github.com/hyper-swe/mgit/internal/guestboot"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
+	"github.com/hyper-swe/mgit/internal/sandboxd/staging"
 )
+
+// stagingDirName is the per-VM SEC-03 staging tree vzf shares over virtiofs
+// instead of the live worktree: worktree files + the private .mgit, with any
+// in-worktree store dropped and escaping symlinks rejected. It lives in the
+// sandbox state dir (the overlay's dir), so the manager's teardown RemoveAll
+// clears it with the rest of the per-sandbox host state. Refs: SEC-03
+const stagingDirName = "worktree-staging"
 
 // newPlatformHypervisor returns the Virtualization.framework
 // implementation. Requires a binary signed with the
@@ -137,18 +146,49 @@ func storageDevices(cfg microvm.VMConfig) ([]vz.StorageDeviceConfiguration, erro
 	return []vz.StorageDeviceConfiguration{rootfsDev, overlayDev}, nil
 }
 
-// worktreeShare wires the virtiofs device that maps the worktree subtree
-// into the guest at the identical path. It only constructs the share
-// device; the SEC-03 quarantine guarantees — rebinding the guest .mgit
-// store to a private sandbox-local object store, rejecting symlinks/store
-// pointers that resolve into the shared store, and mounting host-trusted paths
-// read-only — are enforced at the guest-filesystem layer (MGIT-11.6,
-// FR-17.3/4/14) and are NOT yet in place. No real hostile guest is driven
-// against a worktree until that lands (exec/land routing is a later
-// stage), so this device is presently exercised only by construction
-// tests. Refs: FR-17.3, MGIT-11.6
+// worktreeShare wires the virtiofs device that maps the worktree subtree into
+// the guest at the identical path, delivering the SEC-03 quarantine.
+//
+// vzf shares a LIVE host directory over virtiofs — there is no copy-and-land
+// image-build step like firecracker's. To still deliver the SEC-03 contract
+// (worktree files + a PRIVATE sandbox-local .mgit, with the host shared store
+// unreachable, any in-worktree store excluded, and escaping symlinks rejected),
+// we DO NOT share the live worktree when a private store is provisioned: we
+// build a STAGED copy of the worktree via the shared staging package (the same
+// one firecracker packs) and share THAT staged dir instead.
+//
+// DESIGN TRADE-OFF (copy vs. live): a virtiofs share could in principle follow
+// the guest's writes back to the live worktree, but it cannot host-side EXCLUDE
+// an in-worktree .mgit/.git, REBIND .mgit to a sandbox-local store, or REJECT
+// an escaping symlink before the guest follows it — all of which are SEC-03
+// delivery invariants the guest (the attacker) must never get to violate.
+// virtiofs has no per-entry deny or symlink-resolution-boundary control, so a
+// live share cannot fail closed. A staged copy enforces every invariant
+// host-side before the guest boots, at the cost of a copy on launch and a
+// land-back of committed objects on exit (land is already the only
+// private->shared bridge, so the guest's file edits are sandbox-local by
+// design and need not flow back live). This matches firecracker's copy-and-land
+// model, keeping ONE delivery semantics across backends.
+//
+// When PrivateStorePath is empty (no provisioner wired — tests, the documented
+// pre-SEC-03 direct path) the live worktree is shared unchanged. The guest
+// always mounts at cfg.WorktreePath (identical path); only the host SOURCE
+// differs (staged dir vs. live worktree). Refs: SEC-03, FR-17.3, F-A/NEW-2
 func worktreeShare(cfg microvm.VMConfig) (vz.DirectorySharingDeviceConfiguration, error) {
-	dir, err := vz.NewSharedDirectory(cfg.WorktreePath, false)
+	source := cfg.WorktreePath
+	if cfg.PrivateStorePath != "" {
+		// Build the quarantined staging tree in the sandbox state dir (the
+		// overlay's dir), cleaned by the manager's teardown RemoveAll. Build
+		// fails closed (staging.ErrSymlinkEscape) on an escaping symlink, so an
+		// unquarantined worktree is never shared.
+		stagingDir := filepath.Join(filepath.Dir(cfg.OverlayPath), stagingDirName)
+		if err := staging.Build(cfg.WorktreePath, cfg.PrivateStorePath, stagingDir); err != nil {
+			return nil, fmt.Errorf("vz worktree quarantine: %w", err)
+		}
+		source = stagingDir
+	}
+
+	dir, err := vz.NewSharedDirectory(source, false)
 	if err != nil {
 		return nil, fmt.Errorf("vz shared directory: %w", err)
 	}
