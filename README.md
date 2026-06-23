@@ -1,47 +1,52 @@
 <p align="center">
   <h1 align="center">mgit</h1>
   <p align="center">
-    <strong>Surgical rollback for LLM coding agents</strong>
+    <strong>Let coding agents run untrusted code &mdash; in a disposable microVM, not on your machine</strong>
   </p>
   <p align="center">
-    Stop wasting tokens rewriting working code. Roll back the wrong decision, keep everything else.
+    Autonomous agents <code>npm install</code>, build, and run code on every task. mgit runs that execution inside a per-task microVM, so a compromised dependency burns a throwaway VM &mdash; not your SSH keys, cloud credentials, or the rest of your disk. Only verified, task-tagged changes land back in your real repo.
   </p>
   <p align="center">
-    <a href="#the-problem-mgit-solves">The Problem</a> &middot;
+    <a href="#the-problem-agents-run-untrusted-code-on-your-machine">The Problem</a> &middot;
+    <a href="#how-mgit-contains-it">Containment</a> &middot;
     <a href="#installation">Install</a> &middot;
     <a href="#quick-start">Quick Start</a> &middot;
     <a href="#commands">Commands</a> &middot;
-    <a href="#mcp-integration">MCP</a> &middot;
+    <a href="#security-model">Security</a> &middot;
     <a href="#architecture">Architecture</a>
   </p>
 </p>
 
 ---
 
-## The Problem mgit Solves
+## The Problem: agents run untrusted code on your machine
 
-When an LLM coding agent works on a task without version control, a single bad decision &mdash; the wrong library, the wrong data structure, the wrong abstraction &mdash; cascades into wasted work:
+Every time you let a coding agent work a task in auto mode, it runs code you never read:
 
-> *"Use the React Context API for this state management."*
+> *"add the auth library and wire it up"*
 >
-> &mdash; *the agent writes 800 lines of code, 12 components, 6 tests*
->
-> *"Actually, use Zustand instead."*
->
-> &mdash; *the agent rewrites all 800 lines from scratch, burning tokens, time, and your patience*
+> &mdash; *the agent runs `npm install`, which executes the postinstall scripts of 200 transitive dependencies; then it runs the build and the test suite*
 
-The problem isn't the agent. It's that a fresh prompt is the only tool the agent has to "fix" its previous work. There's no way to say *"keep the components, keep the tests, just swap out the state management layer."*
+All of that executes **on your host**, with your user's privileges &mdash; the same machine that holds your `~/.ssh` keys, your `~/.aws` credentials, your browser sessions, and every other repository you own. The npm and PyPI ecosystems ship malware on a weekly cadence (typosquats, hijacked maintainers, malicious postinstall hooks). A single compromised dependency, the *first* time an agent installs it, can exfiltrate those secrets or plant persistence. That loss is **irrecoverable** &mdash; you cannot roll back a stolen key.
 
-**mgit fixes this with surgical rollback.** When you instruct the agent to make micro-commits via mgit during the task, every step of its work is preserved as an addressable, task-tagged commit. When something goes wrong, you don't restart &mdash; you rewind to the exact decision point, branch from there, and continue.
+The agent doesn't have to be malicious. The code it runs on your behalf just has to contain one bad package.
 
-### Without mgit
+## How mgit contains it
 
-```
-prompt -> 800 lines of code -> wrong choice -> reprompt -> 800 lines rewritten
-                                                            (wasted time + tokens)
-```
+mgit runs the agent's untrusted execution inside a **per-task microVM** &mdash; Firecracker on Linux/KVM, Apple Virtualization.framework on macOS &mdash; so the blast radius of a compromised package is a disposable VM, not your host:
 
-### With mgit
+- **Hardware-isolated execution.** Installs, builds, and tests run in the guest VM. The host filesystem, your other repos, and your credentials are never mounted in. The microVM boundary is the same one cloud providers trust to isolate tenants.
+- **Default-deny egress.** The guest gets no direct network route. A per-task allowlist permits only the destinations a task actually needs (e.g. your package registry), enforced at the IP/flow layer by a host-side proxy &mdash; raw-IP, QUIC, DNS-tunnelling, and metadata-endpoint tricks are denied. (`none` / `allowlist` / `open` modes.)
+- **A verified airlock back to your repo.** The agent commits inside the sandbox; only its changes are pulled back over a dedicated channel, re-verified host-side (dual-hash + task binding + a host-anchored attestation the guest cannot forge), and appended to your real repository. Nothing the guest produces reaches your repo unverified.
+- **Seamless, fail-closed routing.** `mgit run -- <agent command>` transparently routes the agent's execution into the task's sandbox; if the sandbox is unavailable it fails closed (it never silently runs on the host). Adapters wire this into Claude Code, Codex, and Cursor without harness changes.
+
+This is mgit's first job: **make running agents in auto mode safe by default.** The version-control layer below is the airlock that lets contained work flow back out cleanly.
+
+> **Security posture.** The hardware-isolation boundary is the load-bearing guarantee and has been adversarially audited (see [`AUDIT-FR17-SANDBOX-SECURITY-V1.md`](AUDIT-FR17-SANDBOX-SECURITY-V1.md)). The seam-level defenses (quarantine of the host object store, egress enforcement, the land path) are under continuous, independently-reviewed hardening &mdash; mgit treats "never trust the guest side of a seam" as a standing law, not a checkbox. The sandbox ships for Linux and macOS; on Windows, mgit's core version control runs without the sandbox until the native backend lands.
+
+## The second pillar: surgical rollback
+
+Contained execution gets work *in* safely. The other half is undoing a wrong decision without throwing away the good work around it. Because every step is preserved as an addressable, task-tagged commit, you rewind to the exact decision point and branch from there &mdash; instead of reprompting the agent to rewrite hundreds of lines from scratch:
 
 ```
 prompt -> commit -> commit -> commit -> wrong choice -> commit -> commit
@@ -53,20 +58,20 @@ prompt -> commit -> commit -> commit -> wrong choice -> commit -> commit
                                          (zero wasted work below the rollback point)
 ```
 
-The agent's correct decisions are preserved. Only the wrong branch is undone. Work resumes from a known-good state with full context intact.
-
-This is what makes AI-driven development viable for enterprise codebases: **the cost of an agent's mistake is bounded by the cost of the wrong decision, not the cost of the entire task.**
+The agent's correct decisions are preserved; only the wrong branch is undone. **The cost of an agent's mistake is bounded by the cost of the wrong decision, not the cost of the entire task** &mdash; and the rolled-back attempt stays in the append-only audit trail.
 
 ## Why mgit?
 
-mgit is purpose-built for LLM coding agents working on real codebases:
+mgit is purpose-built for autonomous coding agents working on real codebases:
 
-- **Surgical rollback** &mdash; Roll back a single task while preserving every other commit on the branch. Continue from the rollback point as a new branch with full context intact.
-- **Task traceability** &mdash; Every commit is bound to a task ID. Query any task to see exactly which commits it produced.
-- **Append-only audit trail** &mdash; Commits are never deleted. Rollbacks create revert commits. The history of *every* attempt is preserved for review.
-- **Squash workflow** &mdash; Consolidate dozens of micro-commits into a single reviewable commit when a task is verified correct.
-- **Multi-agent isolation** &mdash; Linked worktrees let multiple agents work on different tasks in parallel without stepping on each other.
-- **Integrity verification** &mdash; Dual-hash model (SHA-1 for git compatibility, SHA-256 for tamper detection) with chain verification.
+- **Sandboxed execution** &mdash; Untrusted installs/builds/tests run in a per-task microVM, not on your host. A compromised package is contained to a disposable VM.
+- **Default-deny egress** &mdash; Per-task network allowlist enforced at the IP/flow layer; the guest cannot reach your LAN, cloud metadata, or arbitrary hosts unless explicitly permitted.
+- **Verified land** &mdash; Only changes that pass host-side re-verification (dual-hash + task binding + host-anchored attestation) land in your repo.
+- **Surgical rollback** &mdash; Roll back a single task while preserving every other commit on the branch; continue from the rollback point with full context intact.
+- **Task traceability** &mdash; Every commit is bound to a task ID. Query any task to see exactly which commits it produced, in which sandbox image, under which network posture.
+- **Append-only audit trail** &mdash; Commits are never deleted; rollbacks create revert commits. The history of *every* attempt is preserved for review.
+- **Multi-agent isolation** &mdash; Linked worktrees + per-task sandboxes let multiple agents work different tasks in parallel without stepping on each other.
+- **Runs over your existing git repo** &mdash; mgit keeps a self-contained `.mgit/` store and provably never touches your project's `.git`.
 - **Three integration modes** &mdash; CLI for humans, REST API for services, MCP tools for AI agents.
 
 ## Installation
@@ -117,6 +122,22 @@ mgit squash --task-id=PROJ-1.2.3
 mgit verify
 ```
 
+### Run an agent in a sandbox
+
+```bash
+# Create an isolated worktree bound to a task
+mgit worktree add ./wt-PROJ-1 --task=PROJ-1
+
+# Run the agent's command inside the task's microVM (fail-closed: never
+# falls back to the host). Installs/builds/tests execute in the guest.
+mgit run --task=PROJ-1 -- npm install && npm test
+
+# Pull the verified changes back into your repo (the airlock)
+mgit sandbox land --task=PROJ-1
+```
+
+Agent harnesses (Claude Code, Codex, Cursor) can be wired to route commands through `mgit run` automatically at worktree creation, so sandboxing is transparent to the agent.
+
 ## Commands
 
 ### Core
@@ -150,6 +171,21 @@ mgit verify
 | `mgit worktree list [--porcelain]` | List active worktrees |
 | `mgit worktree remove PATH [--force]` | Remove a worktree |
 | `mgit worktree prune [--dry-run]` | Remove stale worktree metadata |
+
+### Sandbox / Agent Execution
+
+| Command | Description |
+|---------|-------------|
+| `mgit run --task=ID -- <command>` | Run a command inside the task's microVM (fail-closed; never runs on the host) |
+| `mgit sandbox launch --task=ID --worktree=PATH --image=REF` | Provision a sandbox for a task |
+| `mgit sandbox exec --task=ID -- <command>` | Execute one command in the task's sandbox |
+| `mgit sandbox shell --task=ID` | Attach an interactive session (T2 confined-agent mode) |
+| `mgit sandbox land --task=ID` | Pull + host-verify + land the sandbox's changes into your repo |
+| `mgit sandbox status TASK-ID` / `list` / `remove TASK-ID` | Inspect or tear down sandboxes |
+| `mgit sandbox grants --task=ID` / `grant --task=ID KEY` | Review and approve per-task egress capability requests |
+| `mgit sandbox image init` / `add --kernel … --rootfs …` | Manage the signed, digest-pinned guest image set |
+
+> Sandbox commands require the host daemon and a guest image, and run on Linux (Firecracker/KVM) and macOS (Virtualization.framework). See [Security Model](#security-model).
 
 ### Additional
 
@@ -274,6 +310,21 @@ mtix done PROJ-4.2.1
 
 For LLM-driven development in regulated environments, this combination is the difference between *"the AI did some work"* and *"agent claude-01 implemented requirement PROJ-4.2.1 across these 7 commits, squashed at this timestamp, verified by chain hash X."*
 
+## Security Model
+
+mgit's sandbox is designed around one premise: **the guest is the hostile party** &mdash; it runs the untrusted dependency code, so nothing it produces or asserts is trusted. The host is the trust anchor. Every guarantee is enforced host-side, at the four places host and guest meet:
+
+| Seam | Control |
+|------|---------|
+| **Execution boundary** | Per-task microVM (Firecracker / Virtualization.framework). Untrusted installs/builds/tests run in the guest; the host disk and credentials are never mounted in. |
+| **Network egress** | Default-deny at the IP/flow layer. Per-task allowlist via a host proxy + restricted DNS; RFC1918, link-local, and cloud-metadata destinations denied unconditionally; UDP/QUIC blocked. |
+| **Worktree mount** | The guest sees working-tree files only; the host's shared object store, index, and other tasks' data are not part of the guest view. |
+| **Land / attestation** | Commits are re-verified host-side (dual-hash + task binding) and carry a **host-anchored attestation** &mdash; the guest holds no signing key and cannot forge provenance. Land is the only path from the guest's private store to your repo, and it is append-only. |
+
+Additional properties: guest images are digest-pinned **and** Ed25519-signature-verified at boot; capability escalations (extra egress) are derived only from the host-observed denied connection, scoped to the sandbox lifetime, and audited &mdash; there is no "allow all"; the local daemon socket is same-UID peer-credential authenticated; a global concurrency + memory ceiling bounds host resource use.
+
+This model has been **adversarially audited** (red-team design audit + an independent story-closure code review against each control). The audit anchors are checked into the repo ([`AUDIT-FR17-SANDBOX-V1.md`](AUDIT-FR17-SANDBOX-V1.md), [`AUDIT-FR17-SANDBOX-SECURITY-V1.md`](AUDIT-FR17-SANDBOX-SECURITY-V1.md)). The hardware-isolation boundary that protects your host is sound; the seam-level defenses are under continuous, independently-reviewed hardening. We publish the controls we enforce and treat open findings as release-gating.
+
 ## Architecture
 
 ```
@@ -312,7 +363,7 @@ For LLM-driven development in regulated environments, this combination is the di
 - **Append-only** &mdash; The `task_commits` table and audit log are insert-only. Rollbacks create new commits, never delete.
 - **Dual-hash integrity** &mdash; SHA-1 for git protocol compatibility, SHA-256 for content verification and tamper detection.
 - **Clock injection** &mdash; All timestamps come from injected clocks, enabling deterministic testing.
-- **Pure Go** &mdash; No CGO, no external git binary. Single static binary. Cross-compiles to 6 platforms.
+- **Pure-Go core** &mdash; No CGO, no external git binary in the core. Single static binary, cross-compiles to 6 platforms. The sandbox runs as a separate privileged host daemon (`mgit-sandboxd`) driving the microVM backends; any platform CGO (macOS Virtualization.framework) is confined there, so the core stays pure Go.
 
 ## Configuration
 
