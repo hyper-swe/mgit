@@ -26,7 +26,8 @@ type backendSelection struct {
 	workDir    string
 	logger     *slog.Logger
 	clock      func() time.Time
-	peerBinder microvm.PeerBinder // channel peer-identity binder (SEC-10)
+	peerBinder microvm.PeerBinder      // channel peer-identity binder (SEC-10)
+	notifyReg  microvm.NotifyRegistrar // per-VM guest->host notify (auto-land trigger, MGIT-11.10.11); nil disables
 }
 
 // selectManager resolves the sandbox backend: the build-tagged platform
@@ -61,6 +62,7 @@ func selectManager(sel backendSelection) (model.SandboxManager, microvm.GuestDia
 				logger:     sel.logger,
 				clock:      sel.clock,
 				peerBinder: sel.peerBinder,
+				notifyReg:  sel.notifyReg,
 			})
 			landDialer = ld
 			return m, herr
@@ -137,7 +139,8 @@ type hypervisorDeps struct {
 	workDir    string // sandbox-local state root; never a worktree
 	logger     *slog.Logger
 	clock      func() time.Time
-	peerBinder microvm.PeerBinder // channel peer-identity binder (SEC-10); nil disables
+	peerBinder microvm.PeerBinder      // channel peer-identity binder (SEC-10); nil disables
+	notifyReg  microvm.NotifyRegistrar // per-VM guest->host notify (auto-land trigger, MGIT-11.10.11); nil disables
 }
 
 // newImageResolver returns a verified-image resolver that lazily opens

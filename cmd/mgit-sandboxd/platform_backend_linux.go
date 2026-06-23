@@ -41,6 +41,7 @@ func newHypervisorBackend(deps hypervisorDeps) (model.SandboxManager, microvm.Gu
 		Clock:            deps.clock,
 		ExtIface:         os.Getenv(extIfaceEnv),
 		PeerBinder:       deps.peerBinder,
+		NotifyRegistrar:  deps.notifyReg,
 		StoreProvisioner: prov,
 		SensitivePaths:   model.DefaultSandboxPolicy().SensitivePaths,
 	})

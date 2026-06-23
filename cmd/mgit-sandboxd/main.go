@@ -102,11 +102,24 @@ func run(args []string, logSink io.Writer) int {
 	// (SEC-10, the land/attestation accept path). Refs: FR-17.27
 	peerBinder := sandboxd.NewPeerBinder(logger)
 
+	// The notify controller owns each VM's per-VM guest->host land-ready
+	// listener (the auto-land trigger, MGIT-11.10.11). It authorizes the inbound
+	// peer against peerBinder before acting (SEC-10) and forwards to the verified
+	// land path set after land wiring (SetLander below). The backend Registers a
+	// listener per launch / Deregisters per teardown. A construction failure
+	// leaves auto-land disabled but never blocks the host-initiated land path.
+	notifyCtrl, err := sandboxd.NewNotifyController(peerBinder, sandboxd.UnixListen, logger)
+	if err != nil {
+		logger.Error("sandbox notify controller wiring failed", "error", err.Error())
+		return 2
+	}
+
 	selected, landDialer, err := selectManager(backendSelection{
 		backend: opts.backend, ackReduced: opts.ackReduced,
 		hostRoot: opts.hostRoot, repoRoot: opts.repoRoot, workDir: opts.workDir,
 		logger: logger, clock: clock,
 		peerBinder: peerBinder,
+		notifyReg:  notifyCtrl,
 	})
 	if err != nil {
 		logger.Error("sandbox backend selection failed", "error", err.Error())
@@ -158,6 +171,11 @@ func run(args []string, logSink io.Writer) int {
 		} else {
 			defer func() { _ = closeLand() }()
 			dcfg.Lander = lander
+			// Wire the SAME verified land path behind the auto-land trigger: a
+			// guest->host notification runs exactly the host-initiated land
+			// (LandService.Land) the `mgit sandbox land` verb routes through, so
+			// all verification stays host-side (SEC-01). Refs: MGIT-11.10.11
+			notifyCtrl.SetLander(lander)
 		}
 	} else {
 		logger.Warn("sandboxd serving greet-only: --host-root not set; no sandbox operations will be served",

@@ -42,6 +42,14 @@ const defaultOverlaySizeMB = 4096
 const (
 	GuestExecPort uint32 = 1024
 	GuestLandPort uint32 = 1025
+	// GuestNotifyPort is the HOST vsock port the guest dials to signal
+	// "I committed work, ready to land" (the auto-land trigger, MGIT-11.10.11).
+	// It is the only guest->host direction: the guest connects to the host
+	// (VMADDR_CID_HOST), and the host listens. The notification carries NO land
+	// data and asserts NO provenance — it is purely a trigger; the host then
+	// runs the EXISTING verified host-initiated land pull. cmd/mgit-guest dials
+	// this port. Refs: MGIT-11.10.11, SEC-10, SEC-01
+	GuestNotifyPort uint32 = 1026
 )
 
 // ImagePaths locates one resolved, digest-pinned guest image. The
@@ -131,6 +139,28 @@ type PeerIdentifier interface {
 	PeerIdentity() string
 }
 
+// NotifyListenerProvider is implemented by a VM that exposes a host-side
+// socket path the guest reaches the host on for the guest->host land-ready
+// notification (the auto-land trigger). Firecracker's guest->host model has
+// the host LISTEN on a per-VM "<vsock>_<port>" socket; this returns that path.
+// A VM that returns "" has no guest->host notify path, so auto-land is not
+// wired for it (the host-initiated `mgit sandbox land` is unaffected).
+// Refs: MGIT-11.10.11, SEC-10
+type NotifyListenerProvider interface {
+	NotifySocketPath() string
+}
+
+// NotifyRegistrar starts and stops a sandbox's per-VM guest->host notify
+// listener around its lifecycle: Register records the host-bound task and binds
+// the per-VM listener at the host socket; Deregister tears it down at teardown
+// (no residue, SEC-10). It is OPTIONAL (nil disables the auto-land trigger) and
+// keyed by the host-observed identity so one guest can never trigger another's
+// land. sandboxd.NotifyController satisfies it. Refs: MGIT-11.10.11, SEC-10
+type NotifyRegistrar interface {
+	Register(sandboxID, taskID, peerID, socketPath string) error
+	Deregister(sandboxID string)
+}
+
 // Config wires the shared manager's dependencies.
 type Config struct {
 	Backend     string                                    // model.Backend* this platform reports
@@ -139,6 +169,12 @@ type Config struct {
 	Hypervisor  Hypervisor
 	GuestDialer GuestDialer // exec transport into the guest; nil = exec unavailable
 	PeerBinder  PeerBinder  // channel peer-identity binder (SEC-10); nil disables
+	// NotifyRegistrar starts/stops each sandbox's per-VM guest->host notify
+	// listener (the auto-land trigger) across its lifecycle. Optional: nil
+	// disables auto-land (the host-initiated land path is unaffected). Only used
+	// when the VM exposes a notify socket path (NotifyListenerProvider).
+	// Refs: MGIT-11.10.11, SEC-10
+	NotifyRegistrar NotifyRegistrar
 	// StoreProvisioner seeds the SEC-03 private, sandbox-local mgit store per
 	// launch (from the task base commit only) and supplies the shared store
 	// path for the non-reachability check. When set, the quarantine control is
@@ -262,9 +298,38 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 		m.cfg.PeerBinder.Bind(id, peerIdentity(vm, id))
 	}
 
+	// Start the per-VM guest->host notify listener (the auto-land trigger) when
+	// a registrar is wired and the VM exposes a notify socket. A failure here is
+	// non-fatal: the sandbox runs and the host-initiated land still works; only
+	// auto-land is unavailable. Authorization keys on the same host-observed
+	// peer identity the binder recorded (SEC-10). Refs: MGIT-11.10.11, SEC-10
+	m.registerNotify(vm, id, opts.TaskID)
+
 	m.cfg.Logger.Info("sandbox launched", "event", "launched", "backend", m.cfg.Backend,
 		"sandbox_id", id, "task_id", opts.TaskID, "network_mode", opts.Network.Mode)
 	return &info, nil
+}
+
+// registerNotify starts a sandbox's per-VM guest->host notify listener when a
+// registrar is wired and the VM exposes a notify socket path. Best-effort: a
+// listen failure is logged and leaves only the auto-land trigger disabled.
+// Refs: MGIT-11.10.11, SEC-10
+func (m *Manager) registerNotify(vm VM, sandboxID, taskID string) {
+	if m.cfg.NotifyRegistrar == nil {
+		return
+	}
+	provider, ok := vm.(NotifyListenerProvider)
+	if !ok {
+		return
+	}
+	socketPath := provider.NotifySocketPath()
+	if socketPath == "" {
+		return
+	}
+	if err := m.cfg.NotifyRegistrar.Register(sandboxID, taskID, peerIdentity(vm, sandboxID), socketPath); err != nil {
+		m.cfg.Logger.Warn("sandbox auto-land notify listener not started",
+			"event", "notify_unwired", "backend", m.cfg.Backend, "sandbox_id", sandboxID, "error", err.Error())
+	}
 }
 
 // privateStoreDirName is the per-sandbox private store directory under the
@@ -450,6 +515,13 @@ func (m *Manager) Remove(ctx context.Context, id string, force bool) error {
 	// destroyed channel (SEC-10). Refs: FR-17.27
 	if m.cfg.PeerBinder != nil {
 		m.cfg.PeerBinder.Invalidate(id)
+	}
+
+	// Stop the per-VM notify listener so a torn-down sandbox can no longer
+	// auto-land and a recycled identity cannot inherit its trigger (SEC-10,
+	// FR-17.19). Refs: MGIT-11.10.11
+	if m.cfg.NotifyRegistrar != nil {
+		m.cfg.NotifyRegistrar.Deregister(id)
 	}
 
 	m.cfg.Logger.Info("sandbox removed", "event", "removed", "backend", m.cfg.Backend, "sandbox_id", id)

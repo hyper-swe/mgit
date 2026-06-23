@@ -253,7 +253,7 @@ func (h *fcHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
 		h.removeTap(tapPlan)
 		return nil, fmt.Errorf("firecracker new machine: %w", err)
 	}
-	return &fcVM{machine: machine, cancel: cancel, console: console, net: h.net, tapPlan: tapPlan}, nil
+	return &fcVM{machine: machine, cancel: cancel, console: console, net: h.net, tapPlan: tapPlan, vsockPath: p.vsock}, nil
 }
 
 // removeTap best-effort tears down a sandbox's host tap + firewall, guarding
@@ -266,21 +266,42 @@ func (h *fcHypervisor) removeTap(plan *egress.TapPlan) {
 
 // fcVM adapts a Firecracker machine to the manager's lifecycle seam.
 type fcVM struct {
-	machine *fc.Machine
-	cancel  context.CancelFunc // cancels the VMM's detached lifetime
-	console *os.File
-	net     NetRunner       // host network runner, for tap teardown
-	tapPlan *egress.TapPlan // the applied tap plan; nil in none mode
+	machine   *fc.Machine
+	cancel    context.CancelFunc // cancels the VMM's detached lifetime
+	console   *os.File
+	net       NetRunner       // host network runner, for tap teardown
+	tapPlan   *egress.TapPlan // the applied tap plan; nil in none mode
+	vsockPath string          // per-VM firecracker vsock unix socket (host-private, unique per VM)
 }
 
-// PeerIdentity reports the host-observed vsock peer identity. Over
-// Firecracker the guest's well-known context ID is guestVsockCID; the
-// per-VM unix socket (keyed by sandbox ID) is the actual transport
-// discriminator, so the daemon's channel authorization keys on the
-// addressed sandbox and confirms this bound peer. The CID is host-observed,
-// never guest-asserted (SEC-05). Refs: FR-17.27, SEC-10
+// PeerIdentity reports the host-observed vsock peer identity. The guest's
+// in-VM context ID is the well-known guestVsockCID on EVERY Firecracker VM,
+// so it is NOT a per-VM discriminator (audit finding F-E / SEC-10): keying
+// authorization on "cid:3" would let any guest masquerade as any other. The
+// genuine per-VM identity is this VM's PER-VM vsock unix socket path
+// (<workDir>/<sandbox-id>/vsock.sock) — host-created, host-private, and
+// unique per sandbox. Firecracker's guest->host model has the host LISTEN on
+// "<vsock>_<port>", so a guest->host connection can only ever arrive on its
+// OWN VM's socket; the daemon's notify listener derives the same identity from
+// the accepting socket, so Authorize genuinely distinguishes guest A from
+// guest B. The path is host-observed, never guest-asserted (SEC-05).
+// Refs: FR-17.27, SEC-10, SEC-05
 func (v *fcVM) PeerIdentity() string {
-	return fmt.Sprintf("cid:%d", guestVsockCID)
+	return v.vsockPath
+}
+
+// NotifySocketPath reports the per-VM host socket the guest reaches the host on
+// for the guest->host land-ready notification (the auto-land trigger). In
+// Firecracker's guest->host vsock model, a guest connect() to
+// VMADDR_CID_HOST:<port> is forwarded by the VMM to a host unix socket named
+// "<vsock_uds>_<port>"; the host LISTENS there. The path is per-VM (under the
+// sandbox state dir), so a connection on it can only originate from this VM —
+// the host-observed per-VM identity F-E requires. Refs: MGIT-11.10.11, SEC-10
+func (v *fcVM) NotifySocketPath() string {
+	if v.vsockPath == "" {
+		return ""
+	}
+	return reverseVsockSocketPath(v.vsockPath, microvm.GuestNotifyPort)
 }
 
 // teardown cancels the VMM lifetime, closes the console capture, and removes

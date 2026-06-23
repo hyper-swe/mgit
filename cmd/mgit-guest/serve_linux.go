@@ -27,17 +27,25 @@ var procCmdline = "/proc/cmdline"
 // exec requests (one connection = one exec, FR-17.11) and land pulls (the
 // host dials, the guest streams the task branch's object pool, SEC-01). Both
 // listeners run until the context is canceled; the first that fails returns.
-func serveGuest(ctx context.Context, supervisor *guest.Supervisor, execPort, landPort uint32, logger *slog.Logger) error {
+func serveGuest(ctx context.Context, supervisor *guest.Supervisor, execPort, landPort, notifyPort uint32, logger *slog.Logger) error {
 	if err := mountGuestFilesystems(); err != nil {
 		return err
 	}
 	worktreePath := worktreeMountPath()
+	logger.Info("mgit-guest land-ready notify", "event", "notify_config", "target", describeNotify(notifyPort))
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errs := make(chan error, 2)
 	go func() {
-		errs <- serveVsock(ctx, execPort, logger, func(c net.Conn) { serveExecConn(ctx, supervisor, c, logger) })
+		errs <- serveVsock(ctx, execPort, logger, func(c net.Conn) {
+			serveExecConn(ctx, supervisor, c, logger)
+			// After the agent finishes a command, signal the host it may land
+			// (auto-land trigger). Best-effort + idempotent: a host pull with no
+			// new commits is a no-op, so emitting after every exec is safe and
+			// gives "land as soon as done" latency. Refs: MGIT-11.10.11
+			emitLandReady(notifyPort, logger)
+		})
 	}()
 	go func() {
 		errs <- serveVsock(ctx, landPort, logger, func(c net.Conn) { serveLandConn(worktreePath, c, logger) })

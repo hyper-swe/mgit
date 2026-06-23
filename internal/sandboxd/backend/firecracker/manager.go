@@ -40,6 +40,10 @@ type Config struct {
 	// PeerBinder records each sandbox's host-observed peer identity for
 	// channel authorization (SEC-10); nil disables binding.
 	PeerBinder microvm.PeerBinder
+	// NotifyRegistrar starts/stops each sandbox's per-VM guest->host notify
+	// listener (the auto-land trigger) across its lifecycle; nil disables
+	// auto-land (the host-initiated land path is unaffected). Refs: MGIT-11.10.11, SEC-10
+	NotifyRegistrar microvm.NotifyRegistrar
 	// StoreProvisioner seeds the SEC-03 private, sandbox-local store per launch
 	// and supplies the shared store path for the non-reachability check. When
 	// set, the quarantine control is realized; nil leaves the pre-SEC-03 direct
@@ -67,6 +71,7 @@ func NewManager(cfg Config) (*microvm.Manager, error) {
 		Hypervisor:       hv,
 		GuestDialer:      newGuestDialer(cfg.WorkDir),
 		PeerBinder:       cfg.PeerBinder,
+		NotifyRegistrar:  cfg.NotifyRegistrar,
 		StoreProvisioner: cfg.StoreProvisioner,
 		SensitivePaths:   cfg.SensitivePaths,
 		Logger:           cfg.Logger,
