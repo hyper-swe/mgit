@@ -20,6 +20,7 @@ type backendSelection struct {
 	backend    string // sandboxd.BackendRequestAuto | BackendRequestContainer
 	ackReduced bool   // --acknowledge-reduced-isolation
 	hostRoot   string
+	repoRoot   string // mgit repo root whose .mgit is the shared store (SEC-03 provisioning)
 	workDir    string
 	logger     *slog.Logger
 	clock      func() time.Time
@@ -44,6 +45,7 @@ func selectManager(sel backendSelection) (model.SandboxManager, error) {
 		Hypervisor: func() (model.SandboxManager, error) {
 			return newHypervisorBackend(hypervisorDeps{
 				hostRoot:   sel.hostRoot,
+				repoRoot:   sel.repoRoot,
 				workDir:    sel.workDir,
 				logger:     sel.logger,
 				clock:      sel.clock,
@@ -69,6 +71,7 @@ func selectManager(sel backendSelection) (model.SandboxManager, error) {
 // future Windows backend slots in with no caller change.
 type hypervisorDeps struct {
 	hostRoot   string // host config root holding images.lock + trust root (FR-17.13)
+	repoRoot   string // mgit repo root whose .mgit is the shared store (SEC-03 provisioning); empty disables
 	workDir    string // sandbox-local state root; never a worktree
 	logger     *slog.Logger
 	clock      func() time.Time

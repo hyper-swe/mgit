@@ -1,12 +1,14 @@
 //go:build linux
 
-// Full-stack land round-trip against a real mgit-guest image: boot a guest
-// whose mounted worktree is a git repo with a new commit, then pull that
-// commit over the guest land channel, verify it host-side, and atomically
-// import + fast-forward the host task branch — exercising guest land server
-// -> host pull -> verify -> import -> fast-forward end to end. Gated, like
-// the exec round-trip, on a prebuilt mgit-guest rootfs (which must include
-// the land listener) via MGIT_E2E_GUEST_ROOTFS. Refs: FR-17.5, MGIT-11.10.10
+// Full-stack land round-trip against a real mgit-guest image, on the .mgit
+// model (SEC-03): boot a guest whose mounted worktree carries a PRIVATE,
+// sandbox-local .mgit store with a new commit, then pull that commit over the
+// guest land channel, verify it host-side, and atomically import + fast-forward
+// the host task branch — exercising guest land server -> host pull -> verify ->
+// import -> fast-forward end to end. The guest serves <worktree>/.mgit (a bare
+// store), never a .git, and never the host shared store. Gated, like the exec
+// round-trip, on a prebuilt mgit-guest rootfs (which must include the land
+// listener) via MGIT_E2E_GUEST_ROOTFS. Refs: FR-17.5, SEC-03, MGIT-11.6.8
 package firecracker
 
 import (
@@ -17,15 +19,20 @@ import (
 	"testing"
 	"time"
 
-	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/go-git/go-billy/v5/osfs"
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 	"github.com/hyper-swe/mgit/internal/sandboxd/land"
+	"github.com/hyper-swe/mgit/internal/sandboxd/provision"
 	"github.com/hyper-swe/mgit/internal/service"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 	"github.com/hyper-swe/mgit/internal/store/index"
@@ -55,10 +62,12 @@ func (e2eStubAttestor) Attest(_ context.Context, sandboxID, commitHash, contentH
 }
 func (e2eStubAttestor) Verify(context.Context, *model.Attestation) error { return nil }
 
-// TestE2E_Land_RealGuest_RoundTrip proves the whole land stack on real KVM:
-// a guest serves its worktree's new commit over the land channel, and the
-// host pulls, verifies (dual-hash + tree binding), imports, and fast-forwards
-// the task branch. The guest holds no key; the host makes every decision.
+// TestE2E_Land_RealGuest_RoundTrip proves the whole land stack on real KVM with
+// the SEC-03 .mgit model: the host provisions a private store (task base only),
+// the agent's new commit goes into that private store, the worktree image
+// delivers worktree files + the private .mgit, and the guest serves the private
+// store's HEAD over the land channel. The host pulls, verifies (dual-hash + tree
+// binding), imports, and fast-forwards the task branch. The guest holds no key.
 func TestE2E_Land_RealGuest_RoundTrip(t *testing.T) {
 	kernel, _ := requireKVM(t)
 	rootfs := os.Getenv("MGIT_E2E_GUEST_ROOTFS")
@@ -72,8 +81,7 @@ func TestE2E_Land_RealGuest_RoundTrip(t *testing.T) {
 	clock := func() time.Time { return time.Now().UTC() }
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	// Host shared repo + main index. The worktree is a clone of it plus one
-	// new commit (the agent's work); the task branch is pre-created at the
+	// Host shared repo + main index. The task branch is pre-created at the
 	// shared base so the land fast-forwards it. Refs: FR-17.5
 	hostRepoRoot := t.TempDir()
 	hostRepo, err := gitstore.Init(hostRepoRoot, clock)
@@ -86,14 +94,26 @@ func TestE2E_Land_RealGuest_RoundTrip(t *testing.T) {
 	require.NoError(t, branches.CreateBranch(context.Background(),
 		&model.Branch{Name: model.TaskBranchName(task), HeadCommit: base}))
 
+	// Materialize the worktree as PLAIN FILES (no store inside it), then
+	// provision a fresh private .mgit store seeded with the task base, and put
+	// the agent's new commit into THAT private store — the .mgit the image
+	// delivers and the guest serves. Refs: SEC-03
 	wtPath := filepath.Join(t.TempDir(), "repo", "worktrees", "task-a")
-	newCommit := cloneAndCommit(t, hostRepoRoot, wtPath)
+	require.NoError(t, gitstore.NewWorktreeStore(hostRepo).MaterializeBranchTo(context.Background(), model.TaskBranchName(task), wtPath))
+
+	prov, err := provision.NewStoreProvisioner(hostRepoRoot)
+	require.NoError(t, err)
+	privDir := filepath.Join(wtPath, ".mgit")
+	_, err = prov.Provision(task, privDir)
+	require.NoError(t, err)
+	newCommit := commitIntoPrivateStore(t, privDir, task)
 
 	mainIdx, err := index.New(filepath.Join(hostRepoRoot, ".mgit", "index.db"), clock)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mainIdx.Close() })
 
-	// Register the guest image and boot it with the worktree mounted.
+	// Register the guest image and boot it with the worktree (+ private store)
+	// delivered. The provisioner is wired so the SEC-03 quarantine is realized.
 	hostRoot := t.TempDir()
 	_, err = images.GenerateTrustRoot(context.Background(), hostRoot, noopAudit{})
 	require.NoError(t, err)
@@ -118,6 +138,8 @@ func TestE2E_Land_RealGuest_RoundTrip(t *testing.T) {
 			return ImagePaths{KernelPath: ri.KernelPath, RootfsPath: ri.RootfsPath, Cmdline: ri.Cmdline}, rerr
 		},
 		Logger: logger, Clock: clock, PeerBinder: binder,
+		StoreProvisioner: prov,
+		SensitivePaths:   model.DefaultSandboxPolicy().SensitivePaths,
 	})
 	require.NoError(t, err)
 
@@ -165,24 +187,41 @@ func TestE2E_Land_RealGuest_RoundTrip(t *testing.T) {
 	assert.Equal(t, newCommit, recs[0].CommitHash)
 }
 
-// cloneAndCommit clones the host repo into wtPath and adds one new commit
-// (the agent's work) on top of the shared base, returning its hash. The clone
-// source is the self-contained .mgit store: post-MGIT-14 mgit no longer writes
-// a .git at the project root (it coexists with the project's git via a bare
-// .mgit store), so the worktree is cloned from that store. Refs: MGIT-14
-func cloneAndCommit(t *testing.T, hostRepoRoot, wtPath string) string {
+// commitIntoPrivateStore adds one new commit (the agent's work) on top of the
+// private store's seeded base, on the task branch, and returns its hash. It
+// commits via plumbing into the bare .mgit store the SEC-03 model delivers —
+// the same store the guest commits into and ServeLandHead serves. Refs: SEC-03
+func commitIntoPrivateStore(t *testing.T, privDir, task string) string {
 	t.Helper()
-	require.NoError(t, os.MkdirAll(filepath.Dir(wtPath), 0o750))
-	repo, err := gogit.PlainClone(wtPath, false, &gogit.CloneOptions{URL: filepath.Join(hostRepoRoot, ".mgit")})
+	st := filesystem.NewStorage(osfs.New(privDir), cache.NewObjectLRUDefault())
+	branch := plumbing.NewBranchReferenceName(model.TaskBranchName(task))
+	parent, err := st.Reference(branch)
 	require.NoError(t, err)
-	wt, err := repo.Worktree()
+
+	blob := st.NewEncodedObject()
+	blob.SetType(plumbing.BlobObject)
+	bw, err := blob.Writer()
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(wtPath, "work.txt"), []byte("agent work"), 0o600))
-	_, err = wt.Add("work.txt")
+	_, _ = bw.Write([]byte("agent work"))
+	require.NoError(t, bw.Close())
+	blobHash, err := st.SetEncodedObject(blob)
 	require.NoError(t, err)
-	h, err := wt.Commit("feat: agent work", &gogit.CommitOptions{
-		Author: &object.Signature{Name: "agent", Email: "agent@mgit", When: time.Now().UTC()},
-	})
+
+	tree := st.NewEncodedObject()
+	require.NoError(t, (&object.Tree{Entries: []object.TreeEntry{
+		{Name: "work.txt", Mode: 0o100644, Hash: blobHash},
+	}}).Encode(tree))
+	treeHash, err := st.SetEncodedObject(tree)
 	require.NoError(t, err)
-	return h.String()
+
+	sig := object.Signature{Name: "agent", Email: "agent@mgit", When: time.Now().UTC()}
+	commit := st.NewEncodedObject()
+	require.NoError(t, (&object.Commit{
+		Author: sig, Committer: sig, Message: "feat: agent work",
+		TreeHash: treeHash, ParentHashes: []plumbing.Hash{parent.Hash()},
+	}).Encode(commit))
+	ch, err := st.SetEncodedObject(commit)
+	require.NoError(t, err)
+	require.NoError(t, st.SetReference(plumbing.NewHashReference(branch, ch)))
+	return ch.String()
 }

@@ -104,7 +104,8 @@ func run(args []string, logSink io.Writer) int {
 
 	selected, err := selectManager(backendSelection{
 		backend: opts.backend, ackReduced: opts.ackReduced,
-		hostRoot: opts.hostRoot, workDir: opts.workDir, logger: logger, clock: clock,
+		hostRoot: opts.hostRoot, repoRoot: opts.repoRoot, workDir: opts.workDir,
+		logger: logger, clock: clock,
 		peerBinder: peerBinder,
 	})
 	if err != nil {

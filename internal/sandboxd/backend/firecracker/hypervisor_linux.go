@@ -190,7 +190,10 @@ func (h *fcHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
 	var worktreeImg string
 	if cfg.WorktreePath != "" {
 		worktreeImg = filepath.Join(stateDir, worktreeImageName)
-		if err := buildWorktreeImage(context.Background(), h.mkfs, cfg.WorktreePath, worktreeImg, 0); err != nil {
+		// PrivateStorePath (SEC-03) is laid into the image at <worktree>/.mgit
+		// and escaping worktree symlinks are rejected; empty = legacy direct
+		// pack (no provisioner wired). Refs: SEC-03, MGIT-11.6.8
+		if err := buildWorktreeImage(context.Background(), h.mkfs, cfg.WorktreePath, worktreeImg, cfg.PrivateStorePath, 0); err != nil {
 			return nil, fmt.Errorf("firecracker worktree delivery: %w", err)
 		}
 	}
