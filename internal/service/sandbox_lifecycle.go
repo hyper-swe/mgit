@@ -158,6 +158,14 @@ func (s *SandboxService) Land(ctx context.Context, taskID string) error {
 // Refs: FR-17.9, FR-17.18
 func (s *SandboxService) teardownLocked(ctx context.Context, reg *sandboxReg, eventType string, force bool) error {
 	if reg.booted {
+		// Revoke any live capability grants and stop host egress first, so the
+		// grants die with the sandbox (scoped to its lifetime, SEC-05) and the
+		// proxy/DNS listeners are released before the VM and its tap go away.
+		// This fires on every teardown path (Remove, Land, TTL/idle reap).
+		// Refs: FR-17.12, SEC-05
+		if s.capRev != nil {
+			s.capRev.Revoke(reg.info.ID)
+		}
 		if s.egress != nil {
 			s.egress.StopEgress(reg.info.ID)
 		}

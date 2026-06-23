@@ -31,9 +31,10 @@ type SupervisorConfig struct {
 // proxy. The daemon serves Proxy() on the per-sandbox egress channel and
 // drives Resolver() for the guest's DNS. Refs: SEC-04, FR-17.8
 type Supervisor struct {
-	resolver *Resolver
-	proxy    *Proxy
-	dns      *DNSServer
+	allowlist *Allowlist
+	resolver  *Resolver
+	proxy     *Proxy
+	dns       *DNSServer
 }
 
 // NewSupervisor builds the allowlist-mode egress stack. It is an error to
@@ -86,8 +87,13 @@ func NewSupervisor(cfg SupervisorConfig) (*Supervisor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("egress supervisor: %w", err)
 	}
-	return &Supervisor{resolver: resolver, proxy: proxy, dns: dns}, nil
+	return &Supervisor{allowlist: al, resolver: resolver, proxy: proxy, dns: dns}, nil
 }
+
+// Allowlist returns this sandbox's compiled allowlist so the daemon can apply
+// a host-approved, sandbox-lifetime capability grant (Allowlist.GrantIP) to
+// the LIVE enforcement path. Refs: FR-17.12, SEC-05
+func (s *Supervisor) Allowlist() *Allowlist { return s.allowlist }
 
 // Proxy returns the assembled egress proxy (served on the sandbox's egress
 // channel). Refs: SEC-04

@@ -37,6 +37,14 @@ type EgressController interface {
 	StopEgress(sandboxID string)
 }
 
+// CapabilityRevoker drops a sandbox's live capability grants on teardown so a
+// grant never outlives the sandbox it was scoped to (satisfied by
+// *CapabilityService). It is an OPTIONAL collaborator wired at the daemon.
+// Refs: FR-17.12, SEC-05
+type CapabilityRevoker interface {
+	Revoke(sandboxID string)
+}
+
 // SandboxService is the lifecycle orchestrator: handlers go through it,
 // never the manager or stores directly (architecture rule). It owns the
 // sandbox ID, provisions lazily (register without booting; boot on first
@@ -49,7 +57,8 @@ type SandboxService struct {
 	policy  SandboxPolicyReader
 	clock   func() time.Time
 	newID   func() (string, error)
-	egress  EgressController // optional; nil disables host egress orchestration
+	egress  EgressController  // optional; nil disables host egress orchestration
+	capRev  CapabilityRevoker // optional; nil disables capability-grant teardown
 
 	// byTask holds LIVE sandbox registrations, keyed by task ID. This is
 	// in-memory by design, not a duplicate of the sandbox_events audit
@@ -104,6 +113,14 @@ func NewSandboxService(manager model.SandboxManager, events SandboxEventAppender
 // and because it is an optional collaborator. Refs: FR-17.8
 func (s *SandboxService) SetEgressController(c EgressController) {
 	s.egress = c
+}
+
+// SetCapabilityRevoker wires the optional capability-grant revoker (the
+// CapabilityService). Set once at daemon wiring time, before the service
+// handles any request; nil leaves capability-grant teardown disabled. Kept off
+// the constructor for the same reasons as SetEgressController. Refs: FR-17.12, SEC-05
+func (s *SandboxService) SetCapabilityRevoker(c CapabilityRevoker) {
+	s.capRev = c
 }
 
 // Register binds a sandbox to a task+worktree and records it WITHOUT

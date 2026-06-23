@@ -423,3 +423,70 @@ func (c CapabilityRequest) Validate() error {
 	}
 	return nil
 }
+
+// ObservedDenial carries ONLY the facts the HOST observed when it refused a
+// guest flow: the host-resolved/pinned destination IP, the destination port,
+// and the (sandbox, task) the flow came from. It is the single, structurally
+// constrained input a capability-escalation request may be derived from
+// (SEC-05). There is deliberately NO field for a guest-supplied hostname,
+// "remedy text", or free-form reason: the grant prompt and audit record must
+// show the real host-observed destination, never anything the guest can
+// dictate. Construct it from the host egress engine's Decision, never from a
+// guest CONNECT frame. Refs: FR-17.12, SEC-05
+type ObservedDenial struct {
+	SandboxID string     // host-owned sandbox lifecycle ID
+	TaskID    string     // bound task (FR-17.1); the grant prompt shows it
+	DestIP    netip.Addr // host-resolved/pinned destination (never guest text)
+	DestPort  int        // host-observed destination port
+	Rule      string     // host-authored deny reason (for the audit record)
+}
+
+// RequestFromObservedDenial builds an egress CapabilityRequest from the
+// HOST-observed denial alone. It is the SEC-05 chokepoint: the only fields
+// that reach the request (and therefore the grant prompt and the append-only
+// audit record) are the host's own destination IP, port, sandbox, and task.
+// A guest cannot supply or influence any of them — the function takes no
+// guest string at all. A denial with an invalid host-observed IP/port yields
+// a validation error rather than a forgeable request. Refs: FR-17.12, SEC-05
+func (d ObservedDenial) RequestFromObservedDenial() (CapabilityRequest, error) {
+	req := CapabilityRequest{
+		SandboxID:        d.SandboxID,
+		TaskID:           d.TaskID,
+		Capability:       CapabilityEgress,
+		ObservedDestIP:   d.DestIP.String(),
+		ObservedDestPort: d.DestPort,
+	}
+	if err := req.Validate(); err != nil {
+		return CapabilityRequest{}, fmt.Errorf("capability request from observed denial: %w", err)
+	}
+	return req, nil
+}
+
+// GrantScopeSandboxLifetime is the only grant scope: a capability grant lives
+// exactly as long as the sandbox it was granted to. There is no "permanent"
+// or "all sandboxes" scope, and no allow-all capability — each grant names one
+// concrete destination and dies on teardown. Refs: FR-17.12, SEC-05
+const GrantScopeSandboxLifetime = "sandbox_lifetime"
+
+// CapabilityGrant is a recorded, sandbox-lifetime-scoped approval of one
+// CapabilityRequest. It is append-only audited (as a policy_granted sandbox
+// event) and held live only while the sandbox runs; teardown drops it. There
+// is no allow-all: a grant always names the one host-observed destination it
+// authorizes. Refs: FR-17.12, FR-17.18, SEC-05
+type CapabilityGrant struct {
+	SandboxID        string    `json:"sandbox_id"`
+	TaskID           string    `json:"task_id"`
+	Capability       string    `json:"capability"`
+	ObservedDestIP   string    `json:"observed_dest_ip,omitempty"`
+	ObservedDestPort int       `json:"observed_dest_port,omitempty"`
+	Scope            string    `json:"scope"`      // always GrantScopeSandboxLifetime
+	GrantedAt        time.Time `json:"granted_at"` // host clock, UTC
+}
+
+// AllowlistEntry renders an egress grant as a host:port allowlist entry the
+// live egress engine can admit (the grant widens the running sandbox's
+// allowlist, never the persisted launch policy). It is meaningful only for
+// CapabilityEgress grants. Refs: FR-17.12
+func (g CapabilityGrant) AllowlistEntry() string {
+	return fmt.Sprintf("%s:%d", g.ObservedDestIP, g.ObservedDestPort)
+}

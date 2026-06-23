@@ -160,6 +160,19 @@ var (
 	// the remaining guest-backend gap, reported rather than degraded to a
 	// non-interactive session. Refs: MGIT-11.11.4
 	ErrShellTransportUnavailable = errors.New("interactive shell requires the KVM guest PTY transport; use `mgit sandbox exec` for non-interactive commands")
+
+	// ErrCapabilityGrantNotFound indicates no live capability grant exists
+	// for the requested (sandbox, capability) pair — a grant dies with its
+	// sandbox (scoped to the sandbox lifetime), so a lookup after teardown
+	// is expected to miss. Refs: FR-17.12, SEC-05
+	ErrCapabilityGrantNotFound = errors.New("capability grant not found")
+
+	// ErrSSHKeyExtraction indicates the guest asked the host ssh-agent
+	// forwarder for key MATERIAL (a private/identity blob), not a signature.
+	// The host holds the keys and exposes signing only; key extraction is
+	// refused unconditionally so private keys never enter the guest.
+	// Refs: FR-17.12, SEC-01
+	ErrSSHKeyExtraction = errors.New("ssh-agent forward exposes signing only; key material never crosses to the guest")
 )
 
 // ValidationError provides structured context for validation failures.

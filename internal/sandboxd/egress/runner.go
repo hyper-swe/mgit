@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,12 +57,15 @@ type Runner struct {
 	active map[string]*activeEgress
 }
 
-// activeEgress holds the running listeners for one sandbox.
+// activeEgress holds the running listeners for one sandbox plus its
+// supervisor, so a host-approved capability grant can widen the LIVE
+// allowlist (FR-17.12, SEC-05).
 type activeEgress struct {
 	cancel    context.CancelFunc
 	tcp       net.Listener
 	udp       net.PacketConn
 	endpoints Endpoints
+	sup       *Supervisor
 }
 
 // NewRunner validates the configuration and returns a Runner.
@@ -108,6 +113,7 @@ func (r *Runner) Start(ctx context.Context, b Binding) (Endpoints, error) {
 	if err != nil {
 		return Endpoints{}, err
 	}
+	ae.sup = sup
 	//nolint:gosec // G118: cancel is stored in ae.cancel and invoked by Stop — the egress lifecycle deliberately outlives Start
 	runCtx, cancel := context.WithCancel(ctx)
 	ae.cancel = cancel
@@ -171,4 +177,75 @@ func (r *Runner) Running(sandboxID string) bool {
 	defer r.mu.Unlock()
 	_, ok := r.active[sandboxID]
 	return ok
+}
+
+// AllowEgress applies a host-approved, sandbox-lifetime capability grant to a
+// LIVE allowlist-mode sandbox: it widens that sandbox's running allowlist to
+// admit the one host:port entry. The entry must be an exact IP:port (the grant
+// names the host-observed destination, SEC-05) — a hostname/CIDR/wildcard is
+// refused. Granting an unknown (or non-allowlist-mode, hence proxy-less)
+// sandbox is an error (fail closed). This makes Runner satisfy the
+// service-layer EgressGranter. Refs: FR-17.12, SEC-05
+func (r *Runner) AllowEgress(_ context.Context, sandboxID, entry string) error {
+	ip, port, err := parseGrantEntry(entry)
+	if err != nil {
+		return fmt.Errorf("egress runner: grant %q: %w", entry, err)
+	}
+	r.mu.Lock()
+	ae, ok := r.active[sandboxID]
+	r.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("egress runner: grant: sandbox %q has no running egress stack", sandboxID)
+	}
+	if err := ae.sup.Allowlist().GrantIP(ip, port); err != nil {
+		return fmt.Errorf("egress runner: grant: %w", err)
+	}
+	r.cfg.Logger.Info("sandbox egress grant applied", "event", "egress_grant",
+		"sandbox_id", sandboxID, "dest", entry)
+	return nil
+}
+
+// RevokeAll drops every live capability grant for a sandbox (teardown), so a
+// grant never outlives its sandbox. An unknown sandbox is a no-op. Refs: FR-17.12, SEC-05
+func (r *Runner) RevokeAll(sandboxID string) {
+	r.mu.Lock()
+	ae, ok := r.active[sandboxID]
+	r.mu.Unlock()
+	if ok {
+		ae.sup.Allowlist().RevokeGrants()
+	}
+}
+
+// allowlistFor returns a running sandbox's live allowlist (test seam for the
+// grant path).
+func (r *Runner) allowlistFor(sandboxID string) (*Allowlist, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ae, ok := r.active[sandboxID]
+	if !ok {
+		return nil, false
+	}
+	return ae.sup.Allowlist(), true
+}
+
+// parseGrantEntry parses an exact "ip:port" grant entry, rejecting hostnames,
+// CIDRs, and wildcards — a grant names one host-observed destination (SEC-05).
+func parseGrantEntry(entry string) (netip.Addr, int, error) {
+	host, portStr, found := strings.Cut(entry, ":")
+	if !found {
+		return netip.Addr{}, 0, fmt.Errorf("must be ip:port")
+	}
+	// Rejoin for IPv6 (which contains its own colons): AddrPort parses both.
+	if ap, err := netip.ParseAddrPort(entry); err == nil {
+		return ap.Addr().Unmap(), int(ap.Port()), nil
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.Addr{}, 0, fmt.Errorf("host must be a literal IP")
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		return netip.Addr{}, 0, fmt.Errorf("invalid port %q", portStr)
+	}
+	return ip.Unmap(), port, nil
 }

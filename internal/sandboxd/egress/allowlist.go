@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // hostnameRe validates one DNS hostname (the apex of a name rule or the
@@ -40,8 +41,63 @@ type netRule struct {
 // a raw-IP connection proceed (AllowsIP). It never widens with guest
 // input. Refs: SEC-04, FR-17.8
 type Allowlist struct {
-	names []nameRule
-	nets  []netRule
+	names []nameRule // immutable after Compile
+	nets  []netRule  // immutable after Compile
+
+	// grants holds host-approved live additions (scoped to the sandbox
+	// lifetime). Guarded by mu because AllowsIP runs concurrently per guest
+	// flow while a grant may be added/revoked. Each entry is one exact
+	// (ip, port) — never a range — so a grant authorizes only the one
+	// host-observed destination it names (SEC-05). Refs: FR-17.12, SEC-05
+	mu     sync.RWMutex
+	grants map[grantKey]struct{}
+}
+
+// grantKey identifies one exact host-approved granted destination.
+type grantKey struct {
+	ip   netip.Addr
+	port int
+}
+
+// GrantIP adds a host-approved live grant for exactly one (ip, port). It is
+// the live-enforcement half of a sandbox-lifetime capability grant: the
+// allowlist now admits this single destination until RevokeGrants drops it.
+// The ip must be valid and the port a real TCP port; a range is never
+// accepted (no allow-all, SEC-05). Refs: FR-17.12, SEC-05
+func (al *Allowlist) GrantIP(ip netip.Addr, port int) error {
+	if !ip.IsValid() {
+		return fmt.Errorf("egress grant: invalid ip")
+	}
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("egress grant: invalid port %d", port)
+	}
+	al.mu.Lock()
+	defer al.mu.Unlock()
+	if al.grants == nil {
+		al.grants = make(map[grantKey]struct{})
+	}
+	al.grants[grantKey{ip: ip.Unmap(), port: port}] = struct{}{}
+	return nil
+}
+
+// RevokeGrants drops every live grant. Called on sandbox teardown so a grant
+// is scoped to the sandbox lifetime and never outlives it. The launch-time
+// allowlist is untouched. Refs: FR-17.12, SEC-05
+func (al *Allowlist) RevokeGrants() {
+	al.mu.Lock()
+	defer al.mu.Unlock()
+	al.grants = nil
+}
+
+// isGranted reports whether an exact (ip, port) was live-granted.
+func (al *Allowlist) isGranted(ip netip.Addr, port int) bool {
+	al.mu.RLock()
+	defer al.mu.RUnlock()
+	if al.grants == nil {
+		return false
+	}
+	_, ok := al.grants[grantKey{ip: ip.Unmap(), port: port}]
+	return ok
 }
 
 // Compile builds an Allowlist from validated policy entries (each already
@@ -161,7 +217,10 @@ func (al *Allowlist) AllowsIP(ip netip.Addr, port int) bool {
 			return true
 		}
 	}
-	return false
+	// A host-approved live grant (SEC-05) admits exactly this (ip, port). The
+	// authorizer still applies the unconditional denied-range gate first, so a
+	// grant can never re-open a denied range. Refs: FR-17.12, SEC-05
+	return al.isGranted(ip, port)
 }
 
 // matches reports whether a hostname satisfies this name rule.
