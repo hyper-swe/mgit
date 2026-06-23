@@ -31,6 +31,15 @@ const guestVsockCID = 3
 // mounts it at the worktree's identical path (guestboot). Refs: MGIT-11.6.5
 const worktreeDevice = "/dev/vdc"
 
+// overlayUpperDevice is the guest block device the per-VM disk-backed COW
+// overlay drive appears as: it is the second virtio-blk device in
+// buildConfig order (rootfs=vda, overlay=vdb). The guest backs its
+// writable-root overlayfs upperdir on this disk (quota-bounded) instead of
+// a tmpfs RAM upper, so large out-of-worktree writes (npm/pip/apt) consume
+// disk not guest RAM. Supplied via the cmdline descriptor (guestboot), not
+// hardcoded in the guest. Refs: FR-17.17, NFR-17.7, MGIT-11.6.7
+const overlayUpperDevice = "/dev/vdb"
+
 // kvmDevice is the KVM character device probed by the fail-closed
 // availability check. A var (not a const) only so that fail-closed path
 // is testable; it is never reassigned in production.
@@ -130,9 +139,15 @@ func buildConfig(cfg microvm.VMConfig, p vmPaths, worktreeImg string) fc.Config 
 			IsReadOnly:   fc.Bool(false), // the guest edits the worktree copy
 		})
 	}
+	// The per-VM COW overlay drive is always attached (vdb): tell the guest
+	// to back its writable-root overlay upper on it (disk-backed, quota-
+	// bounded) instead of a tmpfs RAM upper. The guest mkfs-es the raw drive
+	// on first boot. Refs: FR-17.17, NFR-17.7, MGIT-11.6.7
+	kernelArgs := guestboot.AppendOverlayCmdline(cfg.Cmdline, guestboot.OverlayUpper{
+		Device: overlayUpperDevice, FSType: "ext4",
+	})
 	// When the worktree image is attached (vdc), tell the guest to mount
 	// it at the worktree's identical path (copy-and-land, MGIT-11.6.5).
-	kernelArgs := cfg.Cmdline
 	if worktreeImg != "" {
 		kernelArgs = guestboot.AppendCmdline(kernelArgs, guestboot.WorktreeMount{
 			Path: cfg.WorktreePath, FSType: "ext4", Source: worktreeDevice,

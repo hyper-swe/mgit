@@ -149,6 +149,10 @@ func TestKVM_RootfsReadOnly_OverlayCOW(t *testing.T) {
 	require.Len(t, fcfg.VsockDevices, 1, "vsock control plane present")
 	assert.Equal(t, uint32(guestVsockCID), fcfg.VsockDevices[0].CID)
 	assert.NotContains(t, fcfg.KernelArgs, "mgit.worktree", "no worktree cmdline without a worktree drive")
+	// The COW overlay drive (vdb) is always attached, so the guest is always
+	// told to back its writable-root upper on it (disk, not RAM). MGIT-11.6.7
+	assert.Contains(t, fcfg.KernelArgs, "mgit.overlay_dev="+overlayUpperDevice)
+	assert.Contains(t, fcfg.KernelArgs, "mgit.overlay_fs=ext4")
 }
 
 // TestKVM_BuildConfig_WorktreeDrive verifies the copy-and-land worktree

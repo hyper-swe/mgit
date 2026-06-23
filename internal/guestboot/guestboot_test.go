@@ -72,6 +72,64 @@ func TestParse_KeyWithoutValue_Skipped(t *testing.T) {
 	assert.False(t, got.Valid())
 }
 
+// TestOverlayRoundTrip verifies an overlay-upper descriptor appended by
+// the host parses back identically on the guest.
+func TestOverlayRoundTrip(t *testing.T) {
+	o := OverlayUpper{Device: "/dev/vdb", FSType: "ext4"}
+	cmdline := AppendOverlayCmdline("console=ttyS0 reboot=k", o)
+	got := ParseOverlayUpper(cmdline)
+	assert.Equal(t, o, got)
+	assert.True(t, got.Valid())
+}
+
+// TestAppendOverlayCmdline_PreservesBase verifies base args are kept and
+// the overlay descriptor is appended after them.
+func TestAppendOverlayCmdline_PreservesBase(t *testing.T) {
+	out := AppendOverlayCmdline("console=ttyS0 panic=1", OverlayUpper{Device: "/dev/vdb", FSType: "ext4"})
+	assert.Contains(t, out, "console=ttyS0 panic=1 ")
+	assert.Contains(t, out, "mgit.overlay_dev=/dev/vdb")
+	assert.Contains(t, out, "mgit.overlay_fs=ext4")
+}
+
+// TestAppendOverlayCmdline_EmptyBase verifies no leading space on a blank base.
+func TestAppendOverlayCmdline_EmptyBase(t *testing.T) {
+	out := AppendOverlayCmdline("", OverlayUpper{Device: "/dev/vdb", FSType: "ext4"})
+	assert.Equal(t, "mgit.overlay_dev=/dev/vdb mgit.overlay_fs=ext4", out)
+}
+
+// TestAppendOverlayCmdline_NoDevice_AddsNothing verifies a descriptor with
+// no device (no disk overlay attached) leaves the cmdline untouched.
+func TestAppendOverlayCmdline_NoDevice_AddsNothing(t *testing.T) {
+	assert.Equal(t, "console=ttyS0", AppendOverlayCmdline("console=ttyS0", OverlayUpper{}))
+}
+
+// TestParseOverlayUpper_IgnoresUnrelatedTokens verifies only the overlay
+// keys are extracted from a realistic cmdline that also carries the
+// worktree descriptor.
+func TestParseOverlayUpper_IgnoresUnrelatedTokens(t *testing.T) {
+	cmdline := "console=ttyS0 mgit.worktree=/wt mgit.overlay_dev=/dev/vdb root=/dev/vda mgit.overlay_fs=ext4 mgit.worktree_src=/dev/vdc"
+	got := ParseOverlayUpper(cmdline)
+	assert.Equal(t, OverlayUpper{Device: "/dev/vdb", FSType: "ext4"}, got)
+}
+
+// TestOverlayValid covers the overlay validity rules.
+func TestOverlayValid(t *testing.T) {
+	cases := map[string]struct {
+		o    OverlayUpper
+		want bool
+	}{
+		"complete":  {OverlayUpper{Device: "/dev/vdb", FSType: "ext4"}, true},
+		"no_device": {OverlayUpper{FSType: "ext4"}, false},
+		"no_fstype": {OverlayUpper{Device: "/dev/vdb"}, false},
+		"empty":     {OverlayUpper{}, false},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, c.want, c.o.Valid())
+		})
+	}
+}
+
 // TestValid covers the validity rules: absolute path + all fields.
 func TestValid(t *testing.T) {
 	cases := map[string]struct {

@@ -8,10 +8,15 @@
 #   /sbin/mgit-guest   - the PID-1 supervisor (static, CGO-free)
 #   /bin/busybox + sh  - a shell + coreutils for the guest to exec
 #   /proc /dev /tmp     - pseudo-fs mount points (mgit-guest mounts them)
-#   /mnt                - tmpfs scratch for the writable-root overlay
+#   /mnt                - scratch mount point for the writable-root overlay
 #                         (mgit-guest overlays a writable root over this
 #                         read-only image so it can create the worktree's
-#                         identical mount point at runtime, MGIT-11.6.6)
+#                         identical mount point at runtime, MGIT-11.6.6).
+#                         The overlay UPPER is backed by the per-VM disk COW
+#                         drive (vdb) when one is attached (mgit-guest mkfs-es
+#                         + mounts it here on first boot), so out-of-worktree
+#                         writes consume DISK not guest RAM (MGIT-11.6.7);
+#                         tmpfs is the fallback when no drive is attached.
 #
 # The worktree mount point is NOT baked: mgit-guest creates it on the
 # writable overlay root, so any host worktree path works.
@@ -39,10 +44,14 @@ cp "$bb" "$root/bin/busybox"
 # handshake, DNS via nslookup, raw-IP attempts), and the filesystem-probe
 # applets the SEC-03 hostile-guest e2e needs (grep/find/head/awk/test/touch)
 # so those probes exercise real behavior instead of passing vacuously when an
-# applet is absent. All are compiled into the static busybox; these are just
-# symlinks. Refs: FR-17.7, SEC-03, MGIT-11.13.6, MGIT-11.6.8
+# applet is absent, and mke2fs so the guest can format the raw per-VM COW
+# overlay drive on first boot to back its writable-root overlay UPPER on DISK
+# (quota-bounded) instead of guest RAM (MGIT-11.6.7) — busybox mke2fs writes
+# an ext2 on-disk layout the guest mounts via the kernel ext4 driver, so no
+# e2fsprogs is needed in the minimal rootfs. All are compiled into the static
+# busybox; these are just symlinks. Refs: FR-17.7, SEC-03, NFR-17.7, MGIT-11.13.6, MGIT-11.6.8, MGIT-11.6.7
 for applet in sh cat echo ls env pwd printf sleep test touch mkdir \
-              grep find head awk \
+              grep find head awk mke2fs \
               nc wget nslookup ping ip ifconfig route; do
 	ln -sf busybox "$root/bin/$applet"
 done

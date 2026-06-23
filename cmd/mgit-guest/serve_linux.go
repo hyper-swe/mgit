@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
+	"time"
 
 	"github.com/mdlayher/vsock"
 	"golang.org/x/sys/unix"
@@ -139,10 +141,22 @@ func mountGuestFilesystems() error {
 	return nil
 }
 
-// overlayScratch is a baked empty dir used as a tmpfs scratch for the
-// writable-root overlay (its upper + work layers and the new-root mount
-// point). It must exist in the read-only image.
+// overlayScratch is a baked empty dir the writable-root overlay's scratch
+// is mounted at — the overlayfs upper + work layers and the new-root mount
+// point live under it. It must exist in the read-only image. Backed either
+// by the disk-backed COW overlay drive (when one is attached) or, failing
+// that, by tmpfs.
 const overlayScratch = "/mnt"
+
+// scratchMounter mounts the overlay scratch at overlayScratch and reports
+// whether it is disk-backed. It is a seam so the device-vs-tmpfs selection
+// is unit-testable without privilege (the real mount/mkfs is e2e-gated on
+// KVM). Refs: NFR-17.7, MGIT-11.6.7
+type scratchMounter interface {
+	// mountScratch mounts the overlay scratch over overlayScratch and
+	// returns true when it is the disk overlay drive (false = tmpfs).
+	mountScratch(o guestboot.OverlayUpper) (diskBacked bool, err error)
+}
 
 // makeRootWritable gives the guest a writable root over the read-only
 // pinned image (FR-17.17): it overlays a writable upper on the image root
@@ -151,29 +165,41 @@ const overlayScratch = "/mnt"
 // worktree during a build — without mutating the immutable image. The
 // image stays the overlay's read-only lower.
 //
-// v1 uses a TMPFS upper (RAM-backed, ephemeral) for simplicity and to
-// avoid an in-guest mkfs. This deliberately differs from the cached
-// image's /sbin/overlay-init, which uses the disk-backed COW overlay drive
-// (vdb) the backend already attaches; moving the upper onto vdb (the
-// FR-17.17/NFR-17.7 disk-backed COW) is a tracked follow-on (MGIT-11.6.7).
+// The overlay UPPER is backed by the per-VM disk-backed COW overlay drive
+// (the FR-17.17/NFR-17.7 quota-bounded COW) when the host supplies an
+// overlay-device descriptor on the kernel cmdline (guestboot), so large
+// writes outside the worktree (npm/pip/apt) consume DISK, not guest RAM,
+// and cannot OOM the guest. The drive is a raw sparse file, so it is
+// mkfs-ed on first boot if unformatted. When no overlay device is supplied
+// (e.g. a virtiofs backend with no drive) it falls back to a TMPFS upper.
 //
 // It is intentionally NOT idempotent (unlike mountPseudoFS/mountWorktree,
 // which tolerate EBUSY): switch_root must run exactly once at boot, so any
-// error here is fatal rather than tolerated. Refs: FR-17.3, FR-17.17, MGIT-11.6.6
+// error here is fatal rather than tolerated. Refs: FR-17.3, FR-17.17, NFR-17.7, MGIT-11.6.6, MGIT-11.6.7
 func makeRootWritable() error {
-	// A tmpfs scratch holds the overlay upper + work dirs and the new-root
-	// mount point (/ is still read-only here, so the scratch is a writable
-	// mount over a baked empty dir).
-	if err := unix.Mount("tmpfs", overlayScratch, "tmpfs", 0, ""); err != nil {
-		return fmt.Errorf("mgit-guest: mount overlay scratch %s: %w", overlayScratch, err)
+	cmdline, err := os.ReadFile(procCmdline)
+	if err != nil {
+		return fmt.Errorf("mgit-guest: read kernel cmdline: %w", err)
+	}
+	return makeRootWritableWith(unixScratchMounter{}, guestboot.ParseOverlayUpper(string(cmdline)))
+}
+
+// makeRootWritableWith performs the writable-root overlay + switch_root over
+// an injectable scratch mounter (the disk-vs-tmpfs upper selection). The
+// scratch (upper + work + new-root) is mounted first, then the image root
+// is overlaid onto the new root and switch_root runs. Refs: FR-17.17, NFR-17.7
+func makeRootWritableWith(m scratchMounter, o guestboot.OverlayUpper) error {
+	if _, err := m.mountScratch(o); err != nil {
+		return err
 	}
 	upper, work, newRoot := overlayScratch+"/upper", overlayScratch+"/work", overlayScratch+"/newroot"
 	for _, d := range []string{upper, work, newRoot} {
-		if err := os.Mkdir(d, 0o755); err != nil { //nolint:gosec // tmpfs scratch, not host-trusted
+		if err := os.Mkdir(d, 0o755); err != nil { //nolint:gosec // overlay scratch, not host-trusted
 			return fmt.Errorf("mgit-guest: create overlay dir %s: %w", d, err)
 		}
 	}
-	// Merge the read-only image root (lower) with the writable tmpfs (upper).
+	// Merge the read-only image root (lower) with the writable upper (on the
+	// disk COW drive, or tmpfs when no drive is attached).
 	opts := "lowerdir=/,upperdir=" + upper + ",workdir=" + work
 	if err := unix.Mount("overlay", newRoot, "overlay", 0, opts); err != nil {
 		return fmt.Errorf("mgit-guest: mount overlay root: %w", err)
@@ -202,6 +228,66 @@ func makeRootWritable() error {
 	}
 	if err := unix.Chdir("/"); err != nil {
 		return fmt.Errorf("mgit-guest: chdir /: %w", err)
+	}
+	return nil
+}
+
+// mkfsCmd formats the raw overlay COW drive on first boot. The guest image
+// ships busybox's mke2fs applet (CGO-free, static), which writes an ext2
+// on-disk layout the guest then mounts via the kernel's ext4 driver
+// (CONFIG_EXT4_FS mounts ext2/ext3/ext4) — so no e2fsprogs is needed in the
+// minimal rootfs and the upper still satisfies the overlay-fs descriptor's
+// declared type. A var indirection so the device-vs-tmpfs selection is
+// unit-testable without execing a formatter. An absolute path: makeRootWritable
+// runs as PID 1 (no inherited PATH) and before switch_root, so the formatter is
+// the read-only image's /bin/mke2fs busybox applet symlink. Refs: NFR-17.7, MGIT-11.6.7
+var mkfsCmd = "/bin/mke2fs"
+
+// unixScratchMounter is the real scratch mounter. When the host supplies a
+// valid disk overlay device it backs the overlay upper on that DISK (the
+// quota-bounded COW drive) — mkfs-ing the raw drive on first boot if it is
+// not yet a filesystem — so out-of-worktree writes consume disk, not RAM.
+// When no device is supplied it falls back to a TMPFS upper. Refs: NFR-17.7
+type unixScratchMounter struct{}
+
+// mountScratch mounts the overlay scratch over overlayScratch. With a valid
+// disk overlay device it mounts that device (formatting it first if a plain
+// mount fails, i.e. the raw sparse drive's first boot); otherwise it mounts
+// a tmpfs. Refs: FR-17.17, NFR-17.7
+func (unixScratchMounter) mountScratch(o guestboot.OverlayUpper) (bool, error) {
+	if !o.Valid() {
+		if err := unix.Mount("tmpfs", overlayScratch, "tmpfs", 0, ""); err != nil {
+			return false, fmt.Errorf("mgit-guest: mount tmpfs overlay scratch %s: %w", overlayScratch, err)
+		}
+		return false, nil
+	}
+	// First boot: the COW drive is a raw sparse file with no filesystem, so a
+	// plain mount fails; format it once, then mount. A subsequent boot (drive
+	// already formatted) mounts directly.
+	if err := unix.Mount(o.Device, overlayScratch, o.FSType, 0, ""); err != nil {
+		if mErr := formatOverlayDrive(o.Device); mErr != nil {
+			return false, mErr
+		}
+		if err := unix.Mount(o.Device, overlayScratch, o.FSType, 0, ""); err != nil {
+			return false, fmt.Errorf("mgit-guest: mount overlay drive %s after mkfs: %w", o.Device, err)
+		}
+	}
+	return true, nil
+}
+
+// formatMkfsTimeout bounds the one-shot first-boot mkfs of the COW drive so
+// a hung formatter cannot wedge boot indefinitely.
+const formatMkfsTimeout = 60 * time.Second
+
+// formatOverlayDrive runs mkfs on the raw overlay COW drive (the busybox
+// mke2fs applet in the guest image). It is invoked once, on first boot, when
+// the sparse drive has no filesystem yet. Refs: NFR-17.7, MGIT-11.6.7
+func formatOverlayDrive(device string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), formatMkfsTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, mkfsCmd, "-F", device) //nolint:gosec // device path is host-supplied via the signed-image cmdline, no shell
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("mgit-guest: mkfs overlay drive %s: %w: %s", device, err, out)
 	}
 	return nil
 }

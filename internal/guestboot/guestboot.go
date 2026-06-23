@@ -27,6 +27,14 @@ const (
 	KeyWorktreeFS = "mgit.worktree_fs"
 	// KeyWorktreeSource is the mount source: a virtiofs tag, or a block device.
 	KeyWorktreeSource = "mgit.worktree_src"
+	// KeyOverlayDev is the block device backing the writable-root overlay
+	// upper (the per-VM disk-backed COW drive, e.g. /dev/vdb). Empty/absent
+	// means no disk overlay was attached and the guest uses a tmpfs upper.
+	KeyOverlayDev = "mgit.overlay_dev"
+	// KeyOverlayFS is the filesystem the guest formats/mounts the overlay
+	// device with ("ext4"). The drive is delivered as a raw sparse file, so
+	// the guest mkfs-es it on first boot if unformatted.
+	KeyOverlayFS = "mgit.overlay_fs"
 )
 
 // WorktreeMount is the host-supplied worktree delivery descriptor.
@@ -68,6 +76,61 @@ func AppendCmdline(base string, w WorktreeMount) string {
 		return suffix
 	}
 	return base + " " + suffix
+}
+
+// OverlayUpper is the host-supplied descriptor for the disk-backed
+// writable-root overlay upper (FR-17.17/NFR-17.7). When the backend
+// attaches a per-VM COW overlay drive, the host names the device and
+// filesystem here so the guest backs its overlayfs upperdir with DISK
+// (quota-bounded) instead of RAM (tmpfs). The device is supplied on the
+// cmdline rather than hardcoded so the upper stays pluggable — the guest
+// never assumes /dev/vdb. Refs: FR-17.17, NFR-17.7, MGIT-11.6.7
+type OverlayUpper struct {
+	Device string // block device backing the upper (e.g. /dev/vdb)
+	FSType string // filesystem to format/mount it with (e.g. "ext4")
+}
+
+// Valid reports whether the overlay descriptor is fully specified: a
+// device path plus a filesystem type. A partial descriptor is treated as
+// absent by the guest (tmpfs fallback). Refs: NFR-17.7
+func (o OverlayUpper) Valid() bool {
+	return o.Device != "" && o.FSType != ""
+}
+
+// AppendOverlayCmdline returns base with the overlay-upper descriptor
+// appended as space-separated key=value pairs the guest parses. A
+// descriptor with no device adds nothing (no disk overlay attached, the
+// guest falls back to a tmpfs upper). Refs: NFR-17.7, MGIT-11.6.7
+func AppendOverlayCmdline(base string, o OverlayUpper) string {
+	if o.Device == "" {
+		return base
+	}
+	suffix := KeyOverlayDev + "=" + o.Device + " " + KeyOverlayFS + "=" + o.FSType
+	if strings.TrimSpace(base) == "" {
+		return suffix
+	}
+	return base + " " + suffix
+}
+
+// ParseOverlayUpper extracts the overlay-upper descriptor from a kernel
+// command line, ignoring unrelated tokens. An absent or partial descriptor
+// yields an invalid (or empty) result, and the guest falls back to a tmpfs
+// upper. Refs: NFR-17.7, MGIT-11.6.7
+func ParseOverlayUpper(cmdline string) OverlayUpper {
+	var o OverlayUpper
+	for _, field := range strings.Fields(cmdline) {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok || value == "" {
+			continue
+		}
+		switch key {
+		case KeyOverlayDev:
+			o.Device = value
+		case KeyOverlayFS:
+			o.FSType = value
+		}
+	}
+	return o
 }
 
 // ParseWorktreeMount extracts the worktree descriptor from a kernel
