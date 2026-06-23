@@ -174,6 +174,16 @@ func children(src storer.EncodedObjectStorer, typ plumbing.ObjectType, h plumbin
 		if err != nil {
 			return nil, fmt.Errorf("read commit %s: %w", h, err)
 		}
+		// Follow ALL parents: the seed inherits whatever ancestry the task tip
+		// has. For a normal task branch (descended from shared main-line base
+		// commits) this is the task's OWN lineage — no sibling task's unique
+		// objects are reachable, so no cross-task exposure (SEC-03). The one
+		// exception is a tip that MERGES another task's branch (a second parent
+		// pointing at task/<other>): that sibling's objects would then be
+		// copied. mgit's squash semantics keep task branches isolated off base
+		// (main never advances into them), so this does not arise in the normal
+		// flow; if cross-task merges ever become possible, gate seeding to the
+		// first parent / base only. Refs: SEC-03
 		next := []objItem{{c.TreeHash, plumbing.TreeObject}}
 		for _, p := range c.ParentHashes {
 			next = append(next, objItem{p, plumbing.CommitObject})

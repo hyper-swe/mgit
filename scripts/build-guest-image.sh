@@ -34,12 +34,15 @@ CGO_ENABLED=0 GOOS=linux go build -C "$REPO_ROOT" -o "$root/sbin/mgit-guest" ./c
 echo "installing busybox shell…"
 bb="$(command -v busybox)"
 cp "$bb" "$root/bin/busybox"
-# Shell + coreutils for the guest to exec, plus the network applets the
-# FR-17.7 network-enforcement e2e needs to probe egress from inside the
-# guest (TCP connect via nc, the proxy CONNECT handshake, DNS via nslookup,
-# raw-IP attempts). The applets are already compiled into the static
-# busybox; these are just symlinks. Refs: FR-17.7, MGIT-11.13.6
-for applet in sh cat echo ls env pwd printf sleep \
+# Shell + coreutils for the guest to exec, the network applets the FR-17.7
+# network-enforcement e2e needs (TCP connect via nc, the proxy CONNECT
+# handshake, DNS via nslookup, raw-IP attempts), and the filesystem-probe
+# applets the SEC-03 hostile-guest e2e needs (grep/find/head/awk/test/touch)
+# so those probes exercise real behavior instead of passing vacuously when an
+# applet is absent. All are compiled into the static busybox; these are just
+# symlinks. Refs: FR-17.7, SEC-03, MGIT-11.13.6, MGIT-11.6.8
+for applet in sh cat echo ls env pwd printf sleep test touch mkdir \
+              grep find head awk \
               nc wget nslookup ping ip ifconfig route; do
 	ln -sf busybox "$root/bin/$applet"
 done

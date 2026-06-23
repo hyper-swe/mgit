@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -24,6 +25,15 @@ const extIfaceEnv = "MGIT_SANDBOX_EXT_IFACE"
 // MGIT_SANDBOX_EXT_IFACE when set, else the default-route interface is
 // auto-detected. Refs: FR-17.15, FR-17.16, FR-17.7
 func newHypervisorBackend(deps hypervisorDeps) (model.SandboxManager, error) {
+	// SEC-03 fail-closed: the Linux/KVM backend delivers the quarantine, so it
+	// refuses to construct without a shared store to seed the per-task private
+	// store from. A microVM must never boot unquarantined (pre-SEC-03 delivery
+	// would expose the worktree's own store to the guest) — better no sandbox
+	// than a silently-degraded one. Refs: SEC-03, MGIT-11.6.8
+	prov, err := newStoreProvisioner(deps)
+	if err != nil {
+		return nil, err
+	}
 	return firecracker.NewManager(firecracker.Config{
 		WorkDir:          deps.workDir,
 		Resolve:          newImageResolver(deps.hostRoot, deps.clock),
@@ -31,7 +41,7 @@ func newHypervisorBackend(deps hypervisorDeps) (model.SandboxManager, error) {
 		Clock:            deps.clock,
 		ExtIface:         os.Getenv(extIfaceEnv),
 		PeerBinder:       deps.peerBinder,
-		StoreProvisioner: newStoreProvisioner(deps),
+		StoreProvisioner: prov,
 		SensitivePaths:   model.DefaultSandboxPolicy().SensitivePaths,
 	})
 }
@@ -50,22 +60,20 @@ func resolveRepoRoot(deps hypervisorDeps) string {
 }
 
 // newStoreProvisioner builds the SEC-03 private-store provisioner from the
-// resolved repo root, or returns nil (logging a warning) when no repo root is
-// known — in which case the quarantine control cannot be realized and the
-// manager's nil-provisioner path applies. Returning nil is honest: the daemon
-// has no shared store to seed from. Refs: SEC-03
-func newStoreProvisioner(deps hypervisorDeps) provision.Provisioner {
+// resolved repo root. It is an ERROR (fail closed) when no repo root is known
+// or the provisioner cannot be built: the quarantine control cannot be realized
+// without a shared store to seed from, and the caller refuses to bring up an
+// unquarantined sandbox backend rather than silently degrading. Refs: SEC-03
+func newStoreProvisioner(deps hypervisorDeps) (provision.Provisioner, error) {
 	root := resolveRepoRoot(deps)
 	if root == "" {
-		deps.logger.Warn("SEC-03 private-store provisioning disabled: no repo root",
-			"event", "quarantine_unprovisioned")
-		return nil
+		return nil, fmt.Errorf("%w: SEC-03 quarantine requires a repo root to seed the private store "+
+			"(set --repo-root or a host config root); refusing to launch sandboxes unquarantined",
+			model.ErrSandboxBackendUnavailable)
 	}
 	p, err := provision.NewStoreProvisioner(root)
 	if err != nil {
-		deps.logger.Warn("SEC-03 private-store provisioning disabled",
-			"event", "quarantine_unprovisioned", "error", err.Error())
-		return nil
+		return nil, fmt.Errorf("%w: SEC-03 private-store provisioner: %w", model.ErrSandboxBackendUnavailable, err)
 	}
-	return p
+	return p, nil
 }

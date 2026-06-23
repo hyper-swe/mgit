@@ -193,11 +193,18 @@ func TestE2E_HostileGuest_SharedStoreUnreachable(t *testing.T) {
 	assert.Contains(t, out, "SHARED_ABSENT", "the host shared .mgit store is not reachable from the guest")
 	assert.NotContains(t, out, "SHARED_LEAK")
 
-	// The other task's secret content appears NOWHERE in the guest filesystem
-	// (a recursive grep of the writable roots finds nothing).
+	// The other task's secret content appears NOWHERE in the guest filesystem.
+	// A POSITIVE CONTROL proves the grep actually works (else a missing/broken
+	// grep would make the negative result vacuously pass): the worktree marker
+	// content MUST be found, the foreign secret MUST NOT.
 	res = guestExec(t, mgr, id,
-		"grep -rl 'OTHER-TASK-SECRET' / 2>/dev/null | head -n1 || true")
-	assert.NotContains(t, string(res.Stdout), "OTHER-TASK-SECRET",
+		"grep -rl 'work area' "+fx.wtPath+" 2>/dev/null | head -n1; echo ---; "+
+			"grep -rl 'OTHER-TASK-SECRET' / 2>/dev/null | head -n1 || true")
+	parts := strings.SplitN(string(res.Stdout), "---", 2)
+	require.Len(t, parts, 2, "probe produced both halves")
+	assert.NotEmpty(t, strings.TrimSpace(parts[0]),
+		"positive control: grep finds the worktree marker (proves grep works in the guest)")
+	assert.NotContains(t, parts[1], "OTHER-TASK-SECRET",
 		"another task's object must never be reachable from the guest (SEC-03 T6)")
 }
 
@@ -251,7 +258,8 @@ func TestE2E_HostileGuest_EscapingSymlinkRejected(t *testing.T) {
 		TaskID: fx.task, WorktreePath: fx.wtPath, ImageRef: ref,
 		Network: model.NetworkPolicy{Mode: model.NetworkModeNone}, CPUs: 1, MemoryMB: 256,
 	})
-	require.Error(t, err, "a worktree with an escaping symlink must fail the launch closed")
+	require.ErrorIs(t, err, errSymlinkEscape,
+		"the launch must fail CLOSED with the symlink-escape error, not an incidental failure")
 }
 
 // TestE2E_HostileGuest_LandIsOnlyBridge proves land is the only private->shared
@@ -274,13 +282,18 @@ func TestE2E_HostileGuest_LandIsOnlyBridge(t *testing.T) {
 	before, err := shared.Reference(plumbing.NewBranchReferenceName(model.TaskBranchName(fx.task)))
 	require.NoError(t, err)
 
-	// Boot + commit inside the guest's private store (an in-guest commit), but
-	// never land.
+	// Boot the guest and mutate its worktree (a filesystem write inside the
+	// sandbox), but never land. This proves the NEGATIVE half — no guest-side
+	// activity reaches the host shared store unless land is invoked. The
+	// POSITIVE half (a real in-guest commit that DOES cross over via land) is
+	// proven by TestE2E_Land_RealGuest_RoundTrip; a self-contained positive
+	// proof here would require the mgit CLI inside the guest image (out of
+	// scope for v1, where the guest image carries only mgit-guest + busybox).
 	mgr, id := bootGuest(t, fx, kernel, rootfs)
 	guestExec(t, mgr, id, "cd "+fx.wtPath+" && echo more > extra.txt") // a guest-side write
 
-	// The shared store's task branch is unchanged: no private object crossed
-	// over without land.
+	// The shared store's task branch is unchanged: nothing crossed over without
+	// land.
 	repo, err := gogit.Open(shared, nil)
 	require.NoError(t, err)
 	after, err := repo.Reference(plumbing.NewBranchReferenceName(model.TaskBranchName(fx.task)), false)
