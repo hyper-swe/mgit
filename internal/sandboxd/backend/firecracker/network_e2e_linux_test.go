@@ -23,6 +23,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -251,31 +252,52 @@ func TestE2E_Network_Allowlist_ProxyAndDNSEnforced(t *testing.T) {
 	gw, _, _ := subnetFor(info.ID)
 	up := netUpPrefix(info.ID)
 
-	// DNS: allowlisted name resolves; non-allowlisted is refused.
+	// From the GUEST: DNS resolution of an allowlisted name succeeds through the
+	// host resolver on the gateway; a non-allowlisted name is REFUSED (the
+	// resolver answers only allowlisted names). busybox nslookup exits 0 even on
+	// REFUSED, so assert on the response text, not the exit code.
 	okDNS := guestProbe(t, mgr, info.ID, up+"nslookup allowed.test "+gw.String()+" 2>&1")
 	assert.Contains(t, string(okDNS.Stdout)+string(okDNS.Stderr), allowedTestIP.String(),
 		"an allowlisted name resolves through the host DNS")
-	badDNS := guestProbe(t, mgr, info.ID, up+"nslookup denied.test "+gw.String()+" 2>&1; echo rc=$?")
-	assert.NotContains(t, string(badDNS.Stdout), allowedTestIP.String())
-	assert.NotContains(t, string(badDNS.Stdout), "rc=0", "a non-allowlisted name is refused")
+	badDNS := guestProbe(t, mgr, info.ID, up+"nslookup denied.test "+gw.String()+" 2>&1")
+	out := string(badDNS.Stdout) + string(badDNS.Stderr)
+	assert.NotContains(t, out, allowedTestIP.String())
+	assert.Contains(t, out, "REFUSED", "a non-allowlisted name is refused by the host resolver")
 
-	// Proxy: a CONNECT to the allowlisted name succeeds (200); a non-allowlisted
-	// name is refused (no 200).
-	connect := func(host string) string {
-		script := up + fmt.Sprintf(
-			"printf 'CONNECT %s:443 HTTP/1.1\\r\\nHost: %s\\r\\n\\r\\n' | nc -w 6 %s %d",
-			host, host, gw.String(), hostProxyPort)
-		r := guestProbe(t, mgr, info.ID, script)
-		return string(r.Stdout) + string(r.Stderr)
-	}
-	assert.Contains(t, connect("allowed.test"), "200", "allowlisted CONNECT is established")
-	assert.NotContains(t, connect("denied.test"), "200", "non-allowlisted CONNECT is refused")
-
-	// A raw-IP direct connect (bypassing the proxy) is dropped by the tap
-	// firewall's default-deny — the guest cannot reach an arbitrary IP directly.
+	// From the GUEST: the firewall lets the guest reach the proxy port (a TCP
+	// connect to gateway:proxy succeeds) but DROPS a direct connect to an
+	// arbitrary IP (default-deny) — so the proxy is the only way out.
+	reach := guestProbe(t, mgr, info.ID,
+		up+fmt.Sprintf("nc -w 4 %s %d </dev/null; echo rc=$?", gw.String(), hostProxyPort))
+	assert.Contains(t, string(reach.Stdout), "rc=0",
+		"the guest can reach the host proxy port (firewall allows gateway:proxy)")
 	raw := guestProbe(t, mgr, info.ID, up+"nc -w 3 203.0.113.30 443 </dev/null; echo rc=$?")
 	assert.NotContains(t, string(raw.Stdout), "rc=0",
 		"a direct raw-IP egress is dropped (only the proxy/DNS are reachable)")
+
+	// Proxy enforcement: the proxy speaks a length-prefixed binary protocol (not
+	// HTTP CONNECT), so drive it directly over the gateway-bound listener — the
+	// same socket the guest reaches — and assert it authorizes the allowlisted
+	// destination and refuses the non-allowlisted one. Refs: SEC-04
+	proxyConnect := func(host string) (bool, error) {
+		c, derr := net.DialTimeout("tcp", net.JoinHostPort(gw.String(), strconv.Itoa(hostProxyPort)), 5*time.Second)
+		if derr != nil {
+			return false, derr
+		}
+		defer func() { _ = c.Close() }()
+		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+		if err := egress.EncodeConnectRequest(c, egress.ConnectRequest{Protocol: "tcp", Host: host, Port: 443}); err != nil {
+			return false, err
+		}
+		allow, _, err := egress.DecodeConnectReply(c)
+		return allow, err
+	}
+	allowOK, err := proxyConnect("allowed.test")
+	require.NoError(t, err)
+	assert.True(t, allowOK, "the proxy authorizes an allowlisted CONNECT")
+	denyOK, err := proxyConnect("denied.test")
+	require.NoError(t, err)
+	assert.False(t, denyOK, "the proxy refuses a non-allowlisted CONNECT")
 
 	// Every proxy/DNS decision is audited (allow + deny both present).
 	recs := audit.snapshot()
@@ -292,10 +314,18 @@ func TestE2E_Network_Allowlist_ProxyAndDNSEnforced(t *testing.T) {
 	assert.True(t, sawDeny, "a deny decision was recorded in the egress log")
 }
 
+// openEgressTarget is a well-known public host:port the open-mode guest NATs
+// out to. Port 443 is used because the dev host already egresses on it (it
+// fetches from GitHub), so it is the most reliable "arbitrary external host"
+// reachability check that does not depend on the box's DNS or UDP egress.
+const openEgressTarget = "1.1.1.1 443"
+
 // TestE2E_Network_Open_NATEgress proves open mode no longer fails closed once
-// the external NAT interface is wired (the MGIT-11.13.6 extIface fix): the
-// guest launches with a NIC and reaches a host service via NAT through the
-// auto-detected default-route interface. Refs: FR-17.7
+// the external NAT interface is wired (the MGIT-11.13.6 extIface fix): launch
+// succeeds with the auto-detected default-route interface (previously it
+// failed at TapPlan.validate with extIface=""), and the guest reaches an
+// arbitrary external host via host NAT — egress that none/allowlist would
+// block. Refs: FR-17.7
 func TestE2E_Network_Open_NATEgress(t *testing.T) {
 	kernel, _ := requireKVM(t)
 	requireNetRoot(t)
@@ -304,66 +334,14 @@ func TestE2E_Network_Open_NATEgress(t *testing.T) {
 		t.Skip("set MGIT_E2E_GUEST_ROOTFS to a present guest image")
 	}
 
-	extIP, extIface := hostExternalAddr(t)
-
-	// A host listener on the external-interface IP: the guest, NATed out that
-	// interface, must be able to reach it (an "arbitrary host" open mode allows
-	// but allowlist/none would block).
-	ln, err := net.Listen("tcp", net.JoinHostPort(extIP, "0"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = ln.Close() })
-	reached := make(chan struct{}, 1)
-	go func() {
-		c, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		select {
-		case reached <- struct{}{}:
-		default:
-		}
-		_ = c.Close()
-	}()
-	_, portStr, err := net.SplitHostPort(ln.Addr().String())
-	require.NoError(t, err)
-
-	// Open mode auto-detects the default route; launch must SUCCEED (with the
-	// old extIface="" it failed closed at TapPlan.validate).
-	mgr, ref := registerGuestManager(t, kernel, rootfs, extIface)
+	// extIface left empty so the manager auto-detects the host default route;
+	// launch SUCCEEDING in open mode is itself the extIface-wiring fix.
+	mgr, ref := registerGuestManager(t, kernel, rootfs, "")
 	info := launchNetSandbox(t, mgr, ref, model.NetworkModeOpen, nil)
 
 	up := netUpPrefix(info.ID)
 	probe := guestProbe(t, mgr, info.ID,
-		up+fmt.Sprintf("nc -w 6 %s %s </dev/null; echo rc=$?", extIP, portStr))
-	// Either the listener observed the connection, or nc reported success.
-	select {
-	case <-reached:
-	case <-time.After(2 * time.Second):
-		assert.Contains(t, string(probe.Stdout), "rc=0",
-			"open mode reaches an arbitrary host via NAT (extIface wired)")
-	}
-}
-
-// hostExternalAddr returns the host's default-route interface and its first
-// IPv4 address — the open-mode NAT egress path. Derived at runtime (never
-// logged or committed). Skips if the host has no usable external IPv4.
-func hostExternalAddr(t *testing.T) (ip, iface string) {
-	t.Helper()
-	name, err := defaultRouteIface()
-	if err != nil {
-		t.Skipf("no default-route interface to NAT through: %v", err)
-	}
-	ni, err := net.InterfaceByName(name)
-	if err != nil {
-		t.Skipf("default-route interface %s not resolvable: %v", name, err)
-	}
-	addrs, err := ni.Addrs()
-	require.NoError(t, err)
-	for _, a := range addrs {
-		if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil {
-			return ipn.IP.String(), name
-		}
-	}
-	t.Skipf("default-route interface %s has no IPv4 address", name)
-	return "", ""
+		up+fmt.Sprintf("nc -w 8 %s </dev/null; echo rc=$?", openEgressTarget))
+	assert.Contains(t, string(probe.Stdout), "rc=0",
+		"open mode reaches an arbitrary external host via host NAT (extIface wired)")
 }
