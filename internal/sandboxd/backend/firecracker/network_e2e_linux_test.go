@@ -39,11 +39,13 @@ import (
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 )
 
-// allowedTestIP is a TEST-NET-3 address (RFC 5737, documentation range): it is
-// public (not RFC1918/loopback/link-local), so the egress authorizer does not
-// unconditionally deny it, yet it is never a real destination — the injected
-// proxy Dial routes it to a local listener. Refs: SEC-04
-var allowedTestIP = netip.MustParseAddr("203.0.113.10")
+// allowedTestIP is a genuinely public, routable address (GitHub's range) so it
+// passes the authorizer's unconditional-deny check — TEST-NET/documentation
+// ranges are themselves denied (egress.deniedPrefixes), which is why a doc IP
+// would resolve via DNS but be refused by the proxy. No real connection is
+// made: the injected proxy Dial routes the authorized flow to a local
+// listener. Refs: SEC-04
+var allowedTestIP = netip.MustParseAddr("140.82.112.3")
 
 // requireNetRoot skips a privileged network test when not running as root: the
 // tap + iptables setup needs CAP_NET_ADMIN.
