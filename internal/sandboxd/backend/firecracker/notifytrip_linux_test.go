@@ -143,9 +143,22 @@ func TestE2E_Notify_RealGuest_AutoLand(t *testing.T) {
 	require.NoError(t, err)
 	notifyCtrl.SetLander(landerAdapter{svc: landSvc})
 
-	// The guest emits the land-ready notify after its exec loop runs; the host
-	// per-VM listener authorizes it and auto-lands. Poll the task branch until it
-	// advances to the agent's commit (no host-initiated land call is made).
+	// mgit-guest emits the land-ready notify after each completed exec (mirrors
+	// an agent finishing a command), so drive ONE exec to fire it; the guest
+	// boots+serves vsock asynchronously, so retry until it lands. No host-side
+	// land call is made — the auto-land is triggered solely by the guest's
+	// post-exec notify.
+	execDeadline := time.Now().Add(25 * time.Second)
+	for time.Now().Before(execDeadline) {
+		if _, eerr := mgr.Exec(context.Background(), info.ID,
+			model.ExecRequest{Command: []string{"/bin/sh", "-c", "true"}}); eerr == nil {
+			break
+		}
+		time.Sleep(400 * time.Millisecond)
+	}
+
+	// The host per-VM listener authorizes the guest's notify (SEC-10) and
+	// auto-lands. Poll the task branch until it advances to the agent's commit.
 	deadline := time.Now().Add(40 * time.Second)
 	var tip *model.Branch
 	for time.Now().Before(deadline) {
