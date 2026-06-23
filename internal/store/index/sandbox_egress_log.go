@@ -9,10 +9,12 @@ import (
 	"github.com/hyper-swe/mgit/internal/model"
 )
 
-// maxEgressHostLen caps the guest-influenced dest_host field; DNS
-// names max out at 253 bytes, so anything longer is hostile padding
-// (SEC-07 label-encoding exfiltration also motivates the cap).
-const maxEgressHostLen = 255
+// maxEgressHostLen caps the guest-influenced dest_host field; DNS names max out
+// at 253 bytes, so anything longer is hostile padding (SEC-07 label-encoding
+// exfiltration also motivates the cap). Single-sourced from the model boundary
+// cap so the two can never drift (the model rejects oversized hosts; this
+// truncates whatever survives). Refs: F-09
+const maxEgressHostLen = model.MaxEgressDestHostLen
 
 // AppendEgressRecord appends one proxy allow/deny decision to the
 // append-only sandbox_egress_log. The store assigns the ULID id and

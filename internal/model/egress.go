@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"net/netip"
+	"strings"
 	"time"
 )
 
@@ -14,6 +15,13 @@ const (
 	// EgressDeny records a refused flow (and why, in Rule).
 	EgressDeny = "deny"
 )
+
+// MaxEgressDestHostLen caps the guest-influenced DestHost length at the model
+// boundary (defense-in-depth). It mirrors the store's sanitize cap so an
+// oversized host is rejected before it can ever reach the append-only log,
+// regardless of which path constructs the record. 255 is the maximum DNS name
+// length (RFC 1035) and matches index.maxEgressHostLen. Refs: FR-17.8, F-09
+const MaxEgressDestHostLen = 255
 
 // validEgressDecisions closes the decision vocabulary.
 var validEgressDecisions = map[string]bool{EgressAllow: true, EgressDeny: true}
@@ -40,6 +48,19 @@ type EgressRecord struct {
 	CreatedAt time.Time `json:"created_at"`        // ISO-8601 UTC, store-assigned
 }
 
+// TruncateDestHost caps a guest-influenced host string to MaxEgressDestHostLen
+// bytes (UTF-8-safe: a split trailing rune is dropped), for audit-record
+// builders that must record a hostile, possibly over-cap name without the
+// record being rejected by Validate. The store separately strips control
+// characters; this only bounds the length so "every deny is audited" (FR-17.8)
+// holds even for an over-cap name. Refs: FR-17.8, F-09
+func TruncateDestHost(host string) string {
+	if len(host) <= MaxEgressDestHostLen {
+		return host
+	}
+	return strings.ToValidUTF8(host[:MaxEgressDestHostLen], "")
+}
+
 // Validate checks the record shape before it enters the append-only
 // log. Refs: FR-17.8, FR-17.18
 func (e EgressRecord) Validate() error {
@@ -54,6 +75,12 @@ func (e EgressRecord) Validate() error {
 	}
 	if !validEgressProtocols[e.Protocol] {
 		return &ValidationError{Field: "protocol", Message: fmt.Sprintf("unknown protocol %q", e.Protocol)}
+	}
+	// Cap the guest-influenced host length at the model boundary (the store
+	// also sanitizes/truncates, but this rejects an oversized host before it
+	// reaches any sink — defense-in-depth, F-09).
+	if len(e.DestHost) > MaxEgressDestHostLen {
+		return &ValidationError{Field: "dest_host", Message: fmt.Sprintf("must be at most %d bytes", MaxEgressDestHostLen)}
 	}
 	if e.DestIP != "" {
 		if _, err := netip.ParseAddr(e.DestIP); err != nil {

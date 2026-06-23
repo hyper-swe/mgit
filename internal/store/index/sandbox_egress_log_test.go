@@ -85,9 +85,20 @@ func TestEgressLog_GuestStringsSanitized(t *testing.T) {
 
 	rec := testEgressRecord()
 	rec.Decision = model.EgressDeny
-	rec.DestHost = "evil\nFAKE-ROW\x1b[31m." + strings.Repeat("a", 1000) + ".example"
+	// A hostile but within-cap DestHost (control chars + ANSI escape): the model
+	// boundary rejects an OVER-cap host outright (see the over-cap assertion
+	// below), so the store's job here is control-char stripping. The Rule is
+	// deliberately oversized to exercise the store's truncation.
+	rec.DestHost = "evil\nFAKE-ROW\x1b[31m." + strings.Repeat("a", 100) + ".example"
 	rec.Rule = "denied: unresolvable SNI \x00" + strings.Repeat("b", 9000)
 	require.NoError(t, store.AppendEgressRecord(ctx, rec))
+
+	// An OVER-cap DestHost is rejected at the model boundary before it can reach
+	// the store at all (defense-in-depth, F-09).
+	oversized := testEgressRecord()
+	oversized.DestHost = strings.Repeat("a", model.MaxEgressDestHostLen+1)
+	require.Error(t, store.AppendEgressRecord(ctx, oversized),
+		"an over-cap dest_host is rejected before entering the append-only log")
 
 	got, err := store.ListEgressBySandbox(ctx, rec.SandboxID)
 	require.NoError(t, err)
