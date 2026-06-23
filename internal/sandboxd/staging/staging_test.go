@@ -71,6 +71,30 @@ func TestBuild_PacksWorktreePlusPrivateMgit(t *testing.T) {
 	assert.Equal(t, "ref: refs/heads/task/x\n", string(got))
 }
 
+// TestBuild_DropsNestedStoreDirs verifies a vendored/submodule clone's store
+// at ANY depth is dropped, not just the root one — its history must not reach
+// the guest (finding F1, the deep form of F-A). The surrounding source files
+// are still packed. Refs: SEC-03
+func TestBuild_DropsNestedStoreDirs(t *testing.T) {
+	wt := t.TempDir()
+	// A vendored dependency that carries its own clone history.
+	require.NoError(t, os.MkdirAll(filepath.Join(wt, "vendor", "foo", ".git"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "vendor", "foo", ".git", "LEAK"), []byte("vendored clone history"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "vendor", "foo", "foo.go"), []byte("package foo"), 0o600))
+	// A nested .mgit too.
+	require.NoError(t, os.MkdirAll(filepath.Join(wt, "sub", ".mgit"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "sub", ".mgit", "LEAK"), []byte("nested store"), 0o600))
+
+	stage := filepath.Join(t.TempDir(), "stage")
+	require.NoError(t, Build(wt, privateStoreWith(t), stage))
+
+	h := have(t, stage)
+	assert.True(t, h["vendor/foo/foo.go"], "the vendored source file is still packed")
+	assert.False(t, h["vendor/foo/.git"], "a nested .git clone is dropped")
+	assert.False(t, h["vendor/foo/.git/LEAK"], "nested clone history never reaches the guest")
+	assert.False(t, h["sub/.mgit/LEAK"], "a nested .mgit store is dropped")
+}
+
 // TestBuild_RejectsEscapingSymlink proves an escaping worktree symlink fails
 // the build CLOSED with the sentinel (finding F-A/NEW-2). Refs: SEC-03
 func TestBuild_RejectsEscapingSymlink(t *testing.T) {

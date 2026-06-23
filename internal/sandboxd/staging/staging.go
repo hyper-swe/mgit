@@ -69,9 +69,12 @@ func Build(worktreePath, privateStorePath, stagingDir string) error {
 		if rel == "." {
 			return nil
 		}
-		// Drop any in-worktree store at the root: the guest's store is the
-		// private one; a packed .mgit/.git would defeat the rebind.
-		if isRootStoreDir(rel) {
+		// Drop any in-worktree git/mgit store DIRECTORY at any depth: the guest's
+		// only store is the private one laid in below. A packed store would
+		// defeat the rebind — at the root (a clone of the repo) OR nested (a
+		// vendored/submodule clone like vendor/foo/.git), whose history would
+		// otherwise reach the guest (finding F1, the deep form of F-A).
+		if d.IsDir() && isStoreDir(rel) {
 			return filepath.SkipDir
 		}
 		dst := filepath.Join(stagingDir, rel)
@@ -84,10 +87,12 @@ func Build(worktreePath, privateStorePath, stagingDir string) error {
 	return copyTree(privateStorePath, filepath.Join(stagingDir, GuestStoreName))
 }
 
-// isRootStoreDir reports whether a worktree-relative path is a store directory
-// at the worktree root (.mgit or .git) that must not be packed.
-func isRootStoreDir(rel string) bool {
-	return rel == GuestStoreName || rel == ".git"
+// isStoreDir reports whether a worktree-relative path's base name is a git/mgit
+// store directory (.mgit or .git) that must not be packed — at ANY depth, so a
+// nested/vendored clone's store never reaches the guest, not just the root one.
+func isStoreDir(rel string) bool {
+	base := filepath.Base(rel)
+	return base == GuestStoreName || base == ".git"
 }
 
 // copyStagingEntry copies one walked worktree entry into the staging tree,
