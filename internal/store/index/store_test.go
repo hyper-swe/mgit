@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -95,6 +96,40 @@ func TestStore_WriteTx_Serialized(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 3, count)
+}
+
+// TestStore_WriteTx_SerializableAccepted proves WriteTx opens at SERIALIZABLE
+// isolation (CLAUDE.md SQL Rule 3) and that modernc/sqlite accepts it: a write
+// committed inside WriteTx is durable and visible to a subsequent read, and a
+// returned error rolls the write back. If the driver rejected the isolation
+// level, BeginTx (hence WriteTx) would error here. Refs: NFR-3, CLAUDE.md SQL Rule 3
+func TestStore_WriteTx_SerializableAccepted(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	// A committed serializable write is visible afterward.
+	require.NoError(t, store.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			"INSERT INTO task_commits (task_id, commit_hash, position, created_at) VALUES (?, ?, ?, ?)",
+			"MGIT-7", "ser123", 0, "2026-04-07T12:00:00Z")
+		return err
+	}))
+
+	// A serializable write that returns an error is rolled back (not visible).
+	wantErr := errors.New("boom")
+	err := store.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, _ = tx.ExecContext(ctx,
+			"INSERT INTO task_commits (task_id, commit_hash, position, created_at) VALUES (?, ?, ?, ?)",
+			"MGIT-7", "rolledback", 1, "2026-04-07T12:00:00Z")
+		return wantErr
+	})
+	require.ErrorIs(t, err, wantErr)
+
+	var count int
+	require.NoError(t, store.ReadTx(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM task_commits WHERE task_id = ?", "MGIT-7").Scan(&count)
+	}))
+	assert.Equal(t, 1, count, "only the committed serializable write survives")
 }
 
 func TestStore_Close(t *testing.T) {

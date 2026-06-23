@@ -123,9 +123,12 @@ func (s *Store) newULID() (string, error) {
 
 // WriteTx executes fn within a serialized write transaction.
 // If fn returns an error, the transaction is rolled back.
-// Refs: NFR-3
+// The transaction is opened at SERIALIZABLE isolation per CLAUDE.md SQL Rule 3;
+// the single-writer pool (writeDB.SetMaxOpenConns(1)) already serializes
+// writers, so this is belt-and-braces — modernc/sqlite maps it onto SQLite's
+// serializable semantics. Refs: NFR-3, CLAUDE.md SQL Rule 3
 func (s *Store) WriteTx(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := s.writeDB.BeginTx(ctx, nil)
+	tx, err := s.writeDB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return fmt.Errorf("begin write tx: %w", err)
 	}
