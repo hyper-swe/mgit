@@ -112,8 +112,13 @@ func TestE2E_Land_RealGuest_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mainIdx.Close() })
 
-	// Register the guest image and boot it with the worktree (+ private store)
-	// delivered. The provisioner is wired so the SEC-03 quarantine is realized.
+	// Register the guest image and boot it. This test proves the land STACK on
+	// the .mgit model, so it delivers the pre-built private store directly (the
+	// worktree, with its .mgit carrying the agent's commit, is packed as-is):
+	// the guest cannot run mgit to commit inside the VM, so the new commit must
+	// be injected host-side into the store the guest will serve. The SEC-03
+	// provisioner+staging DELIVERY (fresh base-only store, shared-store
+	// exclusion) is proven separately by the hostile-guest e2e. Refs: SEC-03
 	hostRoot := t.TempDir()
 	_, err = images.GenerateTrustRoot(context.Background(), hostRoot, noopAudit{})
 	require.NoError(t, err)
@@ -138,8 +143,8 @@ func TestE2E_Land_RealGuest_RoundTrip(t *testing.T) {
 			return ImagePaths{KernelPath: ri.KernelPath, RootfsPath: ri.RootfsPath, Cmdline: ri.Cmdline}, rerr
 		},
 		Logger: logger, Clock: clock, PeerBinder: binder,
-		StoreProvisioner: prov,
-		SensitivePaths:   model.DefaultSandboxPolicy().SensitivePaths,
+		// No StoreProvisioner: deliver the pre-built worktree+.mgit directly so
+		// the guest serves the store carrying the agent's commit (see above).
 	})
 	require.NoError(t, err)
 
