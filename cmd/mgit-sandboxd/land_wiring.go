@@ -10,7 +10,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/sandboxd"
 	"github.com/hyper-swe/mgit/internal/sandboxd/attest"
-	"github.com/hyper-swe/mgit/internal/sandboxd/backend/firecracker"
+	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 	"github.com/hyper-swe/mgit/internal/sandboxd/land"
 	"github.com/hyper-swe/mgit/internal/service"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
@@ -25,11 +25,21 @@ import (
 // The daemon holds ONLY the returned lander; the persister and stores are
 // reachable solely through the orchestrator (SEC-01 no-bypass). The single
 // peer-authorized read closes the SEC-06 refetch window. A returned closer
-// releases the repo + index this opens. Refs: MGIT-11.10.10, SEC-01, SEC-06, SEC-10
-func buildLandService(hostRoot, repoRoot, workDir string, resolver service.SandboxResolver,
+// releases the repo + index this opens.
+//
+// The land transport (landDialer) is the active backend's host LAND dialer,
+// chosen by the build-tagged backend selection (firecracker on Linux, vzf on
+// macOS) and passed in behind the microvm.GuestDialer seam, so this wiring is
+// backend-agnostic and the land channel is unchanged. A nil dialer is a hard
+// error: land cannot be served without a transport into the guest.
+// Refs: MGIT-11.10.10, MGIT-13.1.1, SEC-01, SEC-06, SEC-10
+func buildLandService(hostRoot, repoRoot string, landDialer microvm.GuestDialer, resolver service.SandboxResolver,
 	events service.SandboxEventAppender, policy service.SandboxPolicyReader,
 	peerBinder *sandboxd.PeerBinder, clock func() time.Time, logger *slog.Logger,
 ) (sandboxd.SandboxLander, func() error, error) {
+	if landDialer == nil {
+		return nil, nil, fmt.Errorf("land transport unavailable: no guest land dialer for the active backend")
+	}
 	if repoRoot == "" {
 		// Fallback for callers that do not pass the repo root explicitly:
 		// recover it from the conventional <repo>/.mgit/sandbox host root.
@@ -60,9 +70,11 @@ func buildLandService(hostRoot, repoRoot, workDir string, resolver service.Sandb
 		land.NewStoreBrancher(gitstore.NewMergeStore(repo)),
 	)
 	parents := land.NewPoolAwareParentResolver(land.NewHostParentTreeResolver(repo))
-	// v1 land transport is the firecracker per-VM vsock socket (Linux KVM, the
-	// proven land path); the dialer is pure host I/O over workDir.
-	channel := sandboxd.NewLandChannel(peerBinder, firecracker.NewLandDialer(workDir), land.DefaultLimits(), logger)
+	// The land transport is the active backend's host LAND dialer: the
+	// firecracker per-VM vsock socket on Linux/KVM (pure host I/O), or the vzf
+	// VZVirtioSocketDevice.Connect on the live VM on macOS. Both satisfy
+	// microvm.GuestDialer, so the land channel is identical across backends.
+	channel := sandboxd.NewLandChannel(peerBinder, landDialer, land.DefaultLimits(), logger)
 
 	orch, err := service.NewLandOrchestrator(channel, attestor, lander, parents, events, policy, land.DefaultLimits(), clock)
 	if err != nil {

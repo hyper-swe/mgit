@@ -102,7 +102,7 @@ func run(args []string, logSink io.Writer) int {
 	// (SEC-10, the land/attestation accept path). Refs: FR-17.27
 	peerBinder := sandboxd.NewPeerBinder(logger)
 
-	selected, err := selectManager(backendSelection{
+	selected, landDialer, err := selectManager(backendSelection{
 		backend: opts.backend, ackReduced: opts.ackReduced,
 		hostRoot: opts.hostRoot, repoRoot: opts.repoRoot, workDir: opts.workDir,
 		logger: logger, clock: clock,
@@ -146,7 +146,7 @@ func run(args []string, logSink io.Writer) int {
 		// Wire the land path when the host repo is reachable. A failure here is
 		// non-fatal: the daemon still serves launch/exec/list/remove/status,
 		// but `mgit sandbox land` reports "not served" until land is wired.
-		lander, closeLand, landErr := buildLandService(opts.hostRoot, opts.repoRoot, opts.workDir, svc, events, policyStore, peerBinder, clock, logger)
+		lander, closeLand, landErr := buildLandService(opts.hostRoot, opts.repoRoot, landDialer, svc, events, policyStore, peerBinder, clock, logger)
 		if landErr != nil {
 			logger.Warn("sandbox land path not wired; land will not be served",
 				"event", "land_unwired", "error", landErr.Error())

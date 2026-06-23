@@ -69,6 +69,58 @@ func TestGuestDialer_DialGuest_RegisteredVM_ConnectsOnExecPort(t *testing.T) {
 	assert.Equal(t, "hi", string(buf[:n]))
 }
 
+// TestGuestDialer_DialGuest_RegisteredVM_ConnectsOnLandPort verifies the
+// land dialer resolves a registered sandbox to its live VM and connects on
+// the shared guest LAND port (distinct from the exec port), so the host
+// pulls the task pool over the dedicated land channel. It shares the connect
+// mechanism with exec; only the port differs. Refs: FR-17.5, FR-17.16
+func TestGuestDialer_DialGuest_RegisteredVM_ConnectsOnLandPort(t *testing.T) {
+	host, guest := net.Pipe()
+	defer func() { _ = host.Close() }()
+	defer func() { _ = guest.Close() }()
+
+	fake := &fakeConnector{conn: host}
+	reg := newLiveVMs()
+	reg.put("sb-running", fake)
+
+	conn, err := newGuestLandDialer(reg).DialGuest(context.Background(), "sb-running")
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	assert.Equal(t, microvm.GuestLandPort, fake.gotPort, "land channel dials the single-sourced land port (1025)")
+	assert.NotEqual(t, microvm.GuestExecPort, fake.gotPort, "land must not collide with the exec port")
+	assert.Equal(t, 1, fake.calls)
+
+	// The returned conn is the live channel: a guest write reaches the host.
+	go func() { _, _ = guest.Write([]byte("ld")) }()
+	buf := make([]byte, 2)
+	n, err := conn.Read(buf)
+	require.NoError(t, err)
+	assert.Equal(t, "ld", string(buf[:n]))
+}
+
+// TestGuestLandDialer_DialGuest_UnknownSandbox_FailsClosed verifies the land
+// dialer fails closed for a sandbox with no live VM rather than dialing
+// anything. Refs: FR-17.5, FR-17.16
+func TestGuestLandDialer_DialGuest_UnknownSandbox_FailsClosed(t *testing.T) {
+	conn, err := newGuestLandDialer(newLiveVMs()).DialGuest(context.Background(), "ghost")
+	assert.Nil(t, conn)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, model.ErrSandboxBackendUnavailable)
+}
+
+// TestGuestLandDialer_DialGuest_AfterRemove_FailsClosed verifies a torn-down
+// sandbox is no longer reachable on the land channel either, so a stale ID
+// cannot pull a successor's pool. Refs: FR-17.5, FR-17.16, SEC-10
+func TestGuestLandDialer_DialGuest_AfterRemove_FailsClosed(t *testing.T) {
+	reg := newLiveVMs()
+	reg.put("sb-gone", &fakeConnector{conn: nil})
+	reg.remove("sb-gone")
+
+	conn, err := newGuestLandDialer(reg).DialGuest(context.Background(), "sb-gone")
+	assert.Nil(t, conn)
+	assert.ErrorIs(t, err, model.ErrSandboxBackendUnavailable)
+}
+
 // TestGuestDialer_DialGuest_UnknownSandbox_FailsClosed verifies a sandbox
 // with no live VM fails closed rather than dialing anything. Refs: FR-17.16
 func TestGuestDialer_DialGuest_UnknownSandbox_FailsClosed(t *testing.T) {

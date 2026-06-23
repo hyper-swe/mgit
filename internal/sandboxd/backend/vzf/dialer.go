@@ -77,6 +77,14 @@ func newGuestExecDialer(reg *liveVMs) *guestDialer {
 	return &guestDialer{reg: reg, port: microvm.GuestExecPort}
 }
 
+// newGuestLandDialer returns a dialer for the guest LAND channel: same
+// resolution and connect mechanism as exec (the live VM's
+// VZVirtioSocketDevice.Connect), only the port differs. The daemon land
+// channel pulls the task branch's object pool over it. Refs: FR-17.5, FR-17.16
+func newGuestLandDialer(reg *liveVMs) *guestDialer {
+	return &guestDialer{reg: reg, port: microvm.GuestLandPort}
+}
+
 // DialGuest connects to the bound guest's channel over the live VM's vsock
 // device. It fails closed (ErrSandboxBackendUnavailable) when no live VM is
 // registered for the sandbox. The framework dial is synchronous and does

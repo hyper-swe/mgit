@@ -7,6 +7,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
+	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 )
 
 // newHypervisorBackend reports that the microVM sandbox is unavailable
@@ -21,6 +22,10 @@ import (
 // downgrade to the container fallback (FR-17.15). The seam is identical
 // to the Linux/macOS factories, so the Windows backend slots in as a
 // build-tagged sibling with no change to this caller or main.
-func newHypervisorBackend(_ hypervisorDeps) (model.SandboxManager, error) {
-	return sandboxd.NewUnavailableManager(runtime.GOOS), nil
+//
+// The land dialer is nil here: there is no guest transport on a platform
+// without a sandbox backend, so the daemon land wiring reports land "not
+// served" (it never half-wires a land path with no transport). Refs: MGIT-13.1.1
+func newHypervisorBackend(_ hypervisorDeps) (model.SandboxManager, microvm.GuestDialer, error) {
+	return sandboxd.NewUnavailableManager(runtime.GOOS), nil, nil
 }

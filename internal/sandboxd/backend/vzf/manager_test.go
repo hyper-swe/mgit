@@ -7,6 +7,7 @@ package vzf
 import (
 	"context"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,6 +103,53 @@ func vzfLaunchOpts() model.SandboxLaunchOptions {
 		Network:      model.NetworkPolicy{Mode: model.NetworkModeNone},
 		CPUs:         2, MemoryMB: 1024,
 	}
+}
+
+// TestVZF_NewManagerWithLand_SharesRegistryWithLandDialer verifies the
+// paired constructor returns a working manager AND a land dialer bound to
+// the SAME live-VM registry the manager's hypervisor publishes into, so the
+// daemon land channel reaches the running guest's land port. A drift here
+// would hand the daemon a land dialer wired to a different (always-empty)
+// registry, silently breaking macOS land. Refs: FR-17.5, FR-17.16
+func TestVZF_NewManagerWithLand_SharesRegistryWithLandDialer(t *testing.T) {
+	mgr, landDialer, err := NewManagerWithLand(Config{
+		WorkDir:    t.TempDir(),
+		Resolve:    func(string) (ImagePaths, error) { return testImages(t), nil },
+		Hypervisor: &fakeHypervisor{},
+		Logger:     slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
+		Clock:      func() time.Time { return time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC) },
+	})
+	require.NoError(t, err)
+	require.NotNil(t, mgr)
+	require.NotNil(t, landDialer, "the daemon land wiring needs the backend's land dialer")
+
+	// The land dialer and the manager's exec dialer must share ONE registry:
+	// the real darwin hypervisor publishes each VM into it on Start, and both
+	// channels resolve a sandbox through it. managerRegistry exposes the
+	// manager's registry for the test; a VM published there must be reachable
+	// on the LAND port through the returned land dialer.
+	reg := managerRegistry(t, landDialer)
+	host, guest := net.Pipe()
+	t.Cleanup(func() { _ = host.Close() })
+	t.Cleanup(func() { _ = guest.Close() })
+	fake := &fakeConnector{conn: host}
+	reg.put("sb-live", fake)
+
+	conn, err := landDialer.DialGuest(context.Background(), "sb-live")
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	assert.Equal(t, microvm.GuestLandPort, fake.gotPort, "the daemon land dialer connects on the land port")
+}
+
+// managerRegistry returns the live-VM registry the land dialer resolves
+// through, so a test can publish a fake VM into it (standing in for the real
+// hypervisor's Start-time put). NewManagerWithLand wires this same registry
+// into the manager's exec dialer and hypervisor.
+func managerRegistry(t *testing.T, landDialer microvm.GuestDialer) *liveVMs {
+	t.Helper()
+	gd, ok := landDialer.(*guestDialer)
+	require.True(t, ok, "land dialer must be the vzf guestDialer")
+	return gd.reg
 }
 
 // TestVZF_Launch_BootsGuest verifies a launch through the vzf backend

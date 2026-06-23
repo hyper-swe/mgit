@@ -51,16 +51,30 @@ type Config struct {
 // sandbox ID to its live handle to connect), so exec/land reach the running
 // guest's vsock over the framework API. Refs: FR-17.15, FR-17.16
 func NewManager(cfg Config) (*microvm.Manager, error) {
+	mgr, _, err := NewManagerWithLand(cfg)
+	return mgr, err
+}
+
+// NewManagerWithLand returns the vzf microVM manager AND its host LAND
+// dialer, both bound to ONE live-VM registry so they resolve a sandbox to
+// the same running VZVirtualMachine: the platform hypervisor publishes each
+// started VM into the registry, the manager's exec dialer reaches it on the
+// exec port, and the returned land dialer reaches it on the LAND port over
+// the same VZVirtioSocketDevice.Connect. The daemon land wiring uses this to
+// select the vzf land transport on macOS (firecracker on Linux) behind the
+// microvm.GuestDialer seam. The land dialer fails closed when no live VM is
+// registered for the sandbox. Refs: FR-17.5, FR-17.15, FR-17.16
+func NewManagerWithLand(cfg Config) (*microvm.Manager, microvm.GuestDialer, error) {
 	reg := newLiveVMs()
 	hv := cfg.Hypervisor
 	if hv == nil {
 		var err error
 		hv, err = newPlatformHypervisor(reg)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return microvm.NewManager(microvm.Config{
+	mgr, err := microvm.NewManager(microvm.Config{
 		Backend:          model.BackendVZF,
 		WorkDir:          cfg.WorkDir,
 		Resolve:          cfg.Resolve,
@@ -72,4 +86,8 @@ func NewManager(cfg Config) (*microvm.Manager, error) {
 		Logger:           cfg.Logger,
 		Clock:            cfg.Clock,
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return mgr, newGuestLandDialer(reg), nil
 }

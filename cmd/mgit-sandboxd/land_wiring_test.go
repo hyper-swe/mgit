@@ -12,6 +12,8 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
+	"github.com/hyper-swe/mgit/internal/sandboxd/backend/firecracker"
+	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 	"github.com/hyper-swe/mgit/internal/store/index"
 	"github.com/hyper-swe/mgit/internal/store/policy"
@@ -21,6 +23,14 @@ type stubResolver struct{}
 
 func (stubResolver) Status(context.Context, string) (*model.SandboxInfo, error) {
 	return &model.SandboxInfo{ID: "sbx-1"}, nil
+}
+
+// testLandDialer returns a backend-agnostic land dialer for wiring tests:
+// the firecracker dialer satisfies microvm.GuestDialer and is pure host I/O,
+// standing in for whichever backend selectManager would choose.
+func testLandDialer(t *testing.T) microvm.GuestDialer {
+	t.Helper()
+	return firecracker.NewLandDialer(t.TempDir())
 }
 
 // TestBuildLandService_WiresAndBootstrapsAttestKey verifies the land path
@@ -43,7 +53,7 @@ func TestBuildLandService_WiresAndBootstrapsAttestKey(t *testing.T) {
 	require.NoError(t, err)
 
 	binder := sandboxd.NewPeerBinder(testLogger())
-	lander, closeLand, err := buildLandService(hostRoot, repoRoot, t.TempDir(), stubResolver{},
+	lander, closeLand, err := buildLandService(hostRoot, repoRoot, testLandDialer(t), stubResolver{},
 		events, policyStore, binder, clock, testLogger())
 	require.NoError(t, err)
 	require.NotNil(t, lander)
@@ -72,7 +82,31 @@ func TestBuildLandService_BadRepo_Error(t *testing.T) {
 
 	// Empty repo root exercises the host-root fallback (which derives a root
 	// with no .mgit repo).
-	_, _, err = buildLandService(hostRoot, "", t.TempDir(), stubResolver{}, events, policyStore,
+	_, _, err = buildLandService(hostRoot, "", testLandDialer(t), stubResolver{}, events, policyStore,
 		sandboxd.NewPeerBinder(testLogger()), clock, testLogger())
 	assert.Error(t, err)
+}
+
+// TestBuildLandService_NilDialer_FailsClosed verifies land wiring refuses to
+// serve when the active backend supplies no land transport (e.g. the
+// container fallback or an unsupported OS), rather than half-wiring a land
+// path with no way into the guest. Refs: MGIT-13.1.1
+func TestBuildLandService_NilDialer_FailsClosed(t *testing.T) {
+	clock := func() time.Time { return time.Unix(0, 0).UTC() }
+	repoRoot := t.TempDir()
+	repo, err := gitstore.Init(repoRoot, clock)
+	require.NoError(t, err)
+	require.NoError(t, repo.Close())
+	hostRoot := filepath.Join(repoRoot, ".mgit", "sandbox")
+	require.NoError(t, os.MkdirAll(hostRoot, 0o700))
+	events, err := index.New(filepath.Join(hostRoot, sandboxIndexDB), clock)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = events.Close() })
+	policyStore, err := policy.NewStore(hostRoot, clock, slogPolicyRecorder{logger: testLogger()})
+	require.NoError(t, err)
+
+	_, _, err = buildLandService(hostRoot, repoRoot, nil, stubResolver{}, events, policyStore,
+		sandboxd.NewPeerBinder(testLogger()), clock, testLogger())
+	require.Error(t, err, "no land transport must fail closed")
+	assert.Contains(t, err.Error(), "land transport unavailable")
 }

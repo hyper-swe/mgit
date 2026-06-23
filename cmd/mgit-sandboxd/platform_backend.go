@@ -32,9 +32,17 @@ type backendSelection struct {
 // selectManager resolves the sandbox backend: the build-tagged platform
 // hypervisor for "auto", or the audited reduced-isolation container
 // fallback when explicitly requested. A missing hypervisor is a hard
-// failure, never a silent downgrade (FR-17.15). Refs: FR-17.15, FR-17.16
-func selectManager(sel backendSelection) (model.SandboxManager, error) {
-	return sandboxd.SelectBackend(context.Background(), sandboxd.SelectOptions{
+// failure, never a silent downgrade (FR-17.15).
+//
+// It also returns the active backend's host LAND dialer (firecracker on
+// Linux, vzf on macOS) so the daemon land wiring selects the transport by
+// active backend rather than hardcoding firecracker. The container fallback
+// and any other-OS backend report a nil land dialer (land not served over
+// them); the daemon then logs "land not wired" rather than half-serving.
+// Refs: FR-17.5, FR-17.15, FR-17.16, MGIT-13.1.1
+func selectManager(sel backendSelection) (model.SandboxManager, microvm.GuestDialer, error) {
+	var landDialer microvm.GuestDialer
+	mgr, err := sandboxd.SelectBackend(context.Background(), sandboxd.SelectOptions{
 		Backend:                     sel.backend,
 		AcknowledgeReducedIsolation: sel.ackReduced,
 		Audit:                       slogBackendAuditor{logger: sel.logger},
@@ -43,9 +51,10 @@ func selectManager(sel backendSelection) (model.SandboxManager, error) {
 		// every other OS (Windows runs core mgit without the sandbox in
 		// v1 — ADR-006, FR-17.39). Selection is build-tagged in
 		// platform_backend_*.go so the future WCOW backend slots in with
-		// no change here.
+		// no change here. The chosen backend's host LAND dialer is captured
+		// here for the daemon land wiring.
 		Hypervisor: func() (model.SandboxManager, error) {
-			return newHypervisorBackend(hypervisorDeps{
+			m, ld, herr := newHypervisorBackend(hypervisorDeps{
 				hostRoot:   sel.hostRoot,
 				repoRoot:   sel.repoRoot,
 				workDir:    sel.workDir,
@@ -53,6 +62,8 @@ func selectManager(sel backendSelection) (model.SandboxManager, error) {
 				clock:      sel.clock,
 				peerBinder: sel.peerBinder,
 			})
+			landDialer = ld
+			return m, herr
 		},
 		Container: func() (model.SandboxManager, error) {
 			// SEC-03 fail-closed: the reduced-isolation container fallback still
@@ -73,6 +84,10 @@ func selectManager(sel backendSelection) (model.SandboxManager, error) {
 			})
 		},
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return mgr, landDialer, nil
 }
 
 // resolveRepoRoot returns the mgit repo root for SEC-03 provisioning: the
