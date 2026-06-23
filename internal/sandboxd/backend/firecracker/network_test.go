@@ -97,6 +97,64 @@ func TestApplyTapPlan_ExecsSetupInOrder(t *testing.T) {
 	assert.Equal(t, want, runner.cmds, "applyTapPlan execs the setup commands verbatim, in order")
 }
 
+// procRouteSample is a representative /proc/net/route dump: a default route
+// (Destination 00000000) via eth0 plus a directly-connected subnet route.
+const procRouteSample = `Iface	Destination	Gateway 	Flags	RefCnt	Use	Metric	Mask		MTU	Window	IRTT
+eth0	00000000	0102A8C0	0003	0	0	100	00000000	0	0	0
+eth0	0002A8C0	00000000	0001	0	0	0	00FFFFFF	0	0	0
+`
+
+// TestParseDefaultRouteIface_PicksDefaultRoute verifies the parser returns the
+// interface of the default route (Destination 0.0.0.0), ignoring connected
+// subnet routes. Refs: FR-17.7
+func TestParseDefaultRouteIface_PicksDefaultRoute(t *testing.T) {
+	iface, err := parseDefaultRouteIface(strings.NewReader(procRouteSample))
+	require.NoError(t, err)
+	assert.Equal(t, "eth0", iface)
+}
+
+// TestParseDefaultRouteIface_LowestMetricWins verifies that when several
+// default routes exist, the one with the lowest metric is chosen (the kernel's
+// preferred route). Refs: FR-17.7
+func TestParseDefaultRouteIface_LowestMetricWins(t *testing.T) {
+	sample := `Iface	Destination	Gateway 	Flags	RefCnt	Use	Metric	Mask		MTU	Window	IRTT
+wwan0	00000000	0102A8C0	0003	0	0	600	00000000	0	0	0
+eth0	00000000	0202A8C0	0003	0	0	100	00000000	0	0	0
+`
+	iface, err := parseDefaultRouteIface(strings.NewReader(sample))
+	require.NoError(t, err)
+	assert.Equal(t, "eth0", iface, "the lowest-metric default route wins")
+}
+
+// TestParseDefaultRouteIface_NoDefaultRoute returns an error when the table has
+// no default route (only connected subnets) — open mode then fails closed.
+func TestParseDefaultRouteIface_NoDefaultRoute(t *testing.T) {
+	sample := `Iface	Destination	Gateway 	Flags	RefCnt	Use	Metric	Mask		MTU	Window	IRTT
+eth0	0002A8C0	00000000	0001	0	0	0	00FFFFFF	0	0	0
+`
+	_, err := parseDefaultRouteIface(strings.NewReader(sample))
+	assert.Error(t, err, "no default route is an error, not an empty interface")
+}
+
+// TestParseDefaultRouteIface_SkipsDownRoutes ignores routes without RTF_UP set
+// in Flags. A default route that is not up must not be selected. Refs: FR-17.7
+func TestParseDefaultRouteIface_SkipsDownRoutes(t *testing.T) {
+	sample := `Iface	Destination	Gateway 	Flags	RefCnt	Use	Metric	Mask		MTU	Window	IRTT
+eth0	00000000	0102A8C0	0002	0	0	0	00000000	0	0	0
+eth1	00000000	0102A8C0	0003	0	0	50	00000000	0	0	0
+`
+	iface, err := parseDefaultRouteIface(strings.NewReader(sample))
+	require.NoError(t, err)
+	assert.Equal(t, "eth1", iface, "a down (no RTF_UP) default route is skipped")
+}
+
+// TestParseDefaultRouteIface_EmptyOrHeaderOnly errors on an empty table.
+func TestParseDefaultRouteIface_EmptyOrHeaderOnly(t *testing.T) {
+	_, err := parseDefaultRouteIface(strings.NewReader(
+		"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"))
+	assert.Error(t, err)
+}
+
 // TestApplyTapPlan_NoneNoCommands verifies none mode runs nothing.
 func TestApplyTapPlan_NoneNoCommands(t *testing.T) {
 	runner := &fakeNetRunner{}

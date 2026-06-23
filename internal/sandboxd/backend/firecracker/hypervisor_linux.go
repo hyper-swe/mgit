@@ -50,8 +50,13 @@ var nopLogger = func() *logrus.Entry {
 // newPlatformHypervisor returns the Firecracker-on-KVM implementation.
 // It fails closed when the firecracker binary or /dev/kvm is absent, so
 // a missing VMM never silently degrades isolation (ADR-005, SEC-04).
-// Refs: FR-17.15
-func newPlatformHypervisor(bin string) (microvm.Hypervisor, error) {
+//
+// extIface is the host external interface open mode NATs the guest out
+// through. When empty, the host's default-route interface is auto-detected
+// best-effort; detection failure leaves it empty so the default-safe modes
+// (none/allowlist) still work and only open mode fails closed (TapPlan.validate).
+// Refs: FR-17.15, FR-17.7
+func newPlatformHypervisor(bin, extIface string) (microvm.Hypervisor, error) {
 	if bin == "" {
 		bin = "firecracker"
 	}
@@ -62,7 +67,11 @@ func newPlatformHypervisor(bin string) (microvm.Hypervisor, error) {
 	if _, err := os.Stat(kvmDevice); err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", model.ErrSandboxBackendUnavailable, kvmDevice, err)
 	}
-	return &fcHypervisor{bin: resolved, mkfs: mke2fsExecRunner{}, net: ipRunner{}}, nil
+	if extIface == "" {
+		// Best-effort: open mode needs an upstream; the safe modes do not.
+		extIface, _ = defaultRouteIface()
+	}
+	return &fcHypervisor{bin: resolved, mkfs: mke2fsExecRunner{}, net: ipRunner{}, extIface: extIface}, nil
 }
 
 // fcHypervisor builds Firecracker VMs. The pure-Go SDK drives the VMM

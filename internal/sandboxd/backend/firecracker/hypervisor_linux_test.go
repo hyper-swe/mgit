@@ -58,7 +58,7 @@ func requireKVM(t *testing.T) (kernel, rootfs string) {
 	} else {
 		_ = f.Close()
 	}
-	if _, err := newPlatformHypervisor(""); err != nil {
+	if _, err := newPlatformHypervisor("", ""); err != nil {
 		t.Skipf("firecracker backend unavailable: %v", err)
 	}
 	if _, err := exec.LookPath("mke2fs"); err != nil {
@@ -252,7 +252,7 @@ func TestKVM_SandboxPaths_AllUnderStateDir(t *testing.T) {
 // branch: an absent firecracker binary yields ErrSandboxBackendUnavailable
 // rather than a silent downgrade. Refs: FR-17.15, SEC-04
 func TestKVM_NewPlatformHypervisor_MissingBinary(t *testing.T) {
-	_, err := newPlatformHypervisor("mgit-no-such-firecracker-binary-xyz")
+	_, err := newPlatformHypervisor("mgit-no-such-firecracker-binary-xyz", "")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, model.ErrSandboxBackendUnavailable)
 }
@@ -267,7 +267,7 @@ func TestKVM_NewPlatformHypervisor_NoKVMDevice(t *testing.T) {
 	t.Cleanup(func() { kvmDevice = orig })
 	kvmDevice = filepath.Join(t.TempDir(), "absent-kvm")
 
-	_, err := newPlatformHypervisor("")
+	_, err := newPlatformHypervisor("", "")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, model.ErrSandboxBackendUnavailable)
 }
@@ -292,7 +292,7 @@ func TestKVM_CreateVM_InvalidConfigSurfaces(t *testing.T) {
 // needs no guest images.
 func requireFirecracker(t *testing.T) *fcHypervisor {
 	t.Helper()
-	hv, err := newPlatformHypervisor("")
+	hv, err := newPlatformHypervisor("", "")
 	if err != nil {
 		t.Skipf("firecracker backend unavailable: %v", err)
 	}

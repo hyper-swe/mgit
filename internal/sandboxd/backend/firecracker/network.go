@@ -1,15 +1,62 @@
 package firecracker
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
+	"strconv"
+	"strings"
 
 	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 )
+
+// rtfUp is the RTF_UP flag bit in /proc/net/route's hex Flags column: a route
+// is only usable when it is up. Refs: FR-17.7
+const rtfUp = 0x0001
+
+// parseDefaultRouteIface reads a Linux /proc/net/route table and returns the
+// interface name of the preferred (lowest-metric, up) default route — the
+// Destination 0.0.0.0 row. Open mode NATs the guest out through this
+// interface; if there is no default route the host has no upstream and open
+// mode fails closed. Parsing host-owned /proc here keeps the detection pure
+// and testable (no exec). Refs: FR-17.7
+func parseDefaultRouteIface(r io.Reader) (string, error) {
+	sc := bufio.NewScanner(r)
+	best, bestMetric := "", int64(-1)
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		// Columns: Iface Destination Gateway Flags RefCnt Use Metric Mask ...
+		if len(fields) < 7 || fields[1] == "Destination" {
+			continue // header or short line
+		}
+		if fields[1] != "00000000" { // not the default route (0.0.0.0)
+			continue
+		}
+		flags, err := strconv.ParseUint(fields[3], 16, 32)
+		if err != nil || flags&rtfUp == 0 {
+			continue // unparseable flags, or route not up
+		}
+		metric, err := strconv.ParseInt(fields[6], 10, 64)
+		if err != nil {
+			continue
+		}
+		if bestMetric < 0 || metric < bestMetric {
+			best, bestMetric = fields[0], metric
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return "", fmt.Errorf("read route table: %w", err)
+	}
+	if best == "" {
+		return "", fmt.Errorf("no default route found")
+	}
+	return best, nil
+}
 
 // Host gateway ports the egress runtime listens on per sandbox, and the
 // ports the allowlist tap firewall steers the guest to. Fixed conventions so

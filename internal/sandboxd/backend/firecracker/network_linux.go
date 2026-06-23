@@ -5,8 +5,27 @@ package firecracker
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 )
+
+// procNetRoute is the kernel's IPv4 routing table. Reading it (rather than
+// execing `ip route`) keeps default-route detection dependency-free and the
+// parsing logic unit-testable. Refs: FR-17.7
+const procNetRoute = "/proc/net/route"
+
+// defaultRouteIface returns the host's preferred default-route interface, the
+// one open mode NATs the guest out through. An absent default route is an
+// error so open mode fails closed rather than NATing through nothing.
+// Refs: FR-17.7
+func defaultRouteIface() (string, error) {
+	f, err := os.Open(procNetRoute)
+	if err != nil {
+		return "", fmt.Errorf("open %s: %w", procNetRoute, err)
+	}
+	defer func() { _ = f.Close() }()
+	return parseDefaultRouteIface(f)
+}
 
 // ipRunner is the real NetRunner: it execs the privileged host network
 // tools (ip, iptables, sysctl) to realize a tap plan. Argv is built entirely
