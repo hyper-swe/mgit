@@ -100,8 +100,11 @@ func TestE2E_GuestRoot_UpperOnOverlayDrive(t *testing.T) {
 	// succeed — the disk proof is the host backing file's allocation growth,
 	// not merely that the write succeeded.
 	const writeMiB = 64
+	// Write outside the worktree, then flush to the block device with an
+	// explicit sync (busybox dd's conv=fsync is not portable across builds).
+	// stderr is NOT suppressed so a real failure surfaces in the assertion.
 	cmd := fmt.Sprintf(
-		"dd if=/dev/zero of=/big.bin bs=1M count=%d conv=fsync 2>/dev/null && "+
+		"dd if=/dev/zero of=/big.bin bs=1M count=%d && sync && "+
 			"grep -E ' /mnt ' /proc/mounts", writeMiB)
 
 	var res *model.ExecResult

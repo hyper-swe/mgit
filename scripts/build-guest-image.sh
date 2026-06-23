@@ -50,7 +50,7 @@ cp "$bb" "$root/bin/busybox"
 # an ext2 on-disk layout the guest mounts via the kernel ext4 driver, so no
 # e2fsprogs is needed in the minimal rootfs. All are compiled into the static
 # busybox; these are just symlinks. Refs: FR-17.7, SEC-03, NFR-17.7, MGIT-11.13.6, MGIT-11.6.8, MGIT-11.6.7
-for applet in sh cat echo ls env pwd printf sleep test touch mkdir \
+for applet in sh cat echo ls env pwd printf sleep test touch mkdir dd sync \
               grep find head awk mke2fs \
               nc wget nslookup ping ip ifconfig route; do
 	ln -sf busybox "$root/bin/$applet"
