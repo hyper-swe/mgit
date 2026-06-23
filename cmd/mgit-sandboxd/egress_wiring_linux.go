@@ -13,6 +13,7 @@ import (
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/firecracker"
 	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 	"github.com/hyper-swe/mgit/internal/service"
+	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
 // Fixed gateway ports the egress proxy and DNS server bind per sandbox — the
@@ -28,10 +29,13 @@ const (
 // teardown; none/open sandboxes run no proxy. Wiring is unconditional on
 // Linux: the container fallback refuses allowlist mode before launch, and
 // none/open are no-ops in the runner, so no spurious listeners are bound.
-// Refs: FR-17.7, FR-17.8, SEC-04
-func wireEgress(svc *service.SandboxService, audit egress.Auditor, clock func() time.Time, logger *slog.Logger) {
+// It also wires capability escalation: the same egress.Runner is the live
+// allowlist-widening granter, and the CapabilityService is installed as the
+// sandbox service's grant revoker so grants die with the sandbox (SEC-05).
+// Refs: FR-17.7, FR-17.8, FR-17.12, SEC-04, SEC-05
+func wireEgress(svc *service.SandboxService, events *index.Store, clock func() time.Time, logger *slog.Logger) {
 	runner, err := egress.NewRunner(egress.RunnerConfig{
-		Audit:     audit,
+		Audit:     events,
 		Lookup:    egress.SystemLookup(nil),
 		Dial:      hostEgressDial,
 		Clock:     clock,
@@ -44,6 +48,16 @@ func wireEgress(svc *service.SandboxService, audit egress.Auditor, clock func() 
 		return
 	}
 	svc.SetEgressController(fcEgressController{runner: runner})
+
+	// Capability escalation: a host-observed egress denial can be escalated to a
+	// scoped, audited grant that widens THIS runner's live allowlist; the grant
+	// is revoked when the sandbox tears down. Refs: FR-17.12, SEC-05
+	capSvc, err := service.NewCapabilityService(events, runner, clock)
+	if err != nil {
+		logger.Error("capability escalation wiring failed; escalation disabled", "error", err.Error())
+	} else {
+		svc.SetCapabilityRevoker(capSvc)
+	}
 	logger.Info("sandbox egress enforcement wired", "event", "egress_wired",
 		"proxy_port", egressProxyPort, "dns_port", egressDNSPort)
 }
