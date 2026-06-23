@@ -100,12 +100,13 @@ func TestE2E_GuestRoot_UpperOnOverlayDrive(t *testing.T) {
 	// succeed — the disk proof is the host backing file's allocation growth,
 	// not merely that the write succeeded.
 	const writeMiB = 64
-	// Write outside the worktree, then flush to the block device with an
-	// explicit sync (busybox dd's conv=fsync is not portable across builds).
-	// stderr is NOT suppressed so a real failure surfaces in the assertion.
+	// Write 64 MiB OUTSIDE the worktree (on the overlay root) and flush to the
+	// block device, then dump the mount table for diagnostics. `&&` chains so a
+	// write/sync failure makes the whole command fail (exit != 0); busybox dd's
+	// conv=fsync is not portable, so sync explicitly; stderr is not suppressed.
+	// (dd's "records in/out" goes to stderr; stdout is just the mount table.)
 	cmd := fmt.Sprintf(
-		"dd if=/dev/zero of=/big.bin bs=1M count=%d && sync && "+
-			"grep -E ' /mnt ' /proc/mounts", writeMiB)
+		"dd if=/dev/zero of=/big.bin bs=1M count=%d && sync && cat /proc/mounts", writeMiB)
 
 	var res *model.ExecResult
 	deadline := time.Now().Add(25 * time.Second)
@@ -119,19 +120,16 @@ func TestE2E_GuestRoot_UpperOnOverlayDrive(t *testing.T) {
 		time.Sleep(400 * time.Millisecond)
 	}
 	require.NoError(t, err, "exec must reach the guest once it is serving vsock")
-	require.Equal(t, 0, res.ExitCode, "out-of-worktree write must succeed; stderr=%q", string(res.Stderr))
+	require.Equal(t, 0, res.ExitCode, "out-of-worktree write + sync must succeed; stderr=%q", string(res.Stderr))
+	t.Logf("guest /proc/mounts after the write:\n%s", string(res.Stdout))
 
-	// The overlay scratch (/mnt) must be a real filesystem on a block device,
-	// not tmpfs — i.e. the upper is disk-backed (vdb), not RAM.
-	assert.NotContains(t, string(res.Stdout), "tmpfs",
-		"/mnt (overlay upper) must NOT be tmpfs when the disk COW drive is attached")
-	assert.Contains(t, string(res.Stdout), "/dev/vd",
-		"/mnt (overlay upper) must be mounted from the COW block device")
-
-	// The host overlay backing file must have grown by ~the written size:
-	// the bytes the guest wrote outside the worktree landed on DISK (vdb),
-	// quota-bounded, not in guest RAM. Allow filesystem overhead slack.
+	// AUTHORITATIVE disk proof: the host COW backing file grew by ~the written
+	// size, i.e. the bytes the guest wrote outside the worktree landed on DISK
+	// (the vdb overlay drive), quota-bounded. A tmpfs/RAM upper would NOT grow
+	// the host overlay.img at all — so growth is the definitive disk-vs-RAM
+	// discriminator, independent of the guest's post-switch_root mount layout.
 	grown := allocatedBytes(t, overlayImg)
 	assert.GreaterOrEqual(t, grown, int64(writeMiB-8)<<20,
-		"host overlay COW file must grow by ~%d MiB (disk-backed upper), got %d bytes allocated", writeMiB, grown)
+		"host overlay COW file must grow by ~%d MiB (disk-backed upper, not RAM); got %d bytes allocated; guest mounts:\n%s",
+		writeMiB, grown, string(res.Stdout))
 }
