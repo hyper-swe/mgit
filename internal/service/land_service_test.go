@@ -139,10 +139,14 @@ func (f *fakeAttestor) Attest(_ context.Context, sandboxID, commitHash, contentH
 type fakeParents struct {
 	registered int
 	dereg      int
+	hostHas    map[string]bool // commit ids the host already has (base history)
 }
 
 func (f *fakeParents) ParentFileSet(context.Context, string) (map[string]string, error) {
 	return map[string]string{}, nil
+}
+func (f *fakeParents) HostHasCommit(_ context.Context, id string) (bool, error) {
+	return f.hostHas[id], nil
 }
 func (f *fakeParents) Register(pool []land.Object) ([]string, error) {
 	f.registered++

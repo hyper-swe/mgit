@@ -49,6 +49,11 @@ type Attestor interface {
 // re-verification resolve parents identically. Refs: SEC-06, FR-17.5
 type poolParentResolver interface {
 	ParentFileSet(ctx context.Context, parentCommitID string) (map[string]string, error)
+	// HostHasCommit reports whether the host shared store already contains the
+	// commit, so base history the guest re-streamed is excluded from the new
+	// batch even when it is not in the task_commits ledger (e.g. the branch base
+	// or genesis is host history, never a task commit). Host-only. Refs: FR-17.5
+	HostHasCommit(ctx context.Context, commitID string) (bool, error)
 	Register(pool []land.Object) ([]string, error)
 	Deregister(ids []string)
 }
@@ -164,7 +169,26 @@ func (s *LandService) newChain(ctx context.Context, taskID string, pool []land.O
 	for _, rec := range existing {
 		landed[rec.CommitHash] = true
 	}
-	chain, err := land.CommitChain(pool, func(id string) bool { return landed[id] })
+	// A commit is base history (not new) if it is already in the task ledger OR
+	// already in the host store — the guest re-streams everything reachable from
+	// its branch head, including the branch base/genesis which is host history
+	// but never a task commit. Excluding only the ledger would re-land the base.
+	// Refs: FR-17.5, SEC-06, MGIT-11.9.6
+	var skipErr error
+	skip := func(id string) bool {
+		if landed[id] {
+			return true
+		}
+		has, err := s.parents.HostHasCommit(ctx, id)
+		if err != nil {
+			skipErr = err
+		}
+		return has
+	}
+	chain, err := land.CommitChain(pool, skip)
+	if skipErr != nil {
+		return nil, 0, fmt.Errorf("sandbox land: host commit check: %w", skipErr)
+	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("sandbox land: %w", err)
 	}

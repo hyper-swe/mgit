@@ -2,6 +2,7 @@ package land
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -55,6 +56,25 @@ func (r *HostParentTreeResolver) ParentFileSet(ctx context.Context, parentCommit
 		files[e.Path] = e.Hash
 	}
 	return files, nil
+}
+
+// HostHasCommit reports whether the host shared store already contains the
+// commit. It is used to exclude base history the guest re-streamed from a land
+// batch: a commit the host already has is not "new" and must not be landed
+// again. Host-only by design — it deliberately does NOT consult any land pool,
+// since pool commits are precisely the new ones being landed. An empty id is
+// not a real commit and reports false. Refs: FR-17.5, SEC-06
+func (r *HostParentTreeResolver) HostHasCommit(ctx context.Context, commitID string) (bool, error) {
+	if commitID == "" {
+		return false, nil
+	}
+	if _, err := r.commits.GetCommit(ctx, commitID); err != nil {
+		if errors.Is(err, model.ErrCommitNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("host has commit %s: %w", commitID, err)
+	}
+	return true, nil
 }
 
 // PoolAwareParentResolver resolves a parent commit's file set from the host
@@ -114,6 +134,13 @@ func (r *PoolAwareParentResolver) ParentFileSet(ctx context.Context, parentCommi
 		return poolCommitFileSet(pool, parentCommitID)
 	}
 	return r.host.ParentFileSet(ctx, parentCommitID)
+}
+
+// HostHasCommit reports whether the HOST store already has the commit. It does
+// NOT consult the registered pool — pool commits are the new ones being landed,
+// so they must never be treated as already-present. Refs: FR-17.5, SEC-06
+func (r *PoolAwareParentResolver) HostHasCommit(ctx context.Context, commitID string) (bool, error) {
+	return r.host.HostHasCommit(ctx, commitID)
 }
 
 // commitIDs returns the host-computed git ids of every commit object in a
