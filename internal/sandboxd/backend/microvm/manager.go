@@ -102,6 +102,16 @@ type GuestDialer interface {
 	DialGuest(ctx context.Context, sandboxID string) (net.Conn, error)
 }
 
+// GuestPortDialer opens a connection to an ARBITRARY guest vsock port on one
+// running sandbox. It is the same per-VM vsock transport the exec/land
+// dialers use, only the guest port is a parameter rather than baked in — the
+// one-way port publisher (SEC-09) dials a guest dev-server port through it.
+// The host->guest direction only: this never opens a guest->host path.
+// Refs: SEC-09, FR-17.8, FR-17.16
+type GuestPortDialer interface {
+	DialGuestPort(ctx context.Context, sandboxID string, guestPort int) (net.Conn, error)
+}
+
 // PeerBinder records a sandbox's host-observed peer identity at launch and
 // clears it at teardown, so the daemon can authorize incoming guest->host
 // land/attestation channels against it (SEC-10). Optional: nil disables

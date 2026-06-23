@@ -38,6 +38,33 @@ func NewLandDialer(workDir string) microvm.GuestDialer {
 	return &guestDialer{workDir: workDir, port: microvm.GuestLandPort}
 }
 
+// portDialer is the firecracker realization of microvm.GuestPortDialer: it
+// dials an ARBITRARY guest vsock port on a sandbox (SEC-09 one-way publish),
+// reconstructing the per-VM vsock socket path from workDir + sandbox ID the
+// same way the exec/land dialer does. It is pure host-side I/O (no CGO, no
+// KVM); only a live guest listener on the requested port is hardware-bound.
+// The host->guest direction only: there is no reverse path. Refs: SEC-09
+type portDialer struct {
+	workDir string
+}
+
+// NewPortDialer returns a firecracker microvm.GuestPortDialer over the per-VM
+// vsock sockets under workDir. It is the host transport the one-way port
+// publisher forwards into (SEC-09); a published port dials a guest dev-server
+// port the same way exec dials the exec port. Refs: SEC-09, FR-17.8
+func NewPortDialer(workDir string) microvm.GuestPortDialer {
+	return &portDialer{workDir: workDir}
+}
+
+// DialGuestPort connects to the given guest vsock port over the sandbox's
+// firecracker vsock socket. It fails closed when the sandbox's VM is not
+// running (no socket). The guest port is validated by the model boundary
+// (model.PortPublish.Validate); fcvsock requires a uint32. Refs: SEC-09
+func (d *portDialer) DialGuestPort(ctx context.Context, sandboxID string, guestPort int) (net.Conn, error) {
+	path := sandboxPaths(microvm.SandboxStateDir(d.workDir, sandboxID)).vsock
+	return fcvsock.Dial(ctx, path, uint32(guestPort)) //nolint:gosec // OK: guestPort is range-checked at the model boundary (1..65535)
+}
+
 // vsockSocketPath returns the firecracker per-VM vsock socket for a
 // sandbox. The state dir comes from microvm.SandboxStateDir (the single
 // source of the <workDir>/<sandbox-id> convention the manager creates

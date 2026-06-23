@@ -143,6 +143,11 @@ func run(args []string, logSink io.Writer) int {
 			dcfg.Grants = capSvc
 		}
 
+		// Wire one-way guest->host port publishing (SEC-09): the service then
+		// binds 127.0.0.1 host listeners per published port at boot and tears
+		// them down at teardown. No-op off Linux. Refs: SEC-09, FR-17.8
+		wirePortPublish(svc, opts.workDir, logger)
+
 		// Wire the land path when the host repo is reachable. A failure here is
 		// non-fatal: the daemon still serves launch/exec/list/remove/status,
 		// but `mgit sandbox land` reports "not served" until land is wired.

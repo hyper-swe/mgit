@@ -37,6 +37,19 @@ type EgressController interface {
 	StopEgress(sandboxID string)
 }
 
+// PortPublishController opens and closes a sandbox's one-way host->guest
+// published ports (SEC-09) around its lifecycle. It is an OPTIONAL
+// collaborator wired at the daemon: StartPublish binds a 127.0.0.1 listener
+// per requested port and forwards into the guest over the per-VM dialer;
+// StopPublish closes every listener (no residue, FR-17.19). A sandbox with
+// no published ports is a no-op. The host->guest direction only: there is no
+// reverse path the guest could use to reach a host loopback service.
+// Refs: SEC-09, FR-17.8, FR-17.19
+type PortPublishController interface {
+	StartPublish(ctx context.Context, info model.SandboxInfo, ports []model.PortPublish) error
+	StopPublish(sandboxID string)
+}
+
 // CapabilityRevoker drops a sandbox's live capability grants on teardown so a
 // grant never outlives the sandbox it was scoped to (satisfied by
 // *CapabilityService). It is an OPTIONAL collaborator wired at the daemon.
@@ -67,9 +80,10 @@ type SandboxService struct {
 	policy  SandboxPolicyReader
 	clock   func() time.Time
 	newID   func() (string, error)
-	egress  EgressController  // optional; nil disables host egress orchestration
-	capRev  CapabilityRevoker // optional; nil disables capability-grant teardown
-	capRep  GrantReplayer     // optional; nil disables grant replay on resume
+	egress  EgressController      // optional; nil disables host egress orchestration
+	capRev  CapabilityRevoker     // optional; nil disables capability-grant teardown
+	capRep  GrantReplayer         // optional; nil disables grant replay on resume
+	ports   PortPublishController // optional; nil disables one-way port publishing (SEC-09)
 
 	// byTask holds LIVE sandbox registrations, keyed by task ID. This is
 	// in-memory by design, not a duplicate of the sandbox_events audit
@@ -142,6 +156,14 @@ func (s *SandboxService) SetGrantReplayer(r GrantReplayer) {
 	s.capRep = r
 }
 
+// SetPortPublishController wires the optional one-way port-publish controller
+// (SEC-09). Set once at daemon wiring time, before the service handles any
+// request; nil leaves port publishing disabled. Kept off the constructor for
+// the same reasons as SetEgressController. Refs: SEC-09, FR-17.8
+func (s *SandboxService) SetPortPublishController(c PortPublishController) {
+	s.ports = c
+}
+
 // Register binds a sandbox to a task+worktree and records it WITHOUT
 // booting the VM (lazy, FR-17.10). It rejects a second sandbox for the
 // same task or worktree (FR-17.1, ErrTaskAlreadyBound). The created
@@ -185,6 +207,7 @@ func (s *SandboxService) Register(ctx context.Context, opts model.SandboxLaunchO
 		ID: id, TaskID: opts.TaskID, WorktreePath: opts.WorktreePath,
 		ImageDigest: digest, NetworkMode: opts.Network.Mode,
 		NetworkAllowlist: opts.Network.Allowlist,
+		PublishPorts:     opts.PublishPorts,
 		State:            model.StateCreated, CreatedAt: now,
 	}
 	// lastActivity seeds the idle-suspend deadline from registration time;
@@ -252,6 +275,23 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 			}
 		}
 	}
+	// Open the one-way published ports (SEC-09) once the VM and its egress are
+	// up: each binds a 127.0.0.1 host listener forwarding INTO the guest. A
+	// bind failure fails the boot closed (roll the VM and its egress back) so
+	// no half-published sandbox runs; the registration stays un-booted and
+	// retryable. None requested is a no-op. Refs: SEC-09, FR-17.8
+	if s.ports != nil && len(reg.opts.PublishPorts) > 0 {
+		if pubErr := s.ports.StartPublish(ctx, *launched, reg.opts.PublishPorts); pubErr != nil {
+			if s.egress != nil {
+				s.egress.StopEgress(launched.ID)
+			}
+			return nil, errors.Join(
+				fmt.Errorf("sandbox ensure-running: publish ports: %w", pubErr),
+				s.manager.Stop(ctx, launched.ID, true),
+				s.manager.Remove(ctx, launched.ID, true),
+			)
+		}
+	}
 	if auditErr := s.events.AppendSandboxEvent(ctx, &model.SandboxEvent{
 		SandboxID: launched.ID, TaskID: taskID, EventType: model.EventResumed,
 	}); auditErr != nil {
@@ -259,6 +299,9 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 		// sandbox is an audit-trail gap, FR-17.18). Roll back the VM we
 		// just launched (and its egress) before returning; the registration
 		// stays un-booted and retryable. Errors are joined so none is swallowed.
+		if s.ports != nil {
+			s.ports.StopPublish(launched.ID)
+		}
 		if s.egress != nil {
 			s.egress.StopEgress(launched.ID)
 		}
@@ -269,6 +312,10 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 		)
 	}
 	reg.info = *launched
+	// The backend's SandboxInfo does not carry the published-port mappings
+	// (they are a service-level concern); restore them so List/Status keep
+	// reporting them after boot. Refs: SEC-09
+	reg.info.PublishPorts = reg.opts.PublishPorts
 	reg.booted = true
 	// Record activity and the TTL deadline from the service clock (not the
 	// backend's), so idle-suspend and TTL reap are deterministic. The

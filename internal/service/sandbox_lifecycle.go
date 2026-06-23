@@ -40,6 +40,12 @@ func (s *SandboxService) SuspendIdle(ctx context.Context, idleThreshold time.Dur
 // closes first); leaving it un-booted makes the next exec resume it. Caller
 // holds the lock. Refs: NFR-17.3, FR-17.18
 func (s *SandboxService) suspendLocked(ctx context.Context, reg *sandboxReg) error {
+	// Suspend releases the host listeners with the VM; resume re-opens them in
+	// EnsureRunning (the un-booted registration re-boots and re-publishes from
+	// reg.opts.PublishPorts). Refs: SEC-09, NFR-17.3
+	if s.ports != nil {
+		s.ports.StopPublish(reg.info.ID)
+	}
 	if s.egress != nil {
 		s.egress.StopEgress(reg.info.ID)
 	}
@@ -165,6 +171,12 @@ func (s *SandboxService) teardownLocked(ctx context.Context, reg *sandboxReg, ev
 		// Refs: FR-17.12, SEC-05
 		if s.capRev != nil {
 			s.capRev.Revoke(reg.info.ID)
+		}
+		// Close the one-way published ports BEFORE the VM goes away so no host
+		// 127.0.0.1 listener outlives the sandbox it forwarded into (no residue,
+		// FR-17.19). Idempotent and nil-safe. Refs: SEC-09, FR-17.19
+		if s.ports != nil {
+			s.ports.StopPublish(reg.info.ID)
 		}
 		if s.egress != nil {
 			s.egress.StopEgress(reg.info.ID)

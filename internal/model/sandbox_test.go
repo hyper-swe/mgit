@@ -165,6 +165,78 @@ func TestLaunchOptions_EmptyTask_Invalid(t *testing.T) {
 		assert.Equal(t, "network.mode", vErr.Field,
 			"nested errors must carry the parent field path")
 	})
+
+	t.Run("invalid_publish_ports_propagate", func(t *testing.T) {
+		opts := validLaunchOptions()
+		opts.PublishPorts = []PortPublish{{HostPort: 80, GuestPort: 3000}}
+		var vErr *ValidationError
+		err := opts.Validate()
+		require.Error(t, err)
+		require.ErrorAs(t, err, &vErr)
+		assert.Equal(t, "publish_ports.host_port", vErr.Field,
+			"nested publish-port errors must carry the parent field path")
+	})
+
+	t.Run("valid_publish_ports_pass", func(t *testing.T) {
+		opts := validLaunchOptions()
+		opts.PublishPorts = []PortPublish{{HostPort: 8080, GuestPort: 3000}, {HostPort: 9090, GuestPort: 5173}}
+		assert.NoError(t, opts.Validate())
+	})
+}
+
+// TestPortPublish_Validate verifies the one-way port-publish mapping
+// validation: the host port binds loopback only and must be unprivileged,
+// the guest port must be a valid TCP port, and all input is treated as
+// hostile. Refs: SEC-09
+func TestPortPublish_Validate(t *testing.T) {
+	tests := []struct {
+		name      string
+		port      PortPublish
+		wantErr   bool
+		wantField string
+	}{
+		{name: "valid", port: PortPublish{HostPort: 8080, GuestPort: 3000}, wantErr: false},
+		{name: "min_unprivileged_host_port", port: PortPublish{HostPort: 1024, GuestPort: 1}, wantErr: false},
+		{name: "max_host_port", port: PortPublish{HostPort: 65535, GuestPort: 65535}, wantErr: false},
+		{name: "privileged_host_port", port: PortPublish{HostPort: 80, GuestPort: 3000}, wantErr: true, wantField: "host_port"},
+		{name: "privileged_host_port_1023", port: PortPublish{HostPort: 1023, GuestPort: 3000}, wantErr: true, wantField: "host_port"},
+		{name: "zero_host_port", port: PortPublish{HostPort: 0, GuestPort: 3000}, wantErr: true, wantField: "host_port"},
+		{name: "negative_host_port", port: PortPublish{HostPort: -1, GuestPort: 3000}, wantErr: true, wantField: "host_port"},
+		{name: "overflow_host_port", port: PortPublish{HostPort: 70000, GuestPort: 3000}, wantErr: true, wantField: "host_port"},
+		{name: "zero_guest_port", port: PortPublish{HostPort: 8080, GuestPort: 0}, wantErr: true, wantField: "guest_port"},
+		{name: "negative_guest_port", port: PortPublish{HostPort: 8080, GuestPort: -1}, wantErr: true, wantField: "guest_port"},
+		{name: "overflow_guest_port", port: PortPublish{HostPort: 8080, GuestPort: 70000}, wantErr: true, wantField: "guest_port"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.port.Validate()
+			if tt.wantErr {
+				var vErr *ValidationError
+				require.Error(t, err)
+				require.ErrorAs(t, err, &vErr)
+				assert.Equal(t, tt.wantField, vErr.Field)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestSandboxLaunchOptions_PublishPorts_Duplicate verifies a host port
+// published twice is rejected at the boundary (a duplicate bind would
+// otherwise fail nondeterministically at listen time). Refs: SEC-09
+func TestSandboxLaunchOptions_PublishPorts_Duplicate(t *testing.T) {
+	opts := validLaunchOptions()
+	opts.PublishPorts = []PortPublish{
+		{HostPort: 8080, GuestPort: 3000},
+		{HostPort: 8080, GuestPort: 5173},
+	}
+	var vErr *ValidationError
+	err := opts.Validate()
+	require.Error(t, err)
+	require.ErrorAs(t, err, &vErr)
+	assert.Equal(t, "publish_ports.host_port", vErr.Field)
+	assert.Contains(t, vErr.Message, "duplicate")
 }
 
 // TestSandboxInfo_JSONRoundTrip_SnakeCase verifies SandboxInfo

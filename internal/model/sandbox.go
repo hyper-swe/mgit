@@ -155,6 +155,56 @@ func (p NetworkPolicy) Validate() error {
 	return nil
 }
 
+// minUnprivilegedPort is the lowest host port a published-port mapping may
+// bind. Ports below 1024 are privileged on Unix; the host publisher binds
+// 127.0.0.1 as the daemon's own (unprivileged) user, so a privileged host
+// port is both un-bindable and a foot-gun — reject it at the boundary.
+// Refs: SEC-09
+const minUnprivilegedPort = 1024
+
+// PortPublish maps one HOST loopback port to one GUEST port, ONE WAY: the
+// host can reach the guest's published service at 127.0.0.1:<HostPort>, but
+// the guest gets no path back to the host. The binding is always 127.0.0.1
+// (never 0.0.0.0), so a published dev server is reachable only on host
+// localhost, never on an external interface. Refs: SEC-09, FR-17.8
+type PortPublish struct {
+	HostPort  int `json:"host_port"`  // host loopback port (>=1024); bound 127.0.0.1 only
+	GuestPort int `json:"guest_port"` // guest service port the host forwards into (1..65535)
+}
+
+// Validate checks one published-port mapping: the host port must be a
+// non-privileged port (>=1024, <=65535) so the unprivileged daemon can bind
+// it on 127.0.0.1, and the guest port must be a valid TCP port. All input is
+// hostile: a guest-influenced mapping must never let the host bind a
+// privileged port or an out-of-range one. Refs: SEC-09
+func (p PortPublish) Validate() error {
+	if p.HostPort < minUnprivilegedPort || p.HostPort > 65535 {
+		return &ValidationError{Field: "host_port", Message: fmt.Sprintf("must be a non-privileged port (%d-65535)", minUnprivilegedPort)}
+	}
+	if p.GuestPort < 1 || p.GuestPort > 65535 {
+		return &ValidationError{Field: "guest_port", Message: "must be a valid port (1-65535)"}
+	}
+	return nil
+}
+
+// validatePublishPorts checks the published-port set: each mapping is valid
+// (loopback-bindable host port, valid guest port) and no host port is
+// published twice (a duplicate bind would fail at listen time — reject it
+// deterministically at the boundary instead). Refs: SEC-09
+func validatePublishPorts(ports []PortPublish) error {
+	seen := make(map[int]struct{}, len(ports))
+	for _, pp := range ports {
+		if err := pp.Validate(); err != nil {
+			return err
+		}
+		if _, dup := seen[pp.HostPort]; dup {
+			return &ValidationError{Field: "host_port", Message: fmt.Sprintf("duplicate published host port %d", pp.HostPort)}
+		}
+		seen[pp.HostPort] = struct{}{}
+	}
+	return nil
+}
+
 // SandboxLaunchOptions holds the parameters to provision a microVM
 // bound to one task and one worktree. Zero resource values mean "use
 // the host policy store default" (FR-17.13, NFR-17.5).
@@ -178,6 +228,12 @@ type SandboxLaunchOptions struct {
 	// credential material — secrets are injected per session, never baked
 	// into the launch/image config (the no-credentials-in-image guarantee).
 	ConfineAgent bool `json:"confine_agent,omitempty"`
+	// PublishPorts are the one-way host->guest port mappings (SEC-09): for
+	// each entry the host binds 127.0.0.1:<HostPort> and forwards into the
+	// guest's <GuestPort>. There is no reverse path — the guest cannot use
+	// this to reach a host loopback service. Empty (the default) publishes
+	// nothing. Refs: SEC-09, FR-17.8
+	PublishPorts []PortPublish `json:"publish_ports,omitempty"`
 }
 
 // Validate checks launch options: task binding, worktree path,
@@ -195,6 +251,9 @@ func (o SandboxLaunchOptions) Validate() error {
 	}
 	if err := o.Network.Validate(); err != nil {
 		return nestField("network", err)
+	}
+	if err := validatePublishPorts(o.PublishPorts); err != nil {
+		return nestField("publish_ports", err)
 	}
 	for field, value := range map[string]int64{
 		"cpus": int64(o.CPUs), "memory_mb": int64(o.MemoryMB),
@@ -236,6 +295,11 @@ type SandboxInfo struct {
 	MemoryMB         int       `json:"memory_mb,omitempty"`         // effective memory cap; feeds the FR-17.26 ceiling
 	CreatedAt        time.Time `json:"created_at"`                  // ISO-8601 UTC
 	ExpiresAt        time.Time `json:"expires_at,omitempty"`        // TTL deadline; zero = no TTL
+	// PublishPorts mirrors the launch-time one-way host->guest port mappings
+	// (SEC-09) so List/Status report a sandbox's published ports. Each binds
+	// host 127.0.0.1:<HostPort> forwarding into the guest's <GuestPort>.
+	// Refs: SEC-09, FR-17.8
+	PublishPorts []PortPublish `json:"publish_ports,omitempty"`
 }
 
 // Validate checks that the SandboxInfo has required, well-formed
@@ -262,6 +326,9 @@ func (s SandboxInfo) Validate() error {
 	}
 	if s.State != "" && !validStates[s.State] {
 		return &ValidationError{Field: "state", Message: fmt.Sprintf("unknown state %q", s.State)}
+	}
+	if err := validatePublishPorts(s.PublishPorts); err != nil {
+		return nestField("publish_ports", err)
 	}
 	return nestField("network", NetworkPolicy{Mode: s.NetworkMode, Allowlist: s.NetworkAllowlist}.Validate())
 }

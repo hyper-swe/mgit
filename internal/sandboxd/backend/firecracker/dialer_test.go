@@ -102,3 +102,28 @@ func TestGuestDialer_SandboxSocketAbsent(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, conn)
 }
+
+// TestPortDialer_DialsArbitraryGuestPort verifies the port dialer (SEC-09
+// one-way publish) connects to the sandbox's per-VM vsock socket and
+// requests the GIVEN guest port via the firecracker handshake — the same
+// transport as exec/land, only the port is parameterized. Refs: SEC-09
+func TestPortDialer_DialsArbitraryGuestPort(t *testing.T) {
+	workDir := shortDir(t)
+	d := NewPortDialer(workDir)
+	got := fakeGuestVsock(t, sandboxPaths(microvm.SandboxStateDir(workDir, "sbx-1")).vsock)
+
+	conn, err := d.DialGuestPort(context.Background(), "sbx-1", 3000)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	assert.Equal(t, "CONNECT 3000\n", <-got, "the port dialer requests the given guest port")
+}
+
+// TestPortDialer_SandboxSocketAbsent verifies dialing a guest port on a
+// sandbox whose VM is not running fails closed (no host listener leak).
+func TestPortDialer_SandboxSocketAbsent(t *testing.T) {
+	d := NewPortDialer(shortDir(t))
+	conn, err := d.DialGuestPort(context.Background(), "never-launched", 3000)
+	require.Error(t, err)
+	assert.Nil(t, conn)
+}

@@ -251,6 +251,106 @@ func TestEgress_StartFailure_RollsBackBoot(t *testing.T) {
 	assert.Equal(t, []string{model.EventCreated}, ev.types(), "no resumed event when egress fails")
 }
 
+// fakePorts records StartPublish/StopPublish calls (SEC-09).
+type fakePorts struct {
+	started  []model.SandboxInfo
+	lastPub  []model.PortPublish
+	stopped  []string
+	startErr error
+}
+
+func (p *fakePorts) StartPublish(_ context.Context, info model.SandboxInfo, ports []model.PortPublish) error {
+	if p.startErr != nil {
+		return p.startErr
+	}
+	p.started = append(p.started, info)
+	p.lastPub = ports
+	return nil
+}
+func (p *fakePorts) StopPublish(sandboxID string) { p.stopped = append(p.stopped, sandboxID) }
+
+// TestPortPublish_StartedOnBoot_StoppedOnRemove verifies the service drives
+// the port-publish controller across the lifecycle, handing it the launched
+// info and the requested published ports. Refs: SEC-09, FR-17.8
+func TestPortPublish_StartedOnBoot_StoppedOnRemove(t *testing.T) {
+	mgr := &fakeSandboxManager{}
+	pp := &fakePorts{}
+	svc := newSvc(t, mgr, &fakeEventAppender{})
+	svc.SetPortPublishController(pp)
+
+	opts := regOpts("MGIT-11.10.12", "/work/a")
+	opts.PublishPorts = []model.PortPublish{{HostPort: 8080, GuestPort: 3000}}
+	reg, err := svc.Register(context.Background(), opts)
+	require.NoError(t, err)
+	assert.Empty(t, pp.started, "ports are not published until the VM boots")
+
+	_, err = svc.EnsureRunning(context.Background(), "MGIT-11.10.12")
+	require.NoError(t, err)
+	require.Len(t, pp.started, 1, "ports are published on boot")
+	assert.Equal(t, reg.ID, pp.started[0].ID)
+	assert.Equal(t, []model.PortPublish{{HostPort: 8080, GuestPort: 3000}}, pp.lastPub)
+
+	require.NoError(t, svc.Remove(context.Background(), "MGIT-11.10.12", false))
+	assert.Equal(t, []string{reg.ID}, pp.stopped, "published ports are torn down on remove (no residue)")
+}
+
+// TestPortPublish_NoPortsRequested_NoStart verifies a sandbox that publishes
+// nothing never calls the controller's StartPublish. Refs: SEC-09
+func TestPortPublish_NoPortsRequested_NoStart(t *testing.T) {
+	pp := &fakePorts{}
+	svc := newSvc(t, &fakeSandboxManager{}, &fakeEventAppender{})
+	svc.SetPortPublishController(pp)
+
+	_, err := svc.Register(context.Background(), regOpts("MGIT-11.10.12", "/work/a"))
+	require.NoError(t, err)
+	_, err = svc.EnsureRunning(context.Background(), "MGIT-11.10.12")
+	require.NoError(t, err)
+	assert.Empty(t, pp.started, "no published ports means StartPublish is never called")
+}
+
+// TestPortPublish_StartFailure_RollsBackBoot verifies a failed port-publish
+// bind fails closed: the VM is rolled back and no resumed event is recorded.
+// Refs: SEC-09
+func TestPortPublish_StartFailure_RollsBackBoot(t *testing.T) {
+	mgr := &fakeSandboxManager{}
+	ev := &fakeEventAppender{}
+	pp := &fakePorts{startErr: errors.New("loopback bind failed")}
+	svc := newSvc(t, mgr, ev)
+	svc.SetPortPublishController(pp)
+
+	opts := regOpts("MGIT-11.10.12", "/work/a")
+	opts.PublishPorts = []model.PortPublish{{HostPort: 8080, GuestPort: 3000}}
+	_, err := svc.Register(context.Background(), opts)
+	require.NoError(t, err)
+	_, err = svc.EnsureRunning(context.Background(), "MGIT-11.10.12")
+	require.Error(t, err, "a failed port-publish start fails the boot")
+	assert.Equal(t, 1, mgr.removes, "the VM is rolled back")
+	assert.Equal(t, []string{model.EventCreated}, ev.types(), "no resumed event when port publish fails")
+}
+
+// TestPortPublish_StoppedOnTeardownPaths verifies every teardown path (land,
+// idle-suspend) releases the published ports, so no host listener outlives
+// the sandbox. Refs: SEC-09, FR-17.19, NFR-17.3
+func TestPortPublish_StoppedOnTeardownPaths(t *testing.T) {
+	t.Run("suspend_idle_stops_publish", func(t *testing.T) {
+		mgr := &fakeSandboxManager{}
+		pp := &fakePorts{}
+		svc := newSvc(t, mgr, &fakeEventAppender{})
+		svc.SetPortPublishController(pp)
+		opts := regOpts("MGIT-11.10.12", "/work/a")
+		opts.PublishPorts = []model.PortPublish{{HostPort: 8080, GuestPort: 3000}}
+		reg, err := svc.Register(context.Background(), opts)
+		require.NoError(t, err)
+		_, err = svc.EnsureRunning(context.Background(), "MGIT-11.10.12")
+		require.NoError(t, err)
+
+		suspended, err := svc.SuspendIdle(context.Background(), 0)
+		require.NoError(t, err)
+		require.Equal(t, []string{"MGIT-11.10.12"}, suspended)
+		assert.Equal(t, []string{reg.ID}, pp.stopped, "suspend releases the published ports")
+	})
+}
+
 // TestProvision_DuplicateTask_Rejected verifies one-task/one-worktree
 // exclusivity. Refs: FR-17.1
 func TestProvision_DuplicateTask_Rejected(t *testing.T) {

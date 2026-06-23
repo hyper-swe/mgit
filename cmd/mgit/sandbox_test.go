@@ -143,7 +143,7 @@ func okConnect(c sandboxClient) connectFunc {
 func TestSandboxCmd_Help(t *testing.T) {
 	out, err := runSandbox(okConnect(&fakeSandboxClient{}), "--help")
 	require.NoError(t, err)
-	for _, sub := range []string{"launch", "exec", "land", "list", "remove", "status"} {
+	for _, sub := range []string{"launch", "exec", "land", "list", "remove", "status", "published"} {
 		assert.Contains(t, out, sub, "help lists the %s subcommand", sub)
 	}
 }
@@ -261,6 +261,69 @@ func TestSandboxCmd_FlagWiring(t *testing.T) {
 	t.Run("exec_missing_task", func(t *testing.T) {
 		_, err := runSandbox(okConnect(&fakeSandboxClient{}), "exec", "--", "ls")
 		assert.Error(t, err, "exec without --task is rejected")
+	})
+	t.Run("launch_publish_ports", func(t *testing.T) {
+		fc := &fakeSandboxClient{}
+		_, err := runSandbox(okConnect(fc), "launch",
+			"--task", "MGIT-2", "--worktree", "/w", "--image", "img@sha256:"+strings.Repeat("a", 64),
+			"--publish", "8080:3000", "--publish", "9090")
+		require.NoError(t, err)
+		require.NotNil(t, fc.launched)
+		assert.Equal(t, []model.PortPublish{
+			{HostPort: 8080, GuestPort: 3000},
+			{HostPort: 9090, GuestPort: 9090},
+		}, fc.launched.PublishPorts, "HOST:GUEST and bare PORT both parse")
+	})
+	t.Run("launch_publish_privileged_rejected", func(t *testing.T) {
+		fc := &fakeSandboxClient{}
+		_, err := runSandbox(okConnect(fc), "launch",
+			"--task", "MGIT-2", "--worktree", "/w", "--image", "img@sha256:"+strings.Repeat("a", 64),
+			"--publish", "80:3000")
+		require.Error(t, err, "a privileged host port is rejected before the RPC")
+		assert.Nil(t, fc.launched, "no launch is sent when --publish is invalid")
+	})
+	t.Run("launch_publish_malformed_rejected", func(t *testing.T) {
+		fc := &fakeSandboxClient{}
+		_, err := runSandbox(okConnect(fc), "launch",
+			"--task", "MGIT-2", "--worktree", "/w", "--image", "img@sha256:"+strings.Repeat("a", 64),
+			"--publish", "notaport")
+		require.Error(t, err)
+		assert.Nil(t, fc.launched)
+	})
+}
+
+// TestSandboxPublished_ListsPorts verifies the published command reports a
+// task sandbox's one-way port mappings (SEC-09). Refs: SEC-09
+func TestSandboxPublished_ListsPorts(t *testing.T) {
+	t.Run("human", func(t *testing.T) {
+		fc := &fakeSandboxClient{statusInfo: &model.SandboxInfo{
+			ID: "01JSB", TaskID: "MGIT-1", State: model.StateRunning,
+			PublishPorts: []model.PortPublish{{HostPort: 8080, GuestPort: 3000}},
+		}}
+		out, err := runSandbox(okConnect(fc), "published", "MGIT-1")
+		require.NoError(t, err)
+		assert.Equal(t, "MGIT-1", fc.statusInfo.TaskID)
+		assert.Contains(t, out, "127.0.0.1:8080 -> guest:3000")
+	})
+	t.Run("none", func(t *testing.T) {
+		out, err := runSandbox(okConnect(&fakeSandboxClient{}), "published", "MGIT-9")
+		require.NoError(t, err)
+		assert.Contains(t, out, "no published ports")
+	})
+	t.Run("json", func(t *testing.T) {
+		fc := &fakeSandboxClient{statusInfo: &model.SandboxInfo{
+			ID: "01JSB", TaskID: "MGIT-1", State: model.StateRunning,
+			PublishPorts: []model.PortPublish{{HostPort: 8080, GuestPort: 3000}},
+		}}
+		out, err := runSandbox(okConnect(fc), "published", "MGIT-1", "--json")
+		require.NoError(t, err)
+		var got []model.PortPublish
+		require.NoError(t, json.Unmarshal([]byte(out), &got))
+		assert.Equal(t, []model.PortPublish{{HostPort: 8080, GuestPort: 3000}}, got)
+	})
+	t.Run("op_error_surfaces", func(t *testing.T) {
+		_, err := runSandbox(okConnect(&fakeSandboxClient{opErr: model.ErrSandboxNotFound}), "published", "MGIT-x")
+		assert.Error(t, err)
 	})
 }
 

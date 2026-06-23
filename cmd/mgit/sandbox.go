@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -65,6 +67,7 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 		sandboxLandCmd(connect),
 		sandboxListCmd(connect),
 		sandboxStatusCmd(connect),
+		sandboxPublishedCmd(connect), // list a task's one-way published ports (SEC-09)
 		sandboxRemoveCmd(connect),
 		sandboxGrantsCmd(connect),     // list pending capability requests (deny->prompt, MGIT-11.9.4)
 		sandboxGrantCmd(connect),      // approve one pending capability request
@@ -123,7 +126,7 @@ func writeLandResult(w io.Writer, res *controlproto.LandResult, asJSON bool, tas
 // sandboxLaunchCmd registers (lazily provisions) a sandbox for a task.
 func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 	var task, worktree, image, network string
-	var allow []string
+	var allow, publish []string
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "launch --task <id> --worktree <path> --image <ref>",
@@ -133,13 +136,20 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 			if task == "" || worktree == "" || image == "" {
 				return fmt.Errorf("--task, --worktree and --image are required")
 			}
+			// One-way published ports (SEC-09): host 127.0.0.1:<host> reaches the
+			// guest's <guest>. Parsed and validated host-side before the RPC.
+			ports, err := parsePublishPorts(publish)
+			if err != nil {
+				return err
+			}
 			cl, err := connect(cmd.Context())
 			if err != nil {
 				return err
 			}
 			info, err := cl.Launch(cmd.Context(), model.SandboxLaunchOptions{
 				TaskID: task, WorktreePath: worktree, ImageRef: image,
-				Network: model.NetworkPolicy{Mode: network, Allowlist: allow},
+				Network:      model.NetworkPolicy{Mode: network, Allowlist: allow},
+				PublishPorts: ports,
 			})
 			if err != nil {
 				return err
@@ -156,9 +166,51 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 	cmd.Flags().StringVar(&image, "image", "", "digest-pinned image reference <name>@sha256:<hex> (required)")
 	cmd.Flags().StringVar(&network, "network", model.NetworkModeNone, "network mode: none | allowlist | open")
 	cmd.Flags().StringArrayVar(&allow, "allow", nil, "allowlist entry (repeatable; allowlist mode only)")
+	cmd.Flags().StringArrayVar(&publish, "publish", nil,
+		"one-way published port HOST:GUEST or PORT (repeatable; host binds 127.0.0.1 only, SEC-09)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
 	return cmd
 }
+
+// parsePublishPorts parses repeatable --publish flags into validated one-way
+// port mappings (SEC-09). Each spec is "HOST:GUEST" (distinct host/guest
+// ports) or a bare "PORT" (host and guest the same). All input is hostile:
+// each mapping is validated at the boundary (loopback-only host bind, no
+// privileged or duplicate host ports) before it ever reaches the daemon.
+// Refs: SEC-09, FR-17.8
+func parsePublishPorts(specs []string) ([]model.PortPublish, error) {
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	ports := make([]model.PortPublish, 0, len(specs))
+	for _, spec := range specs {
+		host, guest, found := strings.Cut(spec, ":")
+		if !found {
+			guest = host // bare PORT: host and guest the same
+		}
+		hp, herr := strconv.Atoi(strings.TrimSpace(host))
+		gp, gerr := strconv.Atoi(strings.TrimSpace(guest))
+		if herr != nil || gerr != nil {
+			return nil, fmt.Errorf("invalid --publish %q: want HOST:GUEST or PORT (integers)", spec)
+		}
+		ports = append(ports, model.PortPublish{HostPort: hp, GuestPort: gp})
+	}
+	// Validate the whole set at the boundary (privileged/duplicate/range)
+	// before the RPC, so a bad mapping is rejected with a clear message.
+	if err := (model.SandboxLaunchOptions{
+		TaskID: "MGIT-0.0", WorktreePath: "x", ImageRef: validationStubImageRef,
+		Network: model.NetworkPolicy{Mode: model.NetworkModeNone}, PublishPorts: ports,
+	}).Validate(); err != nil {
+		return nil, fmt.Errorf("invalid published ports: %w", err)
+	}
+	return ports, nil
+}
+
+// validationStubImageRef is a syntactically valid digest-pinned image
+// reference used only to exercise SandboxLaunchOptions.Validate for the
+// publish-port subset in parsePublishPorts (the real image is validated by
+// the daemon on launch).
+const validationStubImageRef = "x@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 // sandboxExecCmd runs one command inside a task's sandbox, streaming
 // output and propagating the guest exit code.
@@ -290,6 +342,52 @@ func sandboxStatusCmd(connect connectFunc) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
 	return cmd
+}
+
+// sandboxPublishedCmd lists the one-way published ports of a task's sandbox
+// (SEC-09): each host 127.0.0.1:<host> reaches the guest's <guest>. It is the
+// read side of the publish escape hatch — ports are declared at launch
+// (--publish) and surface here. Refs: SEC-09, FR-17.8
+func sandboxPublishedCmd(connect connectFunc) *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "published <task-id>",
+		Short: "List a task sandbox's one-way published ports (host 127.0.0.1 -> guest)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cl, err := connect(cmd.Context())
+			if err != nil {
+				return err
+			}
+			info, err := cl.Status(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return writePublishedPorts(cmd.OutOrStdout(), info, asJSON)
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
+	return cmd
+}
+
+// writePublishedPorts renders a sandbox's published ports as JSON or human
+// lines (host 127.0.0.1:<host> -> guest:<guest>). Refs: SEC-09
+func writePublishedPorts(w io.Writer, info *model.SandboxInfo, asJSON bool) error {
+	ports := []model.PortPublish{}
+	if info != nil {
+		ports = info.PublishPorts
+	}
+	if asJSON {
+		return json.NewEncoder(w).Encode(ports)
+	}
+	if len(ports) == 0 {
+		_, _ = fmt.Fprintln(w, "no published ports")
+		return nil
+	}
+	for _, p := range ports {
+		_, _ = fmt.Fprintf(w, "127.0.0.1:%d -> guest:%d\n", p.HostPort, p.GuestPort)
+	}
+	return nil
 }
 
 // sandboxRemoveCmd tears down a task's sandbox.
