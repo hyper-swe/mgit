@@ -64,11 +64,16 @@ type SandboxService struct {
 	byTask map[string]*sandboxReg
 }
 
-// sandboxReg is one registered sandbox (booted or not).
+// sandboxReg is one registered sandbox (booted or not). lastActivity and
+// expiresAt are host-clock timestamps driving the lifecycle sweeps
+// (idle-suspend, TTL reap); they are owned by the service (not the backend)
+// so the injected clock makes them deterministic in tests. Refs: NFR-17.3, FR-17.9
 type sandboxReg struct {
-	info   model.SandboxInfo
-	opts   model.SandboxLaunchOptions
-	booted bool
+	info         model.SandboxInfo
+	opts         model.SandboxLaunchOptions
+	booted       bool
+	lastActivity time.Time // last boot/resume/exec; idle-suspend deadline runs from here
+	expiresAt    time.Time // TTL deadline (registration time + TTL); zero = no TTL
 }
 
 // NewSandboxService wires the service. All dependencies are required
@@ -139,13 +144,17 @@ func (s *SandboxService) Register(ctx context.Context, opts model.SandboxLaunchO
 		return nil, fmt.Errorf("sandbox register: audit: %w", err)
 	}
 
+	now := s.clock().UTC()
 	info := model.SandboxInfo{
 		ID: id, TaskID: opts.TaskID, WorktreePath: opts.WorktreePath,
 		ImageDigest: digest, NetworkMode: opts.Network.Mode,
 		NetworkAllowlist: opts.Network.Allowlist,
-		State:            model.StateCreated, CreatedAt: s.clock().UTC(),
+		State:            model.StateCreated, CreatedAt: now,
 	}
-	s.byTask[opts.TaskID] = &sandboxReg{info: info, opts: opts}
+	// lastActivity seeds the idle-suspend deadline from registration time;
+	// expiresAt is resolved at boot (with the effective TTL) or lazily in the
+	// reap sweep for a never-booted sandbox. Refs: NFR-17.3, FR-17.9
+	s.byTask[opts.TaskID] = &sandboxReg{info: info, opts: opts, lastActivity: now}
 	return &info, nil
 }
 
@@ -207,6 +216,16 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 	}
 	reg.info = *launched
 	reg.booted = true
+	// Record activity and the TTL deadline from the service clock (not the
+	// backend's), so idle-suspend and TTL reap are deterministic. The
+	// effective TTL was filled into opts by applyPolicyDefaults above.
+	// Refs: NFR-17.3, FR-17.9
+	now := s.clock().UTC()
+	reg.lastActivity = now
+	if reg.opts.TTL > 0 {
+		reg.expiresAt = now.Add(reg.opts.TTL)
+		reg.info.ExpiresAt = reg.expiresAt
+	}
 	info := reg.info
 	return &info, nil
 }
@@ -234,6 +253,14 @@ func (s *SandboxService) Exec(ctx context.Context, taskID string, req model.Exec
 	if err != nil {
 		return nil, fmt.Errorf("sandbox exec: %w", err)
 	}
+	// A completed exec is activity: reset the idle-suspend deadline so an
+	// actively-used sandbox is never suspended out from under its agent.
+	// Refs: NFR-17.3
+	s.mu.Lock()
+	if reg, ok := s.byTask[taskID]; ok {
+		reg.lastActivity = s.clock().UTC()
+	}
+	s.mu.Unlock()
 	return res, nil
 }
 
@@ -277,23 +304,8 @@ func (s *SandboxService) Remove(ctx context.Context, taskID string, force bool) 
 	if !ok {
 		return fmt.Errorf("%w: task %q", model.ErrSandboxNotFound, taskID)
 	}
-	if reg.booted {
-		// Stop host egress first so its proxy/DNS listeners are released
-		// before the VM and its tap go away (best-effort; teardown proceeds).
-		if s.egress != nil {
-			s.egress.StopEgress(reg.info.ID)
-		}
-		if err := s.manager.Stop(ctx, reg.info.ID, force); err != nil {
-			return fmt.Errorf("sandbox remove: stop: %w", err)
-		}
-		if err := s.manager.Remove(ctx, reg.info.ID, force); err != nil {
-			return fmt.Errorf("sandbox remove: %w", err)
-		}
-	}
-	if err := s.events.AppendSandboxEvent(ctx, &model.SandboxEvent{
-		SandboxID: reg.info.ID, TaskID: taskID, EventType: model.EventDestroyed,
-	}); err != nil {
-		return fmt.Errorf("sandbox remove: audit: %w", err)
+	if err := s.teardownLocked(ctx, reg, model.EventDestroyed, force); err != nil {
+		return err
 	}
 	delete(s.byTask, taskID)
 	return nil
