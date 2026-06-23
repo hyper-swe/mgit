@@ -32,12 +32,36 @@ const (
 	EventKilled = "killed"
 )
 
-// isValidEventType closes the vocabulary so audit writers cannot fork
-// it with typos. Every state-bearing event (eventStates key) is valid,
-// plus the one audit-only event, policy_granted.
+// nonStateEventTypes are the valid audit-only events: they are recorded in
+// the append-only log but carry no lifecycle state change, so deriving the
+// current state must skip past them to the latest state-bearing event.
+// Single source of truth for both vocabulary validation and DeriveState.
+// Refs: FR-17.18, F-01
+var nonStateEventTypes = []string{EventPolicyGranted, EventCredentialsInjected}
+
+// NonStateEventTypes returns the audit-only event types (no state change),
+// so the store's latest-state query can exclude all of them in one place —
+// adding a new audit-only event here automatically excludes it from state
+// derivation. Refs: FR-17.18
+func NonStateEventTypes() []string {
+	out := make([]string, len(nonStateEventTypes))
+	copy(out, nonStateEventTypes)
+	return out
+}
+
+// isValidEventType closes the vocabulary so audit writers cannot fork it
+// with typos. Every state-bearing event (eventStates key) is valid, plus
+// the audit-only events (nonStateEventTypes).
 func isValidEventType(eventType string) bool {
-	_, stateBearing := eventStates[eventType]
-	return stateBearing || eventType == EventPolicyGranted || eventType == EventCredentialsInjected
+	if _, stateBearing := eventStates[eventType]; stateBearing {
+		return true
+	}
+	for _, t := range nonStateEventTypes {
+		if eventType == t {
+			return true
+		}
+	}
+	return false
 }
 
 // eventStates maps each state-bearing event type to the sandbox state

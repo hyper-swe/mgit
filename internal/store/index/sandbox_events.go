@@ -97,16 +97,29 @@ func (s *Store) ListSandboxEvents(ctx context.Context, sandboxID string) ([]mode
 // transitions. Returns ErrSandboxNotFound when no state-bearing event
 // exists for the id. Refs: FR-17.18, MGIT-11.3.2
 func (s *Store) DeriveState(ctx context.Context, sandboxID string) (string, error) {
-	// Latest state-bearing event for the sandbox (O(log n) via the
-	// sandbox_id index; ULID ids sort in append order).
-	const querySQL = `SELECT event_type FROM sandbox_events
-		WHERE sandbox_id = ? AND event_type <> ?
+	// Latest STATE-BEARING event for the sandbox: audit-only events
+	// (policy_granted, credentials_injected) carry no state change and must
+	// be skipped, else a healthy sandbox whose latest event is audit-only is
+	// mis-read as corrupt. The excluded set is single-sourced from the model
+	// vocabulary, so a new audit-only event is excluded automatically.
+	// (O(log n) via the sandbox_id index; ULID ids sort in append order.)
+	nonState := model.NonStateEventTypes()
+	// Build a "?, ?, ..." placeholder list (placeholders only — no data — so
+	// the query stays fully parameterized; SQL Rule 1).
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(nonState)), ",")
+	querySQL := `SELECT event_type FROM sandbox_events
+		WHERE sandbox_id = ? AND event_type NOT IN (` + placeholders + `)
 		ORDER BY id DESC LIMIT 1`
+
+	args := make([]any, 0, 1+len(nonState))
+	args = append(args, sandboxID)
+	for _, t := range nonState {
+		args = append(args, t)
+	}
 
 	var eventType string
 	err := s.ReadTx(ctx, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, querySQL,
-			sandboxID, model.EventPolicyGranted).Scan(&eventType)
+		return tx.QueryRowContext(ctx, querySQL, args...).Scan(&eventType)
 	})
 	switch {
 	case errors.Is(err, sql.ErrNoRows):

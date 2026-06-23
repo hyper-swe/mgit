@@ -49,4 +49,7 @@ rm -f "$OUT"
 truncate -s "${SIZE_MB}m" "$OUT"
 mke2fs -F -q -t ext4 -d "$root" "$OUT"
 
-echo "done. cmdline: console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro rootfstype=ext4 init=/sbin/mgit-guest"
+# ipv6.disable=1 is REQUIRED for SEC-04: the allowlist tap firewall is
+# IPv4-only, so the guest must have no IPv6 stack (no un-firewalled v6 egress
+# path). Register the image with this in its cmdline. Refs: SEC-04, FR-17.7
+echo "done. cmdline: console=ttyS0 reboot=k panic=1 pci=off ipv6.disable=1 root=/dev/vda ro rootfstype=ext4 init=/sbin/mgit-guest"

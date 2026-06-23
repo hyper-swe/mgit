@@ -302,6 +302,27 @@ func TestDeriveState_Unknown_NotFound(t *testing.T) {
 	})
 }
 
+// TestDeriveState_AuditOnlyEvents_Skipped verifies non-state-bearing audit
+// events (policy_granted, credentials_injected) are skipped when deriving
+// state: a running T2 sandbox whose latest event is a credential injection
+// must report Running, not be mis-read as corrupt. Refs: F-01, MGIT-11.12.7 (F-C)
+func TestDeriveState_AuditOnlyEvents_Skipped(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	for i, latest := range []string{model.EventPolicyGranted, model.EventCredentialsInjected} {
+		t.Run(latest, func(t *testing.T) {
+			sandboxID := "01JXDERIVEAUDIT000000000" + string(rune('A'+i))
+			appendEvents(t, store, sandboxID,
+				model.EventCreated, model.EventResumed, model.EventPolicyGranted, latest)
+			state, err := store.DeriveState(ctx, sandboxID)
+			require.NoError(t, err)
+			assert.Equal(t, model.StateRunning, state,
+				"an audit-only latest event must not mask the derived state")
+		})
+	}
+}
+
 // TestSandboxEvents_ClosedStore_Errors covers the storage error paths.
 // Refs: FR-17.18
 func TestSandboxEvents_ClosedStore_Errors(t *testing.T) {

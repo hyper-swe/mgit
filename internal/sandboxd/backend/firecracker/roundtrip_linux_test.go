@@ -27,7 +27,12 @@ import (
 // e2eGuestCmdline boots the mgit-guest ext4 rootfs read-only with
 // mgit-guest as PID 1 (the worktree-mount descriptor is appended by the
 // backend). Matches scripts/build-guest-image.sh.
-const e2eGuestCmdline = "console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on root=/dev/vda ro rootfstype=ext4 init=/sbin/mgit-guest"
+// ipv6.disable=1 denies the guest an IPv6 stack entirely (SEC-04 flow-layer
+// default-deny for v6): the allowlist tap firewall is IPv4-only, so without
+// this a guest auto-gets a link-local v6 with no ip6tables deny. Set in the
+// host-controlled (signed-image) cmdline, honored at boot before hostile
+// userspace runs. Refs: SEC-04, MGIT-11.12.7 (F-B)
+const e2eGuestCmdline = "console=ttyS0 reboot=k panic=1 pci=off ipv6.disable=1 random.trust_cpu=on root=/dev/vda ro rootfstype=ext4 init=/sbin/mgit-guest"
 
 // noopAudit satisfies images.TrustRootAuditor for the test trust root.
 type noopAudit struct{}

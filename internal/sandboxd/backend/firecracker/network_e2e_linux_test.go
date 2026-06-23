@@ -254,6 +254,13 @@ func TestE2E_Network_Allowlist_ProxyAndDNSEnforced(t *testing.T) {
 	gw, _, _ := subnetFor(info.ID)
 	up := netUpPrefix(info.ID)
 
+	// SEC-04 (F-B): the guest kernel boots with ipv6.disable=1, so there is no
+	// IPv6 stack and thus no un-firewalled v6 egress path (the tap firewall is
+	// IPv4-only). The guest must have no IPv6 address or route on its NIC.
+	v6 := guestProbe(t, mgr, info.ID, up+"ip -6 addr show dev eth0 2>&1; ip -6 route 2>&1")
+	assert.NotContains(t, string(v6.Stdout)+string(v6.Stderr), "inet6",
+		"IPv6 is disabled in the guest (ipv6.disable=1) — no v6 egress path")
+
 	// From the GUEST: DNS resolution of an allowlisted name succeeds through the
 	// host resolver on the gateway; a non-allowlisted name is REFUSED (the
 	// resolver answers only allowlisted names). busybox nslookup exits 0 even on
