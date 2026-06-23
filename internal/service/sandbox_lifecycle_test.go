@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -363,6 +364,100 @@ func TestLifecycle_SuspendIdle_StopsEgress(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"MGIT-1.1"}, suspended)
 	assert.Equal(t, []string{reg.ID}, eg.stopped, "egress is released when the sandbox is suspended")
+}
+
+// TestLifecycle_SuspendResume_GrantStillHonored proves F-D: a capability
+// grant approved while a sandbox runs survives suspend/resume. Suspend
+// releases the host egress proxy (StopEgress) but NOT the grant (grants are
+// sandbox-lifetime scoped, which SPANS suspend); resume rebuilds a fresh,
+// EMPTY egress proxy, so the held grant must be REPLAYED into it. Without the
+// replay the destination is permanently denied: the proxy no longer admits it,
+// yet RecordDenial still sees it in the live set and suppresses re-prompting.
+// Refs: FR-17.12, SEC-05, NFR-17.3
+func TestLifecycle_SuspendResume_GrantStillHonored(t *testing.T) {
+	clk := &mutableClock{t: time.Unix(1_700_000_000, 0)}
+	mgr := &fakeSandboxManager{}
+	ev := &fakeEventAppender{}
+	eg := &fakeEgress{}
+	granter := newRecordingGranter()
+	svc := newLifecycleSvc(t, mgr, ev, clk)
+	svc.SetEgressController(eg)
+
+	// The CapabilityService is both the grant revoker and the grant replayer:
+	// it owns the live grants and the seam to the egress proxy.
+	capSvc, err := NewCapabilityService(ev, granter, clk.now)
+	require.NoError(t, err)
+	svc.SetCapabilityRevoker(capSvc)
+	svc.SetGrantReplayer(capSvc)
+
+	opts := regOpts("MGIT-11.9.4", "/work/a")
+	opts.Network = model.NetworkPolicy{Mode: model.NetworkModeAllowlist, Allowlist: []string{"registry.npmjs.org"}}
+	reg, err := svc.Register(context.Background(), opts)
+	require.NoError(t, err)
+	_, err = svc.EnsureRunning(context.Background(), "MGIT-11.9.4")
+	require.NoError(t, err)
+
+	// An operator grants egress to a host-observed destination while running.
+	denial := model.ObservedDenial{
+		SandboxID: reg.ID, TaskID: "MGIT-11.9.4",
+		DestIP: netip.MustParseAddr("203.0.113.7"), DestPort: 443,
+		Rule: "raw-ip not allowlisted",
+	}
+	capSvc.RecordDenial(denial)
+	_, err = capSvc.Approve(context.Background(), reg.ID, "203.0.113.7:443")
+	require.NoError(t, err)
+	require.Equal(t, []string{"203.0.113.7:443"}, granter.added[reg.ID], "grant widens the live proxy")
+
+	// Suspend: the proxy is torn down but the grant is NOT revoked.
+	clk.advance(time.Hour)
+	suspended, err := svc.SuspendIdle(context.Background(), time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, []string{"MGIT-11.9.4"}, suspended)
+	assert.Empty(t, granter.revoked, "suspend must not revoke a sandbox-lifetime grant")
+	require.NotEmpty(t, capSvc.LiveGrants(reg.ID), "the grant outlives suspend")
+
+	// Resume rebuilds a fresh egress proxy. The held grant MUST be replayed
+	// into it, or the destination is silently denied forever.
+	_, err = svc.EnsureRunning(context.Background(), "MGIT-11.9.4")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"203.0.113.7:443", "203.0.113.7:443"}, granter.added[reg.ID],
+		"the grant is replayed into the rebuilt proxy on resume")
+
+	// And RecordDenial still correctly suppresses re-prompting (it is live),
+	// which is precisely why the replay is mandatory.
+	capSvc.RecordDenial(denial)
+	assert.Empty(t, capSvc.PendingRequests(reg.ID),
+		"a still-live grant is not re-prompted; the replay keeps the proxy in agreement")
+}
+
+// TestLifecycle_Resume_NoGrants_NoReplayCalls verifies the replay seam is a
+// no-op on a clean resume: a sandbox with no live grants triggers no
+// AllowEgress calls when it resumes. Refs: FR-17.12, SEC-05
+func TestLifecycle_Resume_NoGrants_NoReplayCalls(t *testing.T) {
+	clk := &mutableClock{t: time.Unix(1_700_000_000, 0)}
+	mgr := &fakeSandboxManager{}
+	ev := &fakeEventAppender{}
+	granter := newRecordingGranter()
+	svc := newLifecycleSvc(t, mgr, ev, clk)
+	svc.SetEgressController(&fakeEgress{})
+	capSvc, err := NewCapabilityService(ev, granter, clk.now)
+	require.NoError(t, err)
+	svc.SetCapabilityRevoker(capSvc)
+	svc.SetGrantReplayer(capSvc)
+
+	opts := regOpts("MGIT-1", "/work/a")
+	opts.Network = model.NetworkPolicy{Mode: model.NetworkModeAllowlist, Allowlist: []string{"registry.npmjs.org"}}
+	reg, err := svc.Register(context.Background(), opts)
+	require.NoError(t, err)
+	_, err = svc.EnsureRunning(context.Background(), "MGIT-1")
+	require.NoError(t, err)
+
+	clk.advance(time.Hour)
+	_, err = svc.SuspendIdle(context.Background(), time.Minute)
+	require.NoError(t, err)
+	_, err = svc.EnsureRunning(context.Background(), "MGIT-1")
+	require.NoError(t, err)
+	assert.Empty(t, granter.added[reg.ID], "no live grants means no replay")
 }
 
 // TestLifecycle_ReapExpired_PolicyLoadFailure verifies a policy-load failure

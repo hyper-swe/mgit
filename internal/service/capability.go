@@ -227,6 +227,28 @@ func (s *CapabilityService) Revoke(sandboxID string) {
 	s.granter.RevokeAll(sandboxID)
 }
 
+// ReplayGrants re-applies every live grant for a sandbox to the egress engine.
+// It is the suspend->resume bridge: suspend tears the egress proxy down but
+// keeps the grants live (they are sandbox-lifetime scoped, which SPANS
+// suspend); resume rebuilds a fresh, EMPTY allowlist, so the held grants must
+// be replayed into it or the granted destination is silently denied forever
+// while RecordDenial still treats it as live and suppresses re-prompting. No
+// audit record is written — the policy_granted events already stand (these
+// grants were audited when first approved); this only re-syncs the live
+// enforcement view with the durable grant set. A widen failure surfaces (fail
+// closed) so the caller can roll the resume back. Refs: FR-17.12, SEC-05
+func (s *CapabilityService) ReplayGrants(ctx context.Context, sandboxID string) error {
+	for _, g := range s.LiveGrants(sandboxID) {
+		if g.Capability != model.CapabilityEgress {
+			continue
+		}
+		if err := s.granter.AllowEgress(ctx, sandboxID, g.AllowlistEntry()); err != nil {
+			return fmt.Errorf("capability replay: widen egress %q: %w", g.AllowlistEntry(), err)
+		}
+	}
+	return nil
+}
+
 // grantEvent renders a capability grant as an append-only policy_granted
 // sandbox event. The detail JSON carries the host-observed destination and the
 // sandbox-lifetime scope so the audit trail shows the real destination, never

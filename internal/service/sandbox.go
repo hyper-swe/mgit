@@ -45,6 +45,16 @@ type CapabilityRevoker interface {
 	Revoke(sandboxID string)
 }
 
+// GrantReplayer re-applies a sandbox's live capability grants to the egress
+// engine on resume (satisfied by *CapabilityService). Suspend keeps grants
+// live but tears the egress proxy down; resume rebuilds an empty allowlist, so
+// the held grants must be replayed or a granted destination is silently denied
+// for the rest of the sandbox's life. OPTIONAL collaborator wired at the
+// daemon. Refs: FR-17.12, SEC-05
+type GrantReplayer interface {
+	ReplayGrants(ctx context.Context, sandboxID string) error
+}
+
 // SandboxService is the lifecycle orchestrator: handlers go through it,
 // never the manager or stores directly (architecture rule). It owns the
 // sandbox ID, provisions lazily (register without booting; boot on first
@@ -59,6 +69,7 @@ type SandboxService struct {
 	newID   func() (string, error)
 	egress  EgressController  // optional; nil disables host egress orchestration
 	capRev  CapabilityRevoker // optional; nil disables capability-grant teardown
+	capRep  GrantReplayer     // optional; nil disables grant replay on resume
 
 	// byTask holds LIVE sandbox registrations, keyed by task ID. This is
 	// in-memory by design, not a duplicate of the sandbox_events audit
@@ -121,6 +132,14 @@ func (s *SandboxService) SetEgressController(c EgressController) {
 // the constructor for the same reasons as SetEgressController. Refs: FR-17.12, SEC-05
 func (s *SandboxService) SetCapabilityRevoker(c CapabilityRevoker) {
 	s.capRev = c
+}
+
+// SetGrantReplayer wires the optional capability-grant replayer (the
+// CapabilityService). Set once at daemon wiring time, before the service
+// handles any request; nil leaves grant replay on resume disabled. Kept off
+// the constructor for the same reasons as SetEgressController. Refs: FR-17.12, SEC-05
+func (s *SandboxService) SetGrantReplayer(r GrantReplayer) {
+	s.capRep = r
 }
 
 // Register binds a sandbox to a task+worktree and records it WITHOUT
@@ -213,6 +232,24 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 				s.manager.Stop(ctx, launched.ID, true),
 				s.manager.Remove(ctx, launched.ID, true),
 			)
+		}
+		// Resume rebuilds a fresh, EMPTY egress proxy. Replay any live
+		// capability grants into it so a destination granted before suspend
+		// stays admitted — otherwise it is silently denied for the rest of the
+		// sandbox's life while RecordDenial still treats it as live and
+		// suppresses re-prompting (F-D). On first boot the grant set is empty,
+		// so this is a no-op. A replay failure fails closed (roll the VM and its
+		// egress back); the registration stays un-booted and retryable.
+		// Refs: FR-17.12, SEC-05
+		if s.capRep != nil {
+			if repErr := s.capRep.ReplayGrants(ctx, launched.ID); repErr != nil {
+				s.egress.StopEgress(launched.ID)
+				return nil, errors.Join(
+					fmt.Errorf("sandbox ensure-running: grant replay: %w", repErr),
+					s.manager.Stop(ctx, launched.ID, true),
+					s.manager.Remove(ctx, launched.ID, true),
+				)
+			}
 		}
 	}
 	if auditErr := s.events.AppendSandboxEvent(ctx, &model.SandboxEvent{

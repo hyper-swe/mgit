@@ -60,6 +60,11 @@ func wireEgress(svc *service.SandboxService, events *index.Store, clock func() t
 		return nil
 	}
 	svc.SetCapabilityRevoker(capSvc)
+	// Replay live grants on resume: suspend tears the proxy down but keeps the
+	// grants live, so resume must re-widen the rebuilt allowlist or the granted
+	// destination is silently denied for the sandbox's remaining life (F-D).
+	// Refs: FR-17.12, SEC-05
+	svc.SetGrantReplayer(capSvc)
 	// Close the deny->prompt->Grant loop: a host-observed egress denial is
 	// recorded as a pending capability request the operator can approve.
 	runner.SetDenialObserver(capSvc.RecordDenial)
