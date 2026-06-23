@@ -11,6 +11,7 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/cache"
+	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/go-git/go-git/v5/storage/memory"
@@ -26,9 +27,20 @@ import (
 // loudly, never silently, when the object store cannot write. Refs: FR-12, NFR-5
 type faultStorer struct {
 	storage.Storer
-	failSetObject bool
-	failCAS       bool
-	failGetObject bool
+	failSetObject    bool
+	failCAS          bool
+	failGetObject    bool
+	failGetReference bool
+	failIterRefs     bool
+	failIterObjects  bool
+	// skipObjectReads fails EncodedObject only after this many successful reads,
+	// so a deeper "read the Nth commit/tree" error wrap can be reached without
+	// faulting the earlier setup reads.
+	skipObjectReads int
+	objectReads     int
+	// failHash, when set, fails EncodedObject for exactly that object — used to
+	// fault a specific commit (e.g. a merge's source) while others read fine.
+	failHash plumbing.Hash
 }
 
 func (f *faultStorer) SetEncodedObject(o plumbing.EncodedObject) (plumbing.Hash, error) {
@@ -42,7 +54,37 @@ func (f *faultStorer) EncodedObject(typ plumbing.ObjectType, h plumbing.Hash) (p
 	if f.failGetObject {
 		return nil, errors.New("injected: object read failure")
 	}
+	if f.failHash != plumbing.ZeroHash && h == f.failHash {
+		return nil, errors.New("injected: object read failure (specific hash)")
+	}
+	if f.skipObjectReads > 0 {
+		f.objectReads++
+		if f.objectReads > f.skipObjectReads {
+			return nil, errors.New("injected: object read failure (after N)")
+		}
+	}
 	return f.Storer.EncodedObject(typ, h)
+}
+
+func (f *faultStorer) Reference(n plumbing.ReferenceName) (*plumbing.Reference, error) {
+	if f.failGetReference {
+		return nil, errors.New("injected: reference read failure")
+	}
+	return f.Storer.Reference(n)
+}
+
+func (f *faultStorer) IterReferences() (storer.ReferenceIter, error) {
+	if f.failIterRefs {
+		return nil, errors.New("injected: reference iteration failure")
+	}
+	return f.Storer.IterReferences()
+}
+
+func (f *faultStorer) IterEncodedObjects(typ plumbing.ObjectType) (storer.EncodedObjectIter, error) {
+	if f.failIterObjects {
+		return nil, errors.New("injected: object iteration failure")
+	}
+	return f.Storer.IterEncodedObjects(typ)
 }
 
 func (f *faultStorer) CheckAndSetReference(nw, old *plumbing.Reference) error {
