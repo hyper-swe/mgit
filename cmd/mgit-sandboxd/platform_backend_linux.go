@@ -3,13 +3,10 @@
 package main
 
 import (
-	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/firecracker"
-	"github.com/hyper-swe/mgit/internal/sandboxd/provision"
 )
 
 // extIfaceEnv overrides open-mode NAT egress to a specific host interface.
@@ -44,36 +41,4 @@ func newHypervisorBackend(deps hypervisorDeps) (model.SandboxManager, error) {
 		StoreProvisioner: prov,
 		SensitivePaths:   model.DefaultSandboxPolicy().SensitivePaths,
 	})
-}
-
-// resolveRepoRoot returns the mgit repo root for SEC-03 provisioning: the
-// explicit --repo-root, else the conventional parent of the host config root
-// (<repo>/.mgit/sandbox -> <repo>). Mirrors buildLandService's fallback.
-func resolveRepoRoot(deps hypervisorDeps) string {
-	if deps.repoRoot != "" {
-		return deps.repoRoot
-	}
-	if deps.hostRoot == "" {
-		return ""
-	}
-	return filepath.Dir(filepath.Dir(deps.hostRoot))
-}
-
-// newStoreProvisioner builds the SEC-03 private-store provisioner from the
-// resolved repo root. It is an ERROR (fail closed) when no repo root is known
-// or the provisioner cannot be built: the quarantine control cannot be realized
-// without a shared store to seed from, and the caller refuses to bring up an
-// unquarantined sandbox backend rather than silently degrading. Refs: SEC-03
-func newStoreProvisioner(deps hypervisorDeps) (provision.Provisioner, error) {
-	root := resolveRepoRoot(deps)
-	if root == "" {
-		return nil, fmt.Errorf("%w: SEC-03 quarantine requires a repo root to seed the private store "+
-			"(set --repo-root or a host config root); refusing to launch sandboxes unquarantined",
-			model.ErrSandboxBackendUnavailable)
-	}
-	p, err := provision.NewStoreProvisioner(root)
-	if err != nil {
-		return nil, fmt.Errorf("%w: SEC-03 private-store provisioner: %w", model.ErrSandboxBackendUnavailable, err)
-	}
-	return p, nil
 }

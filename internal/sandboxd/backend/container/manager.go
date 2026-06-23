@@ -8,7 +8,16 @@
 // identical path, read-only sensitive paths (FR-17.14), resource caps,
 // and honest network mapping — allowlist mode is refused until the
 // host egress proxy exists rather than silently widened (SEC-04).
-// Refs: FR-17.15, FR-17.3, FR-17.14
+//
+// SEC-03: even as the reduced-isolation fallback, the container still
+// QUARANTINES the store (MGIT-11.6.9): it never bind-mounts the live worktree
+// (which could carry its own .mgit/.git). Each launch seeds a fresh private,
+// sandbox-local .mgit store, builds the quarantine plan + binds the private
+// store (fail closed on ErrSharedStoreReachable), stages the worktree (worktree
+// files + the private .mgit, in-worktree stores excluded, escaping symlinks
+// rejected) via the shared staging package, and bind-mounts the STAGED dir at
+// the worktree's identical path. The host shared store is never reachable.
+// Refs: FR-17.15, FR-17.3, FR-17.14, SEC-03, MGIT-11.6.9
 package container
 
 import (
@@ -27,6 +36,9 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd/provision"
+	"github.com/hyper-swe/mgit/internal/sandboxd/quarantine"
+	"github.com/hyper-swe/mgit/internal/sandboxd/staging"
 )
 
 // Runner executes one container-runtime CLI invocation (rootless
@@ -39,14 +51,28 @@ type Runner interface {
 type Config struct {
 	Runner         Runner   // container runtime CLI
 	SensitivePaths []string // host-trusted paths remounted read-only (FR-17.14)
-	Logger         *slog.Logger
-	Clock          func() time.Time
+	// WorkDir is the sandbox-local state root (never a worktree) where per-
+	// sandbox host artifacts live: the SEC-03 private store and the staged
+	// worktree. Teardown clears each sandbox's subdir with one RemoveAll.
+	// Required when StoreProvisioner is set. Refs: SEC-03, FR-17.19
+	WorkDir string
+	// StoreProvisioner seeds the SEC-03 private, sandbox-local store per launch
+	// and supplies the shared store path for the non-reachability check. When
+	// set, the quarantine control is REALIZED: each launch builds the plan,
+	// binds the private store, fails closed (ErrSharedStoreReachable) on a leaky
+	// layout, and mounts a STAGED worktree instead of the live one. When nil
+	// (tests/direct path) the live worktree is mounted, the pre-SEC-03 behavior.
+	// Refs: SEC-03, MGIT-11.6.9
+	StoreProvisioner provision.Provisioner
+	Logger           *slog.Logger
+	Clock            func() time.Time
 }
 
 // containerSandbox is one supervised container.
 type containerSandbox struct {
 	info model.SandboxInfo
 	name string // runtime container name
+	dir  string // per-sandbox state dir (private store + staging); "" when unquarantined
 }
 
 // Manager implements model.SandboxManager on a rootless container
@@ -69,6 +95,15 @@ func NewManager(cfg Config) (*Manager, error) {
 		return nil, fmt.Errorf("container: logger must not be nil")
 	case cfg.Clock == nil:
 		return nil, fmt.Errorf("container: clock must not be nil")
+	case cfg.StoreProvisioner != nil && cfg.WorkDir == "":
+		// SEC-03 quarantine needs a sandbox-local state root to hold the private
+		// store + staged worktree; without it the control cannot be realized.
+		return nil, fmt.Errorf("container: work dir must not be empty when a store provisioner is set (SEC-03)")
+	}
+	if cfg.WorkDir != "" {
+		if err := os.MkdirAll(cfg.WorkDir, 0o700); err != nil {
+			return nil, fmt.Errorf("container: create work dir: %w", err)
+		}
 	}
 	return &Manager{
 		cfg:       cfg,
@@ -99,14 +134,28 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 	}
 	name := "mgit-sbx-" + id
 
-	if _, err := m.cfg.Runner.run(ctx, m.runArgs(name, network, opts)...); err != nil {
+	// SEC-03: provision the private store, prove the shared store unreachable,
+	// and stage the worktree BEFORE the container exists. A quarantine failure
+	// fails the launch closed (e.g. ErrSharedStoreReachable / ErrSymlinkEscape);
+	// no container ever runs against a leaky or unstaged worktree. stateDir is
+	// "" and mountDir is the live worktree only when no provisioner is wired
+	// (tests/direct path). Refs: SEC-03, FR-17.3
+	stateDir, mountDir, err := m.quarantine(id, opts)
+	if err != nil {
+		return nil, fmt.Errorf("container launch: %w", err)
+	}
+
+	if _, err := m.cfg.Runner.run(ctx, m.runArgs(name, network, mountDir, opts)...); err != nil {
+		if stateDir != "" {
+			_ = os.RemoveAll(stateDir)
+		}
 		return nil, fmt.Errorf("container launch: %w", err)
 	}
 
 	info := m.newSandboxInfo(id, opts)
 
 	m.mu.Lock()
-	m.sandboxes[id] = &containerSandbox{info: info, name: name}
+	m.sandboxes[id] = &containerSandbox{info: info, name: name, dir: stateDir}
 	m.mu.Unlock()
 
 	m.cfg.Logger.Info("container sandbox launched (REDUCED ISOLATION)",
@@ -115,19 +164,72 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 	return &info, nil
 }
 
-// runArgs builds the `run` argv: the worktree is the ONLY writable
-// mount, at the identical path (FR-17.3); host-trusted paths are mounted
-// read-only (FR-17.14); resource caps applied (FR-17.26).
-func (m *Manager) runArgs(name, network string, opts model.SandboxLaunchOptions) []string {
+// stateDirName / privateStoreDirName / stagingDirName name the per-sandbox host
+// artifacts under WorkDir/<id> (cleaned by Remove's one RemoveAll).
+const (
+	privateStoreDirName = "private-store"
+	stagingDirName      = "worktree-staging"
+)
+
+// quarantine realizes the SEC-03 control for one container launch when a
+// provisioner is wired: it seeds a fresh private .mgit store under a per-
+// sandbox state dir, builds the guest filesystem plan + binds the private store
+// (rejecting the launch with ErrSharedStoreReachable on a reachable shared
+// store), then STAGES the worktree (worktree files + the private .mgit, in-
+// worktree stores excluded, escaping symlinks rejected). It returns the state
+// dir (for teardown) and the directory to bind-mount at the worktree path: the
+// staged dir when quarantined, else the live worktree (no provisioner — tests/
+// direct path). On any failure it removes the partial state dir (fail closed).
+// Refs: SEC-03, FR-17.3, FR-17.5, FR-17.14
+func (m *Manager) quarantine(id string, opts model.SandboxLaunchOptions) (stateDir, mountDir string, err error) {
+	if m.cfg.StoreProvisioner == nil {
+		return "", opts.WorktreePath, nil // quarantine not wired (tests/direct path)
+	}
+	stateDir = filepath.Join(m.cfg.WorkDir, id)
+	if mkErr := os.MkdirAll(stateDir, 0o700); mkErr != nil {
+		return "", "", fmt.Errorf("create sandbox state dir: %w", mkErr)
+	}
+	store, pErr := m.cfg.StoreProvisioner.Provision(opts.TaskID, filepath.Join(stateDir, privateStoreDirName))
+	if pErr != nil {
+		_ = os.RemoveAll(stateDir)
+		return "", "", fmt.Errorf("provision private store: %w", pErr)
+	}
+	plan, bpErr := quarantine.BuildPlan(opts.WorktreePath, m.cfg.SensitivePaths)
+	if bpErr != nil {
+		_ = os.RemoveAll(stateDir)
+		return "", "", fmt.Errorf("build quarantine plan: %w", bpErr)
+	}
+	// BindPrivateStore returns ErrSharedStoreReachable for a leaky layout; the
+	// caller rejects the launch, so a reachable shared store never runs.
+	if _, bErr := plan.BindPrivateStore(store.Dir, store.SharedDir); bErr != nil {
+		_ = os.RemoveAll(stateDir)
+		return "", "", fmt.Errorf("bind private store: %w", bErr)
+	}
+	stageDir := filepath.Join(stateDir, stagingDirName)
+	if sErr := staging.Build(opts.WorktreePath, store.Dir, stageDir); sErr != nil {
+		_ = os.RemoveAll(stateDir)
+		return "", "", fmt.Errorf("stage worktree: %w", sErr)
+	}
+	return stateDir, stageDir, nil
+}
+
+// runArgs builds the `run` argv: srcDir (the SEC-03 STAGED worktree when
+// quarantined, else the live worktree) is the ONLY writable mount, at the
+// worktree's identical GUEST path (FR-17.3); host-trusted paths are mounted
+// read-only (FR-17.14); resource caps applied (FR-17.26). The guest always sees
+// the worktree at opts.WorktreePath; only the host SOURCE differs (staged vs.
+// live), so a quarantined container can never reach the live worktree's own
+// store. Refs: FR-17.3, FR-17.14, SEC-03
+func (m *Manager) runArgs(name, network, srcDir string, opts model.SandboxLaunchOptions) []string {
 	args := make([]string, 0, 16+2*len(m.cfg.SensitivePaths))
 	args = append(args,
 		"run", "--detach", "--name", name,
 		"--network", network,
 		"--memory", strconv.Itoa(effectiveMemoryMB(opts.MemoryMB))+"m",
 		"--cpus", strconv.Itoa(effectiveCPUs(opts.CPUs)),
-		"--volume", opts.WorktreePath+":"+opts.WorktreePath,
+		"--volume", srcDir+":"+opts.WorktreePath,
 	)
-	args = append(args, sensitiveMounts(opts.WorktreePath, m.cfg.SensitivePaths)...)
+	args = append(args, sensitiveMounts(srcDir, opts.WorktreePath, m.cfg.SensitivePaths)...)
 	return append(args, "--workdir", opts.WorktreePath, opts.ImageRef, "sleep", "infinity")
 }
 
@@ -231,6 +333,16 @@ func (m *Manager) Remove(ctx context.Context, id string, force bool) error {
 		return fmt.Errorf("container remove: %w", err)
 	}
 
+	// Clear the per-sandbox state dir (the SEC-03 private store + staged
+	// worktree). It is sandbox-local host state under WorkDir, never the live
+	// worktree, so teardown leaves no residue and never touches the worktree
+	// (FR-17.19). Empty for unquarantined launches (tests/direct path).
+	if sb.dir != "" {
+		if err := os.RemoveAll(sb.dir); err != nil {
+			return fmt.Errorf("container remove: clear sandbox dir: %w", err)
+		}
+	}
+
 	m.mu.Lock()
 	delete(m.sandboxes, id)
 	m.mu.Unlock()
@@ -287,17 +399,21 @@ func networkArg(mode string) (string, error) {
 	}
 }
 
-// sensitiveMounts remounts existing host-trusted paths read-only over
-// the writable worktree mount (FR-17.14). Missing paths are skipped:
-// they cannot be modified if they do not exist.
-func sensitiveMounts(worktree string, sensitive []string) []string {
+// sensitiveMounts remounts existing host-trusted paths read-only over the
+// writable worktree mount (FR-17.14). The host SOURCE is taken from srcDir (the
+// staged worktree when quarantined, else the live worktree); the read-only
+// GUEST target is at the worktree's identical path (guestWorktree), so the
+// guest sees them where it expects but cannot modify them. Missing paths are
+// skipped: they cannot be modified if they do not exist. Refs: FR-17.14, SEC-03
+func sensitiveMounts(srcDir, guestWorktree string, sensitive []string) []string {
 	var args []string
 	for _, rel := range sensitive {
-		abs := filepath.Join(worktree, rel)
-		if _, err := os.Stat(abs); err != nil {
+		src := filepath.Join(srcDir, rel)
+		if _, err := os.Stat(src); err != nil {
 			continue
 		}
-		args = append(args, "--volume", abs+":"+abs+":ro")
+		dst := filepath.Join(guestWorktree, rel)
+		args = append(args, "--volume", src+":"+dst+":ro")
 	}
 	return args
 }

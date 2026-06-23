@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/container"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
+	"github.com/hyper-swe/mgit/internal/sandboxd/provision"
 )
 
 // backendSelection is the resolved daemon configuration needed to pick
@@ -53,14 +55,59 @@ func selectManager(sel backendSelection) (model.SandboxManager, error) {
 			})
 		},
 		Container: func() (model.SandboxManager, error) {
+			// SEC-03 fail-closed: the reduced-isolation container fallback still
+			// quarantines the store, so it refuses to construct without a shared
+			// store to seed the per-task private store from — never a container
+			// bind-mounting the raw worktree with its own store exposed.
+			// Refs: SEC-03, MGIT-11.6.9
+			prov, err := newStoreProvisioner(hypervisorDeps{hostRoot: sel.hostRoot, repoRoot: sel.repoRoot})
+			if err != nil {
+				return nil, err
+			}
 			return container.NewManager(container.Config{
-				Runner:         container.PodmanRunner{},
-				SensitivePaths: model.DefaultSandboxPolicy().SensitivePaths,
-				Logger:         sel.logger,
-				Clock:          sel.clock,
+				Runner:           container.PodmanRunner{},
+				SensitivePaths:   model.DefaultSandboxPolicy().SensitivePaths,
+				StoreProvisioner: prov,
+				Logger:           sel.logger,
+				Clock:            sel.clock,
 			})
 		},
 	})
+}
+
+// resolveRepoRoot returns the mgit repo root for SEC-03 provisioning: the
+// explicit --repo-root, else the conventional parent of the host config root
+// (<repo>/.mgit/sandbox -> <repo>). Mirrors buildLandService's fallback.
+// Shared by every backend's fail-closed wiring (firecracker, vzf, container).
+func resolveRepoRoot(deps hypervisorDeps) string {
+	if deps.repoRoot != "" {
+		return deps.repoRoot
+	}
+	if deps.hostRoot == "" {
+		return ""
+	}
+	return filepath.Dir(filepath.Dir(deps.hostRoot))
+}
+
+// newStoreProvisioner builds the SEC-03 private-store provisioner from the
+// resolved repo root. It is an ERROR (fail closed) when no repo root is known
+// or the provisioner cannot be built: the quarantine control cannot be realized
+// without a shared store to seed from, and the caller refuses to bring up an
+// unquarantined sandbox backend rather than silently degrading. Shared by the
+// firecracker (linux), vzf (darwin), and container backend wiring so all three
+// fail closed identically. Refs: SEC-03, MGIT-11.6.8, MGIT-11.6.9
+func newStoreProvisioner(deps hypervisorDeps) (provision.Provisioner, error) {
+	root := resolveRepoRoot(deps)
+	if root == "" {
+		return nil, fmt.Errorf("%w: SEC-03 quarantine requires a repo root to seed the private store "+
+			"(set --repo-root or a host config root); refusing to launch sandboxes unquarantined",
+			model.ErrSandboxBackendUnavailable)
+	}
+	p, err := provision.NewStoreProvisioner(root)
+	if err != nil {
+		return nil, fmt.Errorf("%w: SEC-03 private-store provisioner: %w", model.ErrSandboxBackendUnavailable, err)
+	}
+	return p, nil
 }
 
 // hypervisorDeps are the inputs every platform microVM backend needs.
