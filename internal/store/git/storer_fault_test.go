@@ -28,6 +28,7 @@ type faultStorer struct {
 	storage.Storer
 	failSetObject bool
 	failCAS       bool
+	failGetObject bool
 }
 
 func (f *faultStorer) SetEncodedObject(o plumbing.EncodedObject) (plumbing.Hash, error) {
@@ -35,6 +36,13 @@ func (f *faultStorer) SetEncodedObject(o plumbing.EncodedObject) (plumbing.Hash,
 		return plumbing.ZeroHash, errors.New("injected: object store write failure")
 	}
 	return f.Storer.SetEncodedObject(o)
+}
+
+func (f *faultStorer) EncodedObject(typ plumbing.ObjectType, h plumbing.Hash) (plumbing.EncodedObject, error) {
+	if f.failGetObject {
+		return nil, errors.New("injected: object read failure")
+	}
+	return f.Storer.EncodedObject(typ, h)
 }
 
 func (f *faultStorer) CheckAndSetReference(nw, old *plumbing.Reference) error {
