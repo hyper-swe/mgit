@@ -53,8 +53,10 @@ func TestBuildLandService_WiresAndBootstrapsAttestKey(t *testing.T) {
 	require.NoError(t, err)
 
 	binder := sandboxd.NewPeerBinder(testLogger())
-	lander, closeLand, err := buildLandService(hostRoot, repoRoot, testLandDialer(t), stubResolver{},
-		events, policyStore, binder, clock, testLogger())
+	lander, closeLand, err := buildLandService(landWiring{
+		hostRoot: hostRoot, repoRoot: repoRoot, landDialer: testLandDialer(t), resolver: stubResolver{},
+		events: events, policy: policyStore, peerBinder: binder, clock: clock, logger: testLogger(),
+	})
 	require.NoError(t, err)
 	require.NotNil(t, lander)
 	t.Cleanup(func() { _ = closeLand() })
@@ -82,8 +84,11 @@ func TestBuildLandService_BadRepo_Error(t *testing.T) {
 
 	// Empty repo root exercises the host-root fallback (which derives a root
 	// with no .mgit repo).
-	_, _, err = buildLandService(hostRoot, "", testLandDialer(t), stubResolver{}, events, policyStore,
-		sandboxd.NewPeerBinder(testLogger()), clock, testLogger())
+	_, _, err = buildLandService(landWiring{
+		hostRoot: hostRoot, repoRoot: "", landDialer: testLandDialer(t), resolver: stubResolver{},
+		events: events, policy: policyStore, peerBinder: sandboxd.NewPeerBinder(testLogger()),
+		clock: clock, logger: testLogger(),
+	})
 	assert.Error(t, err)
 }
 
@@ -105,8 +110,11 @@ func TestBuildLandService_NilDialer_FailsClosed(t *testing.T) {
 	policyStore, err := policy.NewStore(hostRoot, clock, slogPolicyRecorder{logger: testLogger()})
 	require.NoError(t, err)
 
-	_, _, err = buildLandService(hostRoot, repoRoot, nil, stubResolver{}, events, policyStore,
-		sandboxd.NewPeerBinder(testLogger()), clock, testLogger())
+	_, _, err = buildLandService(landWiring{
+		hostRoot: hostRoot, repoRoot: repoRoot, landDialer: nil, resolver: stubResolver{},
+		events: events, policy: policyStore, peerBinder: sandboxd.NewPeerBinder(testLogger()),
+		clock: clock, logger: testLogger(),
+	})
 	require.Error(t, err, "no land transport must fail closed")
 	assert.Contains(t, err.Error(), "land transport unavailable")
 }

@@ -3,6 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/land"
@@ -70,6 +74,67 @@ type LandSummary struct {
 	Branch  string // the task branch advanced
 }
 
+// LandLimits bounds the land path's worst-case host memory. Each in-flight
+// land buffers one guest pool in RAM, bounded per-pool by MaxPoolBytes (the
+// per-pool ceiling the LandChannel enforces, land.DefaultLimits().MaxTotalBytes).
+// MaxConcurrentLands caps how many pulls may be buffered AT ONCE, so the
+// documented host budget is exactly:
+//
+//	worst-case buffered RAM = MaxConcurrentLands × MaxPoolBytes
+//
+// This aggregate bound is SEPARATE from the daemon's MaxConns (which bounds
+// connections, not land memory) and from land.DecodeObjects' per-object/count/
+// total ceilings (which bound ONE pool). A hostile guest must never be able to
+// drive an unbounded number of concurrent 4 GiB buffers. Refs: FR-17.35, MGIT-11.13.5
+type LandLimits struct {
+	// MaxConcurrentLands is the maximum number of lands buffering a pool at
+	// once. Beyond it a new land queues (bounded by its context deadline) and,
+	// if it cannot acquire a slot in time, is rejected rather than over-
+	// allocating. Must be > 0.
+	MaxConcurrentLands int
+	// MaxPoolBytes is the per-pool ceiling used to document the host budget. It
+	// mirrors the LandChannel's per-pool limit; the channel is the enforcement
+	// point, this field is for the budget calculation and audit logging.
+	MaxPoolBytes int64
+}
+
+// Default land-concurrency bounds. The concurrency cap is intentionally small:
+// lands are heavyweight (verify + import) and single-client in normal use, so a
+// handful of concurrent lands is ample headroom while keeping the worst-case
+// host budget modest (4 × 4 GiB = 16 GiB with the default per-pool ceiling).
+const (
+	defaultMaxConcurrentLands = 4
+	defaultMaxPoolBytes       = 4 << 30 // mirrors land.DefaultLimits().MaxTotalBytes
+)
+
+// DefaultLandLimits returns the safe default land-concurrency bounds.
+func DefaultLandLimits() LandLimits {
+	return LandLimits{
+		MaxConcurrentLands: defaultMaxConcurrentLands,
+		MaxPoolBytes:       defaultMaxPoolBytes,
+	}
+}
+
+// LandOption configures optional LandService behavior without breaking the
+// required-dependency constructor signature.
+type LandOption func(*LandService)
+
+// WithLandLimits sets the concurrency cap and per-pool budget. Non-positive
+// fields fall back to the safe defaults (and the applied values are logged).
+func WithLandLimits(limits LandLimits) LandOption {
+	return func(s *LandService) { s.limits = limits }
+}
+
+// WithLandLogger wires a logger for budget/rejection audit events. A nil logger
+// is ignored (the discard default stays). Refs: MGIT-11.13.5
+func WithLandLogger(logger *slog.Logger) LandOption {
+	return func(s *LandService) {
+		if logger != nil {
+			s.logger = logger
+		}
+	}
+}
+
 // LandService coordinates a land over the control plane: resolve the
 // host-bound sandbox, pull its object pool once (peer-authorized, single read
 // for SEC-06), derive the verified commit batch and host attestations from
@@ -85,6 +150,23 @@ type LandService struct {
 	attestor Attestor
 	orch     landOrchestrator
 	policy   SandboxPolicyReader
+
+	limits LandLimits
+	logger *slog.Logger
+	// sem bounds concurrent in-flight lands: a slot is taken before the pool is
+	// pulled (buffered) and released when the land completes. At capacity a land
+	// queues on its context and is rejected if it cannot acquire in time, so the
+	// worst-case buffered RAM is MaxConcurrentLands × MaxPoolBytes — never
+	// unbounded. SEPARATE from the daemon's MaxConns. Refs: MGIT-11.13.5
+	sem chan struct{}
+	// flight coalesces concurrent lands for the SAME sandbox into one in-flight
+	// pull (F7, MGIT-11.10.11): a hostile guest spamming its notify socket fans
+	// out many triggers for one sandbox; without this they race the single
+	// pools[sandboxID] buffer slot (last-writer-wins waste). Keyed by sandbox ID
+	// so it covers BOTH the notify trigger and the control-plane verb, and it
+	// composes with sem (the leader holds one sem slot; coalesced followers hold
+	// none). Refs: MGIT-11.10.11, MGIT-11.13.5
+	flight singleflight.Group
 }
 
 // NewLandService wires the land service. All dependencies are required.
@@ -92,7 +174,7 @@ type LandService struct {
 // there), so the service holds no clock of its own.
 func NewLandService(resolver SandboxResolver, puller LandPuller, ledger LandedCommitReader,
 	parents poolParentResolver, attestor Attestor, orch landOrchestrator,
-	policy SandboxPolicyReader) (*LandService, error) {
+	policy SandboxPolicyReader, opts ...LandOption) (*LandService, error) {
 	switch {
 	case resolver == nil:
 		return nil, fmt.Errorf("land service: sandbox resolver must not be nil")
@@ -109,10 +191,33 @@ func NewLandService(resolver SandboxResolver, puller LandPuller, ledger LandedCo
 	case policy == nil:
 		return nil, fmt.Errorf("land service: policy reader must not be nil")
 	}
-	return &LandService{
+	s := &LandService{
 		resolver: resolver, puller: puller, ledger: ledger, parents: parents,
 		attestor: attestor, orch: orch, policy: policy,
-	}, nil
+		limits: DefaultLandLimits(),
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	// Apply safe defaults for any unset/invalid bound, so a misconfigured cap
+	// can never disable the memory budget (a zero-length semaphore would also
+	// deadlock every land). Refs: MGIT-11.13.5
+	if s.limits.MaxConcurrentLands <= 0 {
+		s.limits.MaxConcurrentLands = defaultMaxConcurrentLands
+	}
+	if s.limits.MaxPoolBytes <= 0 {
+		s.limits.MaxPoolBytes = defaultMaxPoolBytes
+	}
+	s.sem = make(chan struct{}, s.limits.MaxConcurrentLands)
+	// Log the effective bounds and the derived host budget so the operator can
+	// audit that cap × per-pool fits the host (no silent budget). Refs: MGIT-11.13.5
+	s.logger.Info("land concurrency bounds applied",
+		"event", "land_budget",
+		"max_concurrent_lands", s.limits.MaxConcurrentLands,
+		"max_pool_bytes", s.limits.MaxPoolBytes,
+		"host_memory_budget_bytes", int64(s.limits.MaxConcurrentLands)*s.limits.MaxPoolBytes)
+	return s, nil
 }
 
 // Land lands a task's new sandbox commits onto its host branch. It resolves
@@ -132,6 +237,48 @@ func (s *LandService) Land(ctx context.Context, taskID string) (*LandSummary, er
 	}
 	sandboxID := info.ID
 
+	// Per-sandbox single-flight (F7): coalesce concurrent triggers for ONE
+	// sandbox into a single in-flight land. A hostile guest spamming its notify
+	// socket fans out many Land calls for its own sandbox; without coalescing
+	// they each pull a full pool and race the single pools[sandboxID] buffer
+	// (self-inflicted resource waste, last-writer-wins). With it, the first call
+	// runs the land and any concurrent caller for the same sandbox shares its
+	// result instead of launching a second pull. Keyed by sandbox ID so it also
+	// covers the control-plane verb. Refs: MGIT-11.10.11, MGIT-11.13.5
+	v, err, _ := s.flight.Do(sandboxID, func() (interface{}, error) {
+		return s.landGuarded(ctx, tid, sandboxID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*LandSummary), nil
+}
+
+// landGuarded acquires a concurrency slot (bounding worst-case buffered RAM to
+// MaxConcurrentLands × MaxPoolBytes), runs one land, and releases the slot. At
+// capacity it queues on the context and is REJECTED (never over-allocating) if
+// a slot does not free in time. The single-flight leader runs this; coalesced
+// followers do not, so concurrent triggers for one sandbox consume one slot.
+// Refs: MGIT-11.13.5
+func (s *LandService) landGuarded(ctx context.Context, tid model.TaskID, sandboxID string) (*LandSummary, error) {
+	select {
+	case s.sem <- struct{}{}:
+		defer func() { <-s.sem }()
+	case <-ctx.Done():
+		s.logger.Warn("land rejected: concurrency cap reached",
+			"event", "land_rejected", "sandbox_id", sandboxID,
+			"max_concurrent_lands", s.limits.MaxConcurrentLands, "error", ctx.Err().Error())
+		return nil, fmt.Errorf("sandbox land: concurrency cap of %d reached: %w",
+			s.limits.MaxConcurrentLands, ctx.Err())
+	}
+	return s.landOnce(ctx, tid, sandboxID)
+}
+
+// landOnce performs one land for an already-resolved sandbox: pull the pool
+// once, derive the new chain, and route through the orchestrator. It is invoked
+// under both the per-sandbox single-flight and the global concurrency slot.
+func (s *LandService) landOnce(ctx context.Context, tid model.TaskID, sandboxID string) (*LandSummary, error) {
+	taskID := tid.String()
 	pool, err := s.puller.Pull(ctx, sandboxID)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox land: pull pool: %w", err)

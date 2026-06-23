@@ -52,6 +52,8 @@ type daemonOpts struct {
 	maxSandboxes int
 	maxMemoryMB  int
 	maxConns     int
+	maxConcLands int
+	maxLandBytes int64
 	ackReduced   bool
 }
 
@@ -69,6 +71,10 @@ func parseFlags(args []string, logSink io.Writer) (*daemonOpts, int) {
 	flags.IntVar(&o.maxSandboxes, "max-sandboxes", 8, "global concurrent-sandbox ceiling (FR-17.26)")
 	flags.IntVar(&o.maxMemoryMB, "max-memory-mb", 0, "global sandbox memory ceiling in MB (0 until policy wiring resolves the FR-17.26 50% host default)")
 	flags.IntVar(&o.maxConns, "max-conns", 0, "max concurrent control connections (0 = daemon default)")
+	flags.IntVar(&o.maxConcLands, "max-concurrent-lands", 0,
+		"max concurrent in-flight lands; bounds buffered host RAM = cap x per-pool ceiling (0 = safe default)")
+	flags.Int64Var(&o.maxLandBytes, "max-land-pool-bytes", 0,
+		"per-pool host buffer ceiling in bytes (0 = land.DefaultLimits default, 4 GiB)")
 	flags.StringVar(&o.backend, "backend", sandboxd.BackendRequestAuto,
 		"sandbox backend: auto (platform hypervisor) or container (REDUCED isolation; requires --acknowledge-reduced-isolation)")
 	flags.BoolVar(&o.ackReduced, "acknowledge-reduced-isolation", false,
@@ -164,7 +170,12 @@ func run(args []string, logSink io.Writer) int {
 		// Wire the land path when the host repo is reachable. A failure here is
 		// non-fatal: the daemon still serves launch/exec/list/remove/status,
 		// but `mgit sandbox land` reports "not served" until land is wired.
-		lander, closeLand, landErr := buildLandService(opts.hostRoot, opts.repoRoot, landDialer, svc, events, policyStore, peerBinder, clock, logger)
+		lander, closeLand, landErr := buildLandService(landWiring{
+			hostRoot: opts.hostRoot, repoRoot: opts.repoRoot, landDialer: landDialer,
+			resolver: svc, events: events, policy: policyStore, peerBinder: peerBinder,
+			maxConcurrentLands: opts.maxConcLands, maxPoolBytes: opts.maxLandBytes,
+			clock: clock, logger: logger,
+		})
 		if landErr != nil {
 			logger.Warn("sandbox land path not wired; land will not be served",
 				"event", "land_unwired", "error", landErr.Error())

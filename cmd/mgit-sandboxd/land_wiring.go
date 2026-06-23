@@ -33,30 +33,47 @@ import (
 // backend-agnostic and the land channel is unchanged. A nil dialer is a hard
 // error: land cannot be served without a transport into the guest.
 // Refs: MGIT-11.10.10, MGIT-13.1.1, SEC-01, SEC-06, SEC-10
-func buildLandService(hostRoot, repoRoot string, landDialer microvm.GuestDialer, resolver service.SandboxResolver,
-	events service.SandboxEventAppender, policy service.SandboxPolicyReader,
-	peerBinder *sandboxd.PeerBinder, clock func() time.Time, logger *slog.Logger,
-) (sandboxd.SandboxLander, func() error, error) {
-	if landDialer == nil {
+// landWiring carries the land-path wiring inputs (a struct, not a long
+// parameter list, to stay within the parameter-count limit and to group the
+// concurrency/memory-budget knobs with the rest of the wiring).
+type landWiring struct {
+	hostRoot, repoRoot string
+	landDialer         microvm.GuestDialer
+	resolver           service.SandboxResolver
+	events             service.SandboxEventAppender
+	policy             service.SandboxPolicyReader
+	peerBinder         *sandboxd.PeerBinder
+	// maxConcurrentLands caps concurrent in-flight lands; maxPoolBytes is the
+	// per-pool host buffer ceiling. Together they document the worst-case host
+	// memory budget (cap x per-pool). Zero selects the safe default. Refs: MGIT-11.13.5
+	maxConcurrentLands int
+	maxPoolBytes       int64
+	clock              func() time.Time
+	logger             *slog.Logger
+}
+
+func buildLandService(w landWiring) (sandboxd.SandboxLander, func() error, error) {
+	if w.landDialer == nil {
 		return nil, nil, fmt.Errorf("land transport unavailable: no guest land dialer for the active backend")
 	}
+	repoRoot := w.repoRoot
 	if repoRoot == "" {
 		// Fallback for callers that do not pass the repo root explicitly:
 		// recover it from the conventional <repo>/.mgit/sandbox host root.
-		repoRoot = filepath.Dir(filepath.Dir(hostRoot))
+		repoRoot = filepath.Dir(filepath.Dir(w.hostRoot))
 	}
-	repo, err := gitstore.Open(repoRoot, clock)
+	repo, err := gitstore.Open(repoRoot, w.clock)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open host repo %s: %w", repoRoot, err)
 	}
-	mainIdx, err := index.New(filepath.Join(repoRoot, ".mgit", "index.db"), clock)
+	mainIdx, err := index.New(filepath.Join(repoRoot, ".mgit", "index.db"), w.clock)
 	if err != nil {
 		_ = repo.Close()
 		return nil, nil, fmt.Errorf("open host index: %w", err)
 	}
 	closer := func() error { return errors.Join(mainIdx.Close(), repo.Close()) }
 
-	attestor, err := loadOrGenerateAttestor(hostRoot, clock, logger)
+	attestor, err := loadOrGenerateAttestor(w.hostRoot, w.clock, w.logger)
 	if err != nil {
 		_ = closer()
 		return nil, nil, err
@@ -70,18 +87,36 @@ func buildLandService(hostRoot, repoRoot string, landDialer microvm.GuestDialer,
 		land.NewStoreBrancher(gitstore.NewMergeStore(repo)),
 	)
 	parents := land.NewPoolAwareParentResolver(land.NewHostParentTreeResolver(repo))
+	// The per-pool ceiling is the single enforcement point for one pool's host
+	// buffer (the LandChannel reads at most this many bytes; DecodeObjects
+	// re-enforces it). An operator override widens or narrows it from the
+	// default; the concurrency cap below multiplies it into the host budget.
+	poolLimits := land.DefaultLimits()
+	if w.maxPoolBytes > 0 {
+		poolLimits.MaxTotalBytes = w.maxPoolBytes
+	}
 	// The land transport is the active backend's host LAND dialer: the
 	// firecracker per-VM vsock socket on Linux/KVM (pure host I/O), or the vzf
 	// VZVirtioSocketDevice.Connect on the live VM on macOS. Both satisfy
 	// microvm.GuestDialer, so the land channel is identical across backends.
-	channel := sandboxd.NewLandChannel(peerBinder, landDialer, land.DefaultLimits(), logger)
+	channel := sandboxd.NewLandChannel(w.peerBinder, w.landDialer, poolLimits, w.logger)
 
-	orch, err := service.NewLandOrchestrator(channel, attestor, lander, parents, events, policy, land.DefaultLimits(), clock)
+	orch, err := service.NewLandOrchestrator(channel, attestor, lander, parents, w.events, w.policy, poolLimits, w.clock)
 	if err != nil {
 		_ = closer()
 		return nil, nil, fmt.Errorf("wire land orchestrator: %w", err)
 	}
-	landSvc, err := service.NewLandService(resolver, channel, mainIdx, parents, attestor, orch, policy)
+	// The concurrency cap + per-pool ceiling bound the aggregate buffered RAM
+	// (cap x per-pool). The service logs the effective budget at construction
+	// and the per-sandbox single-flight coalesces concurrent triggers (F7).
+	// Refs: MGIT-11.13.5, MGIT-11.10.11
+	landSvc, err := service.NewLandService(w.resolver, channel, mainIdx, parents, attestor, orch, w.policy,
+		service.WithLandLimits(service.LandLimits{
+			MaxConcurrentLands: w.maxConcurrentLands,
+			MaxPoolBytes:       poolLimits.MaxTotalBytes,
+		}),
+		service.WithLandLogger(w.logger),
+	)
 	if err != nil {
 		_ = closer()
 		return nil, nil, fmt.Errorf("wire land service: %w", err)
