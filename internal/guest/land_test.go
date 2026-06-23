@@ -10,15 +10,32 @@ import (
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/go-git/go-billy/v5/osfs"
+
 	"github.com/hyper-swe/mgit/internal/landwire"
 	"github.com/hyper-swe/mgit/internal/sandboxd/land"
 )
+
+// privateStoreRepo opens (or initializes) a bare, worktree-less go-git store
+// at <worktreeDir>/.mgit — the same private-store layout the host quarantine
+// binds and ServeLandHead serves. Mirrors internal/store/git.Open/Init.
+func privateStoreRepo(t *testing.T, worktreeDir string) *gogit.Repository {
+	t.Helper()
+	mgitPath := filepath.Join(worktreeDir, ".mgit")
+	require.NoError(t, os.MkdirAll(mgitPath, 0o750))
+	storage := filesystem.NewStorage(osfs.New(mgitPath), cache.NewObjectLRUDefault())
+	repo, err := gogit.Init(storage, nil)
+	require.NoError(t, err)
+	return repo
+}
 
 // gitBuilder writes content-addressed objects into a memory store.
 type gitBuilder struct {
@@ -133,22 +150,41 @@ func TestStreamReachable_MissingObject_Error(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestServeLandHead_RealRepo streams a real on-disk repo's HEAD pool and
-// confirms the host decoder reads the committed blob back (the guest open +
-// resolve + stream path, cross-platform).
-func TestServeLandHead_RealRepo(t *testing.T) {
+// TestServeLandHead_RealPrivateStore streams a real on-disk PRIVATE store's
+// HEAD pool (the <worktree>/.mgit bare store SEC-03 binds) and confirms the
+// host decoder reads the committed blob back — the guest open + resolve +
+// stream path against the .mgit store, not a .git. Refs: SEC-03, FR-17.5
+func TestServeLandHead_RealPrivateStore(t *testing.T) {
 	dir := t.TempDir()
-	repo, err := gogit.PlainInit(dir, false)
+	repo := privateStoreRepo(t, dir)
+
+	// Commit "land me" via plumbing into the bare store and point a branch +
+	// HEAD at it (no go-git worktree exists for a worktree-less store).
+	blob := repo.Storer.NewEncodedObject()
+	blob.SetType(plumbing.BlobObject)
+	bw, err := blob.Writer()
 	require.NoError(t, err)
-	wt, err := repo.Worktree()
+	_, _ = bw.Write([]byte("land me"))
+	require.NoError(t, bw.Close())
+	blobHash, err := repo.Storer.SetEncodedObject(blob)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "f.txt"), []byte("land me"), 0o600))
-	_, err = wt.Add("f.txt")
+
+	treeObj := repo.Storer.NewEncodedObject()
+	require.NoError(t, (&object.Tree{Entries: []object.TreeEntry{
+		{Name: "f.txt", Mode: filemode.Regular, Hash: blobHash},
+	}}).Encode(treeObj))
+	treeHash, err := repo.Storer.SetEncodedObject(treeObj)
 	require.NoError(t, err)
-	_, err = wt.Commit("feat: f", &gogit.CommitOptions{
-		Author: &object.Signature{Name: "agent", Email: "a@mgit", When: time.Unix(0, 0).UTC()},
-	})
+
+	sig := object.Signature{Name: "agent", Email: "a@mgit", When: time.Unix(0, 0).UTC()}
+	commitObj := repo.Storer.NewEncodedObject()
+	require.NoError(t, (&object.Commit{Author: sig, Committer: sig, Message: "feat: f", TreeHash: treeHash}).Encode(commitObj))
+	commitHash, err := repo.Storer.SetEncodedObject(commitObj)
 	require.NoError(t, err)
+
+	branch := plumbing.NewBranchReferenceName("task/MGIT-11.6.8")
+	require.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(branch, commitHash)))
+	require.NoError(t, repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, branch)))
 
 	var buf bytes.Buffer
 	require.NoError(t, ServeLandHead(dir, &buf))
@@ -166,14 +202,15 @@ func TestServeLandHead_RealRepo(t *testing.T) {
 
 func TestServeLandHead_UnbornHead_NoBytes(t *testing.T) {
 	dir := t.TempDir()
-	_, err := gogit.PlainInit(dir, false)
-	require.NoError(t, err)
+	privateStoreRepo(t, dir) // a fresh bare store with an unborn HEAD
 	var buf bytes.Buffer
 	require.NoError(t, ServeLandHead(dir, &buf))
-	assert.Zero(t, buf.Len(), "an empty repo serves nothing")
+	assert.Zero(t, buf.Len(), "an empty store serves nothing")
 }
 
-func TestServeLandHead_NotARepo_Error(t *testing.T) {
+func TestServeLandHead_NoPrivateStore_Error(t *testing.T) {
+	// A worktree with no .mgit private store fails closed (the host always
+	// binds one; its absence is a quarantine/provisioning failure).
 	assert.Error(t, ServeLandHead(t.TempDir(), io.Discard))
 }
 

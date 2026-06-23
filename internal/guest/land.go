@@ -4,27 +4,53 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/storer"
+	"github.com/go-git/go-git/v5/storage/filesystem"
+
+	"github.com/go-git/go-billy/v5/osfs"
 
 	"github.com/hyper-swe/mgit/internal/landwire"
 )
 
-// ServeLandHead opens the worktree's git repository, resolves its checked-out
-// HEAD (the task branch the sandbox is bound to), and streams every object
-// reachable from it to w. It is the connection-serving entry point for the
-// guest land channel: the host dials, this serves the pool, the connection
-// closes. An empty repository (unborn HEAD) serves nothing — there is
-// nothing to land. PURE TRANSPORT: it never inspects or asserts provenance
-// (SEC-01). Refs: FR-17.5, SEC-01
-func ServeLandHead(repoPath string, w io.Writer) error {
-	repo, err := gogit.PlainOpen(repoPath)
+// guestStoreName is the worktree-relative directory the guest's private,
+// sandbox-local mgit object store is mounted at. It mirrors the host
+// quarantine binding (quarantine.guestStoreName) and the store layout the
+// rest of mgit standardizes on post-MGIT-14: mgit's store lives in .mgit/,
+// never a .git at the worktree root. The guest commits into this private
+// store and land streams its reachable pool back to the host. Keeping the
+// constant here (not importing the host-only quarantine package from the
+// guest binary) keeps the in-guest code free of host-side dependencies.
+// Refs: SEC-03, MGIT-14
+const guestStoreName = ".mgit"
+
+// ServeLandHead opens the worktree's PRIVATE sandbox-local mgit object store
+// at <worktreePath>/.mgit, resolves its HEAD (the task branch the sandbox is
+// bound to), and streams every object reachable from it to w. It is the
+// connection-serving entry point for the guest land channel: the host dials,
+// this serves the pool, the connection closes. An empty store (unborn HEAD)
+// serves nothing — there is nothing to land. PURE TRANSPORT: it never
+// inspects or asserts provenance (SEC-01).
+//
+// The store is opened as a BARE, worktree-less go-git store
+// (osfs+filesystem.NewStorage+gogit.Open(storage,nil)) — the same model
+// internal/store/git.Open uses — NOT gogit.PlainOpen of a .git: per SEC-03
+// the guest only ever sees working-tree files plus this private .mgit store
+// the host bound; there is no host shared .mgit and no project .git reachable
+// from inside the guest. Refs: FR-17.5, SEC-01, SEC-03, MGIT-14
+func ServeLandHead(worktreePath string, w io.Writer) error {
+	mgitPath := filepath.Join(worktreePath, guestStoreName)
+	dotFS := osfs.New(mgitPath)
+	storage := filesystem.NewStorage(dotFS, cache.NewObjectLRUDefault())
+	repo, err := gogit.Open(storage, nil)
 	if err != nil {
-		return fmt.Errorf("guest land: open repo %s: %w", repoPath, err)
+		return fmt.Errorf("guest land: open private store %s: %w", mgitPath, err)
 	}
 	head, err := repo.Head()
 	if err != nil {

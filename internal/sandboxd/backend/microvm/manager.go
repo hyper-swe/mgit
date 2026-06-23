@@ -25,6 +25,8 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/guestexec"
+	"github.com/hyper-swe/mgit/internal/sandboxd/provision"
+	"github.com/hyper-swe/mgit/internal/sandboxd/quarantine"
 )
 
 // defaultOverlaySizeMB sizes the writable overlay when the request
@@ -63,11 +65,18 @@ type VMConfig struct {
 	Cmdline        string
 	OverlayPath    string // per-sandbox COW backing file (FR-17.17), pre-sized to the quota
 	WorktreePath   string // shared at the identical guest path (FR-17.3)
-	WorktreeTag    string // mount tag
-	AttachNIC      bool   // false in none mode (FR-17.7)
-	NetworkMode    string // model.NetworkMode*: backend wires NAT (open) vs proxy-route (allowlist) vs no NIC (none) (FR-17.7, FR-17.8)
-	VsockEnabled   bool
-	BalloonEnabled bool
+	// PrivateStorePath is the host directory backing the guest's PRIVATE,
+	// sandbox-local mgit object store (SEC-03). The backend delivers it at the
+	// guest's <worktree>/.mgit so the guest commits into it; the host shared
+	// .mgit is never delivered. Empty when no provisioner is wired (legacy/
+	// direct path) — the quarantine control is realized only when set.
+	// Refs: SEC-03, FR-17.3, FR-17.5
+	PrivateStorePath string
+	WorktreeTag      string // mount tag
+	AttachNIC        bool   // false in none mode (FR-17.7)
+	NetworkMode      string // model.NetworkMode*: backend wires NAT (open) vs proxy-route (allowlist) vs no NIC (none) (FR-17.7, FR-17.8)
+	VsockEnabled     bool
+	BalloonEnabled   bool
 }
 
 // VM is the lifecycle handle the manager drives.
@@ -120,8 +129,20 @@ type Config struct {
 	Hypervisor  Hypervisor
 	GuestDialer GuestDialer // exec transport into the guest; nil = exec unavailable
 	PeerBinder  PeerBinder  // channel peer-identity binder (SEC-10); nil disables
-	Logger      *slog.Logger
-	Clock       func() time.Time
+	// StoreProvisioner seeds the SEC-03 private, sandbox-local mgit store per
+	// launch (from the task base commit only) and supplies the shared store
+	// path for the non-reachability check. When set, the quarantine control is
+	// REALIZED: every launch builds the plan, binds the private store, and
+	// fails closed (ErrSharedStoreReachable) if the shared store could be
+	// reached. When nil (legacy/direct path, tests) the worktree is delivered
+	// without a private store rebind, the pre-SEC-03 behavior. Refs: SEC-03
+	StoreProvisioner provision.Provisioner
+	// SensitivePaths are the worktree-relative host-trusted patterns layered
+	// read-only into the guest plan (FR-17.14). Only used when a provisioner
+	// is wired. Refs: FR-17.14
+	SensitivePaths []string
+	Logger         *slog.Logger
+	Clock          func() time.Time
 }
 
 // sandbox is one supervised microVM.
@@ -197,7 +218,17 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 		return nil, fmt.Errorf("%s launch: %w", m.cfg.Backend, err)
 	}
 
-	vm, err := m.cfg.Hypervisor.CreateVM(vmConfig(id, opts, images, overlay))
+	// SEC-03: provision the private, sandbox-local store and prove the host
+	// shared store is unreachable from the guest plan BEFORE the VM exists. A
+	// quarantine failure fails the launch closed (ErrSharedStoreReachable) —
+	// the guest never boots against a leaky layout. Refs: SEC-03, FR-17.3
+	privateStore, err := m.quarantine(opts.TaskID, opts.WorktreePath, dir)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, fmt.Errorf("%s launch: %w", m.cfg.Backend, err)
+	}
+
+	vm, err := m.cfg.Hypervisor.CreateVM(vmConfig(id, opts, images, overlay, privateStore))
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("%s launch: create vm: %w", m.cfg.Backend, err)
@@ -226,26 +257,63 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 	return &info, nil
 }
 
+// privateStoreDirName is the per-sandbox private store directory under the
+// state dir — OUTSIDE the worktree, sandbox-local (cleaned by teardown's one
+// RemoveAll). It is never the worktree and never the shared store. Refs: SEC-03
+const privateStoreDirName = "private-store"
+
+// quarantine realizes the SEC-03 control for one launch: when a store
+// provisioner is wired, it seeds a fresh private store (task base commit only)
+// under the sandbox state dir, builds the guest filesystem plan, binds the
+// private store, and rejects the launch if the host shared store could be
+// reached (ErrSharedStoreReachable). It returns the private store host path the
+// backend delivers at the guest's .mgit. When no provisioner is wired it is a
+// no-op (empty path) — the pre-SEC-03 delivery, used by tests and the direct
+// path. Refs: SEC-03, FR-17.3, FR-17.5, FR-17.14
+func (m *Manager) quarantine(taskID, worktreePath, stateDir string) (string, error) {
+	if m.cfg.StoreProvisioner == nil {
+		return "", nil // quarantine not wired (legacy/direct path)
+	}
+	privDir := filepath.Join(stateDir, privateStoreDirName)
+	store, err := m.cfg.StoreProvisioner.Provision(taskID, privDir)
+	if err != nil {
+		return "", fmt.Errorf("provision private store: %w", err)
+	}
+	plan, err := quarantine.BuildPlan(worktreePath, m.cfg.SensitivePaths)
+	if err != nil {
+		return "", fmt.Errorf("build quarantine plan: %w", err)
+	}
+	// BindPrivateStore enforces the SEC-03 invariants and returns
+	// ErrSharedStoreReachable if the shared store is reachable; the caller
+	// rejects the launch, so a leaky layout never boots a guest.
+	if _, err := plan.BindPrivateStore(store.Dir, store.SharedDir); err != nil {
+		return "", fmt.Errorf("bind private store: %w", err)
+	}
+	return store.Dir, nil
+}
+
 // vmConfig builds the hypervisor-agnostic VM description carrying the
 // FR-17 isolation contract: read-only pinned rootfs + per-VM COW
-// overlay (FR-17.17), worktree share, vsock control plane, and a NIC
-// only when the network mode is not "none" (FR-17.7).
-func vmConfig(id string, opts model.SandboxLaunchOptions, images ImagePaths, overlay string) VMConfig {
+// overlay (FR-17.17), worktree share, the SEC-03 private store, vsock
+// control plane, and a NIC only when the network mode is not "none"
+// (FR-17.7). Refs: FR-17.3, FR-17.17, SEC-03
+func vmConfig(id string, opts model.SandboxLaunchOptions, images ImagePaths, overlay, privateStore string) VMConfig {
 	return VMConfig{
-		SandboxID:      id,
-		CPUs:           opts.CPUs,
-		MemoryMB:       opts.MemoryMB,
-		KernelPath:     images.KernelPath,
-		RootfsPath:     images.RootfsPath,
-		RootfsReadOnly: true,
-		Cmdline:        images.Cmdline,
-		OverlayPath:    overlay,
-		WorktreePath:   opts.WorktreePath,
-		WorktreeTag:    "work",
-		AttachNIC:      opts.Network.Mode != model.NetworkModeNone,
-		NetworkMode:    opts.Network.Mode,
-		VsockEnabled:   true,
-		BalloonEnabled: true,
+		SandboxID:        id,
+		CPUs:             opts.CPUs,
+		MemoryMB:         opts.MemoryMB,
+		KernelPath:       images.KernelPath,
+		RootfsPath:       images.RootfsPath,
+		RootfsReadOnly:   true,
+		Cmdline:          images.Cmdline,
+		OverlayPath:      overlay,
+		WorktreePath:     opts.WorktreePath,
+		PrivateStorePath: privateStore,
+		WorktreeTag:      "work",
+		AttachNIC:        opts.Network.Mode != model.NetworkModeNone,
+		NetworkMode:      opts.Network.Mode,
+		VsockEnabled:     true,
+		BalloonEnabled:   true,
 	}
 }
 
