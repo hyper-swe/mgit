@@ -71,6 +71,7 @@ func NewSupervisor(cfg SupervisorConfig) (*Supervisor, error) {
 	resolver, err := NewResolver(ResolverConfig{
 		SandboxID: cfg.SandboxID, TaskID: cfg.TaskID,
 		Allowlist: al, Lookup: cfg.Lookup, Audit: cfg.Audit, Clock: cfg.Clock,
+		Logger: cfg.Logger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("egress supervisor: %w", err)
@@ -78,7 +79,7 @@ func NewSupervisor(cfg SupervisorConfig) (*Supervisor, error) {
 	authorizer, err := NewAuthorizer(AuthorizerConfig{
 		SandboxID: cfg.SandboxID, TaskID: cfg.TaskID,
 		Allowlist: al, Resolver: resolver, Audit: cfg.Audit,
-		OnDenial: cfg.OnDenial,
+		Logger: cfg.Logger, OnDenial: cfg.OnDenial,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("egress supervisor: %w", err)

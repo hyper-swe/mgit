@@ -1,7 +1,10 @@
 package egress
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"net/netip"
 	"testing"
 
@@ -10,6 +13,19 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 )
+
+// failingAuditor fails every append, to exercise the audit-write error path.
+type failingAuditor struct{}
+
+func (failingAuditor) AppendEgressRecord(context.Context, *model.EgressRecord) error {
+	return errors.New("audit store unavailable")
+}
+
+// captureLogger returns a logger writing to buf, so a test can assert that a
+// swallowed-then-logged failure actually reached the log.
+func captureLogger(buf *bytes.Buffer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+}
 
 // buildAuthorizer wires an authorizer over a compiled allowlist and a
 // resolver whose upstream lookup is the supplied fake.
@@ -160,4 +176,30 @@ func TestAllowlist_EgressAudited(t *testing.T) {
 	}
 	assert.True(t, sawAllow, "the allowed flow is audited")
 	assert.True(t, sawDeny, "the denied flow is audited")
+}
+
+// TestAllowlist_AuditWriteError_Logged proves an egress-audit write failure is
+// not silently swallowed (CLAUDE.md "no swallowed errors"): the decision still
+// stands (the deny is enforced) but the failed durable write is logged so the
+// gap is observable. Refs: FR-17.8, FR-17.18
+func TestAllowlist_AuditWriteError_Logged(t *testing.T) {
+	al, err := Compile([]string{"registry.npmjs.org"})
+	require.NoError(t, err)
+	res, err := NewResolver(ResolverConfig{
+		SandboxID: "01SB", TaskID: "MGIT-11.7.2",
+		Allowlist: al, Lookup: resolvesTo("140.82.112.3"), Audit: failingAuditor{}, Clock: frozenClock(),
+	})
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	az, err := NewAuthorizer(AuthorizerConfig{
+		SandboxID: "01SB", TaskID: "MGIT-11.7.2",
+		Allowlist: al, Resolver: res, Audit: failingAuditor{}, Logger: captureLogger(&buf),
+	})
+	require.NoError(t, err)
+
+	// The deny is still enforced even though its audit write fails.
+	_, err = az.Authorize(context.Background(), Flow{Protocol: "tcp", Host: "1.2.3.4", Port: 443})
+	require.ErrorIs(t, err, ErrEgressDenied, "the decision stands despite the audit-write failure")
+	assert.Contains(t, buf.String(), "audit store unavailable",
+		"the swallowed audit-write error is logged, not dropped silently")
 }

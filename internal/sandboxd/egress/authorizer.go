@@ -3,6 +3,8 @@ package egress
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/netip"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -35,6 +37,9 @@ type AuthorizerConfig struct {
 	Allowlist *Allowlist
 	Resolver  *Resolver
 	Audit     Auditor
+	// Logger records audit-write failures so a dropped durable record is never
+	// silent (CLAUDE.md "no swallowed errors"). Optional; nil => discard.
+	Logger *slog.Logger
 	// OnDenial, when set, is notified of each denial that names a concrete
 	// host-observed destination IP, so it can be escalated to a capability
 	// request (the deny->prompt trigger, FR-17.12). It carries only
@@ -47,7 +52,8 @@ type AuthorizerConfig struct {
 // resolver, and audits every allow and deny. It is the policy core the
 // proxy consults before opening any host-side connection. Refs: SEC-04, FR-17.8
 type Authorizer struct {
-	cfg AuthorizerConfig
+	cfg    AuthorizerConfig
+	logger *slog.Logger
 }
 
 // NewAuthorizer validates the configuration and returns an Authorizer.
@@ -62,7 +68,11 @@ func NewAuthorizer(cfg AuthorizerConfig) (*Authorizer, error) {
 	case cfg.SandboxID == "":
 		return nil, fmt.Errorf("egress authorizer: sandbox id must not be empty")
 	}
-	return &Authorizer{cfg: cfg}, nil
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	return &Authorizer{cfg: cfg, logger: logger}, nil
 }
 
 // Authorize decides one flow. TCP only: UDP/QUIC is refused (the sole UDP
@@ -154,10 +164,18 @@ func (a *Authorizer) deny(ctx context.Context, f Flow, ip netip.Addr, rule strin
 func (a *Authorizer) audit(ctx context.Context, decision string, f Flow, ip netip.Addr, rule string) {
 	rec := &model.EgressRecord{
 		SandboxID: a.cfg.SandboxID, TaskID: a.cfg.TaskID,
-		Decision: decision, Protocol: "tcp", DestHost: f.Host, DestPort: f.Port, Rule: rule,
+		Decision: decision, Protocol: "tcp", DestHost: model.TruncateDestHost(f.Host), DestPort: f.Port, Rule: rule,
 	}
 	if ip.IsValid() {
 		rec.DestIP = ip.String()
 	}
-	_ = a.cfg.Audit.AppendEgressRecord(ctx, rec)
+	// The decision already stands by the time this is called (allow/deny is
+	// returned regardless), so a transient audit-write error does not change the
+	// outcome — but it must not be swallowed silently (CLAUDE.md "no swallowed
+	// errors"): a failed durable write is logged so the audit-trail gap is
+	// observable. Refs: FR-17.8, FR-17.18
+	if err := a.cfg.Audit.AppendEgressRecord(ctx, rec); err != nil {
+		a.logger.Error("egress tcp audit write failed", "event", "egress_audit_writefail",
+			"sandbox_id", a.cfg.SandboxID, "decision", decision, "error", err.Error())
+	}
 }

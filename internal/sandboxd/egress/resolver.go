@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/netip"
 	"sync"
 	"time"
@@ -32,6 +34,9 @@ type ResolverConfig struct {
 	Lookup    LookupFunc
 	Audit     Auditor
 	Clock     func() time.Time
+	// Logger records audit-write failures so a dropped durable record is never
+	// silent (CLAUDE.md "no swallowed errors"). Optional; nil => discard.
+	Logger *slog.Logger
 	// MaxQueriesPerWindow caps DNS queries per Window (0 => default 60).
 	MaxQueriesPerWindow int
 	// Window is the rate-limit window (0 => default one minute).
@@ -48,6 +53,7 @@ type ResolverConfig struct {
 // IP between resolution and connect (DNS-rebind defense). Refs: SEC-07, SEC-04
 type Resolver struct {
 	cfg    ResolverConfig
+	logger *slog.Logger
 	maxQPW int
 	window time.Duration
 	nxCap  int
@@ -74,8 +80,13 @@ func NewResolver(cfg ResolverConfig) (*Resolver, error) {
 	case cfg.SandboxID == "":
 		return nil, fmt.Errorf("egress resolver: sandbox id must not be empty")
 	}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	r := &Resolver{
 		cfg:    cfg,
+		logger: logger,
 		maxQPW: orDefault(cfg.MaxQueriesPerWindow, 60),
 		window: cfg.Window,
 		nxCap:  orDefault(cfg.NXDOMAINBurstThreshold, 10),
@@ -110,9 +121,29 @@ func (r *Resolver) Resolve(ctx context.Context, name string) ([]netip.Addr, erro
 		return nil, fmt.Errorf("egress resolve %q: %w", name, err)
 	}
 
-	r.pin(name, ips)
+	// Drop any unconditionally-denied IP (loopback, RFC1918/ULA, link-local,
+	// the cloud-metadata endpoint, reserved ranges) BEFORE it is pinned or
+	// returned. An allowlisted name that resolves to a denied IP is a DNS-rebind
+	// attempt: the guest must never learn the denied IP (no answer leak) and it
+	// must never be pinned, so the pin set matches exactly what the proxy will
+	// admit (no over-wide pin honored on a later raw-IP connect). Refs: SEC-04, SEC-07
+	allowed := filterDeniedIPs(ips)
+	r.pin(name, allowed)
 	r.audit(ctx, model.EgressAllow, name, "dns: resolved (pinned)")
-	return ips, nil
+	return allowed, nil
+}
+
+// filterDeniedIPs returns only the IPs that are not unconditionally denied,
+// preserving order. The result may be empty (a name that resolved solely to
+// denied ranges), which is a valid "no usable address" answer. Refs: SEC-04
+func filterDeniedIPs(ips []netip.Addr) []netip.Addr {
+	allowed := make([]netip.Addr, 0, len(ips))
+	for _, ip := range ips {
+		if _, denied := IsUnconditionallyDenied(ip); !denied {
+			allowed = append(allowed, ip)
+		}
+	}
+	return allowed
 }
 
 // Pinned returns the IPs a prior Resolve pinned for a name, if any. The
@@ -192,16 +223,20 @@ func (r *Resolver) pin(name string, ips []netip.Addr) {
 	r.pins[name] = ips
 }
 
-// audit appends one dns decision. The policy decision itself already
-// stands by the time this is called (deny returns regardless), so a
-// transient audit-write error does not change the outcome; it is the
-// store's append-only durability that matters, surfaced via the store's
-// own error logging. Refs: FR-17.8
+// audit appends one dns decision. The policy decision itself already stands by
+// the time this is called (deny returns regardless), so a transient audit-write
+// error does not change the outcome — but it must not be swallowed silently
+// (CLAUDE.md "no swallowed errors"): a failed durable write is logged so the
+// audit-trail gap is observable. The flow is not failed on the write error
+// (the decision is already enforced). Refs: FR-17.8, FR-17.18
 func (r *Resolver) audit(ctx context.Context, decision, name, rule string) {
-	_ = r.cfg.Audit.AppendEgressRecord(ctx, &model.EgressRecord{
+	if err := r.cfg.Audit.AppendEgressRecord(ctx, &model.EgressRecord{
 		SandboxID: r.cfg.SandboxID, TaskID: r.cfg.TaskID,
-		Decision: decision, Protocol: "dns", DestHost: name, Rule: rule,
-	})
+		Decision: decision, Protocol: "dns", DestHost: model.TruncateDestHost(name), Rule: rule,
+	}); err != nil {
+		r.logger.Error("egress dns audit write failed", "event", "egress_audit_writefail",
+			"sandbox_id", r.cfg.SandboxID, "decision", decision, "error", err.Error())
+	}
 }
 
 // orDefault returns v when positive, else def.

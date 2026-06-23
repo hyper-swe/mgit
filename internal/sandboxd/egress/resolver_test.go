@@ -1,6 +1,7 @@
 package egress
 
 import (
+	"bytes"
 	"context"
 	"net/netip"
 	"sync"
@@ -150,6 +151,76 @@ func TestDNS_NXDOMAINBurst_Flagged(t *testing.T) {
 	}
 	assert.True(t, r.NXDOMAINBurst(), "3 NXDOMAINs reach the burst threshold")
 	assert.GreaterOrEqual(t, aud.withRule("nxdomain_burst"), 1, "the burst is flagged in the audit log")
+}
+
+// TestDNS_DeniedRangeIPs_FilteredFromAnswerAndPin proves the resolver never
+// leaks an unconditionally-denied IP to the guest: when an allowlisted name
+// resolves (a DNS-rebind attempt) to a mix of a routable public IP and denied
+// IPs (loopback, RFC1918, the cloud-metadata endpoint), only the public IP is
+// returned AND only the public IP is pinned. The guest therefore never learns
+// a denied IP, and the pin set matches exactly what the proxy will admit — no
+// over-wide pin that could later be honored on a raw-IP connect. Refs: SEC-04, SEC-07
+func TestDNS_DeniedRangeIPs_FilteredFromAnswerAndPin(t *testing.T) {
+	public := netip.MustParseAddr("140.82.112.3")
+	loopback := netip.MustParseAddr("127.0.0.1")
+	rfc1918 := netip.MustParseAddr("10.0.0.5")
+	metadata := netip.MustParseAddr("169.254.169.254")
+	lookup := func(_ context.Context, _ string) ([]netip.Addr, error) {
+		return []netip.Addr{loopback, public, rfc1918, metadata}, nil
+	}
+	aud := &fakeAuditor{}
+	r := testResolver(t, lookup, aud, frozenClock())
+
+	ips, err := r.Resolve(context.Background(), "registry.npmjs.org")
+	require.NoError(t, err)
+	assert.Equal(t, []netip.Addr{public}, ips,
+		"denied-range IPs are filtered out of the answer returned to the guest")
+
+	// The pin set must contain only the surviving public IP.
+	assert.True(t, r.IsPinned(public), "the routable IP is pinned")
+	assert.False(t, r.IsPinned(loopback), "a denied IP is never pinned")
+	assert.False(t, r.IsPinned(rfc1918), "a denied IP is never pinned")
+	assert.False(t, r.IsPinned(metadata), "the metadata endpoint is never pinned")
+}
+
+// TestDNS_AllDeniedIPs_NoData proves an allowlisted name that resolves ONLY to
+// denied ranges yields no usable answer and no pin — the guest learns nothing
+// it could connect to. Refs: SEC-04, SEC-07
+func TestDNS_AllDeniedIPs_NoData(t *testing.T) {
+	loopback := netip.MustParseAddr("127.0.0.1")
+	rfc1918 := netip.MustParseAddr("10.0.0.5")
+	lookup := func(_ context.Context, _ string) ([]netip.Addr, error) {
+		return []netip.Addr{loopback, rfc1918}, nil
+	}
+	aud := &fakeAuditor{}
+	r := testResolver(t, lookup, aud, frozenClock())
+
+	ips, err := r.Resolve(context.Background(), "registry.npmjs.org")
+	require.NoError(t, err)
+	assert.Empty(t, ips, "a name resolving only to denied ranges yields no answer")
+	assert.False(t, r.IsPinned(loopback))
+	assert.False(t, r.IsPinned(rfc1918))
+}
+
+// TestDNS_AuditWriteError_Logged proves a DNS-decision audit write failure is
+// not silently swallowed (CLAUDE.md "no swallowed errors"): the resolution
+// decision still stands but the failed durable write is logged. Refs: FR-17.8
+func TestDNS_AuditWriteError_Logged(t *testing.T) {
+	al, err := Compile([]string{"registry.npmjs.org"})
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	r, err := NewResolver(ResolverConfig{
+		SandboxID: "01SB", TaskID: "MGIT-11.7.3",
+		Allowlist: al, Lookup: resolvesTo("140.82.112.3"), Audit: failingAuditor{},
+		Clock: frozenClock(), Logger: captureLogger(&buf),
+	})
+	require.NoError(t, err)
+
+	ips, err := r.Resolve(context.Background(), "registry.npmjs.org")
+	require.NoError(t, err, "the resolution stands despite the audit-write failure")
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("140.82.112.3")}, ips)
+	assert.Contains(t, buf.String(), "audit store unavailable",
+		"the swallowed audit-write error is logged, not dropped silently")
 }
 
 // TestNewResolver_Validates rejects a missing dependency (DI contract).
