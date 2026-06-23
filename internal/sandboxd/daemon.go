@@ -16,7 +16,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -423,8 +422,11 @@ func ensureRunning(ctx context.Context, socketPath string, spawn func() error, w
 	return fmt.Errorf("sandboxd activation: %s not dialable after spawn", socketPath)
 }
 
-// dialOK reports whether a live, authenticated daemon serves the
-// socket: the connection must yield the greeting, not merely accept.
+// dialOK reports whether a live, authenticated daemon serves the socket: the
+// connection must yield the FULL liveness greeting, not merely accept and not
+// merely emit a prefix. It compares the whole greeting exactly, symmetric with
+// the real client (client.go dialGreeted), so a truncated or wrong greeting is
+// treated as not-live rather than spuriously OK. Refs: FR-17.34
 func dialOK(ctx context.Context, socketPath string) bool {
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "unix", socketPath)
@@ -434,9 +436,9 @@ func dialOK(ctx context.Context, socketPath string) bool {
 	defer func() { _ = conn.Close() }()
 
 	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
-	buf := make([]byte, 3)
+	buf := make([]byte, len(greeting))
 	if _, err := io.ReadFull(conn, buf); err != nil {
 		return false
 	}
-	return strings.HasPrefix(greeting, string(buf))
+	return string(buf) == greeting
 }

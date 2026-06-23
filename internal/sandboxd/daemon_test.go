@@ -390,3 +390,92 @@ func TestSandboxd_New_Guards(t *testing.T) {
 		})
 	}
 }
+
+// TestSandboxd_DialOK_FullGreeting proves dialOK compares the FULL liveness
+// greeting (symmetric with the real client), so a server that only emits a
+// prefix of the greeting is treated as not-live rather than spuriously OK.
+// Refs: FR-17.34
+func TestSandboxd_DialOK_FullGreeting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix-socket greeting probe is not the Windows IPC model (MGIT-11.5.3)")
+	}
+
+	serve := func(t *testing.T, reply string) string {
+		t.Helper()
+		path := shortSocketPath(t)
+		ln, err := net.Listen("unix", path)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = ln.Close() })
+		go func() {
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				_, _ = conn.Write([]byte(reply))
+				_ = conn.Close()
+			}
+		}()
+		return path
+	}
+
+	t.Run("full_greeting_is_live", func(t *testing.T) {
+		assert.True(t, dialOK(context.Background(), serve(t, greeting)),
+			"a daemon emitting the full greeting is live")
+	})
+	t.Run("prefix_only_greeting_is_not_live", func(t *testing.T) {
+		assert.False(t, dialOK(context.Background(), serve(t, greeting[:3])),
+			"a server emitting only a prefix of the greeting is not accepted")
+	})
+	t.Run("wrong_greeting_is_not_live", func(t *testing.T) {
+		assert.False(t, dialOK(context.Background(), serve(t, "no thanks\n")),
+			"a server emitting a wrong greeting is not accepted")
+	})
+	t.Run("dead_socket_is_not_live", func(t *testing.T) {
+		assert.False(t, dialOK(context.Background(), shortSocketPath(t)),
+			"an unbound socket path is not live")
+	})
+}
+
+// TestSandboxd_SocketDir_Owner0700 proves F-08's directory hardening: the
+// socket's parent directory is owner-only (0700) after the daemon binds, and a
+// pre-existing world-writable (0777) directory is TIGHTENED to 0700 rather than
+// left open for squatting / symlink interposition. A directory the daemon
+// cannot chmod (not owned by this user) fails closed. Refs: FR-17.34, F-08
+func TestSandboxd_SocketDir_Owner0700(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("0700 unix directory modes are not the Windows IPC model (MGIT-11.5.3)")
+	}
+
+	t.Run("fresh_dir_is_tightened_to_0700_after_run", func(t *testing.T) {
+		cfg, _ := testConfig(t, newFakeManager())
+		dir := filepath.Dir(cfg.SocketPath)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := runDaemon(ctx, t, cfg)
+		_ = waitForSocket(t, cfg.SocketPath).Close()
+
+		info, err := os.Stat(dir)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o700), info.Mode().Perm(),
+			"the socket directory is owner-only after the daemon binds")
+
+		cancel()
+		<-done
+	})
+
+	t.Run("preexisting_0777_dir_is_tightened", func(t *testing.T) {
+		cfg, _ := testConfig(t, newFakeManager())
+		dir := filepath.Dir(cfg.SocketPath)
+		//nolint:gosec // G302: intentionally world-writable to PROVE ensureSocketDir tightens it
+		require.NoError(t, os.Chmod(dir, 0o777), "make the dir world-writable before launch")
+
+		d, err := New(cfg)
+		require.NoError(t, err)
+		require.NoError(t, d.ensureSocketDir(), "ensureSocketDir tightens a world-writable dir")
+
+		info, err := os.Stat(dir)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o700), info.Mode().Perm(),
+			"a pre-existing 0777 socket directory is tightened to owner-only")
+	})
+}
