@@ -7,6 +7,7 @@ package staging
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -101,14 +102,25 @@ func TestBuild_RejectsEscapingSymlink(t *testing.T) {
 	outside := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret"), []byte("host secret"), 0o600))
 
-	cases := map[string]string{
-		"absolute_outside": filepath.Join(outside, "secret"),
-		"relative_dotdot":  filepath.Join("..", filepath.Base(outside), "secret"),
-	}
-	for name, target := range cases {
-		t.Run(name, func(t *testing.T) {
+	// "abs" uses the absolute outside path; "rel" uses a genuine ../-escape
+	// computed from the worktree to the outside file. The relative target MUST
+	// be derived per-worktree via filepath.Rel (not a hand-built
+	// "../<base(outside)>"): the latter is fragile — when the outside and
+	// worktree temp dirs share a basename (as Go's t.TempDir can produce on
+	// Linux) it resolves back INTO the worktree and is correctly NOT an escape,
+	// which silently weakened this security assertion on Linux.
+	for _, kind := range []string{"abs", "rel"} {
+		t.Run(kind, func(t *testing.T) {
 			wt := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(wt, "ok.txt"), []byte("ok"), 0o600))
+			target := filepath.Join(outside, "secret")
+			if kind == "rel" {
+				rel, rerr := filepath.Rel(wt, filepath.Join(outside, "secret"))
+				require.NoError(t, rerr)
+				require.True(t, strings.HasPrefix(rel, ".."+string(filepath.Separator)),
+					"the relative target must genuinely escape the worktree, got %q", rel)
+				target = rel
+			}
 			require.NoError(t, os.Symlink(target, filepath.Join(wt, "escape")))
 
 			stage := filepath.Join(t.TempDir(), "stage")
