@@ -36,6 +36,14 @@ func serveGuest(ctx context.Context, supervisor *guest.Supervisor, execPort, lan
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// Start one AF_VSOCK->TCP-loopback bridge per published guest port so the
+	// host publisher's host->guest vsock connect reaches the guest's own dev
+	// server, completing one-way port publishing (SEC-09). The ports come from
+	// the kernel cmdline (guestboot); the bridges die with ctx (VM teardown),
+	// so there is no goroutine leak or host residue. Refs: SEC-09, FR-17.8
+	go servePublishBridges(ctx, publishPorts(), realVsockListen, realLoopbackDial, logger)
+
 	errs := make(chan error, 2)
 	go func() {
 		errs <- serveVsock(ctx, execPort, logger, func(c net.Conn) {
@@ -113,6 +121,17 @@ func worktreeMountPath() string {
 		return ""
 	}
 	return guestboot.ParseWorktreeMount(string(cmdline)).Path
+}
+
+// publishPorts reads the kernel cmdline published-ports descriptor to learn
+// which guest TCP ports to bridge over AF_VSOCK (SEC-09). Empty when no ports
+// are published or the cmdline is unreadable. Refs: SEC-09, FR-17.8
+func publishPorts() []int {
+	cmdline, err := os.ReadFile(procCmdline)
+	if err != nil {
+		return nil
+	}
+	return guestboot.ParsePublishPorts(string(cmdline))
 }
 
 // mountGuestFilesystems mounts the worktree at its identical absolute host

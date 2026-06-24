@@ -29,6 +29,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -109,14 +110,11 @@ func startGuestDevServer(t *testing.T, mgr *microvm.Manager, id, body string) {
 // wired over the firecracker per-VM port dialer (the publish direction).
 // Refs: SEC-09, FR-17.8
 func TestE2E_PortPublish_GuestServiceReachableOnHost(t *testing.T) {
-	// GATED on the guest-side vsock<->TCP publish bridge (MGIT-11.10.13): the
-	// host publisher dials the guest over VSOCK (DialGuestPort), but a real dev
-	// server (and this test's busybox `nc -ll`) listens on TCP. Without an
-	// in-guest AF_VSOCK->TCP bridge the host reaches nothing. The host-side
-	// publisher + SEC-09 one-way isolation are proven by
-	// TestE2E_PortPublish_GuestCannotReachHostLoopback; un-skip this once the
-	// guest bridge lands. Refs: SEC-09, MGIT-11.10.13
-	t.Skip("needs the guest-side vsock<->TCP publish bridge (MGIT-11.10.13)")
+	// The guest-side AF_VSOCK->TCP-loopback publish bridge (MGIT-11.10.13) now
+	// runs in mgit-guest, so the host publisher's host->guest vsock connect
+	// (DialGuestPort) reaches the bridge -> the guest's loopback dev server.
+	// The published guest ports are supplied to the guest on the kernel
+	// cmdline via the launch options' PublishPorts. Refs: SEC-09, MGIT-11.10.13
 	kernel, _ := requireKVM(t)
 	requireNetRoot(t)
 	rootfs := os.Getenv("MGIT_E2E_GUEST_ROOTFS")
@@ -124,8 +122,25 @@ func TestE2E_PortPublish_GuestServiceReachableOnHost(t *testing.T) {
 		t.Skip("set MGIT_E2E_GUEST_ROOTFS to a present guest image")
 	}
 
+	// Launch WITH the published-port mapping in the options: the backend puts
+	// the guest port (3000) on the kernel cmdline so mgit-guest starts its
+	// AF_VSOCK->TCP-loopback bridge for it on boot. The host port is chosen
+	// up-front so the launch options and the host-side StartPublish agree.
 	mgr, ref, workDir := registerGuestManagerAt(t, kernel, rootfs, "")
-	info := launchNetSandbox(t, mgr, ref, model.NetworkModeOpen, nil)
+	hostPort := freeHostPort(t)
+	mapping := []model.PortPublish{{HostPort: hostPort, GuestPort: guestDevServerPort}}
+	wtPath := filepath.Join(t.TempDir(), "repo", "wt")
+	require.NoError(t, os.MkdirAll(wtPath, 0o750))
+	info, err := mgr.Launch(context.Background(), model.SandboxLaunchOptions{
+		TaskID:       "MGIT-11.10.13",
+		WorktreePath: wtPath,
+		ImageRef:     ref,
+		Network:      model.NetworkPolicy{Mode: model.NetworkModeOpen},
+		PublishPorts: mapping,
+		CPUs:         1, MemoryMB: 256,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = mgr.Remove(context.Background(), info.ID, true) })
 	startGuestDevServer(t, mgr, info.ID, "hello-from-guest")
 
 	// Wire the host-side controller over the firecracker per-VM port dialer.
@@ -135,9 +150,7 @@ func TestE2E_PortPublish_GuestServiceReachableOnHost(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	hostPort := freeHostPort(t)
-	require.NoError(t, ctrl.StartPublish(context.Background(), *info,
-		[]model.PortPublish{{HostPort: hostPort, GuestPort: guestDevServerPort}}))
+	require.NoError(t, ctrl.StartPublish(context.Background(), *info, mapping))
 	t.Cleanup(func() { ctrl.StopPublish(info.ID) })
 
 	// The publisher binds host loopback only.

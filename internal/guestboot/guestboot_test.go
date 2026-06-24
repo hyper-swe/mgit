@@ -148,3 +148,58 @@ func TestValid(t *testing.T) {
 		})
 	}
 }
+
+// TestPublishPortsRoundTrip verifies the host-appended published-ports
+// descriptor parses back to the same guest ports on the guest — the contract
+// both ends share for the SEC-09 vsock<->TCP bridge.
+func TestPublishPortsRoundTrip(t *testing.T) {
+	ports := []int{3000, 8080, 1}
+	cmdline := AppendPublishPortsCmdline("console=ttyS0 reboot=k", ports)
+	assert.Equal(t, ports, ParsePublishPorts(cmdline))
+}
+
+// TestAppendPublishPortsCmdline_PreservesBase verifies base args are kept and
+// the descriptor is appended as a single comma-joined token after them.
+func TestAppendPublishPortsCmdline_PreservesBase(t *testing.T) {
+	out := AppendPublishPortsCmdline("console=ttyS0 panic=1", []int{3000, 8080})
+	assert.Contains(t, out, "console=ttyS0 panic=1 ")
+	assert.Contains(t, out, "mgit.publish_ports=3000,8080")
+}
+
+// TestAppendPublishPortsCmdline_EmptyBase verifies no leading space on a blank base.
+func TestAppendPublishPortsCmdline_EmptyBase(t *testing.T) {
+	out := AppendPublishPortsCmdline("", []int{3000})
+	assert.Equal(t, "mgit.publish_ports=3000", out)
+}
+
+// TestAppendPublishPortsCmdline_NoPorts_AddsNothing verifies an empty (or
+// all-invalid) port list leaves the cmdline untouched.
+func TestAppendPublishPortsCmdline_NoPorts_AddsNothing(t *testing.T) {
+	assert.Equal(t, "console=ttyS0", AppendPublishPortsCmdline("console=ttyS0", nil))
+	assert.Equal(t, "console=ttyS0", AppendPublishPortsCmdline("console=ttyS0", []int{0, 70000, -1}))
+}
+
+// TestAppendPublishPortsCmdline_DropsOutOfRange verifies out-of-range ports
+// are dropped so the descriptor only ever names valid guest TCP ports.
+func TestAppendPublishPortsCmdline_DropsOutOfRange(t *testing.T) {
+	out := AppendPublishPortsCmdline("", []int{0, 3000, 70000, 8080})
+	assert.Equal(t, "mgit.publish_ports=3000,8080", out)
+}
+
+// TestParsePublishPorts_IgnoresUnrelatedTokens verifies only the publish key
+// is extracted from a realistic cmdline that also carries other descriptors.
+func TestParsePublishPorts_IgnoresUnrelatedTokens(t *testing.T) {
+	cmdline := "console=ttyS0 mgit.worktree=/wt mgit.publish_ports=3000,8080 root=/dev/vda mgit.overlay_dev=/dev/vdb"
+	assert.Equal(t, []int{3000, 8080}, ParsePublishPorts(cmdline))
+}
+
+// TestParsePublishPorts_Empty verifies an absent descriptor yields no ports.
+func TestParsePublishPorts_Empty(t *testing.T) {
+	assert.Empty(t, ParsePublishPorts("console=ttyS0 root=/dev/vda"))
+}
+
+// TestParsePublishPorts_SkipsMalformed verifies malformed/out-of-range
+// entries are skipped (the guest only listens on valid ports).
+func TestParsePublishPorts_SkipsMalformed(t *testing.T) {
+	assert.Equal(t, []int{3000, 8080}, ParsePublishPorts("mgit.publish_ports=3000,abc,70000,0,8080"))
+}

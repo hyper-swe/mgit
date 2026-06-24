@@ -153,6 +153,12 @@ func buildConfig(cfg microvm.VMConfig, p vmPaths, worktreeImg string) fc.Config 
 			Path: cfg.WorktreePath, FSType: "ext4", Source: worktreeDevice,
 		})
 	}
+	// Tell the guest which TCP ports to expose over AF_VSOCK for one-way
+	// host->guest port publishing (SEC-09): mgit-guest runs an
+	// AF_VSOCK(:N)->TCP(127.0.0.1:N) bridge per listed port so the host
+	// publisher's host->guest vsock connect reaches the guest dev server. No
+	// ports => no token. Refs: SEC-09, FR-17.8
+	kernelArgs = guestboot.AppendPublishPortsCmdline(kernelArgs, cfg.PublishPorts)
 
 	out := fc.Config{
 		SocketPath:      p.socket,

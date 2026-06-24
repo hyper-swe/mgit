@@ -85,6 +85,13 @@ type VMConfig struct {
 	NetworkMode      string // model.NetworkMode*: backend wires NAT (open) vs proxy-route (allowlist) vs no NIC (none) (FR-17.7, FR-17.8)
 	VsockEnabled     bool
 	BalloonEnabled   bool
+	// PublishPorts are the GUEST TCP ports the guest must expose for one-way
+	// host->guest port publishing (SEC-09): the backend puts them on the guest
+	// kernel cmdline (guestboot) so mgit-guest runs an AF_VSOCK->TCP-localhost
+	// bridge per port, and the host publisher's host->guest vsock connect
+	// reaches the guest's own dev server. Host-side only; no path back to the
+	// host. Empty when nothing is published. Refs: SEC-09, FR-17.8
+	PublishPorts []int
 }
 
 // VM is the lifecycle handle the manager drives.
@@ -389,7 +396,23 @@ func vmConfig(id string, opts model.SandboxLaunchOptions, images ImagePaths, ove
 		NetworkMode:      opts.Network.Mode,
 		VsockEnabled:     true,
 		BalloonEnabled:   true,
+		PublishPorts:     guestPublishPorts(opts.PublishPorts),
 	}
+}
+
+// guestPublishPorts projects the launch options' host->guest port mappings to
+// just the GUEST ports the guest must bridge (the host port is host-side
+// state the guest never learns — SEC-09 keeps the cmdline free of host
+// addresses). Refs: SEC-09, FR-17.8
+func guestPublishPorts(ports []model.PortPublish) []int {
+	if len(ports) == 0 {
+		return nil
+	}
+	out := make([]int, 0, len(ports))
+	for _, pp := range ports {
+		out = append(out, pp.GuestPort)
+	}
+	return out
 }
 
 // newSandboxInfo assembles the running sandbox's metadata record,

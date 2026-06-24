@@ -16,6 +16,7 @@ package guestboot
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -35,6 +36,14 @@ const (
 	// device with ("ext4"). The drive is delivered as a raw sparse file, so
 	// the guest mkfs-es it on first boot if unformatted.
 	KeyOverlayFS = "mgit.overlay_fs"
+	// KeyPublishPorts is the comma-separated list of GUEST TCP ports the guest
+	// must expose for one-way host->guest port publishing (SEC-09). For each
+	// listed port N the guest runs an AF_VSOCK(:N)->TCP(127.0.0.1:N) bridge so
+	// the host publisher's host->guest vsock connect reaches the guest's own
+	// loopback dev server. Empty/absent means no ports are published. The
+	// cmdline carries only port numbers — no secrets, no host addresses — so
+	// it cannot give the guest a path to the host (SEC-09 stays one-way).
+	KeyPublishPorts = "mgit.publish_ports"
 )
 
 // WorktreeMount is the host-supplied worktree delivery descriptor.
@@ -131,6 +140,53 @@ func ParseOverlayUpper(cmdline string) OverlayUpper {
 		}
 	}
 	return o
+}
+
+// AppendPublishPortsCmdline returns base with the published-ports descriptor
+// appended as a single key=value token, the value being the guest ports
+// joined by commas (e.g. "mgit.publish_ports=3000,8080"). An empty port list
+// adds nothing (no ports published). Out-of-range ports (not 1..65535) are
+// dropped: the descriptor only ever names valid guest TCP ports, so the guest
+// never tries to listen on a bogus vsock port. Refs: SEC-09, FR-17.8
+func AppendPublishPortsCmdline(base string, guestPorts []int) string {
+	tokens := make([]string, 0, len(guestPorts))
+	for _, p := range guestPorts {
+		if p < 1 || p > 65535 {
+			continue
+		}
+		tokens = append(tokens, strconv.Itoa(p))
+	}
+	if len(tokens) == 0 {
+		return base
+	}
+	suffix := KeyPublishPorts + "=" + strings.Join(tokens, ",")
+	if strings.TrimSpace(base) == "" {
+		return suffix
+	}
+	return base + " " + suffix
+}
+
+// ParsePublishPorts extracts the guest ports to bridge from a kernel command
+// line, ignoring unrelated tokens. Malformed or out-of-range entries are
+// skipped (the guest only listens on valid ports); an absent descriptor
+// yields an empty slice (no bridges). The guest calls this on /proc/cmdline.
+// Refs: SEC-09, FR-17.8
+func ParsePublishPorts(cmdline string) []int {
+	var ports []int
+	for _, field := range strings.Fields(cmdline) {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok || key != KeyPublishPorts || value == "" {
+			continue
+		}
+		for _, tok := range strings.Split(value, ",") {
+			n, err := strconv.Atoi(strings.TrimSpace(tok))
+			if err != nil || n < 1 || n > 65535 {
+				continue
+			}
+			ports = append(ports, n)
+		}
+	}
+	return ports
 }
 
 // ParseWorktreeMount extracts the worktree descriptor from a kernel
