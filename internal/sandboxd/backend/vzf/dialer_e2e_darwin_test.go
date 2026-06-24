@@ -25,6 +25,13 @@ import (
 	"github.com/hyper-swe/mgit/internal/model"
 )
 
+// e2eVZFCmdline is the kernel cmdline the vzf live-e2e guests boot with. Like
+// firecracker's e2eGuestCmdline it MUST set init=/sbin/mgit-guest (else the
+// kernel falls through to /bin/sh as PID 1 and nothing serves vsock) and
+// rootfstype=ext4; console=hvc0 is the vz virtio-console (no ttyS0/pci=off —
+// vz presents virtio over PCI, not firecracker's MMIO). Refs: MGIT-13.1.1
+const e2eVZFCmdline = "console=hvc0 root=/dev/vda ro rootfstype=ext4 init=/sbin/mgit-guest"
+
 // TestE2E_VZF_Exec_RealGuest_RoundTrip boots a real guest and execs over
 // the dialer. Gated on MGIT_E2E_VZF_KERNEL + MGIT_E2E_GUEST_ROOTFS and the
 // virtualization entitlement.
@@ -44,7 +51,7 @@ func TestE2E_VZF_Exec_RealGuest_RoundTrip(t *testing.T) {
 	mgr, err := NewManager(Config{
 		WorkDir: t.TempDir(),
 		Resolve: func(string) (ImagePaths, error) {
-			return ImagePaths{KernelPath: kernel, RootfsPath: rootfs, Cmdline: "console=hvc0 root=/dev/vda ro"}, nil
+			return ImagePaths{KernelPath: kernel, RootfsPath: rootfs, Cmdline: e2eVZFCmdline}, nil
 		},
 		Logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
 		Clock:  func() time.Time { return time.Now().UTC() },

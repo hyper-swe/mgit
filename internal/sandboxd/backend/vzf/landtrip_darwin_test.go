@@ -135,7 +135,7 @@ func TestE2E_VZF_Land_RealGuest_RoundTrip(t *testing.T) {
 	mgr, landDialer, err := NewManagerWithLand(Config{
 		WorkDir: workDir,
 		Resolve: func(string) (ImagePaths, error) {
-			return ImagePaths{KernelPath: kernel, RootfsPath: rootfs, Cmdline: "console=hvc0 root=/dev/vda ro"}, nil
+			return ImagePaths{KernelPath: kernel, RootfsPath: rootfs, Cmdline: e2eVZFCmdline}, nil
 		},
 		Logger: logger, Clock: clock, PeerBinder: binder,
 	})

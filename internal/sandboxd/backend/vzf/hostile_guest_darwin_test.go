@@ -108,7 +108,7 @@ func vzfBootGuest(t *testing.T, fx vzfHostileFixture, kernel, rootfs string) (*m
 	mgr, err := NewManager(Config{
 		WorkDir: t.TempDir(),
 		Resolve: func(string) (ImagePaths, error) {
-			return ImagePaths{KernelPath: kernel, RootfsPath: rootfs, Cmdline: "console=hvc0 root=/dev/vda ro"}, nil
+			return ImagePaths{KernelPath: kernel, RootfsPath: rootfs, Cmdline: e2eVZFCmdline}, nil
 		},
 		Logger:           slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
 		Clock:            func() time.Time { return time.Now().UTC() },
@@ -205,7 +205,7 @@ func TestE2E_VZF_HostileGuest_EscapingSymlinkRejected(t *testing.T) {
 	mgr, err := NewManager(Config{
 		WorkDir: t.TempDir(),
 		Resolve: func(string) (ImagePaths, error) {
-			return ImagePaths{KernelPath: kernel, RootfsPath: rootfs, Cmdline: "console=hvc0 root=/dev/vda ro"}, nil
+			return ImagePaths{KernelPath: kernel, RootfsPath: rootfs, Cmdline: e2eVZFCmdline}, nil
 		},
 		Logger:           slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
 		Clock:            func() time.Time { return time.Now().UTC() },
