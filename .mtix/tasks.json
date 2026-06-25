@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-24T10:25:50Z",
+  "exported_at": "2026-06-25T06:38:59Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -470,7 +470,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.729571710340941,
+      "progress": 0.8414224664224664,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -619,7 +619,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.6153846153846154,
+      "progress": 0.8888888888888888,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -642,7 +642,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -650,7 +650,8 @@
       "weight": 1,
       "content_hash": "f72de1d6956db746ccc82cef9a0eba3cffc95f07f8f1b528dff7e9bdfc4e7056",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-25T06:36:50Z",
+      "closed_at": "2026-06-25T06:36:50Z"
     },
     {
       "id": "MGIT-11.10.10",
@@ -766,7 +767,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -774,7 +775,8 @@
       "weight": 1,
       "content_hash": "70bd1730fd2ac332da4aee0808b0ba2cff23fe0d56e0ab2c8cc5a23e6a5483a8",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-25T06:36:53Z",
+      "closed_at": "2026-06-25T06:36:53Z"
     },
     {
       "id": "MGIT-11.10.3",
@@ -790,7 +792,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -798,7 +800,8 @@
       "weight": 1,
       "content_hash": "5705c64f31edee8f3fe10c00912f81c244641a345700b0cf2e74d25dd3374701",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-25T06:36:55Z",
+      "closed_at": "2026-06-25T06:36:55Z"
     },
     {
       "id": "MGIT-11.10.4",
@@ -814,7 +817,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -822,7 +825,8 @@
       "weight": 1,
       "content_hash": "d0a4e49d219e3b0c7cd82ac139911fadd47a74a081033ea80d83620eec1896c2",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:50Z"
+      "updated_at": "2026-06-25T06:36:58Z",
+      "closed_at": "2026-06-25T06:36:58Z"
     },
     {
       "id": "MGIT-11.10.5",
@@ -838,7 +842,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -846,7 +850,7 @@
       "weight": 1,
       "content_hash": "97fd82c22645d8e0c97b2b5807b89115beb2f8627d936b67fe607da35550f3d4",
       "created_at": "2026-06-12T11:47:32Z",
-      "updated_at": "2026-06-12T11:47:32Z"
+      "updated_at": "2026-06-25T06:37:09Z"
     },
     {
       "id": "MGIT-11.10.6",
@@ -1850,7 +1854,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "done",
-      "progress": 1,
+      "progress": 0.8333333333333334,
       "assignee": "opus-agent-01",
       "creator": "cli",
       "agent_state": "working",
@@ -1924,7 +1928,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "deferred",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "fable-agent-01",
       "creator": "cli",
@@ -1932,7 +1936,8 @@
       "weight": 1,
       "content_hash": "2344712b18907a1ac4eca9f752d75a1e87aef57bfc0c49ef7c1ada55e5ba8e9b",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-15T15:29:32Z"
+      "updated_at": "2026-06-25T06:36:38Z",
+      "closed_at": "2026-06-25T06:36:38Z"
     },
     {
       "id": "MGIT-11.5.4",
@@ -2098,7 +2103,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.6666666666666666,
+      "progress": 0.8888888888888888,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -2121,15 +2126,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "opus-agent-01",
       "creator": "cli",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "c7faa7978addc107b98a9bba1edc7d071bb27eea1317dcb3d5997d21181c4178",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-16T11:34:28Z"
+      "updated_at": "2026-06-25T06:37:07Z",
+      "closed_at": "2026-06-25T06:37:07Z"
     },
     {
       "id": "MGIT-11.6.2",
@@ -2194,15 +2200,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "a65c3f283d5684fe12d504440d4bc043a317e137bce83468934f0c26bf5ae760",
       "created_at": "2026-06-20T13:39:00Z",
-      "updated_at": "2026-06-20T13:52:00Z"
+      "updated_at": "2026-06-25T06:37:08Z",
+      "closed_at": "2026-06-25T06:37:08Z"
     },
     {
       "id": "MGIT-11.6.5",
@@ -2343,15 +2350,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "drift-reconcile",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "028ebc9fb13ecd4e2a81e440ddb7064de87abf0b63a85bd93b2a33f0b35f54ab",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:16:41Z"
+      "updated_at": "2026-06-25T06:38:06Z",
+      "closed_at": "2026-06-25T06:38:06Z"
     },
     {
       "id": "MGIT-11.7.1",
@@ -2367,7 +2375,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -2375,7 +2383,8 @@
       "weight": 1,
       "content_hash": "ec963ac6252c675e0386137bc5dcaf002354dce76e73728e685f108988b8501b",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-25T06:36:40Z",
+      "closed_at": "2026-06-25T06:36:40Z"
     },
     {
       "id": "MGIT-11.7.2",
@@ -2391,7 +2400,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -2399,7 +2408,8 @@
       "weight": 1,
       "content_hash": "1099e7559562aa5a738305677299eb0a204aa58cae566d2e0c580e7c7027a036",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-25T06:36:42Z",
+      "closed_at": "2026-06-25T06:36:42Z"
     },
     {
       "id": "MGIT-11.7.3",
@@ -2415,7 +2425,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -2423,7 +2433,8 @@
       "weight": 1,
       "content_hash": "845d4fd11a85524912baec1d8b2c6e97f1a29347bc29d54ddff8a96170c7d311",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-25T06:36:46Z",
+      "closed_at": "2026-06-25T06:36:46Z"
     },
     {
       "id": "MGIT-11.7.4",
@@ -2439,7 +2450,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -2447,7 +2458,8 @@
       "weight": 1,
       "content_hash": "ede213e6e7cb359829dfe64b28415df09c5ae2c1818a05f32b55d39e94432996",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-12T11:42:49Z"
+      "updated_at": "2026-06-25T06:36:48Z",
+      "closed_at": "2026-06-25T06:36:48Z"
     },
     {
       "id": "MGIT-11.8",
@@ -2639,7 +2651,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.75,
+      "progress": 0.875,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -2762,15 +2774,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "opus-agent-01",
       "creator": "cli",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "3ba153dec7a8fa2cfaeb91f0837d948637b5d6f6589d8a0f6e9a5f241ab22fcd",
       "created_at": "2026-06-12T11:16:40Z",
-      "updated_at": "2026-06-23T08:29:38Z"
+      "updated_at": "2026-06-25T06:37:09Z",
+      "closed_at": "2026-06-25T06:37:09Z"
     },
     {
       "id": "MGIT-11.9.6",
@@ -7606,12 +7619,6 @@
       "created_at": "2026-06-12T11:47:32Z"
     },
     {
-      "from_id": "MGIT-11.6",
-      "to_id": "MGIT-11.7",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:16:41Z"
-    },
-    {
       "from_id": "MGIT-11.6.1",
       "to_id": "MGIT-11.7.1",
       "dep_type": "blocks",
@@ -8020,12 +8027,6 @@
       "created_at": "2026-06-12T11:42:51Z"
     },
     {
-      "from_id": "MGIT-11.9.5",
-      "to_id": "MGIT-11.10.5",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:47:33Z"
-    },
-    {
       "from_id": "MGIT-12.1",
       "to_id": "MGIT-12.6",
       "dep_type": "blocks",
@@ -8240,6 +8241,13 @@
       "last_heartbeat": "2026-06-21T05:35:20Z"
     },
     {
+      "agent_id": "drift-reconcile",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-11.7",
+      "last_heartbeat": "2026-06-25T06:38:04Z"
+    },
+    {
       "agent_id": "fable-agent-01",
       "project": "MGIT",
       "state": "working",
@@ -8263,5 +8271,5 @@
   ],
   "sessions": null,
   "node_count": 277,
-  "checksum": "579a8d55e0713a9c55d28fb1c30c3ffe58c80f07a3e39c2b8680407cfce3821c"
+  "checksum": "98c09f1b98d4fec143f63514ac508b5b80f8e67397b7bf3161d4bd5a2f5374d0"
 }
