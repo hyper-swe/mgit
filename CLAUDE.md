@@ -478,6 +478,33 @@ type WorktreeManager interface {
 - `internal/service/worktree_service.go` — Lifecycle orchestration, task binding, hooks
 - `cmd/mgit/worktree.go` — CLI subcommands
 
+### Spawning sub-agents — DOGFOOD mgit worktrees (do not reach for git worktrees)
+
+We build mgit; we use mgit. When you spawn a sub-agent to work a task in
+parallel, **prefer an mgit worktree over a git worktree.** For each parallel
+task:
+
+1. `mgit work <path> --task <ID>` — creates an mgit worktree bound to the task
+   (FR-16) and wires the agent files (`CLAUDE.md` + `.claude/settings.json` →
+   `mgit run`). This is the first-class "start an agent on a task" entry point.
+2. Run the sub-agent **in that worktree**, and have it commit with
+   `mgit commit` (or just `mgit commit` from inside the worktree — the bound
+   task ID is auto-inherited). Its shell routes through `mgit run` into the
+   task sandbox when one is launched (`--sandbox`).
+3. Integrate the finished task with `mgit squash --task <ID> --to-git`, then
+   `git apply` / land it onto the project's git.
+
+**Honest caveat (this instruction is advisory, not enforced):** the Claude
+Code Agent tool's built-in `isolation: "worktree"` is **git-only** — it cannot
+natively isolate a sub-agent into an mgit worktree. So "spawn with mgit" is a
+deliberate workaround: create the mgit worktree with `mgit work` first, then
+spawn the sub-agent **without** the harness's git-worktree isolation, pointed
+at that path. This trades the harness's automatic worktree cleanup for mgit's
+task-binding + provenance. Prefer it for mgit-dev's own parallel work so we
+exercise the product we ship (the credibility test: *if we don't use mgit, why
+would anyone?*). If a step genuinely blocks delivery, fall back to a git
+worktree and **file the friction as a task** — that friction is the backlog.
+
 ---
 
 ## NAMING AND FORMATTING
