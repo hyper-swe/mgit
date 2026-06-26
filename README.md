@@ -109,6 +109,8 @@ mgit sandbox land --task PROJ-12   # pull + host-verify + append to your real re
 
 `mgit commit` uses `--task-id` (auto-inherited inside a bound worktree); `mgit run -- <cmd>` routes execution into the task sandbox, fail-closed.
 
+> **Worktree caveats.** An mgit worktree is **not** a git repo (no `.git`) &mdash; integrate by exporting the squash as a patch (`mgit squash --to-git | git apply`), never by running `git` inside the worktree. And gitignored **build** artifacts (e.g. an embedded `web/dist`) are not seeded into a worktree; list them in `.mgit/seed-include` (one glob per line, e.g. `web/dist`) to carry them in, or run your generate/build step in the worktree as you would in a fresh checkout.
+
 ## Why mgit?
 
 mgit is purpose-built for autonomous coding agents working on real codebases:
@@ -123,6 +125,18 @@ mgit is purpose-built for autonomous coding agents working on real codebases:
 - **Runs over your existing git repo** &mdash; mgit keeps a self-contained `.mgit/` store and provably never touches your project's `.git` (it only *reads* it, read-only, to learn git's current state).
 - **Stays in sync with git automatically** &mdash; git is authoritative; mgit keeps its `.mgit` base coherent with your current local working state on its own (no manual `mgit sync`). A new task worktree carries your unpushed local foundation, and each task pins the base it forked from so a later resync never corrupts its diff. See [ADR-008](docs/adr/008-git-authoritative-coexistence.md).
 - **Three integration modes** &mdash; CLI for humans, REST API for services, MCP tools for AI agents.
+
+## When mgit earns its keep
+
+mgit's worktree layer overlaps with plain `git worktree` + "push the branch first," so be honest about when the extra layer pays off. Reach for mgit when:
+
+- **You can't or won't push WIP.** An mgit worktree carries your *current local working state* &mdash; including unpushed commits and uncommitted foundation &mdash; into every task worktree. Native git worktrees base off the last *pushed* commit and miss it.
+- **You want a task&rarr;commit audit trail** and the [mtix](https://github.com/hyper-swe/mtix) &harr; mgit product loop: every step is a task-tagged, append-only commit you can review and undo.
+- **You need to run untrusted code.** Per-task microVM containment for installs/builds/tests is the one capability plain worktrees fundamentally lack &mdash; **the main reason to reach for mgit.**
+
+If none of those apply &mdash; you push WIP freely and your code is trusted &mdash; native git worktrees are lighter and git-native. mgit is for the cases they don't cover.
+
+> *From an independent trial (a team integrating their own project through mgit):* six tickets integrated through mgit worktrees with **zero conflicts**; `squash --to-git` verified to **round-trip byte-for-byte**; the gitignore-aware seed praised (no `node_modules`). Their headline: the **microVM sandbox is the real differentiator** &mdash; the capability native worktrees can't provide.
 
 ## Installation
 

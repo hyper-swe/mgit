@@ -64,6 +64,15 @@ that worktree.
 > wiring. Use `mgit worktree add ./path --task ID` only when you want the
 > worktree without the agent-shell integration.
 
+> **Build artifacts in a worktree.** A worktree is seeded from `.mgit` honoring
+> `.gitignore`, so gitignored **generated** artifacts (e.g. an embedded
+> `web/dist`) are NOT carried in — a fresh worktree may fail `go build ./...`
+> until they exist, exactly like a fresh git checkout. Either run the
+> generate/build step in the worktree, or list the build-required paths in
+> `.mgit/seed-include` (one glob per line, e.g. `web/dist`) to carry them from
+> the working tree into every new worktree. The task-id flag is `--task-id`
+> everywhere (`--task` is accepted as a back-compat alias).
+
 ## 3. Micro-commit every coherent step
 
 Commit as soon as a step compiles or passes — micro-commits are cheap and
