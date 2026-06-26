@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
+	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 )
 
 // This file is the bridge between mgit's bare .mgit/ object store and the
@@ -87,8 +89,12 @@ func (r *Repository) workingFileContent(rel string) ([]byte, filemode.FileMode, 
 // is reported as a non-directory file path and tracked as a symlink (its link
 // text), never traversed into. Refs: MGIT-14.7 (#2)
 func (r *Repository) listWorkingFiles() ([]string, error) {
+	matcher, err := r.ignoreMatcher()
+	if err != nil {
+		return nil, err
+	}
 	var paths []string
-	err := filepath.WalkDir(r.root, func(abs string, d fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(r.root, func(abs string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -107,6 +113,18 @@ func (r *Repository) listWorkingFiles() ([]string, error) {
 			}
 			return nil
 		}
+		// Honor .gitignore (MGIT-32): an ignored directory is not descended and
+		// an ignored file is not listed, so `mgit status`/`add .` see only
+		// trackable working files. .git/.mgit are excluded above UNCONDITIONALLY
+		// (sacrosanct, never subject to ignore rules). A file already tracked in
+		// HEAD that a later .gitignore rule covers is the rare git edge gitignore
+		// itself does not retract — out of scope here; stage it explicitly.
+		if matcher.Match(strings.Split(rel, "/"), d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if d.IsDir() {
 			return nil
 		}
@@ -117,6 +135,20 @@ func (r *Repository) listWorkingFiles() ([]string, error) {
 		return nil, fmt.Errorf("walk working tree: %w", err)
 	}
 	return paths, nil
+}
+
+// ignoreMatcher builds a gitignore matcher from the project's .gitignore files
+// (root + nested, with negation), via go-git's matcher so the semantics match
+// git exactly. It is rebuilt per status/add walk so newly written rules take
+// effect immediately. .git/.mgit are excluded by the walk regardless, so their
+// internal .gitignore files (if any) never affect project matching.
+// Refs: MGIT-32
+func (r *Repository) ignoreMatcher() (gitignore.Matcher, error) {
+	patterns, err := gitignore.ReadPatterns(osfs.New(r.root), nil)
+	if err != nil {
+		return nil, fmt.Errorf("read gitignore patterns: %w", err)
+	}
+	return gitignore.NewMatcher(patterns), nil
 }
 
 // blobHashOfWorkingFile returns the git blob hash a working file's content
