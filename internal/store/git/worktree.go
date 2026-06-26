@@ -375,6 +375,16 @@ func (ws *WorktreeStore) MaterializeBranchTo(_ context.Context, branchName, dest
 			return fmt.Errorf("materialize branch %s: %w", branchName, err)
 		}
 	}
+
+	// Carry gitignored-but-build-required artifacts (e.g. a generated web/dist
+	// that a //go:embed depends on) listed in .mgit/seed-include. These are
+	// absent from the materialized tree because mgit's add honors .gitignore
+	// (MGIT-32), so they are copied from the live source working tree AFTER the
+	// tree write — without importing them into .mgit (the base/audit stays
+	// clean). Everything NOT listed stays excluded. Refs: MGIT-38
+	if err := ws.repo.copySeedIncludes(destRoot); err != nil {
+		return fmt.Errorf("materialize branch %s: seed-include: %w", branchName, err)
+	}
 	return nil
 }
 
