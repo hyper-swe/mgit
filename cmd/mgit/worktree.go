@@ -37,7 +37,8 @@ func worktreeCmd() *cobra.Command {
 			defer app.Close()
 
 			ctx := context.Background()
-			wtSvc := service.NewWorktreeService(app.Index, app.Branch, gitstore.NewWorktreeStore(app.Repo), func() time.Time { return time.Now().UTC() })
+			wtSvc := service.NewWorktreeService(app.Index, app.Branch, gitstore.NewWorktreeStore(app.Repo), func() time.Time { return time.Now().UTC() }).
+				WithSync(app.Sync, app.Repo, gitstore.NewCommitStore(app.Repo))
 
 			wt, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
 				Path: args[0], TaskID: wtTaskID, AgentID: wtAgentID, Branch: wtBranch,

@@ -13,13 +13,13 @@ import (
 // UNIQUE constraints on task_id and path enforce isolation.
 // Refs: FR-16.11, MGIT-8.1.2
 func (s *Store) InsertWorktree(ctx context.Context, wt *model.WorktreeInfo) error {
-	const insertSQL = `INSERT INTO worktrees (path, branch_name, task_id, agent_id, created_at)
-		VALUES (?, ?, ?, ?, ?)`
+	const insertSQL = `INSERT INTO worktrees (path, branch_name, task_id, agent_id, created_at, fork_base)
+		VALUES (?, ?, ?, ?, ?, ?)`
 
 	return s.WriteTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, insertSQL,
 			wt.Path, wt.Branch, wt.TaskID, wt.AgentID,
-			s.clock().UTC().Format(time.RFC3339))
+			s.clock().UTC().Format(time.RFC3339), wt.ForkBase)
 		if err != nil {
 			return fmt.Errorf("insert worktree: %w", err)
 		}
@@ -31,7 +31,7 @@ func (s *Store) InsertWorktree(ctx context.Context, wt *model.WorktreeInfo) erro
 // Returns ErrWorktreeNotFound if not registered.
 // Refs: FR-16
 func (s *Store) GetWorktree(ctx context.Context, path string) (*model.WorktreeInfo, error) {
-	const querySQL = `SELECT path, branch_name, task_id, agent_id, created_at
+	const querySQL = `SELECT path, branch_name, task_id, agent_id, created_at, fork_base
 		FROM worktrees WHERE path = ?`
 
 	var wt model.WorktreeInfo
@@ -39,7 +39,7 @@ func (s *Store) GetWorktree(ctx context.Context, path string) (*model.WorktreeIn
 
 	err := s.ReadTx(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, querySQL, path).Scan(
-			&wt.Path, &wt.Branch, &wt.TaskID, &wt.AgentID, &createdAt)
+			&wt.Path, &wt.Branch, &wt.TaskID, &wt.AgentID, &createdAt, &wt.ForkBase)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", model.ErrWorktreeNotFound, path)
@@ -52,10 +52,35 @@ func (s *Store) GetWorktree(ctx context.Context, path string) (*model.WorktreeIn
 	return &wt, nil
 }
 
+// GetWorktreeByTask retrieves the worktree bound to a task ID. The worktrees
+// table has UNIQUE(task_id), so at most one row matches. Returns
+// ErrWorktreeNotFound when no worktree is bound to the task (e.g. a task
+// committed directly on the host store without `mgit work`). It backs the
+// ADR-008 §4 pinned-fork-base assertion in squash/diff. Refs: MGIT-35, FR-16
+func (s *Store) GetWorktreeByTask(ctx context.Context, taskID string) (*model.WorktreeInfo, error) {
+	const querySQL = `SELECT path, branch_name, task_id, agent_id, created_at, fork_base
+		FROM worktrees WHERE task_id = ?`
+
+	var wt model.WorktreeInfo
+	var createdAt string
+	err := s.ReadTx(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, querySQL, taskID).Scan(
+			&wt.Path, &wt.Branch, &wt.TaskID, &wt.AgentID, &createdAt, &wt.ForkBase)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: task %s", model.ErrWorktreeNotFound, taskID)
+	}
+	if t, parseErr := time.Parse(time.RFC3339, createdAt); parseErr == nil {
+		wt.CreatedAt = t
+	}
+	wt.Name = model.DeriveNameFromPath(wt.Path)
+	return &wt, nil
+}
+
 // ListWorktrees returns all registered worktrees.
 // Refs: FR-16
 func (s *Store) ListWorktrees(ctx context.Context) ([]model.WorktreeInfo, error) {
-	const querySQL = `SELECT path, branch_name, task_id, agent_id, created_at FROM worktrees`
+	const querySQL = `SELECT path, branch_name, task_id, agent_id, created_at, fork_base FROM worktrees`
 
 	var worktrees []model.WorktreeInfo
 	err := s.ReadTx(ctx, func(tx *sql.Tx) error {
@@ -68,7 +93,7 @@ func (s *Store) ListWorktrees(ctx context.Context) ([]model.WorktreeInfo, error)
 		for rows.Next() {
 			var wt model.WorktreeInfo
 			var createdAt string
-			if err := rows.Scan(&wt.Path, &wt.Branch, &wt.TaskID, &wt.AgentID, &createdAt); err != nil {
+			if err := rows.Scan(&wt.Path, &wt.Branch, &wt.TaskID, &wt.AgentID, &createdAt, &wt.ForkBase); err != nil {
 				return err
 			}
 			if t, parseErr := time.Parse(time.RFC3339, createdAt); parseErr == nil {

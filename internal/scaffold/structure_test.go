@@ -128,6 +128,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		"index":  true,
 		"lock":   true,
 		"policy": true, // host-only sandbox policy store (FR-17.13, MGIT-11.3.4)
+		"gitref": true, // read-only project-.git reader for auto-housekeeping (ADR-008, MGIT-35)
 	}
 
 	storeEntries, err := os.ReadDir(filepath.Join(root, "internal", "store"))

@@ -7,7 +7,9 @@ package index
 // schemaVersion tracks the current schema version for migrations.
 // Version 2: FR-17 sandbox tables (sandbox_events, sandbox_egress_log)
 // and the additive task_commits.sandbox_id column.
-const schemaVersion = 2
+// Version 3: ADR-008 — additive worktrees.fork_base column pinning the base
+// commit each task forked from (MGIT-35).
+const schemaVersion = 3
 
 // createTablesSQL defines all tables for the mgit index database.
 // task_commits is APPEND-ONLY: no UPDATE, no DELETE. Ever.
@@ -78,6 +80,9 @@ CREATE TABLE IF NOT EXISTS worktrees (
     task_id TEXT NOT NULL,
     agent_id TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
+    -- fork_base pins the base commit this task forked from (ADR-008 §4); a
+    -- later base resync never shifts it, so squash/diff stay correct (MGIT-35).
+    fork_base TEXT NOT NULL DEFAULT '',
     UNIQUE(branch_name),
     UNIQUE(task_id)
 );

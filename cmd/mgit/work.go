@@ -31,6 +31,7 @@ type workOptions struct {
 	TaskID        string
 	AgentID       string
 	Branch        string
+	Base          string   // --base: pin the task fork-base to an explicit ref (ADR-008 §4)
 	LaunchSandbox bool     // --sandbox: also launch the bound task sandbox
 	Image         string   // --image: digest-pinned image (sandbox leg only)
 	Network       string   // --network: none | allowlist | open
@@ -85,6 +86,7 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	cmd.Flags().StringVar(&opts.TaskID, "task", "", "task ID to bind the worktree to (required)")
 	cmd.Flags().StringVar(&opts.AgentID, "agent-id", "", "agent ID recorded with the worktree")
 	cmd.Flags().StringVar(&opts.Branch, "branch", "", "branch name (default: task/<task-id>)")
+	cmd.Flags().StringVar(&opts.Base, "base", "", "pin the task's fork-base to an explicit commit/ref (default: current local working state)")
 	cmd.Flags().BoolVar(&opts.LaunchSandbox, "sandbox", false, "also launch the task's microVM sandbox (requires --image)")
 	cmd.Flags().StringVar(&opts.Image, "image", "", "digest-pinned image <name>@sha256:<hex> (with --sandbox)")
 	cmd.Flags().StringVar(&opts.Network, "network", model.NetworkModeNone, "sandbox network mode: none | allowlist | open")
@@ -100,7 +102,8 @@ func workCmd() *cobra.Command {
 // workDeps and invokes the orchestrator. Refs: MGIT-34
 func runWork(ctx context.Context, app *App, opts workOptions) error {
 	wtSvc := service.NewWorktreeService(app.Index, app.Branch,
-		gitstore.NewWorktreeStore(app.Repo), func() time.Time { return time.Now().UTC() })
+		gitstore.NewWorktreeStore(app.Repo), func() time.Time { return time.Now().UTC() }).
+		WithSync(app.Sync, app.Repo, gitstore.NewCommitStore(app.Repo))
 	deps := workDeps{
 		addWorktree:    wtSvc.Add,
 		writeAdapters:  injectAgentAdapters,
@@ -120,7 +123,7 @@ func runWork(ctx context.Context, app *App, opts workOptions) error {
 // when the worktree itself could not be provisioned. Refs: MGIT-34, FR-16
 func workSetup(ctx context.Context, out io.Writer, deps workDeps, opts workOptions) (*model.WorktreeInfo, error) {
 	wt, err := deps.addWorktree(ctx, model.WorktreeAddOptions{
-		Path: opts.Path, TaskID: opts.TaskID, AgentID: opts.AgentID, Branch: opts.Branch,
+		Path: opts.Path, TaskID: opts.TaskID, AgentID: opts.AgentID, Branch: opts.Branch, Base: opts.Base,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("work: create worktree: %w", err)

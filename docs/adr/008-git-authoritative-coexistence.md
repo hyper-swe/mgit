@@ -75,9 +75,15 @@ loud** — it never materializes or diffs against a *known-stale* base.
 
 ### 4. Each task pins its fork-base
 
-A task records the base commit it forked from. `squash`/`diff` are always
-computed against that **pinned** fork-base, so a later base move never corrupts
-a task's net change.
+A task records the base commit it forked from (in the worktree registry and
+marker). A task's net change is computed against that fork-base — which, under
+the append-only model, **equals** the first micro-commit's parent by
+construction: a base resync advances only the *shared* base branch, never the
+task's own ref, so the task's `fork-base..tip` range is invariant under resync.
+`squash`/`diff` derive the base from the first micro-commit's parent **and
+assert it still equals the recorded pin**, failing loud if a retarget/rewrite
+ever shifted it rather than exporting a corrupt net diff. The pin is therefore
+load-bearing (an enforced invariant), not advisory.
 
 ### 5. Per-store isolation for parallel agents; the host store is the integration point
 

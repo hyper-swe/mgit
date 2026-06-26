@@ -17,6 +17,10 @@ type WorktreeInfo struct {
 	AgentID      string    `json:"agent_id,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	LastCommitAt time.Time `json:"last_commit_at,omitempty"`
+	// ForkBase is the .mgit base commit this task forked from, pinned at
+	// creation. squash/diff compute against it so a later base resync never
+	// corrupts the task's net change (ADR-008 §4). Refs: MGIT-35
+	ForkBase string `json:"fork_base,omitempty"`
 }
 
 // Validate checks that the WorktreeInfo has required fields.
@@ -40,6 +44,10 @@ type WorktreeAddOptions struct {
 	TaskID  string `json:"task_id"`
 	AgentID string `json:"agent_id,omitempty"`
 	Branch  string `json:"branch,omitempty"`
+	// Base, when non-empty, pins the task's fork-base to an explicit ref
+	// (`mgit work --base <ref>`) for deliberate hotfix/release work instead of
+	// the auto-resynced local base (ADR-008 §4). Refs: MGIT-35
+	Base string `json:"base,omitempty"`
 }
 
 // Validate checks the add options.

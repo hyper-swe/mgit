@@ -16,6 +16,8 @@ This document is the primary operating guide for AI agents working on the **MGIT
 > ```
 > The squash patch is a real `diff --git` with content and round-trips cleanly; a raw working-tree file-diff is error-prone and loses git semantics. (For a sandboxed task, land through the airlock instead: `mgit sandbox land --task <ID>`.)
 
+> **mgit stays in sync with git automatically — there is no manual `mgit sync`** (ADR-008). git is authoritative; mgit keeps its `.mgit` base coherent with your current local working state on its own, so `mgit work` always materializes the current state (carrying your unpushed local foundation) and never a stale tree. Each task pins the base it forked from, so a later resync never corrupts its diff. mgit reads `.git` read-only and never mutates it; if it cannot safely read git state it fails loud rather than materialize a stale worktree.
+
 ## The Context Chain Principle — Non-Negotiable
 
 **The dot-notation hierarchy IS your context.** Every node in the tree — from root story to leaf micro-issue — contributes a layer of context. When you read a node's assembled prompt via `mtix_context`, you receive the full briefing from root to that node: the business goal, the technical approach, the specific scope, and the exact instruction.

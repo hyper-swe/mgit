@@ -81,6 +81,13 @@ func (s *SquashService) SquashTask(ctx context.Context, req SquashRequest) (*mod
 			fmt.Sprintf("- %s: %s", c.ShortID(), c.Message))
 	}
 
+	// ADR-008 §4: a task's net change is computed against its PINNED fork-base.
+	// Enforce that the computed base still matches the pin — fail loud if a base
+	// move or retarget ever shifted it, rather than export a corrupt patch.
+	if err := assertPinnedForkBase(ctx, s.indexStore, req.TaskID, base); err != nil {
+		return nil, fmt.Errorf("squash task %s: %w", req.TaskID, err)
+	}
+
 	// Merge diffs: last write wins per path
 	mergedDiffs := mergeDiffs(allDiffs)
 

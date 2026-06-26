@@ -21,6 +21,11 @@ type WorktreeMarker struct {
 	Store  string `json:"store"`
 	Branch string `json:"branch"`
 	Task   string `json:"task"`
+	// ForkBase is the .mgit base commit this worktree's task forked from,
+	// pinned at creation. It lets commands run from inside the worktree compute
+	// squash/diff against the pinned base even when the shared base later
+	// resyncs (ADR-008 §4). Refs: MGIT-35
+	ForkBase string `json:"fork_base,omitempty"`
 }
 
 // WriteWorktreeMarker writes the marker into worktreeRoot/.mgit/worktree,
@@ -28,7 +33,14 @@ type WorktreeMarker struct {
 // the task. The worktree's .mgit directory is created if needed (it also holds
 // the agent shims). Refs: FR-16, MGIT-24
 func (ws *WorktreeStore) WriteWorktreeMarker(worktreeRoot, branch, task string) error {
-	marker := WorktreeMarker{Store: ws.repo.MgitDir(), Branch: branch, Task: task}
+	return ws.WriteWorktreeMarkerWithBase(worktreeRoot, branch, task, "")
+}
+
+// WriteWorktreeMarkerWithBase writes the worktree marker including the pinned
+// fork-base commit (ADR-008 §4). WriteWorktreeMarker delegates here with an
+// empty base for callers that do not pin one. Refs: MGIT-35, FR-16, MGIT-24
+func (ws *WorktreeStore) WriteWorktreeMarkerWithBase(worktreeRoot, branch, task, forkBase string) error {
+	marker := WorktreeMarker{Store: ws.repo.MgitDir(), Branch: branch, Task: task, ForkBase: forkBase}
 	dir := filepath.Join(worktreeRoot, mgitDirName)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("worktree marker: mkdir %s: %w", dir, err)

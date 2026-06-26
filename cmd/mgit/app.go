@@ -32,6 +32,7 @@ type App struct {
 	Merge    *service.MergeService
 	GC       *service.GCService
 	Bundle   *service.BundleService
+	Sync     *service.SyncService
 
 	// BoundTask is the task ID a linked worktree is bound to (empty for a normal
 	// repository). Commands run from inside a worktree default to it. Refs: MGIT-24
@@ -128,6 +129,7 @@ func OpenApp(path string) (*App, error) {
 		Merge:     service.NewMergeService(repo, bs, ms, cs),
 		GC:        service.NewGCService(gcs),
 		Bundle:    service.NewBundleService(idx, clock),
+		Sync:      service.NewSyncService(repo, ws, cs, boundTask, clock),
 		BoundTask: boundTask,
 		fileLock:  fileLock,
 	}, nil

@@ -62,6 +62,31 @@ func (s *BranchService) CreateBranch(ctx context.Context, taskID string) (*model
 	return branch, nil
 }
 
+// CreateBranchAt creates a task branch forked at an EXPLICIT base commit rather
+// than the current HEAD. It backs `mgit work --base <ref>` and the pinned
+// fork-base of ADR-008 §4: the task branch is anchored at baseCommit so a later
+// base resync (which advances the shared base branch) never retargets it.
+// Refs: MGIT-35, FR-5
+func (s *BranchService) CreateBranchAt(ctx context.Context, taskID, baseCommit string) (*model.Branch, error) {
+	tid, err := model.ParseTaskID(taskID)
+	if err != nil {
+		return nil, fmt.Errorf("create branch: %w", err)
+	}
+	branch := &model.Branch{
+		Name:       model.TaskBranchName(taskID),
+		TaskID:     tid,
+		HeadCommit: baseCommit,
+		CreatedAt:  s.repo.Now(),
+	}
+	if err := s.gitBranches.CreateBranch(ctx, branch); err != nil {
+		return nil, fmt.Errorf("create branch in git: %w", err)
+	}
+	if err := s.indexStore.CreateBranch(ctx, branch); err != nil {
+		return nil, fmt.Errorf("create branch in index: %w", err)
+	}
+	return branch, nil
+}
+
 // CreateNamedBranch creates a branch with an explicit name pointing at the
 // current HEAD, without the task/ auto-naming convention. It backs the
 // git-familiar `mgit checkout -b <name>` create-and-switch idiom, where the

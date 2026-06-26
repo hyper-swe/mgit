@@ -18,6 +18,9 @@ type WorktreeService struct {
 	indexStore *index.Store
 	branch     *BranchService
 	worktree   *gitstore.WorktreeStore
+	repo       *gitstore.Repository
+	commits    *gitstore.CommitStore
+	sync       *SyncService
 	clock      func() time.Time
 }
 
@@ -31,6 +34,19 @@ func NewWorktreeService(idx *index.Store, branch *BranchService, wt *gitstore.Wo
 		worktree:   wt,
 		clock:      clock,
 	}
+}
+
+// WithSync attaches the auto-housekeeping dependencies (ADR-008, MGIT-35): the
+// SyncService resyncs the `.mgit` base from the current local working state
+// BEFORE a new worktree is forked (so it carries the developer's unpushed
+// foundation), and repo/commits resolve+pin the per-task fork-base. Returns the
+// receiver for fluent wiring. When unset, Add behaves as before (no auto-sync,
+// empty fork-base) so legacy callers/tests keep working. Refs: MGIT-35
+func (s *WorktreeService) WithSync(sync *SyncService, repo *gitstore.Repository, cs *gitstore.CommitStore) *WorktreeService {
+	s.sync = sync
+	s.repo = repo
+	s.commits = cs
+	return s
 }
 
 // Add creates a new worktree bound to a task.
@@ -47,13 +63,13 @@ func (s *WorktreeService) Add(ctx context.Context, opts model.WorktreeAddOptions
 		branchName = "task/" + opts.TaskID
 	}
 
-	// Auto-create branch if needed
-	_, err := s.branch.GetBranch(ctx, branchName)
+	// Auto-housekeep BEFORE forking so the new worktree carries the current
+	// local working state (incl. the developer's unpushed foundation) — the
+	// concrete advantage of an mgit worktree over a git worktree (ADR-008 §2).
+	// Then resolve+pin the fork-base so a later base resync cannot shift it.
+	forkBase, err := s.resolveForkBase(ctx, opts, branchName)
 	if err != nil {
-		_, createErr := s.branch.CreateBranch(ctx, opts.TaskID)
-		if createErr != nil {
-			return nil, fmt.Errorf("worktree add: create branch: %w", createErr)
-		}
+		return nil, fmt.Errorf("worktree add: %w", err)
 	}
 
 	wt := &model.WorktreeInfo{
@@ -62,6 +78,7 @@ func (s *WorktreeService) Add(ctx context.Context, opts model.WorktreeAddOptions
 		Branch:    branchName,
 		TaskID:    opts.TaskID,
 		AgentID:   opts.AgentID,
+		ForkBase:  forkBase,
 		CreatedAt: s.clock(),
 	}
 
@@ -79,14 +96,80 @@ func (s *WorktreeService) Add(ctx context.Context, opts model.WorktreeAddOptions
 		return nil, fmt.Errorf("worktree add: materialize source: %w", err)
 	}
 
-	// Write the linked-worktree marker so `mgit` run from inside the worktree
-	// binds to the shared parent store on this task branch (ADR-007, MGIT-24).
-	if err := s.worktree.WriteWorktreeMarker(opts.Path, branchName, opts.TaskID); err != nil {
+	// Write the linked-worktree marker (with the pinned fork-base) so `mgit` run
+	// from inside the worktree binds to the shared parent store on this task
+	// branch and computes diff/squash against the pinned base (ADR-007, ADR-008).
+	if err := s.worktree.WriteWorktreeMarkerWithBase(opts.Path, branchName, opts.TaskID, forkBase); err != nil {
 		_ = s.indexStore.DeleteWorktree(ctx, opts.Path)
 		return nil, fmt.Errorf("worktree add: write marker: %w", err)
 	}
 
 	return wt, nil
+}
+
+// resolveForkBase ensures the base is synced (unless an explicit --base is
+// given) and returns the commit the task branch is/forked at, auto-creating the
+// branch at that pinned base when it does not yet exist. With --base, the branch
+// is pinned to the resolved ref; without it, the branch forks off the
+// auto-resynced local base. An existing branch keeps its current tip as the
+// pinned base. Refs: MGIT-35, ADR-008 §2,§4
+func (s *WorktreeService) resolveForkBase(ctx context.Context, opts model.WorktreeAddOptions, branchName string) (string, error) {
+	if existing, err := s.branch.GetBranch(ctx, branchName); err == nil {
+		return existing.HeadCommit, nil
+	}
+	if opts.Base != "" {
+		return s.createBranchAtBase(ctx, opts.TaskID, opts.Base)
+	}
+	if s.sync != nil {
+		if err := s.sync.EnsureSynced(ctx); err != nil {
+			return "", fmt.Errorf("auto-resync base: %w", err)
+		}
+	}
+	br, err := s.branch.CreateBranch(ctx, opts.TaskID)
+	if err != nil {
+		return "", fmt.Errorf("create branch: %w", err)
+	}
+	return br.HeadCommit, nil
+}
+
+// createBranchAtBase resolves the explicit --base ref to a concrete commit and
+// forks the task branch there, pinning it. Refs: MGIT-35, ADR-008 §4
+func (s *WorktreeService) createBranchAtBase(ctx context.Context, taskID, baseRef string) (string, error) {
+	if s.commits == nil {
+		return "", fmt.Errorf("--base requires sync wiring")
+	}
+	commit, err := s.resolveBaseCommit(ctx, baseRef)
+	if err != nil {
+		return "", err
+	}
+	br, err := s.branch.CreateBranchAt(ctx, taskID, commit)
+	if err != nil {
+		return "", fmt.Errorf("create branch at base: %w", err)
+	}
+	return br.HeadCommit, nil
+}
+
+// resolveBaseCommit resolves an `mgit work --base <ref>` argument to a concrete
+// mgit commit id. It accepts (in order) an mgit commit hash (full/abbreviated
+// hex), the literal "HEAD", or an mgit branch name (e.g. "main", "task/X"), so
+// the natural `--base main` works rather than requiring a raw SHA. Refs that
+// exist only in the project's git (e.g. a git tag) are out of scope for v1 — a
+// documented follow-up. Refs: MGIT-35, ADR-008 §4
+func (s *WorktreeService) resolveBaseCommit(ctx context.Context, baseRef string) (string, error) {
+	if baseRef == "HEAD" {
+		head, err := s.repo.Head()
+		if err != nil {
+			return "", fmt.Errorf("resolve --base HEAD: %w", err)
+		}
+		return head, nil
+	}
+	if c, err := s.commits.GetCommit(ctx, baseRef); err == nil {
+		return c.CommitID, nil
+	}
+	if br, err := s.branch.GetBranch(ctx, baseRef); err == nil && br.HeadCommit != "" {
+		return br.HeadCommit, nil
+	}
+	return "", fmt.Errorf("resolve --base %q: not a known mgit commit, branch, or HEAD", baseRef)
 }
 
 // List returns all registered worktrees.

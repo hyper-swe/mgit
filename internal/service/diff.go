@@ -57,6 +57,13 @@ func (s *DiffService) DiffTask(ctx context.Context, taskID string) ([]model.File
 
 	lastHash := records[len(records)-1].CommitHash
 
+	// ADR-008 §4: enforce the cumulative diff is taken from the task's PINNED
+	// fork-base (equal to the first commit's parent by construction); fail loud
+	// if a base move ever shifted it rather than render a wrong diff.
+	if err := assertPinnedForkBase(ctx, s.indexStore, taskID, firstCommit.ParentID); err != nil {
+		return nil, fmt.Errorf("diff task %s: %w", taskID, err)
+	}
+
 	if firstCommit.ParentID == "" {
 		// First commit has no parent — return empty diff
 		return []model.FileDiff{}, nil

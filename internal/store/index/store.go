@@ -192,6 +192,10 @@ func (s *Store) migrate() error {
 	if err := s.ensureColumn(ctx, "task_commits", "sandbox_id", "TEXT"); err != nil {
 		return err
 	}
+	// ADR-008 (MGIT-35): pin each task's fork-base in the worktree registry.
+	if err := s.ensureColumn(ctx, "worktrees", "fork_base", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if _, err := s.writeDB.ExecContext(ctx, postMigrationIndexSQL); err != nil {
 		return fmt.Errorf("create post-migration indexes: %w", err)
 	}

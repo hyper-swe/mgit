@@ -110,3 +110,25 @@ func (r *Repository) clearStaging() error {
 	}
 	return nil
 }
+
+// StagedSnapshot returns the currently staged project-relative paths so a
+// caller can restore them after a side operation. It backs the staging-neutral
+// auto-resync (ADR-008): EnsureSynced runs on read-ish commands (`mgit status`,
+// `mgit diff`) and must NOT destroy a user's manual partial staging selection.
+// Refs: MGIT-35, ADR-008 §3
+func (r *Repository) StagedSnapshot() ([]string, error) {
+	return r.stagedPaths()
+}
+
+// RestoreStaging replaces the staging set with exactly the given paths,
+// undoing any staging side effects of an intervening resync (ADR-008). An
+// empty/nil set clears the staging file entirely. Refs: MGIT-35, ADR-008 §3
+func (r *Repository) RestoreStaging(paths []string) error {
+	if err := r.clearStaging(); err != nil {
+		return err
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	return r.stagePaths(paths)
+}

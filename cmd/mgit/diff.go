@@ -41,6 +41,12 @@ func diffCmd() *cobra.Command {
 			ctx := context.Background()
 			_ = unified // accepted for compatibility; informational only
 
+			// Auto-housekeep before any base-dependent diff so we never diff
+			// against a known-stale base (ADR-008 §3). Cheap no-op on no drift.
+			if err := app.Sync.EnsureSynced(ctx); err != nil {
+				return fmt.Errorf("diff: %w", err)
+			}
+
 			// --staged: show status of staged files instead of commit diff.
 			if staged {
 				ws := gitstore.NewWorktreeStore(app.Repo)

@@ -10,6 +10,15 @@ coherent step into an isolated `.mgit` store that never touches the project's
 real `.git`, course-correct cheaply when a decision turns out wrong, and land
 only the squashed, reviewed result.
 
+> **mgit keeps itself in sync with git — there is no manual `mgit sync` step**
+> (ADR-008). git is authoritative; mgit automatically keeps its `.mgit` base
+> coherent with your current local working state. A new task worktree therefore
+> carries your unpushed local foundation, and each task pins the base it forked
+> from, so a later resync never corrupts its diff. mgit reads `.git` read-only
+> to learn git's state and never mutates it. You never run a resync by hand; if
+> mgit cannot safely read git state it fails loud rather than materialize a
+> stale worktree.
+
 This skill is written for **both**:
 - an **autonomous agent** working a task end to end, and
 - a **reviewer** directing course-correction on an agent's work.

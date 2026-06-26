@@ -120,7 +120,8 @@ mgit is purpose-built for autonomous coding agents working on real codebases:
 - **See and undo exactly what the agent did** &mdash; Every step is a task-tagged commit; commits are never deleted and rollbacks create revert commits, so the full history of *every* attempt stays reviewable.
 - **`mgit work` to start an agent** &mdash; One command provisions a task-bound worktree and wires the agent's shell to route through the sandbox &mdash; the first-class "start an agent on a task" entry point.
 - **Multi-agent isolation** &mdash; Per-task worktrees + per-task sandboxes let multiple agents work different tasks in parallel without stepping on each other.
-- **Runs over your existing git repo** &mdash; mgit keeps a self-contained `.mgit/` store and provably never touches your project's `.git`.
+- **Runs over your existing git repo** &mdash; mgit keeps a self-contained `.mgit/` store and provably never touches your project's `.git` (it only *reads* it, read-only, to learn git's current state).
+- **Stays in sync with git automatically** &mdash; git is authoritative; mgit keeps its `.mgit` base coherent with your current local working state on its own (no manual `mgit sync`). A new task worktree carries your unpushed local foundation, and each task pins the base it forked from so a later resync never corrupts its diff. See [ADR-008](docs/adr/008-git-authoritative-coexistence.md).
 - **Three integration modes** &mdash; CLI for humans, REST API for services, MCP tools for AI agents.
 
 ## Installation

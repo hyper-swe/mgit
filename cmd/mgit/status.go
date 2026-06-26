@@ -27,6 +27,12 @@ func statusCmd() *cobra.Command {
 			defer app.Close()
 
 			ctx := context.Background()
+			// Auto-housekeep: keep the .mgit base coherent with the current local
+			// working state before reading status (ADR-008 §3). A no-op on the
+			// cheap path; fails loud rather than report a known-stale base.
+			if err := app.Sync.EnsureSynced(ctx); err != nil {
+				return fmt.Errorf("status: %w", err)
+			}
 			ws := gitstore.NewWorktreeStore(app.Repo)
 			files, err := ws.Status(ctx)
 			if err != nil {
