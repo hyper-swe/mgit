@@ -34,12 +34,12 @@ builds:
 
 archives:
   - id: mgit-archive
-    builds:
+    ids:
       - mgit
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
 
 checksum:
   name_template: "checksums.txt"
@@ -62,29 +62,24 @@ release:
   prerelease: auto
   name_template: "mgit {{.Tag}}"
   header: |
-    ## mgit — Surgical Rollback for LLM Coding Agents
+    ## mgit — a sandboxed, checkpointed working substrate for LLM coding agents
 
-    Stop wasting tokens rewriting working code. Roll back the wrong decision, keep everything else.
+    mgit gives a coding agent two things together: **containment** — its untrusted code (npm/pip installs, builds, tests) runs in a disposable per-task microVM, not on your machine — and a **checkpointed working substrate** — every step is a task-tagged micro-commit in an isolated `.mgit` store that never touches your real `.git`, so you review and land only the squashed result.
+
+    > **Beta.** The microVM sandbox is the differentiator; it is live-validated on Linux (firecracker/KVM) and macOS (Apple Virtualization.framework, arm64). Windows runs core mgit without the sandbox. See **Known limitations** in the [CHANGELOG](https://github.com/hyper-swe/mgit/blob/main/CHANGELOG.md).
 
     ### Highlights
 
-    - **22 CLI commands** with full flag parity to the specification — commit, log, squash, rollback, merge, diff, restore, gc, import/export, worktree, and more
-    - **15 MCP tools** for direct LLM agent integration via stdio transport
-    - **10 REST API endpoints** for service and CI/CD integration
-    - **Multi-agent worktree isolation** — parallel agents work on different tasks without interference
-    - **Merge with conflict detection** — fast-forward, squash, and no-ff strategies with file-level conflict reporting
-    - **Bundle import/export** with SHA-256 manifest verification for portable task archives
-    - **Garbage collection** with loose object packing via go-git's RepackObjects
-    - **Dual-hash integrity** — SHA-1 for git compatibility, SHA-256 for tamper detection
-    - **Append-only audit trail** — every commit, rollback, and squash is recorded and never deleted
-    - **Pure Go, zero CGO** — single static binary, cross-compiles to Linux, macOS, and Windows (amd64 + arm64)
+    - **Per-task microVM containment** — installs/builds/tests run in a disposable, hardware-isolated VM; a poisoned dependency burns the VM, not your host. Default-deny per-task egress allowlist; verified land (dual-hash + task binding + host-anchored attestation) through an airlock.
+    - **`mgit work`** — one command starts an agent on a task: a task-bound worktree with the agent's shell wired through `mgit run` into the sandbox.
+    - **Runs over your existing git repo** — a self-contained `.mgit` store; your project's `.git` is provably never mutated, and the base stays in sync with your local working state automatically (no manual sync).
+    - **Checkpointed, reviewable history** — task-tagged micro-commits; backtrack / fork / cherry-pick to course-correct; `squash --to-git | git apply` lands a byte-for-byte patch.
+    - **Multi-agent worktree isolation**, **REST + MCP** integration surfaces, dual-hash integrity, append-only audit.
+    - **Pure Go, zero CGO** — single static binary (Linux, macOS, Windows; amd64 + arm64).
 
     ### Quality
 
-    - 530+ automated tests across 69 test files
-    - 85%+ code coverage on all packages
-    - Race-detector clean under `-race`
-    - Zero lint warnings
+    - 530+ automated tests, race-detector clean under `-race`, zero lint warnings.
 
     ### Install
 
