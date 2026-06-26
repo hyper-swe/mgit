@@ -63,13 +63,18 @@ func (s *SquashService) SquashTask(ctx context.Context, req SquashRequest) (*mod
 		return nil, fmt.Errorf("squash task %s: %w", req.TaskID, model.ErrTaskNotFound)
 	}
 
-	// Merge all file diffs from individual commits
+	// Merge all file diffs from individual commits. base is the task's base
+	// (the first micro-commit's parent) — the "from" side of the net export diff.
 	var allDiffs []model.FileDiff
 	var commitSummaries []string
-	for _, rec := range records {
+	var base string
+	for i, rec := range records {
 		c, getErr := s.commitStore.GetCommit(ctx, rec.CommitHash)
 		if getErr != nil {
 			return nil, fmt.Errorf("squash task %s: get commit %s: %w", req.TaskID, rec.CommitHash, getErr)
+		}
+		if i == 0 {
+			base = c.ParentID
 		}
 		allDiffs = append(allDiffs, c.FileDiffs...)
 		commitSummaries = append(commitSummaries,
@@ -133,6 +138,10 @@ func (s *SquashService) SquashTask(ctx context.Context, req SquashRequest) (*mod
 	if err != nil {
 		return nil, fmt.Errorf("squash task %s: create squash commit: %w", req.TaskID, err)
 	}
+	// Bind the created commit's identity so GitFormatPatch can compute the net
+	// base->squash tree diff for the git-am-compatible export. Refs: MGIT-33
+	squashCommit.CommitID = hash
+	squashCommit.ParentID = base
 
 	// Index the squash commit
 	position := len(records)
@@ -174,43 +183,8 @@ func (s *SquashService) ExportToGitPatch(c *model.Commit) string {
 	if c == nil {
 		return ""
 	}
-
-	// Split message into subject + body, prefix subject with [squashed].
-	subject, body := splitMessage(c.Message)
-	if !strings.HasPrefix(subject, "[squashed]") {
-		subject = "[squashed] " + subject
-	}
-
-	author := c.AgentID
-	if author == "" {
-		author = "mgit-squash"
-	}
-	email := author + "@mgit.local"
-	createdAt := c.CreatedAt
-	if createdAt.IsZero() {
-		createdAt = time.Now().UTC()
-	}
-	dateRFC := createdAt.UTC().Format(time.RFC1123Z)
-	hash := c.CommitID
-	if hash == "" {
-		hash = c.ContentHash
-	}
-
 	var b strings.Builder
-	// mbox From line — git format-patch uses commit hash + epoch.
-	fmt.Fprintf(&b, "From %s %s\n", hash, createdAt.UTC().Format("Mon Jan 2 15:04:05 2006"))
-	fmt.Fprintf(&b, "From: %s <%s>\n", author, email)
-	fmt.Fprintf(&b, "Date: %s\n", dateRFC)
-	fmt.Fprintf(&b, "Subject: [PATCH] %s\n", subject)
-	b.WriteString("\n")
-	if body != "" {
-		b.WriteString(body)
-		if !strings.HasSuffix(body, "\n") {
-			b.WriteString("\n")
-		}
-		b.WriteString("\n")
-	}
-	b.WriteString("---\n")
+	b.WriteString(s.mboxHeader(c))
 
 	// Per-file diff section. Each file gets a "diff --git" header so the
 	// output is recognizable to git am / git apply.
@@ -241,6 +215,60 @@ func (s *SquashService) ExportToGitPatch(c *model.Commit) string {
 
 	b.WriteString("-- \nmgit\n")
 	return b.String()
+}
+
+// mboxHeader renders the git format-patch mbox preamble (From/From:/Date/
+// Subject + optional body + the "---" separator) shared by ExportToGitPatch and
+// GitFormatPatch. The subject is prefixed with [squashed] per FR-7. Refs: FR-7
+func (s *SquashService) mboxHeader(c *model.Commit) string {
+	subject, body := splitMessage(c.Message)
+	if !strings.HasPrefix(subject, "[squashed]") {
+		subject = "[squashed] " + subject
+	}
+	author := c.AgentID
+	if author == "" {
+		author = "mgit-squash"
+	}
+	createdAt := c.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	hash := c.CommitID
+	if hash == "" {
+		hash = c.ContentHash
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "From %s %s\n", hash, createdAt.UTC().Format("Mon Jan 2 15:04:05 2006"))
+	fmt.Fprintf(&b, "From: %s <%s@mgit.local>\n", author, author)
+	fmt.Fprintf(&b, "Date: %s\n", createdAt.UTC().Format(time.RFC1123Z))
+	fmt.Fprintf(&b, "Subject: [PATCH] %s\n\n", subject)
+	if body != "" {
+		b.WriteString(body)
+		if !strings.HasSuffix(body, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("---\n")
+	return b.String()
+}
+
+// GitFormatPatch renders a squash commit as a git format-patch whose body is
+// produced by go-git's own unified-diff encoder (DiffStore.PatchBetween) — so
+// it is git-am/git-apply compatible with real content, the working mgit->git
+// delivery bridge. Unlike ExportToGitPatch (which renders model.FileDiff
+// metadata, for synthetic/unit commits), this computes the real net tree diff
+// from the squash commit's parent (the task base) to the squash commit, so
+// c.CommitID must be set (SquashTask sets it). Refs: FR-7, MGIT-33
+func (s *SquashService) GitFormatPatch(ctx context.Context, c *model.Commit) (string, error) {
+	if c == nil {
+		return "", nil
+	}
+	body, err := gitstore.NewDiffStore(s.repo).PatchBetween(ctx, c.ParentID, c.CommitID)
+	if err != nil {
+		return "", fmt.Errorf("squash git patch: %w", err)
+	}
+	return s.mboxHeader(c) + body + "-- \nmgit\n", nil
 }
 
 // splitMessage splits a commit message into its first-line subject and body.

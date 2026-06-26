@@ -72,7 +72,10 @@ func squashCmd() *cobra.Command {
 			}
 
 			if toGit {
-				patch := app.Squash.ExportToGitPatch(squashed)
+				patch, perr := app.Squash.GitFormatPatch(ctx, squashed)
+				if perr != nil {
+					return fmt.Errorf("squash --to-git: %w", perr)
+				}
 				if toGitOutput != "" {
 					if err := os.WriteFile(toGitOutput, []byte(patch), 0o600); err != nil {
 						return fmt.Errorf("squash --to-git: write patch: %w", err)

@@ -64,9 +64,22 @@ func showCmd() *cobra.Command {
 			_, _ = fmt.Fprintf(os.Stdout, "Type:   %s\n\n", c.CommitType)
 			_, _ = fmt.Fprintf(os.Stdout, "    %s\n", c.Message)
 
-			if stat && len(c.FileDiffs) > 0 {
+			// A commit object does not store its FileDiffs, so compute them
+			// against its parent (with content hunks) when absent, so `mgit show`
+			// renders the real change — not just metadata. Refs: MGIT-33
+			diffs := c.FileDiffs
+			if len(diffs) == 0 && c.ParentID != "" {
+				if computed, derr := app.Diff.DiffCommits(ctx, c.ParentID, c.CommitID); derr == nil {
+					diffs = computed
+				}
+			}
+			if len(diffs) > 0 {
 				_, _ = fmt.Fprintln(os.Stdout)
-				_, _ = fmt.Fprint(os.Stdout, app.Diff.FormatStat(c.FileDiffs))
+				if stat {
+					_, _ = fmt.Fprint(os.Stdout, app.Diff.FormatStat(diffs))
+				} else {
+					_, _ = fmt.Fprint(os.Stdout, app.Diff.FormatUnified(diffs))
+				}
 			}
 			return nil
 		},
