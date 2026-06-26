@@ -9,6 +9,13 @@ This document is the primary operating guide for AI agents working on the **MGIT
 
 > **Start a task with `mgit work`.** `mgit work <path> --task <ID>` provisions a task-bound mgit worktree and wires the agent shell to route through `mgit run` (the sandbox airlock). Inside it, `mgit commit -m "..."` records each step (task ID auto-inherited), `mgit log`/`mgit status`/`mgit diff` orient you, `mgit rollback`/`mgit checkout -b`/`mgit cherry-pick` course-correct without restarting, and `mgit squash --task-id <ID> --to-git` collapses the work for the land. See [MGIT_WORKING_DISCIPLINE.md](MGIT_WORKING_DISCIPLINE.md).
 
+> **Integrate to git with `mgit squash --to-git`, NOT a hand-rolled file-diff.** An mgit worktree is **not** a git repo and git stays canonical, so you land a task by exporting its squashed net change as a git patch and applying it — never by manually diffing files between trees:
+> ```bash
+> mgit squash --task-id <ID> --to-git --to-git-output task.patch   # the task's net change, as a git-apply-able patch
+> git -C <project-root> apply task.patch                           # (or: git am < task.patch)
+> ```
+> The squash patch is a real `diff --git` with content and round-trips cleanly; a raw working-tree file-diff is error-prone and loses git semantics. (For a sandboxed task, land through the airlock instead: `mgit sandbox land --task <ID>`.)
+
 ## The Context Chain Principle — Non-Negotiable
 
 **The dot-notation hierarchy IS your context.** Every node in the tree — from root story to leaf micro-issue — contributes a layer of context. When you read a node's assembled prompt via `mtix_context`, you receive the full briefing from root to that node: the business goal, the technical approach, the specific scope, and the exact instruction.

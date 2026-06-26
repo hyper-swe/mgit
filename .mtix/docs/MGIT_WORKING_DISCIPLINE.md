@@ -139,6 +139,13 @@ mgit squash --task-id MGIT-12.3 --to-git --to-git-output task.patch  # export as
 mgit squash --task-id MGIT-12.3 --to-main            # fast-forward the squash onto main
 ```
 
+**Integrate by APPLYING the squash patch — never by hand-diffing files.** An mgit
+worktree is not a git repo and git stays canonical, so the `--to-git` patch IS the
+bridge: apply it to the project's git with `git apply task.patch` (or
+`git am < task.patch`). Do NOT reconstruct the change by manually diffing files
+between trees — that loses git semantics and is error-prone. The patch is a real
+`diff --git` with content and round-trips cleanly (MGIT-33).
+
 If the task ran in a sandbox, land the verified changes through the airlock:
 
 ```bash

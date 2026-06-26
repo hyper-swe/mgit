@@ -1,6 +1,6 @@
 # ADR-008: Git-Authoritative Coexistence and Auto-Housekeeping
 
-**Status:** Accepted
+**Status:** Accepted (revised 2026-06-26 — §2: base = current LOCAL working state pinned per task, not the pushed integration ref; after real-use validation, MGIT-28/35)
 **Date:** 2026-06-26
 **Refs:** MGIT-35, MGIT-14 (mgit-over-git coexistence), ADR-001 (Embedded git), ADR-007 (Linked-worktree binding), MGIT-26 (dogfood), MGIT-32 (.gitignore), MGIT-34 (`mgit work`)
 
@@ -33,20 +33,27 @@ land path (`mgit squash --to-git`). This is required, not optional — there is
 **no opt-in mode** where mgit owns history and git is downstream. (Mixing the
 two is exactly what caused the MGIT-26 drift.)
 
-### 2. The base anchors on a designated integration ref — NOT live `HEAD`
+### 2. The base is the current LOCAL working state, pinned per task — NOT pushed `main`
 
-mgit's base tracks a **configured integration ref** (default: the repository's
-default branch, e.g. `main`), read from `.git` **read-only**. Branch switches,
-hotfix checkouts, detached HEAD, `bisect`, and in-progress `rebase` **do not
-move mgit's base**. This is the single most important correction: anchoring on
-live `HEAD` is what would silently mis-land a hotfix.
+When a task worktree is created (`mgit work` / `worktree add`), its base is the
+project's **current local working state** — the current branch's `HEAD` plus the
+locally-captured working tree, **including unpushed commits and in-progress
+foundation**. This is a deliberate advantage over git worktrees, validated in
+real use (MGIT-28): git worktrees base off the last *pushed* commit and miss
+local work, whereas an mgit worktree carries the developer's unpushed foundation
+into every task worktree — present and building.
 
-Deliberate hotfix/release work targets a base explicitly and **pinned**:
-`mgit work --task <ID> --base <ref>`. Working a hotfix is then a choice, never
-a side effect of what happens to be checked out.
+The base is **pinned per task at creation**. Branch switches, hotfix checkouts,
+detached `HEAD`, `bisect`, and in-progress `rebase` **do not retarget an
+already-created task's base** — that pinning is what prevents a `git switch
+hotfix` from silently re-basing (and mis-landing) in-flight work. The hazard is
+*unpinned* following of `HEAD`, **not** the use of local state. A task that must
+build on a different base targets it explicitly and pinned:
+`mgit work --task <ID> --base <ref>`.
 
-The base syncs from the ref's **committed tree**, never the dirty working tree
-(no uncommitted, possibly-unrelated edits pollute the base).
+mgit reads `.git` **read-only** only to learn the current local `HEAD`/ref. It
+does NOT require the work to be pushed, and it does NOT base on the remote/pushed
+integration ref — doing so would erase the local-foundation advantage above.
 
 ### 3. Auto-housekeeping — no manual `mgit sync`
 
@@ -54,15 +61,17 @@ mgit keeps the base coherent **automatically**. There is no user-facing
 `mgit sync` chore (a missed sync is a footgun). On every base-dependent command
 (`work`/materialize, `status`, `diff`, the squash base) mgit:
 
-1. runs a **cheap, content-based drift check** — compares the integration ref's
-   current commit id (read-only) against the id `.mgit` last synced from. (A
-   commit-id/content signal, **not** mtime, which can false-negative.)
-2. if — and only if — they differ, **auto-resyncs** the base from the ref's
-   committed tree (reusing the import path, `.gitignore`-honoring per MGIT-32).
+1. runs a **cheap, content-based drift check** — compares the current local
+   `HEAD`/working state (read-only) against the state `.mgit` last synced from.
+   (A commit-id/content signal, **not** mtime, which can false-negative.)
+2. if — and only if — they differ, **auto-resyncs** the base from the current
+   local working state (reusing the import path, `.gitignore`-honoring per
+   MGIT-32) — eliminating the manual `mgit add . && mgit commit`.
 
-The common path is the cheap compare; a full re-import runs only on real drift.
-It **fails loud** — it never materializes or diffs against a *known-stale*
-base.
+Only NEW worktrees pick up a resync; each task's **pinned** fork-base (§4) is
+untouched, so an in-flight task never shifts under the agent. The common path
+is the cheap compare; a full re-import runs only on real drift. It **fails
+loud** — it never materializes or diffs against a *known-stale* base.
 
 ### 4. Each task pins its fork-base
 
@@ -97,20 +106,25 @@ git-LFS. The existing `.git`-untouched tests still hold — they assert no
 
 ## Consequences
 
-**Prevents** (per the safety review): silent wrong-branch hotfix land,
-base thrash on branch-switch/detached-HEAD/bisect/rebase, dirty-tree base
-pollution, corrupted squash diffs after a base move, false-negative drift,
-torn/partial base under concurrency, and silent ingestion of tampered
-working-tree files (resync is from the committed integration-ref tree, a
-reviewed point, not an arbitrary dirty tree).
+**Prevents** (per the safety review): silent wrong-branch hotfix land and base
+thrash on branch-switch/detached-HEAD/bisect/rebase — via **per-task pinning**
+(a switch can't retarget an in-flight task); corrupted squash diffs after a base
+move (pinned fork-base, §4); false-negative drift (content signal, not mtime);
+and torn/partial base under concurrency (transactional + lock-guarded resync).
+The base is the developer's OWN local working tree, so "tampered file ingestion"
+is not a host-base concern — untrusted *guest* output is gated separately by the
+attested land path + SEC-03 quarantine, never by the host base.
 
 **Costs:** per-store isolation copies the base lineage per private store (disk;
 already accepted for sandboxes). Reading `.git` couples base-derivation (not all
 commands) to git readability — degrade gracefully, fail loud only where the base
 is actually needed.
 
-**Rejected alternatives:** (a) *follow live `HEAD` + reimport the working tree* —
-silently mis-lands hotfixes (the breaker above). (b) *manual `mgit sync`* —
+**Rejected alternatives:** (a) *UNPINNED* following of live `HEAD` (re-deriving
+every in-flight task's base from whatever is checked out) — silently retargets /
+mis-lands on a branch switch. The adopted design bases off the local working
+state but **pins per task**, getting the local-foundation advantage without the
+mis-land. (b) *manual `mgit sync`* —
 a footgun: a missed sync corrupts silently. (c) *mgit-as-authoritative / opt-in
 substrate mode* — doubles the source-of-truth surface and is what caused the
 MGIT-26 drift; dropped.
