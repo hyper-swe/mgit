@@ -244,6 +244,28 @@ func TestWorktreeService_Add_MaterializesBranchSource(t *testing.T) {
 	assert.Equal(t, "package src\n", string(got))
 }
 
+// TestWorktreeService_Add_WritesTaskBindingMarker verifies the FR-16
+// auto-tag substrate the `mgit work` flow (MGIT-34) relies on: `Add` writes a
+// linked-worktree marker binding the worktree to its task and branch, so a
+// commit made from inside the worktree auto-inherits that task ID (resolved
+// by OpenApp via the marker). Refs: FR-16, MGIT-24, MGIT-34
+func TestWorktreeService_Add_WritesTaskBindingMarker(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	stageAndCommit(t, env, "MGIT-34.1", "src.go", "package src\n")
+
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, fixedClock())
+	dir := filepath.Join(t.TempDir(), "wt")
+	wt, err := wtSvc.Add(ctx, model.WorktreeAddOptions{Path: dir, TaskID: "MGIT-34.2"})
+	require.NoError(t, err)
+
+	marker, isWorktree, err := gitstore.ReadWorktreeMarker(dir)
+	require.NoError(t, err)
+	require.True(t, isWorktree, "worktree must carry a linked-worktree marker")
+	assert.Equal(t, "MGIT-34.2", marker.Task, "commits from the worktree auto-tag this task (FR-16)")
+	assert.Equal(t, wt.Branch, marker.Branch, "marker binds the worktree's task branch")
+}
+
 func TestWorktreeService_List(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()

@@ -66,6 +66,7 @@ func rootCmd() *cobra.Command {
 		importCmd(),
 		docsCmd(),
 		worktreeCmd(),
+		workCmd(),
 		diffCmd(),
 		sandboxCmd(),
 		serveCmd(),
