@@ -7,28 +7,52 @@ import (
 	"strings"
 )
 
-// taskIDPattern validates task IDs in the format PREFIX-N[.N[.N]].
-// Supports 1 to 3 numeric segments after an uppercase alphabetic prefix.
-// Examples: MGIT-1, MGIT-1.2, MGIT-1.2.3, PROJ-4.2.1
-// Refs: FR-4, MGIT-2.1.3
-var taskIDPattern = regexp.MustCompile(`^([A-Z]+)-(\d+(?:\.\d+){0,2})$`)
+// taskIDGrammar is the human-readable description of the accepted task-id
+// form. It is embedded in rejection errors so a user or agent can self-correct.
+// Refs: FR-4, MGIT-41
+const taskIDGrammar = "<PREFIX>-<segments> using letters/digits/.-_ " +
+	"(e.g. MTIX-30.6, MGIT-1.2.3, MTIX-30-probe)"
 
-// TaskID represents a dot-notation task identifier.
+// taskIDPattern validates task IDs in the broadened form PREFIX-BODY.
+//
+// PREFIX is an alphanumeric project token (e.g. MGIT, MTIX, PROJ2). BODY is a
+// path of segments separated by "." or "-", where each segment is one or more
+// of [A-Za-z0-9_]. This accepts the real-world ids mtix and users emit —
+// MTIX-30-probe, MTIX-30.6, MGIT-1.2.3, MGIT-11.13.5 — while staying a clean,
+// git-ref-safe and log/SQL-safe token.
+//
+// The character class is an ALLOWLIST (the safe set) rather than a blocklist:
+// path separators (/ \), whitespace, control chars, and shell/glob/SQL
+// metacharacters (space, quotes, ; | & $ backtick * ? ~ etc.) are all absent
+// from the class and therefore rejected. Empty segments are impossible (each
+// segment needs at least one char), so leading/trailing/doubled separators and
+// ".." sequences cannot match. ids derive git branch names (task/<id>),
+// commit-message tags ([MGIT:<id>]), and SQLite params, so this safety
+// boundary is load-bearing.
+//
+// Examples accepted: MGIT-1, MGIT-1.2.3, PROJ-4.2.1, MTIX-30-probe, MGIT-1_a.
+// Refs: FR-4, MGIT-2.1.3, MGIT-41
+var taskIDPattern = regexp.MustCompile(
+	`^([A-Za-z0-9]+)-([A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)$`)
+
+// TaskID represents a prefixed, segmented task identifier.
 // It is a value type that can be used as a map key.
-// The format is PREFIX-N[.N[.N]] (e.g., MGIT-1.2.3).
-// Refs: FR-4, MGIT-2.1.3
+// The form is PREFIX-BODY where BODY is a "."/"-"-separated segment path
+// (e.g., MGIT-1.2.3, MTIX-30-probe).
+// Refs: FR-4, MGIT-2.1.3, MGIT-41
 type TaskID struct {
 	prefix string
-	parts  string // dot-separated numeric parts, e.g., "1.2.3"
+	parts  string // separated segment path, e.g., "1.2.3" or "30-probe"
 }
 
-// ParseTaskID parses a dot-notation task ID string.
-// Returns ErrInvalidTaskID if the format does not match.
-// Refs: FR-4
+// ParseTaskID parses a task ID string into the broadened PREFIX-BODY form.
+// Returns ErrInvalidTaskID, naming the accepted grammar and quoting the
+// offending value, when the input does not match.
+// Refs: FR-4, MGIT-41
 func ParseTaskID(s string) (TaskID, error) {
 	matches := taskIDPattern.FindStringSubmatch(s)
 	if matches == nil {
-		return TaskID{}, fmt.Errorf("%w: %q", ErrInvalidTaskID, s)
+		return TaskID{}, fmt.Errorf("%w %q: must match %s", ErrInvalidTaskID, s, taskIDGrammar)
 	}
 	return TaskID{
 		prefix: matches[1],
@@ -38,13 +62,18 @@ func ParseTaskID(s string) (TaskID, error) {
 
 // validateTaskIDField validates a required task_id field value for use
 // inside Validate() methods: non-empty and well-formed per ParseTaskID.
-// Shared by worktree and sandbox option types. Refs: FR-4, FR-16, FR-17.1
+// On malformed (non-empty) input it surfaces the accepted grammar so the
+// caller learns the fix, not just that it failed.
+// Shared by worktree and sandbox option types. Refs: FR-4, FR-16, FR-17.1, MGIT-41
 func validateTaskIDField(id string) error {
 	if id == "" {
 		return &ValidationError{Field: "task_id", Message: "must not be empty"}
 	}
 	if _, err := ParseTaskID(id); err != nil {
-		return &ValidationError{Field: "task_id", Message: fmt.Sprintf("invalid format: %q", id)}
+		return &ValidationError{
+			Field:   "task_id",
+			Message: fmt.Sprintf("invalid task id %q: must match %s", id, taskIDGrammar),
+		}
 	}
 	return nil
 }
@@ -71,7 +100,9 @@ func (t TaskID) Prefix() string {
 	return t.prefix
 }
 
-// Depth returns the number of numeric segments (1, 2, or 3).
+// Depth returns the number of dot-separated segments in the body
+// (e.g. MGIT-1.2.3 -> 3, MTIX-30-probe -> 1). Dash-joined segments count
+// as a single dotted segment. Refs: MGIT-41
 func (t TaskID) Depth() int {
 	if t.parts == "" {
 		return 0

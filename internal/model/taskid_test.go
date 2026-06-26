@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,6 +20,14 @@ func TestTaskID_Parse(t *testing.T) {
 		{"three_levels", "MGIT-1.2.3", false},
 		{"different_prefix", "PROJ-4.2.1", false},
 		{"large_numbers", "MGIT-99.88.77", false},
+		// Broadened real-world forms (MGIT-41).
+		{"dash_suffix_probe", "MTIX-30-probe", false},
+		{"dot_two_part", "MTIX-30.6", false},
+		{"deep_nesting", "MGIT-11.13.5", false},
+		{"mixed_dash_dot", "MGIT-11.13.5-probe", false},
+		{"underscore_body", "MGIT-1_a", false},
+		{"alpha_segment", "MGIT-feature.x", false},
+		{"numeric_prefix", "PROJ2-1.2", false},
 	}
 
 	for _, tt := range tests {
@@ -32,6 +41,117 @@ func TestTaskID_Parse(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestTaskID_Parse_BroadenedAccepts confirms the broadened grammar (MGIT-41)
+// accepts the real-world ids that mtix and users actually emit. The trigger
+// was `mgit worktree add ... --task MTIX-30-probe` being rejected.
+func TestTaskID_Parse_BroadenedAccepts(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"mtix_dash_probe", "MTIX-30-probe"},
+		{"mtix_dot_two_part", "MTIX-30.6"},
+		{"mgit_three_part", "MGIT-1.2.3"},
+		{"mgit_deep", "MGIT-11.13.5"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tid, err := ParseTaskID(tt.input)
+			require.NoError(t, err, "ParseTaskID(%q) should succeed", tt.input)
+			// Round-trips exactly.
+			assert.Equal(t, tt.input, tid.String())
+			// Derived branch ref must be a clean git ref (no separators/spaces).
+			ref := TaskBranchName(tt.input)
+			assert.False(t, strings.ContainsAny(ref[len(TaskBranchPrefix):], " \t/\\"),
+				"branch ref %q must stay git-ref-safe", ref)
+		})
+	}
+}
+
+// TestTaskID_Parse_RejectsUnsafe confirms ids that would be dangerous as git
+// refs, commit-message tags, or SQL params stay rejected (MGIT-41).
+func TestTaskID_Parse_RejectsUnsafe(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"path_traversal", "../etc"},
+		{"slash_path", "a/b"},
+		{"backslash_path", "a\\b"},
+		{"space", "MTIX 30"},
+		{"semicolon_injection", "MTIX-30;rm"},
+		{"shell_var", "MTIX-$x"},
+		{"empty", ""},
+		{"control_char", "MTIX-3\x00"},
+		{"newline", "MTIX-3\n"},
+		{"glob_star", "MTIX-3*"},
+		{"glob_question", "MTIX-3?"},
+		{"tilde", "MTIX-~3"},
+		{"pipe", "MTIX-3|x"},
+		{"ampersand", "MTIX-3&x"},
+		{"backtick", "MTIX-3`x`"},
+		{"single_quote", "MTIX-3'x"},
+		{"double_quote", "MTIX-3\"x"},
+		{"double_dot_segment", "MGIT-1..2"},
+		{"leading_dash_body", "MGIT--1"},
+		{"trailing_dot", "MGIT-1.2."},
+		{"trailing_dash", "MGIT-1-"},
+		{"leading_dot", "MGIT-.1"},
+		{"no_dash", "MGIT123"},
+		{"just_prefix", "MGIT-"},
+		{"no_prefix", "-1.2"},
+		{"prefix_with_dot", "MG.IT-1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseTaskID(tt.input)
+			assert.Error(t, err, "ParseTaskID(%q) must be rejected", tt.input)
+		})
+	}
+}
+
+// TestTaskID_Parse_ErrorNamesGrammar confirms the rejection error is
+// actionable: it quotes the offending id and states the accepted form so a
+// user/agent can self-correct (MGIT-41).
+func TestTaskID_Parse_ErrorNamesGrammar(t *testing.T) {
+	_, err := ParseTaskID("MTIX 30")
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, `"MTIX 30"`, "error must quote the offending id")
+	assert.Contains(t, msg, "letters", "error must describe the accepted character class")
+	assert.Contains(t, msg, "MTIX-30.6", "error must give a concrete example")
+}
+
+// TestValidateTaskIDField_ErrorNamesGrammar confirms the shared field
+// validator (used by worktree/sandbox/egress option Validate methods) also
+// surfaces the actionable grammar message (MGIT-41).
+func TestValidateTaskIDField_ErrorNamesGrammar(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"empty", ""},
+		{"space", "MTIX 30"},
+		{"injection", "MTIX-30;rm"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateTaskIDField(tt.input)
+			require.Error(t, err)
+		})
+	}
+
+	// Non-empty but malformed must name the grammar.
+	err := validateTaskIDField("MTIX 30")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "MTIX-30.6", "field validator must surface the accepted form")
+
+	// Accepted broadened form passes.
+	assert.NoError(t, validateTaskIDField("MTIX-30-probe"))
 }
 
 func TestTaskID_Parse_AllFormats(t *testing.T) {
@@ -63,11 +183,9 @@ func TestTaskID_ParseInvalid(t *testing.T) {
 		{"empty", ""},
 		{"no_prefix", "123"},
 		{"no_dash", "MGIT123"},
-		{"lowercase_prefix", "mgit-1.2.3"},
 		{"trailing_dot", "MGIT-1.2."},
 		{"leading_dot", "MGIT-.1.2"},
 		{"double_dot", "MGIT-1..2"},
-		{"non_numeric", "MGIT-abc"},
 		{"spaces", "MGIT- 1.2"},
 		{"just_prefix", "MGIT-"},
 	}
