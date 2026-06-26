@@ -1,6 +1,7 @@
 // Package main is the entry point for the mgit CLI.
-// mgit is a safety-critical micro version control system
-// for LLM coding agents operating within the mtix ecosystem.
+// mgit is a checkpointed, sandboxed working substrate for LLM coding agents
+// operating within the mtix ecosystem: task-tagged micro-commits in an isolated
+// .mgit store over the project's git, with per-task microVM containment.
 // Refs: FR-8, NFR-4
 package main
 
@@ -20,8 +21,9 @@ var (
 	date    = "unknown"
 )
 
-// Version returns the formatted version string.
-var Version = version
+// Version is the resolved version string (ldflags or module build info),
+// consumed by the docs generator. Refs: MGIT-40
+var Version = func() string { v, _, _ := resolveBuildInfo(); return v }()
 
 func main() {
 	if err := rootCmd().Execute(); err != nil {
@@ -40,8 +42,8 @@ func main() {
 func rootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:     "mgit",
-		Short:   "micro git — safety-critical version control for LLM agents",
-		Version: fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
+		Short:   "micro git — a checkpointed, sandboxed working substrate for LLM coding agents",
+		Version: versionString(),
 	}
 
 	root.AddCommand(
@@ -71,6 +73,7 @@ func rootCmd() *cobra.Command {
 		sandboxCmd(),
 		serveCmd(),
 		runCmd(),
+		versionCmd(),
 	)
 
 	return root
