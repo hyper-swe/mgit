@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-25T06:38:59Z",
+  "exported_at": "2026-06-26T14:11:49Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -470,7 +470,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "open",
-      "progress": 0.8414224664224664,
+      "progress": 0.8886752136752136,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1139,7 +1139,7 @@
       "priority": 3,
       "labels": "[]",
       "status": "blocked",
-      "progress": 0.2857142857142857,
+      "progress": 0.4,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1162,7 +1162,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -1170,7 +1170,8 @@
       "weight": 1,
       "content_hash": "6ce34a771b8eb593d4fb62522ae33cba3f20f9026c312ae969df257bba0f671a",
       "created_at": "2026-06-12T11:16:41Z",
-      "updated_at": "2026-06-12T11:42:51Z"
+      "updated_at": "2026-06-26T13:56:30Z",
+      "closed_at": "2026-06-26T13:56:30Z"
     },
     {
       "id": "MGIT-11.12.2",
@@ -1234,7 +1235,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -1242,7 +1243,8 @@
       "weight": 1,
       "content_hash": "0430cd66fe8e41e1feffb6b6e77b7afbc629aecf07faa72121bdf9a694bcbeb4",
       "created_at": "2026-06-12T11:16:41Z",
-      "updated_at": "2026-06-12T11:42:51Z"
+      "updated_at": "2026-06-26T13:56:32Z",
+      "closed_at": "2026-06-26T13:56:32Z"
     },
     {
       "id": "MGIT-11.12.5",
@@ -1332,15 +1334,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0.5,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "housekeeping",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "eb299f58767caf47d0afd54ccf421d91747e1bec969158ed2175ceade7c9be4f",
       "created_at": "2026-06-12T11:16:41Z",
-      "updated_at": "2026-06-12T11:16:41Z"
+      "updated_at": "2026-06-26T13:58:04Z",
+      "closed_at": "2026-06-26T13:58:04Z"
     },
     {
       "id": "MGIT-11.13.1",
@@ -1356,15 +1359,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "ac0536f8aeb6ea713154080a5b11e8d6c37738c96e66616adbd4165046f486e5",
       "created_at": "2026-06-12T11:16:41Z",
-      "updated_at": "2026-06-12T11:42:51Z"
+      "updated_at": "2026-06-25T14:06:52Z",
+      "closed_at": "2026-06-25T14:06:52Z"
     },
     {
       "id": "MGIT-11.13.2",
@@ -1380,15 +1384,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "117ec2284978617cd51b4b8cf16b6627e16447b6f5acf42108a3c09bf7eed880",
       "created_at": "2026-06-12T11:16:41Z",
-      "updated_at": "2026-06-12T11:42:51Z"
+      "updated_at": "2026-06-25T14:06:52Z",
+      "closed_at": "2026-06-25T14:06:52Z"
     },
     {
       "id": "MGIT-11.13.3",
@@ -1404,15 +1409,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "c19618468eb0ba0943180f910e0466fe526d4e6275c4688961ccb6818c2037ab",
       "created_at": "2026-06-12T11:16:41Z",
-      "updated_at": "2026-06-12T11:42:51Z"
+      "updated_at": "2026-06-25T13:40:31Z",
+      "closed_at": "2026-06-25T13:40:31Z"
     },
     {
       "id": "MGIT-11.13.4",
@@ -2873,7 +2879,7 @@
       "issue_type": "",
       "priority": 4,
       "labels": "[]",
-      "status": "open",
+      "status": "deferred",
       "progress": 0,
       "assignee": "",
       "creator": "mcp",
@@ -2881,7 +2887,7 @@
       "weight": 1,
       "content_hash": "27cafc9905b6a735f5dde5e8056ab625214cbd1732c75b19723c86152f4b22b0",
       "created_at": "2026-06-15T15:27:00Z",
-      "updated_at": "2026-06-15T15:27:00Z"
+      "updated_at": "2026-06-26T13:56:53Z"
     },
     {
       "id": "MGIT-12.1",
@@ -3065,7 +3071,7 @@
       "issue_type": "",
       "priority": 4,
       "labels": "[]",
-      "status": "open",
+      "status": "deferred",
       "progress": 0,
       "assignee": "",
       "creator": "mcp",
@@ -3073,7 +3079,7 @@
       "weight": 1,
       "content_hash": "ebab1252506c76739e7d7409192cb5d15c2e816c56db36e22b84d73a7aced543",
       "created_at": "2026-06-15T15:28:12Z",
-      "updated_at": "2026-06-15T15:28:12Z"
+      "updated_at": "2026-06-26T13:57:15Z"
     },
     {
       "id": "MGIT-13",
@@ -3089,7 +3095,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "in_progress",
+      "status": "done",
       "progress": 1,
       "assignee": "",
       "creator": "mcp",
@@ -3097,7 +3103,8 @@
       "weight": 1,
       "content_hash": "e297ee38350b721371bf144501005979a33982f53248a6538c586ff7039787c6",
       "created_at": "2026-06-17T14:24:45Z",
-      "updated_at": "2026-06-17T14:25:58Z"
+      "updated_at": "2026-06-26T13:57:17Z",
+      "closed_at": "2026-06-26T13:57:17Z"
     },
     {
       "id": "MGIT-13.1",
@@ -4238,15 +4245,15 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "opus-agent",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "c3bc96843cb3e0cba44e2b9f894c9006752c126317f76bfb7875b00d3724f0c4",
       "created_at": "2026-06-23T17:53:27Z",
-      "updated_at": "2026-06-23T17:53:27Z"
+      "updated_at": "2026-06-26T09:50:36Z"
     },
     {
       "id": "MGIT-27",
@@ -4286,15 +4293,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "ae812157479506e293649ecfc09659bbdce88ac2baa648320e0e0f9319761ee4",
       "created_at": "2026-06-24T08:40:47Z",
-      "updated_at": "2026-06-24T08:40:47Z"
+      "updated_at": "2026-06-26T11:31:37Z",
+      "closed_at": "2026-06-26T11:31:37Z"
     },
     {
       "id": "MGIT-29",
@@ -4310,15 +4318,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "fd2adee61c833ce5865cc9c8696407c45273be99df8926b9d7d55294e551d030",
       "created_at": "2026-06-24T08:51:44Z",
-      "updated_at": "2026-06-24T08:51:44Z"
+      "updated_at": "2026-06-26T13:09:35Z",
+      "closed_at": "2026-06-26T13:09:35Z"
     },
     {
       "id": "MGIT-3",
@@ -4745,6 +4754,129 @@
       "updated_at": "2026-06-24T09:55:54Z"
     },
     {
+      "id": "MGIT-31",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 31,
+      "project": "MGIT",
+      "title": "Live-validate FR-17 e2e + perf on the KVM box (firecracker): NFR-17.3/.4 + boot budgets owed",
+      "description": "",
+      "prompt": "The FR-17 e2e + perf harnesses (MGIT-11.13.1, MGIT-11.13.2) are committed and LIVE-VALIDATED on macOS vzf (arm64), but the firecracker-only assertions have never run because the KVM box was down this session. Run them on the Linux/KVM runner (the dual-boot box — boot into Linux/KVM; IP varies by DHCP, see the gitignored handoff doc) to capture the owed numbers.\n\nOWED firecracker live runs (harness compiles/vets/lints clean, KVM-gated):\n1. MGIT-11.13.1 firecracker variant (internal/sandboxd/backend/firecracker/e2e_workflow_linux_test.go): TestE2E_ClaimToLand_Succeeds, _ProvenanceRecordedPerCommit, _RemoveDiscardsUnlanded_NoResidue — run with /dev/kvm + MGIT_E2E_GUEST_ROOTFS (the x86_64 guest image) + root for any net case. Confirms the full workflow + provenance + no-residue on firecracker (vzf already passes all 3).\n2. MGIT-11.13.2 firecracker NFR assertions (internal/sandboxd/backend/firecracker/perf_bench_linux_test.go): the two metrics that SKIP on vzf (in-process VM) and ASSERT only on firecracker — TestBench_FiveIdleUnder500MB (NFR-17.4, per-VM RSS summed from /proc) and TestBench_SuspendedZeroCPU (NFR-17.3, /proc stat ticks across suspend) — PLUS the boot-budget asserts TestBench_WarmStartUnder200ms / cold-boot\u003c1s (firecracker-oriented; recorded-only on vzf). Capture the measured numbers for the adoption-criteria spike.\n\nDELIVERABLE: a short results note (the measured RSS / CPU / boot numbers vs the NFR-17 targets, pass/fail), committed or recorded; if any target regresses, file the regression. No code change expected unless a real bug surfaces. No co-authored-by/agent/Generated-with trailer; LAN IP stays out of git.",
+      "acceptance": "On the KVM box: the firecracker e2e_workflow tests (3) pass live, and the firecracker perf asserts (NFR-17.3 suspended CPU=0, NFR-17.4 5-idle\u003c500MB, plus the \u003c1s/\u003c200ms boot budgets) run live with their measured numbers recorded against the NFR-17 targets; any regression is filed. The vzf-validated portions need no re-run.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "0b9e820230b5e1a3186e9db870c355e2b8e71c2eae0d483288ed4e8d15c8c3a2",
+      "created_at": "2026-06-26T09:14:03Z",
+      "updated_at": "2026-06-26T09:14:03Z"
+    },
+    {
+      "id": "MGIT-32",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 32,
+      "project": "MGIT",
+      "title": "mgit add/status should honor .gitignore (first dogfood finding on mgit-dev)",
+      "description": "",
+      "prompt": "FIRST DOGFOOD FINDING (2026-06-26, MGIT-26 pilot): after `mgit init` on the real mgit-dev repo, both `mgit add .` and `mgit status` IGNORE the repo's .gitignore. Observed:\n- `mgit add .` in a repo with `.gitignore` (ignoring `ignored.txt` + `build/`) STAGED `build/out.o` and `ignored.txt` anyway. It DOES skip `.git/` and `.mgit/` (good), but nothing else.\n- `mgit status` on mgit-dev lists a huge noisy untracked set — `.claude/worktrees/\u003c...\u003e/.git`, `.github/workflows/ci.yml` (inside leftover worktrees), build artifacts, the `mgit` binary, `cover.out`, etc. — because none of the .gitignore rules are applied.\n\nIMPACT: this is the #1 blocker to adopting mgit on an existing repo (the bootstrap-cost friction in MGIT-26). A blanket working-tree import pulls in build output, vendored worktrees, and the compiled binary; status is unusable as a signal. It forces scoped per-file `mgit add`, defeating the \"just works over your repo\" coexistence story (MGIT-14).\n\nFIX: make the working-tree walk used by `mgit add`/`mgit status` (and anything that enumerates untracked files) honor `.gitignore` (and ideally nested .gitignore + .git/info/exclude), consistent with the SEC-03 staging which already drops .mgit/.git at any depth. Likely lives near cmd/mgit/add.go + status.go + whatever walks the worktree (internal/store/git worktree materialize or a dedicated ignore matcher). Use a tested gitignore-matching approach (go-git has gitignore matchers: github.com/go-git/go-git/v5/plumbing/format/gitignore — already an approved dependency). Add tests: ignored file not staged by `add .`, ignored dir skipped, nested .gitignore honored, negation (`!`) honored, `.git`/`.mgit` always skipped.\n\nTDD per CLAUDE.md; no co-authored-by/agent/Generated-with trailer. This is the pilot task for the MGIT-26 dogfood (do it USING mgit's own micro-commit workflow, then squash/export the result to git for delivery). Refs: MGIT-26, MGIT-14.",
+      "acceptance": "`mgit add .` and `mgit status` honor the repo's .gitignore (and nested .gitignore + .git/info/exclude), never staging/listing ignored paths, while still always skipping .git/ and .mgit/; covered by tests (ignored file/dir, nested, negation, .git/.mgit always skipped). On mgit-dev, `mgit status` after init shows a clean, signal-bearing untracked set (no build artifacts / worktrees / binary).",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "bf488570e23b513a15ba8e7c544fc2160e3a631e5e22ea6576b5de0511dd1af8",
+      "created_at": "2026-06-26T09:50:30Z",
+      "updated_at": "2026-06-26T10:03:23Z",
+      "closed_at": "2026-06-26T10:03:23Z"
+    },
+    {
+      "id": "MGIT-33",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 33,
+      "project": "MGIT",
+      "title": "mgit→git delivery BROKEN: squash --to-git emits empty patch; mgit diff renders empty paths (2nd dogfood finding)",
+      "description": "",
+      "prompt": "CRITICAL DOGFOOD FINDING (2026-06-26, MGIT-26 pilot, during MGIT-32). The mgit→git delivery bridge — the whole point of the \"checkpointed working substrate → squash → land to git\" story ([[mgit-purpose-positioning]]) — does NOT work. Two micro-commits were made on task MGIT-32 (20310558 red test, c01561ac green fix), both committed cleanly via `mgit add`+`mgit commit`. Then:\n\n1. `mgit squash --task-id MGIT-32 --to-git --to-git-output X.patch` produced an 11-line patch with the commit SUMMARY only and ZERO `diff --git` hunks — i.e. an EMPTY patch. The squashed changes are not rendered into the format-patch, so the work cannot be delivered to git via the documented bridge.\n2. `mgit diff --task-id MGIT-32` renders garbage: repeated `diff --mgit a/ b/` blocks with EMPTY path names and \"deleted file:\" + `--- a/ (00000000) +++ b/ ()` — no real paths, no content, everything looks deleted-from-nothing.\n3. `mgit show \u003ccommit\u003e` prints commit metadata (author/date/task/type/message) but no file list / no diff.\n\nThe objects committed fine (mgit log shows the chain), so this is a DIFF/PATCH-RENDERING defect (the task/commit tree-diff against its base is not being computed/printed), not a storage loss. But it makes squash --to-git / diff / show useless and BLOCKS delivery of mgit-tracked work to git. I had to deliver MGIT-32 via plain `git add`+`git commit` instead (the working tree already held the changes because the edits were made directly on the shared tree, not in an isolated mgit worktree).\n\nINVESTIGATE: the task/commit diff computation behind `mgit diff`, `mgit show`, and `mgit squash --to-git` (likely a shared diff renderer in internal/store/git or the diff/squash service). The empty `a/ b/` paths suggest the tree-walk that produces FileDiffs for a task is yielding entries with blank Path (or diffing a tree against itself/empty). Reproduce: fresh repo, mgit init, write a file, mgit add + commit --task-id T, then `mgit diff --task-id T` and `mgit squash --task-id T --to-git` — assert the diff/patch contain the file's real path + content. Add regression tests at the diff/squash layer.\n\nTDD per CLAUDE.md; no co-authored-by/agent/Generated-with trailer. This is the #1 dogfood blocker — without it mgit work can't reach git. Refs: MGIT-26, MGIT-32, [[squash-semantics-decision]].",
+      "acceptance": "`mgit diff --task-id T`, `mgit show \u003ccommit\u003e`, and `mgit squash --task-id T --to-git` all render the real file paths + content diff for a task's commits (verified: fresh repo, one file added via mgit add+commit → the patch/diff shows that file's path and +content, applies cleanly with git apply). Regression tests cover the diff/squash rendering against a non-empty base. The mgit→git delivery loop works end-to-end (mgit squash --to-git | git apply reproduces the change).",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "6bcce73ac3b346310918fb98288caa756dd52cb51820f0ad2ef9e45be8ae8302",
+      "created_at": "2026-06-26T10:03:00Z",
+      "updated_at": "2026-06-26T11:00:27Z",
+      "closed_at": "2026-06-26T11:00:27Z"
+    },
+    {
+      "id": "MGIT-34",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 34,
+      "project": "MGIT",
+      "title": "Wire mgit worktrees into the agent flow (close dogfood gap #5)",
+      "description": "",
+      "prompt": "DOGFOOD GAP #5 (MGIT-26): when an agent works a task, it currently runs in a GIT worktree (the Claude Code harness auto-isolates into git worktrees), NOT an mgit worktree — so the canonical \"one task \u003c-\u003e one mgit worktree \u003c-\u003e one agent, commits auto-tagged\" flow (FR-16) is never exercised by the agent. We CAN'T change the external harness, but we CAN make mgit's own agent-launch flow first-class: one command that starts an agent on a task inside an mgit-managed worktree, wired so the agent's commits are mgit-task-tagged and isolated, and `mgit run` routes its shell into the task sandbox.\n\nVERIFIED WORKING (manually, 2026-06-26) so build on it: `mgit worktree add \u003cpath\u003e --task \u003cID\u003e` materializes the full tree from .mgit and binds the task; a `mgit commit` from inside that worktree auto-inherits the task id (FR-16); `mgit squash --task \u003cID\u003e --to-git | git apply` round-trips. The pieces work — this task WIRES them into a cohesive agent entry flow.\n\nSCOPE (design the cleanest cohesive flow; reuse existing pieces, do not reinvent):\n- Reuse internal/worktree (the WorktreeManager / `mgit worktree add` path) to create+bind the mgit worktree for the task.\n- Reuse internal/agentadapter (UpsertClaudeMd + WriteClaudeSettings, claude.go/claudemd.go) to write the worktree's CLAUDE.md (the working-discipline + sandbox-env block) and .claude/settings.json that routes the agent's shell through `mgit run` (the sandbox hook). See cmd/mgit/run.go (newRunCmd/resolveRun/sandboxForDir) for how `mgit run` binds a sandbox to a worktree dir.\n- Deliver it as a first-class command — either extend `mgit worktree add` with agent-wiring flags (e.g. --agent claude that also writes the adapter files), or a new `mgit work`/`mgit agent start` command — whichever is cleaner and matches the existing CLI conventions. Optionally (behind a flag) launch the task sandbox bound to the worktree so `mgit run` works immediately; if the sandbox backend is unavailable, degrade gracefully (the worktree + adapter wiring must still succeed — fail-closed only the sandbox-routing part).\n- Most of this is HOST-SIDE (worktree materialize + adapter file writes) and fully unit-testable WITHOUT a sandbox/KVM; only the optional sandbox-launch leg is env-gated.\n\nTESTS: worktree created+bound to the task; CLAUDE.md + .claude/settings.json written into it with the mgit-run routing; a commit made in the worktree auto-tags the task; idempotent re-run; graceful degradation when the sandbox is unavailable. TDD per CLAUDE.md (red-\u003egreen), godoc with Refs, no functions\u003e50 lines / files\u003e500.\n\nCONSTRAINTS: no co-authored-by/agent/\"Generated with\" trailer in any commit; no LAN IP; full gate (gofmt/vet/golangci-lint 0/build/-race) before reporting. Do NOT mark mtix done and do NOT commit to main — work in your worktree and report the file paths + full contents + verification; the parent integrates + validates. Refs: MGIT-26, FR-16, MGIT-11.11.",
+      "acceptance": "A first-class mgit command starts an agent on a task inside an mgit-managed worktree: it provisions+binds the mgit worktree (reusing WorktreeManager), writes the agentadapter CLAUDE.md + .claude/settings.json routing the agent's shell through `mgit run`, and (optionally/gated) launches the bound sandbox, degrading gracefully if unavailable. Commits made in that worktree auto-tag the task (FR-16). Covered by host-side tests (creation, adapter wiring, auto-tag, idempotency, graceful degradation); full gate green; no banned trailers; no LAN IP.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "opus-agent",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "4e469c18a99e05145aa047059f1339fa7c30e5f7d936aa5db80d13369c641620",
+      "created_at": "2026-06-26T11:32:36Z",
+      "updated_at": "2026-06-26T11:42:38Z",
+      "closed_at": "2026-06-26T11:42:38Z"
+    },
+    {
+      "id": "MGIT-35",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 35,
+      "project": "MGIT",
+      "title": "mgit/git tree drift when dogfooding over git: define the sync model + a one-command resync",
+      "description": "",
+      "prompt": "ADOPTION FRICTION (found 2026-06-26 dogfooding mgit on mgit-dev, MGIT-26). mgit runs OVER an existing git repo (MGIT-14 coexistence): the project's git tree and the .mgit store are TWO trees. When work is delivered via GIT directly (as MGIT-32/33/34 were — git commits 5138fd1/21756b9/40e6150), the .mgit store stays at its last import (bootstrap ac2ad8ff) and DRIFTS from git main. Concretely: `mgit work \u003cpath\u003e --task \u003cID\u003e` materializes the worktree from .mgit, so it produced a STALE tree (missing work.go etc.) until a manual re-import (`mgit add . \u0026\u0026 mgit commit`) re-synced .mgit to the current working tree. The drift was silent — nothing warned that the materialized worktree was behind git main.\n\nWHY IT MATTERS: this is the core coexistence question for adopting mgit on a repo that ALSO uses git for delivery. Two sources of truth that silently diverge = stale worktrees, confusing diffs, and lost confidence. It is the #1 friction for the \"dogfood mgit on its own repo\" story and any real user adopting mgit over an existing git repo.\n\nADDRESS CLEANLY (design-first — likely an ADR, NOT a band-aid). Decide + implement:\n1. AUTHORITATIVE-SOURCE MODEL (the root decision; write it as an ADR): is mgit the working substrate with ALL changes flowing mgit -\u003e squash -\u003e land to git (so .mgit is always current and you NEVER commit to git directly while using mgit), OR is git authoritative and .mgit re-syncs from it on demand? Pick one and document the workflow + invariants. (This session mixed both, which is what caused the drift.)\n2. ONE-COMMAND RESYNC: replace the ad-hoc `mgit add . \u0026\u0026 mgit commit` with a first-class, idempotent `mgit sync` (or extend `mgit import`) that brings .mgit's base up to the current git HEAD / working tree in one step (honoring .gitignore — fixed in MGIT-32). Fast, safe, documented.\n3. DRIFT DETECTION + GUIDANCE: `mgit work` (and probably `mgit status`) should DETECT when .mgit's base tree diverges from the git working tree and warn (or offer to resync) BEFORE materializing a stale worktree — never silently materialize behind git.\n4. Evaluate (and document the decision either way) whether `mgit work` should be able to materialize from the live working tree / git HEAD directly when bound to the base, vs always from .mgit — against the isolation model.\n\nACCEPTANCE: an ADR records the authoritative-source/sync model + workflow; a one-command resync exists (idempotent, gitignore-honoring, tested); drift between .mgit and the git working tree is detected and surfaced (not silent) by `mgit work`/`status`; docs (README + the agent skill from MGIT-29) describe the chosen workflow so adopters don't hit silent drift. TDD per CLAUDE.md; no co-authored-by/agent/Generated-with trailer; no LAN IP. Refs: MGIT-26, MGIT-14, MGIT-32, MGIT-34.",
+      "acceptance": "An ADR records the authoritative-source + sync model (mgit-as-substrate-with-land vs git-authoritative-with-resync) and the resulting workflow/invariants. A first-class idempotent resync (`mgit sync` or extended `mgit import`) brings .mgit current with git HEAD/working tree, honoring .gitignore, with tests. `mgit work` and `mgit status` detect + surface .mgit↔git drift instead of silently materializing a stale worktree. README + the MGIT-29 agent skill document the chosen workflow. Gate green; no banned trailers; no LAN IP.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "opus-agent",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "b888f52abad72e4a41c7c4eadabcc5cfb0c731b2c24832666a3c894bfba8e2fb",
+      "created_at": "2026-06-26T12:57:54Z",
+      "updated_at": "2026-06-26T14:10:41Z"
+    },
+    {
       "id": "MGIT-4",
       "parent_id": "",
       "depth": 0,
@@ -5008,7 +5140,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
+      "status": "cancelled",
       "progress": 1,
       "assignee": "opus-agent-01",
       "creator": "cli",
@@ -5016,7 +5148,8 @@
       "weight": 1,
       "content_hash": "aa9901916088d4d250e847dd8a7cf1111224a49f17644887281a4ced42b29ca6",
       "created_at": "2026-04-02T13:18:08Z",
-      "updated_at": "2026-04-14T07:49:36Z"
+      "updated_at": "2026-06-26T13:56:27Z",
+      "closed_at": "2026-06-26T13:56:27Z"
     },
     {
       "id": "MGIT-4.2.1",
@@ -6732,15 +6865,15 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "in_progress",
+      "status": "open",
       "progress": 0.6666666666666666,
-      "assignee": "opus-agent-01",
+      "assignee": "",
       "creator": "mcp",
-      "agent_state": "working",
+      "agent_state": "",
       "weight": 1,
       "content_hash": "121c5b24faf2a8b4e1959cb06b77ffaa71c2b1c30317690b0face43b4ee07e80",
       "created_at": "2026-04-08T13:55:09Z",
-      "updated_at": "2026-06-22T19:59:04Z"
+      "updated_at": "2026-06-26T13:56:34Z"
     },
     {
       "id": "MGIT-9.1",
@@ -6781,15 +6914,15 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "in_progress",
+      "status": "open",
       "progress": 0,
-      "assignee": "opus-agent-01",
+      "assignee": "",
       "creator": "mcp",
-      "agent_state": "working",
+      "agent_state": "",
       "weight": 1,
       "content_hash": "f538c4c94199334a851d7943cacab60b541f25aabf7a70cda881f64df03e31b5",
       "created_at": "2026-04-08T13:55:24Z",
-      "updated_at": "2026-04-08T14:19:56Z"
+      "updated_at": "2026-06-26T13:56:36Z"
     },
     {
       "id": "MGIT-9.3",
@@ -6805,15 +6938,15 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "in_progress",
+      "status": "open",
       "progress": 0,
-      "assignee": "opus-agent-01",
+      "assignee": "",
       "creator": "mcp",
-      "agent_state": "working",
+      "agent_state": "",
       "weight": 1,
       "content_hash": "da768bf52750ddeec54da18963aad3cbd121cea7add0dc1c7359a4c744782678",
       "created_at": "2026-04-08T13:55:26Z",
-      "updated_at": "2026-04-08T14:19:56Z"
+      "updated_at": "2026-06-26T13:56:42Z"
     },
     {
       "id": "MGIT-9.4",
@@ -7119,84 +7252,6 @@
       "to_id": "MGIT-11.12.4",
       "dep_type": "blocks",
       "created_at": "2026-06-12T11:47:32Z"
-    },
-    {
-      "from_id": "MGIT-11.12",
-      "to_id": "MGIT-11.13",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:16:41Z"
-    },
-    {
-      "from_id": "MGIT-11.12.1",
-      "to_id": "MGIT-11.13.1",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.12.1",
-      "to_id": "MGIT-11.13.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.12.1",
-      "to_id": "MGIT-11.13.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.12.2",
-      "to_id": "MGIT-11.13.1",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.12.2",
-      "to_id": "MGIT-11.13.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.12.2",
-      "to_id": "MGIT-11.13.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.12.3",
-      "to_id": "MGIT-11.13.1",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.12.3",
-      "to_id": "MGIT-11.13.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.12.3",
-      "to_id": "MGIT-11.13.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.12.4",
-      "to_id": "MGIT-11.13.1",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.12.4",
-      "to_id": "MGIT-11.13.2",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
-    },
-    {
-      "from_id": "MGIT-11.12.4",
-      "to_id": "MGIT-11.13.3",
-      "dep_type": "blocks",
-      "created_at": "2026-06-12T11:42:51Z"
     },
     {
       "from_id": "MGIT-11.13.5",
@@ -8255,6 +8310,13 @@
       "last_heartbeat": "2026-06-12T12:15:22Z"
     },
     {
+      "agent_id": "housekeeping",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-11.13",
+      "last_heartbeat": "2026-06-26T13:57:48Z"
+    },
+    {
       "agent_id": "import-script",
       "project": "MGIT",
       "state": "working",
@@ -8262,14 +8324,20 @@
       "last_heartbeat": "2026-04-02T13:18:09Z"
     },
     {
-      "agent_id": "opus-agent-01",
+      "agent_id": "opus-agent",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-11.10.12",
+      "current_node_id": "MGIT-35",
+      "last_heartbeat": "2026-06-25T13:40:27Z"
+    },
+    {
+      "agent_id": "opus-agent-01",
+      "project": "MGIT",
+      "state": "idle",
       "last_heartbeat": "2026-04-07T05:58:03Z"
     }
   ],
   "sessions": null,
-  "node_count": 277,
-  "checksum": "98c09f1b98d4fec143f63514ac508b5b80f8e67397b7bf3161d4bd5a2f5374d0"
+  "node_count": 282,
+  "checksum": "1579500068d1f25e96e24c31b04227904c8ee0c68bd0db20ec8cba172a834d3a"
 }
