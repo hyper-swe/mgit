@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/utils/merkletrie"
 
 	"github.com/hyper-swe/mgit/internal/model"
 )
@@ -84,16 +85,21 @@ func changeToFileDiff(change *object.Change) model.FileDiff {
 
 	fd := model.FileDiff{}
 
+	// go-git's merkletrie.Action is `_ = iota; Insert; Delete; Modify`, i.e.
+	// Insert=1, Delete=2, Modify=3 (0 is the unused blank). Switch on the NAMED
+	// constants — the prior magic 0/1/2 mis-mapped every action (Insert hit the
+	// Delete arm and read the empty From side -> empty-path "deleted" entries).
+	// Refs: MGIT-33
 	switch action {
-	case 0: // Insert
+	case merkletrie.Insert:
 		fd.Path = change.To.Name
 		fd.Operation = model.DiffAdded
 		fd.NewHash = change.To.TreeEntry.Hash.String()
-	case 1: // Delete
+	case merkletrie.Delete:
 		fd.Path = change.From.Name
 		fd.Operation = model.DiffDeleted
 		fd.OldHash = change.From.TreeEntry.Hash.String()
-	case 2: // Modify
+	case merkletrie.Modify:
 		fd.Path = change.To.Name
 		fd.Operation = model.DiffModified
 		fd.OldHash = change.From.TreeEntry.Hash.String()
