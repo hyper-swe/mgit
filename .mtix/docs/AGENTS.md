@@ -5,13 +5,15 @@
 
 ## Overview
 
-This document is the primary operating guide for AI agents working on the **MGIT** project managed by mtix. Safety-critical operating procedures are the baseline standard — not optional, not domain-specific, always enforced.
+This document is the primary operating guide for AI agents working on the **MGIT** project managed by mtix. mgit is the safe, checkpointed working substrate for HyperSwe coding agents: you work each task inside an isolated, version-controlled worktree, micro-commit every coherent step, and land only the reviewed result. The operating discipline below is a high-integrity engineering standard — always enforced because the substrate is load-bearing, not because of any compliance regime.
+
+> **Start a task with `mgit work`.** `mgit work <path> --task <ID>` provisions a task-bound mgit worktree and wires the agent shell to route through `mgit run` (the sandbox airlock). Inside it, `mgit commit -m "..."` records each step (task ID auto-inherited), `mgit log`/`mgit status`/`mgit diff` orient you, `mgit rollback`/`mgit checkout -b`/`mgit cherry-pick` course-correct without restarting, and `mgit squash --task-id <ID> --to-git` collapses the work for the land. See [MGIT_WORKING_DISCIPLINE.md](MGIT_WORKING_DISCIPLINE.md).
 
 ## The Context Chain Principle — Non-Negotiable
 
 **The dot-notation hierarchy IS your context.** Every node in the tree — from root story to leaf micro-issue — contributes a layer of context. When you read a node's assembled prompt via `mtix_context`, you receive the full briefing from root to that node: the business goal, the technical approach, the specific scope, and the exact instruction.
 
-**Before doing ANY work, call `mtix_context` with the node ID.** This is as inviolable as parameterized SQL queries in safety-critical systems. Do not work from titles alone. Do not skip this step.
+**Before doing ANY work, call `mtix_context` with the node ID.** This is as inviolable as the parameterized-SQL and go-git-determinism laws mgit is built on. Do not work from titles alone. Do not skip this step.
 
 If the assembled context is insufficient to execute independently, **STOP and escalate** — the parent task decomposition is incomplete. Do not guess at missing requirements.
 
@@ -27,7 +29,7 @@ If the assembled context is insufficient to execute independently, **STOP and es
 
 **NEVER write code without a corresponding mtix task.** Every change — feature, bug fix, refactor, one-line fix — MUST have a task created BEFORE code is written. If no task exists, create one with `mtix create` (with `description`, `prompt`, `acceptance` populated), claim it, then work.
 
-Every task must pass the completeness test: *"Can a different agent, with zero conversation history, execute this task using ONLY the assembled context chain from root to this node?"* If not, add file paths, function names, inputs/outputs, edge cases, and test scenarios. A title-only or vaguely-described task is not actionable — it forces the executing agent to guess, which is unacceptable in safety-critical systems.
+Every task must pass the completeness test: *"Can a different agent, with zero conversation history, execute this task using ONLY the assembled context chain from root to this node?"* If not, add file paths, function names, inputs/outputs, edge cases, and test scenarios. A title-only or vaguely-described task is not actionable — it forces the executing agent to guess, which the discipline does not allow.
 
 ## Agent Workflow
 
@@ -96,9 +98,9 @@ Use `mtix_dep_add` for cross-branch dependencies. Undeclared dependencies cause 
 ### Completeness Test
 *"If another agent reads only the assembled context from root to this child, can it execute without asking questions?"* If not, add the missing details.
 
-### Safety-Critical Decomposition
-- Every child inherits safety constraints from parent
-- Never decompose away a safety requirement — it must appear in at least one child's acceptance criteria
+### Requirement-Preserving Decomposition
+- Every child inherits the parent's constraints
+- Never decompose away a requirement — it must appear in at least one child's acceptance criteria
 - Track requirement coverage: the union of children's acceptance criteria must fully cover the parent's
 
 ## Traceability Requirements
@@ -109,7 +111,7 @@ Every completed task must have an auditable trail:
 3. **Traceability comment** — task → requirement → test → result (manual, via `mtix_comment`)
 4. **Verification evidence** — tests passing, acceptance criteria met (manual, documented in comments)
 
-This is the baseline standard for all MGIT work, aligned with DO-178C, IEC 62304, NASA-STD-8739.8, and MIL-STD-498 requirements.
+This is the baseline standard for all MGIT work: an auditable, reviewable trail of what each agent did, so the reviewer can see and undo exactly what changed.
 
 ## Emergency Procedures
 

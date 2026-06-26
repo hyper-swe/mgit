@@ -1,0 +1,181 @@
+# mgit Working Discipline — Agent Skill
+
+> The step-by-step discipline for working a task with **mgit**, the safe,
+> checkpointed working substrate for HyperSwe coding agents. Every command
+> below exists in the shipped CLI; verify any flag with `mgit <cmd> --help`.
+
+mgit is git underneath (go-git). Its value is not novel storage — it is the
+agent workflow plus the sandbox-to-land integration. You micro-commit each
+coherent step into an isolated `.mgit` store that never touches the project's
+real `.git`, course-correct cheaply when a decision turns out wrong, and land
+only the squashed, reviewed result.
+
+This skill is written for **both**:
+- an **autonomous agent** working a task end to end, and
+- a **reviewer** directing course-correction on an agent's work.
+
+Course-correction (backtrack / fork / cherry-pick) is **cheap and supported**,
+and this skill instructs you to use it — but note it is not yet validated that
+agents reliably reach for it on their own (MGIT-28 is the pending head-to-head
+test). The most reliable actor directing it today is a reviewer.
+
+---
+
+## 1. Pick up the task
+
+Get your task context from mtix (assembled context chain → your full
+briefing), then claim it. Do not write code without a task.
+
+```bash
+mtix ready                      # find unblocked, unclaimed work
+mtix context MGIT-12.3          # MANDATORY: read the assembled briefing
+mtix claim  MGIT-12.3 --agent <agent-id>
+```
+
+## 2. Start the agent on the task with `mgit work`
+
+`mgit work` is the first-class "start an agent on a task" entry point. It
+provisions a task-bound mgit worktree (FR-16) and wires the agent's shell to
+route through `mgit run` into the task sandbox (CLAUDE.md + .claude/settings.json).
+
+```bash
+# Worktree + agent wiring only (sandbox launched later / on another host):
+mgit work ./wt-MGIT-12.3 --task MGIT-12.3
+
+# Also launch the microVM sandbox now (requires a digest-pinned image):
+mgit work ./wt-MGIT-12.3 --task MGIT-12.3 \
+  --sandbox --image base@sha256:<hex> --network allowlist --allow registry.npmjs.org
+```
+
+If the sandbox backend is unavailable the worktree and wiring still succeed;
+only the sandbox leg fails closed (NFR-17.6). All work below runs **inside**
+that worktree.
+
+> Prefer `mgit work` over raw `mgit worktree add` — `work` also does the agent
+> wiring. Use `mgit worktree add ./path --task ID` only when you want the
+> worktree without the agent-shell integration.
+
+## 3. Micro-commit every coherent step
+
+Commit as soon as a step compiles or passes — micro-commits are cheap and
+expected; they are collapsed at land, so do not batch or hesitate. Inside a
+bound worktree the task ID is auto-inherited.
+
+```bash
+mgit status                              # what's changed
+mgit add .                               # stage
+mgit commit -m "add validation helper"   # task ID auto-inherited in the worktree
+# Outside a bound worktree, pass it explicitly:
+mgit commit --task-id MGIT-12.3 -m "add validation helper"
+```
+
+`mgit commit` takes `--task-id` (NOT `--task`). `mgit run -- <cmd>` routes
+builds/tests/installs into the sandbox; in a wired worktree your shell already
+does this transparently.
+
+## 4. Orient between steps
+
+```bash
+mgit log --oneline               # the steps you've taken so far
+mgit log --task-id MGIT-12.3     # just this task's commits
+mgit diff                        # uncommitted changes
+mgit diff --task-id MGIT-12.3    # cumulative diff for the task
+mgit show <hash>                 # one commit in detail
+```
+
+## 5. Course-correct — backtrack, fork, salvage (don't restart)
+
+When a prior decision proves wrong (e.g. a bad library choice), return to the
+decision point instead of rewriting hundreds of lines from scratch.
+
+**Backtrack** — append-only revert of a task or a specific commit (the reverted
+attempt stays in history for review):
+
+```bash
+mgit rollback --task-id MGIT-12.3 --reason "wrong validation lib"
+mgit rollback --commit <hash> --reason "revert just this step"   # resolves task automatically
+```
+
+**Fork** — branch a new line from a good commit and continue the new approach,
+preserving the old line:
+
+```bash
+mgit checkout <good-hash>          # move to the decision point
+mgit checkout -b task/MGIT-12.3-v2 # fork a new branch from here
+```
+
+**Salvage** — cherry-pick the still-good work from the old line onto the new one:
+
+```bash
+mgit cherry-pick <useful-hash>                       # apply onto current branch
+mgit cherry-pick <useful-hash> --onto task/MGIT-12.3-v2
+mgit cherry-pick <useful-hash> --no-commit           # preview only
+```
+
+A reviewer can drive exactly these steps after inspecting `mgit log`/`mgit diff`.
+
+## 6. Hand off for review
+
+The append-only history is the review surface: every step, including reverted
+attempts, is visible. The reviewer reads `mgit log --task-id <ID>` and
+`mgit diff --task-id <ID>` and can direct any of the step-5 course-corrections
+before the work lands.
+
+```bash
+mgit log --task-id MGIT-12.3 --format full
+mgit diff --task-id MGIT-12.3
+mgit verify --task-id MGIT-12.3   # commit chain + index integrity
+```
+
+## 7. Squash and land
+
+Squash collapses the task's micro-commits into one reviewable commit. Land
+exports/promotes only that result.
+
+```bash
+mgit squash --task-id MGIT-12.3 --dry-run            # preview
+mgit squash --task-id MGIT-12.3                      # squash in place
+mgit squash --task-id MGIT-12.3 --to-git --to-git-output task.patch  # export as git format-patch
+mgit squash --task-id MGIT-12.3 --to-main            # fast-forward the squash onto main
+```
+
+If the task ran in a sandbox, land the verified changes through the airlock:
+
+```bash
+mgit sandbox land --task MGIT-12.3   # pull + host-verify (dual-hash + task binding) + append
+```
+
+Then mark the task done in mtix once acceptance criteria and tests pass:
+
+```bash
+mtix done MGIT-12.3
+```
+
+---
+
+## Command quick-reference
+
+| Step | Command |
+|------|---------|
+| Start a task | `mgit work <path> --task <ID>` |
+| Commit a step | `mgit commit -m "..."` (task auto-inherited) / `--task-id <ID>` |
+| Run build/test/install | `mgit run -- <command>` |
+| Orient | `mgit status` · `mgit log --oneline` · `mgit diff [--task-id <ID>]` · `mgit show <hash>` |
+| Backtrack | `mgit rollback --task-id <ID>` / `--commit <hash>` |
+| Fork | `mgit checkout <hash>` then `mgit checkout -b <branch>` |
+| Salvage | `mgit cherry-pick <hash> [--onto <branch>]` |
+| Verify | `mgit verify --task-id <ID>` |
+| Squash | `mgit squash --task-id <ID> [--to-git \| --to-main]` |
+| Land (sandbox) | `mgit sandbox land --task <ID>` |
+
+## Honest caveats
+
+- mgit is git underneath; the moat is the agent UX/discipline + the
+  sandbox-land integration, not the storage. The honest comparison is
+  "git + a scratch-branch convention."
+- The backtrack/fork/cherry-pick loop is **cheap and instructed here** but not
+  yet validated as something agents reliably self-initiate (MGIT-28). Reviewers
+  are the most reliable directors of course-correction today.
+- macOS containment defaults to a vzf + **Linux** guest; a mac-native profile
+  for Swift/Xcode/brew workloads is a planned opt-in (MGIT-27). There is no
+  seamless macOS-native execution today.

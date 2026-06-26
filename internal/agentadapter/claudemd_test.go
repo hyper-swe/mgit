@@ -50,6 +50,38 @@ func TestGenDoc_RemedyGuidance(t *testing.T) {
 	assert.Contains(t, s, "mgit sandbox policy request --egress")
 }
 
+// TestGenDoc_StatesWorkingDiscipline verifies the section instructs the agent
+// in the mgit micro-commit / orient / course-correct discipline using only
+// real commands. Refs: MGIT-29, MGIT-28
+func TestGenDoc_StatesWorkingDiscipline(t *testing.T) {
+	s := RenderClaudeMdSection(SandboxEnv{WorktreePath: "/repo/wt", NetworkMode: "none"})
+
+	assert.Contains(t, s, "working discipline", "the discipline subsection is present")
+	// Micro-commit cadence after each coherent step.
+	assert.Contains(t, s, "mgit commit", "instructs micro-commit cadence")
+	assert.Contains(t, s, "squash", "explains commits are squashed at land")
+	// Orientation commands.
+	assert.Contains(t, s, "mgit log")
+	assert.Contains(t, s, "mgit status")
+	assert.Contains(t, s, "mgit diff")
+	// Course-correction (backtrack / fork / salvage), reviewer-directable.
+	assert.Contains(t, s, "mgit rollback")
+	assert.Contains(t, s, "mgit checkout")
+	assert.Contains(t, s, "mgit cherry-pick")
+	// `mgit run` routes the shell.
+	assert.Contains(t, s, "mgit run")
+}
+
+// TestGenDoc_DisciplineUsesRealFlags verifies the documented micro-commit uses
+// the real --task-id flag, never the nonexistent --task flag on commit.
+// Refs: MGIT-29
+func TestGenDoc_DisciplineUsesRealFlags(t *testing.T) {
+	s := RenderClaudeMdSection(SandboxEnv{WorktreePath: "/repo/wt", NetworkMode: "none"})
+	// `mgit commit` takes --task-id (or auto-inherits in a bound worktree); it
+	// must never be documented with a bare --task flag.
+	assert.NotContains(t, s, "mgit commit --task ")
+}
+
 // TestGenDoc_NoSecrets verifies the generator emits only the posture it is
 // given and never reads ambient host secrets. Refs: MGIT-11.11.2
 func TestGenDoc_NoSecrets(t *testing.T) {

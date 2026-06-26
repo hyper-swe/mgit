@@ -57,8 +57,32 @@ func RenderClaudeMdSection(env SandboxEnv) string {
 	b.WriteString("This is a policy decision, not a transient network error: do not retry blindly. ")
 	b.WriteString("Run the exact `remedy=` command (e.g. `mgit sandbox policy request --egress <host:port>`) ")
 	b.WriteString("to request the destination; the operator is prompted once, and you can then retry.\n")
+	b.WriteString(renderWorkingDiscipline())
 	b.WriteString(claudeMdEndMarker)
 	return b.String()
+}
+
+// renderWorkingDiscipline returns the imperative "mgit working discipline"
+// subsection injected into every sandboxed agent's CLAUDE.md. It is a static,
+// secret-free string (no ambient state read) describing only mgit's own CLI,
+// so it cannot leak host secrets and is stable across regenerations.
+// Refs: MGIT-29, MGIT-28
+func renderWorkingDiscipline() string {
+	return "\n### mgit working discipline\n\n" +
+		"This worktree is version-controlled by **mgit** and bound to one task. " +
+		"Your shell already routes through `mgit run`, so just run commands normally.\n\n" +
+		"- **Commit after every coherent step.** Run `mgit commit -m \"<what changed>\"` " +
+		"once a step compiles/passes — the task ID is auto-inherited from this worktree, " +
+		"so no `--task-id` is needed. Micro-commits are cheap and expected; they are " +
+		"collapsed into one commit at land via `mgit squash`, so do not hesitate or batch.\n" +
+		"- **Orient before you act.** `mgit status` (working tree), `mgit log --oneline` " +
+		"(your steps so far), and `mgit diff` / `mgit diff --task-id <ID>` (what changed) " +
+		"keep you grounded between steps.\n" +
+		"- **Course-correct, don't restart.** When a prior decision proves wrong, return to " +
+		"that point instead of rewriting from scratch: `mgit rollback --commit <hash>` " +
+		"(append-only revert) or `mgit checkout -b <branch>` to fork a new line from a good " +
+		"commit, then `mgit cherry-pick <hash>` to salvage the still-good work from the old " +
+		"line. The operator or a review agent may direct these steps.\n"
 }
 
 // renderNetwork describes the egress posture for the agent.

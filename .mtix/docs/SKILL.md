@@ -40,7 +40,9 @@ allowed-tools:
 
 # MGIT — mtix Skill
 
-This skill enables AI agents to work on the **MGIT** project using mtix task management. Safety-critical operating procedures are baked in as the baseline standard.
+This skill enables AI agents to work on the **MGIT** project using mtix task management. mgit is the safe, checkpointed working substrate for HyperSwe coding agents: an agent works each task inside an isolated, version-controlled worktree, micro-commits every coherent step, and lands only the reviewed result. The engineering discipline below (context-chain traversal, no-code-without-a-task, no-stub completeness) is the operating standard — high-integrity because the substrate is load-bearing, not because of any compliance regime.
+
+> **Working a task with mgit.** Start an agent on a task with `mgit work <path> --task <ID>` — it provisions a task-bound mgit worktree and wires the agent's shell to route through `mgit run` (the sandbox airlock). Inside the worktree, `mgit commit -m "..."` records each step (task ID auto-inherited); `mgit log` / `mgit status` / `mgit diff` orient you; `mgit rollback` / `mgit checkout -b` / `mgit cherry-pick` course-correct without restarting; `mgit squash --task-id <ID> --to-git` collapses the work for the land. See [the mgit agent skill](MGIT_WORKING_DISCIPLINE.md) for the full command-level discipline.
 
 ## NON-NEGOTIABLE: Context Chain Traversal
 
@@ -100,16 +102,19 @@ For deeper guidance, `mtix plugin install` provides role-specific skills:
 
 ## Reference Documentation
 
+- [MGIT_WORKING_DISCIPLINE.md](MGIT_WORKING_DISCIPLINE.md) — the mgit working substrate: micro-commit → backtrack → fork → cherry-pick → squash → land
 - [AGENTS.md](AGENTS.md) — full agent operating guide
 - [CONTEXT_CHAIN.md](CONTEXT_CHAIN.md) — writing effective task descriptions
 - [STATUS_MACHINE.md](STATUS_MACHINE.md) — state transitions
 - [WORKFLOWS.md](WORKFLOWS.md) — decompose-claim-done patterns
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — common errors and solutions
 
-## Compliance References
+## Engineering Discipline
 
-Safety-critical compliance mapping guides are available in `.claude/skills/references/`:
-- `do-178c-checklist.md` — Aviation (DO-178C DAL A-E)
-- `iec-62304-checklist.md` — Medical devices (IEC 62304 Class A-C)
-- `nasa-std-8739-checklist.md` — Space systems (NASA-STD-8739.8)
-- `mil-std-498-checklist.md` — Defense (MIL-STD-498)
+mgit is held to a high-integrity engineering bar — not a compliance regime, but the standard that keeps the substrate trustworthy:
+- **Test-driven** — no production code without a failing test first; coverage bars enforced.
+- **Append-only audit** — commits are never deleted; rollbacks create revert commits, preserving every attempt for review.
+- **Parameterized SQL + go-git determinism** — no string-built queries, no shelling out to git.
+- **No stubs** — a task is done only when every acceptance criterion is real, working code with passing tests.
+
+OWASP ASVS Level 2 informs the security mindset. See the root `CLAUDE.md` for the full contributor discipline.
