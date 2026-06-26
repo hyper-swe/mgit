@@ -193,6 +193,61 @@ mtix done MGIT-12.3
 | Squash | `mgit squash --task-id <ID> [--to-git \| --to-main]` |
 | Land (sandbox) | `mgit sandbox land --task <ID>` |
 
+## Common pitfalls (and the fix)
+
+Friction real agents have hit working through mgit — know these up front so you
+don't rediscover them by stumbling:
+
+1. **A worktree is NOT a git repo.** There is no `.git` inside it, so `git
+   status` / `git diff` / `git commit` / `git apply` do not work there and
+   git-trained habits mislead you. Use the mgit equivalents (`mgit status`,
+   `mgit diff`, `mgit commit`), and integrate by exporting the squash:
+   `mgit squash --task-id <ID> --to-git | git apply` — run the `git apply` from
+   the **project root**, never inside the worktree.
+
+2. **Gitignored build artifacts are not seeded.** A worktree is seeded from
+   `.mgit` honoring `.gitignore`, so generated/embedded artifacts (e.g. a
+   `//go:embed`-ed `web/dist`) are absent and a full build can fail — exactly
+   like a fresh `git checkout`. Fix: run the generate/build step in the
+   worktree, or list the build-required paths in `.mgit/seed-include` (one glob
+   per line) to carry them in.
+
+3. **Do not manually re-import to "refresh" a worktree.** mgit auto-housekeeps
+   its base from your current local working state, so you never need
+   `mgit add . && mgit commit` to pick up just-integrated work. If a worktree
+   looks stale, that is a bug to report — not a manual sync step to run.
+
+4. **The task-id flag is `--task-id`** on every command (`--task` is accepted as
+   an alias). Don't guess — prefer `--task-id`.
+
+5. **Task IDs accept dotted and dashed forms** — `MGIT-1.2.3`, `MTIX-30.6`,
+   `MTIX-30-probe` are all valid. Genuinely unsafe ids (path separators,
+   whitespace, shell/SQL metacharacters) are rejected with an error that *names*
+   the accepted grammar — read it instead of guessing.
+
+6. **mgit does not make parallelism safe by itself — disjoint scope does.**
+   Running N agents in N worktrees prevents store collisions, but two agents
+   editing the same files still conflict at land. Give each parallel agent a
+   non-overlapping set of files/areas; mgit adds containment + a task-tagged
+   audit trail + cheap checkpointing *on top of* that discipline, not instead of
+   it.
+
+7. **The sandbox fails closed.** When a sandbox is wired, `mgit run` routes
+   execution into the microVM and does **not** fall back to the host if the
+   backend is unavailable. A blocked command is a policy/availability signal
+   (often `MGIT-EGRESS-DENIED …` with a `remedy=`), not something to retry on
+   the host.
+
+8. **Check `mgit version` if behaviour seems off.** It reports the real
+   version/commit/date; a surprising result is usually a stale binary, not an
+   mgit bug.
+
+9. **Know when mgit is the right tool.** It earns its keep when you can't/won't
+   push WIP (a worktree carries your *unpushed* local foundation), you want the
+   task&rarr;commit audit trail + the mtix loop, or you need the microVM sandbox
+   for untrusted code. If you push WIP freely and the code is trusted, a plain
+   `git worktree` is lighter — use it instead.
+
 ## Honest caveats
 
 - mgit is git underneath; the moat is the agent UX/discipline + the
