@@ -89,7 +89,7 @@ func sandboxLandCmd(connect connectFunc) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if task == "" {
-				return fmt.Errorf("--task is required")
+				return fmt.Errorf("--task-id is required")
 			}
 			cl, err := connect(cmd.Context())
 			if err != nil {
@@ -102,7 +102,7 @@ func sandboxLandCmd(connect connectFunc) *cobra.Command {
 			return writeLandResult(cmd.OutOrStdout(), res, asJSON, task)
 		},
 	}
-	cmd.Flags().StringVar(&task, "task", "", "task ID whose sandbox commits to land (required)")
+	bindTaskIDFlag(cmd, &task, "task ID whose sandbox commits to land (required)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
 	return cmd
 }
@@ -134,7 +134,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if task == "" || worktree == "" || image == "" {
-				return fmt.Errorf("--task, --worktree and --image are required")
+				return fmt.Errorf("--task-id, --worktree and --image are required")
 			}
 			// One-way published ports (SEC-09): host 127.0.0.1:<host> reaches the
 			// guest's <guest>. Parsed and validated host-side before the RPC.
@@ -161,7 +161,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 				fmt.Sprintf("Launched sandbox %s for task %s (%s)\n", info.ID, info.TaskID, info.State))
 		},
 	}
-	cmd.Flags().StringVar(&task, "task", "", "task ID to bind (required)")
+	bindTaskIDFlag(cmd, &task, "task ID to bind (required)")
 	cmd.Flags().StringVar(&worktree, "worktree", "", "worktree path the sandbox mounts (required)")
 	cmd.Flags().StringVar(&image, "image", "", "digest-pinned image reference <name>@sha256:<hex> (required)")
 	cmd.Flags().StringVar(&network, "network", model.NetworkModeNone, "network mode: none | allowlist | open")
@@ -227,7 +227,7 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if task == "" {
-				return printErr(cmd.ErrOrStderr(), fmt.Errorf("--task is required"))
+				return printErr(cmd.ErrOrStderr(), fmt.Errorf("--task-id is required"))
 			}
 			cl, err := connect(cmd.Context())
 			if err != nil {
@@ -247,7 +247,7 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&task, "task", "", "task ID whose sandbox runs the command (required)")
+	bindTaskIDFlag(cmd, &task, "task ID whose sandbox runs the command (required)")
 	cmd.Flags().StringArrayVar(&env, "env", nil, "explicit KEY=VALUE injected into the guest (repeatable; host env is never forwarded)")
 	return cmd
 }
@@ -267,7 +267,7 @@ func sandboxShellCmd(connect connectFunc) *cobra.Command {
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if task == "" {
-				return printErr(cmd.ErrOrStderr(), fmt.Errorf("--task is required"))
+				return printErr(cmd.ErrOrStderr(), fmt.Errorf("--task-id is required"))
 			}
 			cl, err := connect(cmd.Context())
 			if err != nil {
@@ -283,7 +283,7 @@ func sandboxShellCmd(connect connectFunc) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&task, "task", "", "task ID whose sandbox to attach (required)")
+	bindTaskIDFlag(cmd, &task, "task ID whose sandbox to attach (required)")
 	return cmd
 }
 

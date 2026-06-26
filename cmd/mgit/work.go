@@ -66,7 +66,7 @@ func newWorkCmd(run func(ctx context.Context, app *App, opts workOptions) error)
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.TaskID == "" {
-				return fmt.Errorf("--task is required")
+				return fmt.Errorf("--task-id is required")
 			}
 			opts.Path = args[0]
 			app, err := openAppFromCwd()
@@ -83,7 +83,7 @@ func newWorkCmd(run func(ctx context.Context, app *App, opts workOptions) error)
 
 // bindWorkFlags registers the `mgit work` flags. Refs: MGIT-34
 func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
-	cmd.Flags().StringVar(&opts.TaskID, "task", "", "task ID to bind the worktree to (required)")
+	bindTaskIDFlag(cmd, &opts.TaskID, "task ID to bind the worktree to (required)")
 	cmd.Flags().StringVar(&opts.AgentID, "agent-id", "", "agent ID recorded with the worktree")
 	cmd.Flags().StringVar(&opts.Branch, "branch", "", "branch name (default: task/<task-id>)")
 	cmd.Flags().StringVar(&opts.Base, "base", "", "pin the task's fork-base to an explicit commit/ref (default: current local working state)")

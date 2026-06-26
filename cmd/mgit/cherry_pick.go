@@ -87,6 +87,6 @@ func cherryPickCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&noCommit, "no-commit", false, "Print what would be cherry-picked without committing")
 	cmd.Flags().StringVar(&onto, "onto", "", "Switch to branch before cherry-picking")
-	cmd.Flags().StringVar(&taskID, "task-id", "", "Override the task ID for the cherry-picked commit (default: derived from source)")
+	bindTaskIDFlag(cmd, &taskID, "Override the task ID for the cherry-picked commit (default: derived from source)")
 	return cmd
 }

@@ -42,7 +42,7 @@ func TestT2_ShellAttach(t *testing.T) {
 func TestT2_Shell_RequiresTask(t *testing.T) {
 	out, err := runShell(okConnect(&fakeSandboxClient{}), "")
 	require.Error(t, err)
-	assert.Contains(t, out, "--task is required")
+	assert.Contains(t, out, "--task-id is required")
 }
 
 // TestT2_Shell_PropagatesExit verifies a non-zero session exit becomes an

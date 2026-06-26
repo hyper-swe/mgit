@@ -54,6 +54,6 @@ func addCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVarP(&all, "all", "A", false, "Stage all changes")
-	cmd.Flags().StringVar(&taskScope, "task", "", "Task ID scope (advisory — stored as metadata for future use)")
+	bindTaskIDFlag(cmd, &taskScope, "Task ID scope (advisory — stored as metadata for future use)")
 	return cmd
 }

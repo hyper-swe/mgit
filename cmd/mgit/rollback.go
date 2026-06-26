@@ -85,7 +85,7 @@ func rollbackCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&taskID, "task-id", "", "Task to rollback (required unless --commit is set)")
+	bindTaskIDFlag(cmd, &taskID, "Task to rollback (required unless --commit is set)")
 	cmd.Flags().StringVar(&reason, "reason", "", "Reason for rollback")
 	cmd.Flags().StringVar(&commitHash, "commit", "", "Rollback by specific commit hash (resolves task ID automatically)")
 	cmd.Flags().StringVar(&toCommit, "to-commit", "", "Alias for --commit")

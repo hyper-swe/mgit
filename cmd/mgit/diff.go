@@ -98,7 +98,7 @@ func diffCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&fromHash, "from", "", "From commit hash")
 	cmd.Flags().StringVar(&toHash, "to", "", "To commit hash (default: HEAD)")
-	cmd.Flags().StringVar(&taskID, "task-id", "", "Cumulative diff for a task")
+	bindTaskIDFlag(cmd, &taskID, "Cumulative diff for a task")
 	cmd.Flags().BoolVar(&stat, "stat", false, "Show statistics only")
 	cmd.Flags().IntVar(&unified, "unified", 3, "Number of context lines (informational)")
 	cmd.Flags().BoolVar(&formatJSON, "json", false, "Output as JSON")

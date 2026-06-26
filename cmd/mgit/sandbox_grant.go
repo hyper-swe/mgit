@@ -21,7 +21,7 @@ func sandboxGrantsCmd(connect connectFunc) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if taskID == "" {
-				return fmt.Errorf("--task is required")
+				return fmt.Errorf("--task-id is required")
 			}
 			cl, err := connect(cmd.Context())
 			if err != nil {
@@ -45,7 +45,7 @@ func sandboxGrantsCmd(connect connectFunc) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&taskID, "task", "", "task whose pending requests to list (required)")
+	bindTaskIDFlag(cmd, &taskID, "task whose pending requests to list (required)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
 	return cmd
 }
@@ -62,7 +62,7 @@ func sandboxGrantCmd(connect connectFunc) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if taskID == "" {
-				return fmt.Errorf("--task is required")
+				return fmt.Errorf("--task-id is required")
 			}
 			cl, err := connect(cmd.Context())
 			if err != nil {
@@ -77,6 +77,6 @@ func sandboxGrantCmd(connect connectFunc) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&taskID, "task", "", "task whose request to approve (required)")
+	bindTaskIDFlag(cmd, &taskID, "task whose request to approve (required)")
 	return cmd
 }

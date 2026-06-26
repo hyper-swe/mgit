@@ -28,7 +28,7 @@ func worktreeCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			if wtTaskID == "" {
-				return fmt.Errorf("--task is required")
+				return fmt.Errorf("--task-id is required")
 			}
 			app, err := openAppFromCwd()
 			if err != nil {
@@ -51,7 +51,7 @@ func worktreeCmd() *cobra.Command {
 			return nil
 		},
 	}
-	addCmd.Flags().StringVar(&wtTaskID, "task", "", "Task ID to bind (required)")
+	bindTaskIDFlag(addCmd, &wtTaskID, "Task ID to bind (required)")
 	addCmd.Flags().StringVar(&wtAgentID, "agent-id", "", "Agent ID")
 	addCmd.Flags().StringVar(&wtBranch, "branch", "", "Branch name (default: task/<task-id>)")
 

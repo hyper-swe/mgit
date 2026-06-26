@@ -112,7 +112,7 @@ func branchCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&taskID, "task-id", "", "Create branch for task")
+	bindTaskIDFlag(cmd, &taskID, "Create branch for task")
 	cmd.Flags().StringVarP(&deleteBranch, "delete", "d", "", "Delete branch")
 	cmd.Flags().StringVar(&renameBranch, "rename", "", "Rename branch (provide new name as arg)")
 	cmd.Flags().BoolVar(&active, "active", false, "List only active task branches")

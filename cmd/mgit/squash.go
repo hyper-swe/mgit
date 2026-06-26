@@ -109,7 +109,7 @@ func squashCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&taskID, "task-id", "", "Task to squash (required)")
+	bindTaskIDFlag(cmd, &taskID, "Task to squash (required)")
 	cmd.Flags().StringVar(&message, "message", "", "Custom squash message")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview without making changes")
 	cmd.Flags().BoolVar(&formatJSON, "json", false, "Output as JSON")

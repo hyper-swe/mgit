@@ -91,7 +91,7 @@ func statusCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&taskID, "task-id", "", "Filter by task scope")
+	bindTaskIDFlag(cmd, &taskID, "Filter by task scope")
 	cmd.Flags().BoolVar(&formatJSON, "json", false, "Output as JSON")
 	cmd.Flags().BoolVar(&short, "short", false, "Compact status output")
 	cmd.Flags().BoolVar(&porcelain, "porcelain", false, "Machine-readable output")

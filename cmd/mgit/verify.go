@@ -63,7 +63,7 @@ func verifyCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&taskID, "task-id", "", "Verify specific task")
+	bindTaskIDFlag(cmd, &taskID, "Verify specific task")
 	cmd.Flags().BoolVar(&formatJSON, "json", false, "Output as JSON")
 	cmd.Flags().BoolVar(&fix, "fix", false, "Attempt auto-repair on verification failures")
 	return cmd

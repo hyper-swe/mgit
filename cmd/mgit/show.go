@@ -85,7 +85,7 @@ func showCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&taskID, "task-id", "", "Show task info")
+	bindTaskIDFlag(cmd, &taskID, "Show task info")
 	cmd.Flags().BoolVar(&formatJSON, "json", false, "Output as JSON")
 	cmd.Flags().BoolVar(&stat, "stat", false, "Show file statistics only")
 	cmd.Flags().StringVar(&format, "format", "", "Output format: json")

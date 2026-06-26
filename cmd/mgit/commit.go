@@ -71,7 +71,7 @@ func commitCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&taskID, "task-id", "", "Task ID (required)")
+	bindTaskIDFlag(cmd, &taskID, "Task ID (required)")
 	cmd.Flags().StringVar(&message, "message", "", "Commit message (auto-generated if empty)")
 	cmd.Flags().StringVarP(&message, "m", "m", "", "Commit message (shorthand)")
 	cmd.Flags().StringVar(&agentID, "agent-id", "cli", "Agent ID")

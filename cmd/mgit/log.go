@@ -65,7 +65,7 @@ func logCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&taskID, "task-id", "", "Filter by task ID")
+	bindTaskIDFlag(cmd, &taskID, "Filter by task ID")
 	cmd.Flags().IntVarP(&limit, "limit", "n", 20, "Maximum commits to show")
 	cmd.Flags().BoolVar(&formatJSON, "json", false, "Output as JSON")
 	cmd.Flags().BoolVar(&oneline, "oneline", false, "One-line compact format")

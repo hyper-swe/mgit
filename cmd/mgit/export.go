@@ -54,7 +54,7 @@ func exportCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&taskID, "task-id", "", "Task to export (required)")
+	bindTaskIDFlag(cmd, &taskID, "Task to export (required)")
 	cmd.Flags().StringVar(&output, "output", "", "Output file (default: stdout)")
 	cmd.Flags().StringVar(&format, "format", "json", "Export format: json | git | audit-log")
 	return cmd

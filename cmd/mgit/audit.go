@@ -62,7 +62,7 @@ func auditCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&taskID, "task-id", "", "Filter by task ID")
+	bindTaskIDFlag(cmd, &taskID, "Filter by task ID")
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Filter by agent ID")
 	cmd.Flags().StringVar(&since, "since", "", "Show entries after date (RFC3339)")
 	cmd.Flags().StringVar(&until, "until", "", "Show entries before date (RFC3339)")
