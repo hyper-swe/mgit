@@ -1,23 +1,46 @@
 <p align="center">
   <h1 align="center">mgit</h1>
   <p align="center">
-    <strong>Let coding agents run untrusted code &mdash; in a disposable microVM, not on your machine</strong>
+    <strong>Let your AI coding agent run in full auto &mdash; safely.</strong>
   </p>
   <p align="center">
-    Autonomous agents <code>npm install</code>, build, and run code on every task. mgit runs that execution inside a per-task microVM, so a compromised dependency burns a throwaway VM &mdash; not your SSH keys, cloud credentials, or the rest of your disk. Only verified, task-tagged changes land back in your real repo.
+    <sub>Untrusted installs, builds, and tests run in a disposable microVM, not on your machine. Part of the <a href="https://github.com/hyper-swe">HyperSwe</a> suite.</sub>
   </p>
-  <p align="center">
-    <sub>Part of the <a href="https://github.com/hyper-swe">HyperSwe</a> suite for autonomous coding agents.</sub>
-  </p>
-  <p align="center">
-    <a href="#the-problem-agents-run-untrusted-code-on-your-machine">The Problem</a> &middot;
-    <a href="#how-mgit-contains-it">Containment</a> &middot;
-    <a href="#installation">Install</a> &middot;
-    <a href="#quick-start">Quick Start</a> &middot;
-    <a href="#commands">Commands</a> &middot;
-    <a href="#security-model">Security</a> &middot;
-    <a href="#architecture">Architecture</a>
-  </p>
+</p>
+
+**Your coding agent runs `npm install` on a package it discovered thirty seconds ago &mdash; on the same laptop that holds your SSH keys, cloud credentials, and every repo you own.** mgit runs every install, build, and test the agent touches inside a **per-task microVM** with default-deny networking, so a poisoned dependency burns a throwaway VM instead of exfiltrating your secrets. Stop babysitting agents in ask-for-permission mode &mdash; turn them loose and let the hardware boundary keep your machine safe.
+
+**And it keeps the agent's messy trial-and-error out of your real git.** Every step is a task-tagged checkpoint in an isolated `.mgit` store that *provably never touches your `.git`* &mdash; so your history stays clean, you review the agent's entire trail, and you land only the squashed, verified result. Wrong turn? Roll back to any checkpoint and salvage the good parts instead of re-prompting from scratch.
+
+### What mgit brings to your dev environment
+
+- 🛡️ **Run untrusted agent code without fear** &mdash; hardware-isolated microVM, not your host (the same boundary cloud providers trust between tenants).
+- 🔒 **Default-deny egress** &mdash; the agent reaches only the destinations a task actually needs; your secrets, LAN, and cloud metadata stay unreachable.
+- 🧬 **A clean, reviewable git history** &mdash; task-tagged micro-commits in a separate store; land only the polished squash, never the noise.
+- ↩️ **Course-correct by checkpoint** &mdash; roll back, fork, and cherry-pick instead of rewriting hundreds of lines.
+- 🔌 **Drop-in for your agent** &mdash; adapters for Claude Code, Codex, and Cursor; one command starts an agent on a task.
+
+> *"Six tickets integrated through mgit worktrees with **zero conflicts**; `squash --to-git` round-trips **byte-for-byte**. The microVM sandbox is the real differentiator &mdash; the one thing plain git worktrees fundamentally can't do."*
+> <br>&mdash; an independent team that ran their own project through mgit
+
+### Try it in two minutes
+
+```bash
+brew install hyper-swe/tap/mgit          # macOS / Linux  (or: go install github.com/hyper-swe/mgit/cmd/mgit@latest)
+
+mgit init                                # set up the isolated .mgit store over your existing git repo
+mgit work ./task-42 --task-id PROJ-42    # start an agent on a task in its own worktree
+#   add  --sandbox --image <ref>  to run the agent's code inside the microVM
+```
+
+<p align="center">
+  <a href="#the-problem-agents-run-untrusted-code-on-your-machine">The Problem</a> &middot;
+  <a href="#how-mgit-contains-it">Containment</a> &middot;
+  <a href="#the-second-pillar-a-checkpointed-working-substrate">Checkpointed substrate</a> &middot;
+  <a href="#installation">Install</a> &middot;
+  <a href="#quick-start">Quick Start</a> &middot;
+  <a href="#commands">Commands</a> &middot;
+  <a href="#security-model">Security</a>
 </p>
 
 ---
