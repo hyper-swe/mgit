@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -54,12 +55,38 @@ func (s *BranchService) CreateBranch(ctx context.Context, taskID string) (*model
 		return nil, fmt.Errorf("create branch in git: %w", err)
 	}
 
-	// Create in SQLite index
-	if err := s.indexStore.CreateBranch(ctx, branch); err != nil {
-		return nil, fmt.Errorf("create branch in index: %w", err)
+	// Create in SQLite index (self-heals a stale orphan; rolls back the ref on
+	// an unrecoverable index failure — MGIT-42).
+	if err := s.insertBranchIndex(ctx, branch); err != nil {
+		return nil, err
 	}
 
 	return branch, nil
+}
+
+// insertBranchIndex inserts branch into the SQLite index, keeping the two stores
+// consistent when the index write trips. The caller has ALREADY created the git
+// ref above, and gitBranches.CreateBranch rejects a genuine duplicate at the ref
+// step — so an ErrBranchAlreadyExists here can only be a STALE index row left by
+// a prior ref-only delete (MGIT-42); we clear it and re-insert (self-heal). If
+// the index write fails for any other reason, or healing fails, we roll back the
+// ref we just created so a failed create never leaves a partial branch.
+// Refs: MGIT-42, FR-5
+func (s *BranchService) insertBranchIndex(ctx context.Context, branch *model.Branch) error {
+	err := s.indexStore.CreateBranch(ctx, branch)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, model.ErrBranchAlreadyExists) {
+		if delErr := s.indexStore.DeleteBranch(ctx, branch.Name); delErr == nil {
+			if err2 := s.indexStore.CreateBranch(ctx, branch); err2 == nil {
+				return nil
+			}
+		}
+	}
+	// Unrecoverable: undo the git ref so both stores stay consistent (atomicity).
+	_ = s.gitBranches.DeleteBranch(ctx, branch.Name, true)
+	return fmt.Errorf("create branch in index: %w", err)
 }
 
 // CreateBranchAt creates a task branch forked at an EXPLICIT base commit rather
@@ -81,8 +108,8 @@ func (s *BranchService) CreateBranchAt(ctx context.Context, taskID, baseCommit s
 	if err := s.gitBranches.CreateBranch(ctx, branch); err != nil {
 		return nil, fmt.Errorf("create branch in git: %w", err)
 	}
-	if err := s.indexStore.CreateBranch(ctx, branch); err != nil {
-		return nil, fmt.Errorf("create branch in index: %w", err)
+	if err := s.insertBranchIndex(ctx, branch); err != nil {
+		return nil, err
 	}
 	return branch, nil
 }
@@ -137,10 +164,22 @@ func (s *BranchService) SwitchBranch(ctx context.Context, name string) error {
 	return s.gitBranches.SwitchBranch(ctx, name)
 }
 
-// DeleteBranch removes a branch. Rejects unmerged branches unless forced.
-// Refs: FR-5
+// DeleteBranch removes a branch from BOTH the go-git ref store and the SQLite
+// index, in one operation. Deleting only the ref (the old behavior) orphaned the
+// index row, so `worktree add` for the same task later failed "branch already
+// exists" with no clean recovery (MGIT-42). A ref that is already absent must
+// NOT block clearing the index row — that is the recovery path for an
+// already-stranded task — so ErrBranchNotFound from the ref store is tolerated;
+// any other ref error (e.g. an unmerged branch without --force) is real and
+// propagates without touching the index. Refs: MGIT-42, FR-5
 func (s *BranchService) DeleteBranch(ctx context.Context, name string, force bool) error {
-	return s.gitBranches.DeleteBranch(ctx, name, force)
+	if err := s.gitBranches.DeleteBranch(ctx, name, force); err != nil && !errors.Is(err, model.ErrBranchNotFound) {
+		return err
+	}
+	if err := s.indexStore.DeleteBranch(ctx, name); err != nil {
+		return fmt.Errorf("delete branch index: %w", err)
+	}
+	return nil
 }
 
 // LockBranch acquires an advisory lock on a branch.

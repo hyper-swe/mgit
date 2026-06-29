@@ -27,6 +27,21 @@ func (s *Store) CreateBranch(ctx context.Context, branch *model.Branch) error {
 	})
 }
 
+// DeleteBranch removes a branch row from the index. It is idempotent: deleting
+// a name with no row is NOT an error, so a stale row left by a ref-only delete
+// can be cleared even when the ref is already gone (recovery). The `branches`
+// table is index/cache state (task lookup, locks, squash metadata), NOT the
+// append-only audit table (`task_commits`), so deleting a row here is allowed.
+// Refs: MGIT-42, FR-5
+func (s *Store) DeleteBranch(ctx context.Context, name string) error {
+	return s.WriteTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM branches WHERE name = ?", name); err != nil {
+			return fmt.Errorf("delete branch: %w", err)
+		}
+		return nil
+	})
+}
+
 // GetBranch retrieves a branch by name.
 // Returns ErrBranchNotFound if the branch does not exist.
 // Refs: FR-5
