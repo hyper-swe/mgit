@@ -8,29 +8,31 @@
   </p>
 </p>
 
-**Your coding agent runs `npm install` on a package it discovered thirty seconds ago &mdash; on the same laptop that holds your SSH keys, cloud credentials, and every repo you own.** mgit runs every install, build, and test the agent touches inside a **per-task microVM** with default-deny networking, so a poisoned dependency burns a throwaway VM instead of exfiltrating your secrets. Stop babysitting agents in ask-for-permission mode &mdash; turn them loose and let the hardware boundary keep your machine safe.
+**Your AI coding agent just ran `npm install` on a package it found seconds ago &mdash; on the same computer as your passwords, your keys, and every project you own.** mgit runs everything the agent installs, builds, and runs inside a **throwaway sandbox** that can't reach your files or your network. A bad package gets trapped and thrown away &mdash; it never touches your real machine. So stop watching over the agent's shoulder. Turn it loose.
 
-**And it keeps the agent's messy trial-and-error out of your real git.** Every step is a task-tagged checkpoint in an isolated `.mgit` store that *provably never touches your `.git`* &mdash; so your history stays clean, you review the agent's entire trail, and you land only the squashed, verified result. Wrong turn? Roll back to any checkpoint and salvage the good parts instead of re-prompting from scratch.
+**And it keeps the agent's trial-and-error out of your real project.** mgit records every step the agent takes in its own separate space, so your git history stays clean. You see exactly what it did, keep only the finished result, and &mdash; if it went the wrong way &mdash; rewind to any point and reuse the good parts instead of starting over.
 
-### What mgit brings to your dev environment
+### What you get
 
-- 🛡️ **Run untrusted agent code without fear** &mdash; hardware-isolated microVM, not your host (the same boundary cloud providers trust between tenants).
-- 🔒 **Default-deny egress** &mdash; the agent reaches only the destinations a task actually needs; your secrets, LAN, and cloud metadata stay unreachable.
-- 🧬 **A clean, reviewable git history** &mdash; task-tagged micro-commits in a separate store; land only the polished squash, never the noise.
-- ↩️ **Course-correct by checkpoint** &mdash; roll back, fork, and cherry-pick instead of rewriting hundreds of lines.
-- 🔌 **Drop-in for your agent** &mdash; adapters for Claude Code, Codex, and Cursor; one command starts an agent on a task.
+- 🛡️ **Run the agent's code without fear** &mdash; it's sealed in a sandbox, not on your computer.
+- 🔒 **It can't phone home** &mdash; the agent only reaches what the task needs; your secrets and network stay off-limits.
+- 🧬 **A clean project history** &mdash; the agent's mess stays in its own space; you keep only the polished result.
+- ↩️ **Undo any step** &mdash; rewind, branch, and reuse good work instead of rewriting it.
+- 🔌 **Works with the agent you already use** &mdash; Claude Code, Codex, Cursor. One command to start.
 
 > *"Six tickets integrated through mgit worktrees with **zero conflicts**; `squash --to-git` round-trips **byte-for-byte**. The microVM sandbox is the real differentiator &mdash; the one thing plain git worktrees fundamentally can't do."*
 > <br>&mdash; an independent team that ran their own project through mgit
 
-### Try it in two minutes
+### Try it on your next task
+
+Two minutes, and it runs on top of your existing git repo &mdash; nothing to migrate, your git stays untouched.
 
 ```bash
 brew install hyper-swe/tap/mgit          # macOS / Linux  (or: go install github.com/hyper-swe/mgit/cmd/mgit@latest)
 
-mgit init                                # set up the isolated .mgit store over your existing git repo
-mgit work ./task-42 --task-id PROJ-42    # start an agent on a task in its own worktree
-#   add  --sandbox --image <ref>  to run the agent's code inside the microVM
+mgit init                                # set mgit up alongside your existing repo (your git is left untouched)
+mgit work ./task-42 --task-id PROJ-42    # give the agent its own space to work the task
+#   add  --sandbox --image <ref>  to run the agent's code in the throwaway sandbox
 ```
 
 <p align="center">
