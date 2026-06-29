@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1-beta] - 2026-06-29
+
+### Fixed
+
+- **`mgit branch --delete` left a stale branch row in the index**, so `mgit worktree add` for the same task later failed with `branch already exists` and no clean recovery (gc/prune didn't help). Delete now clears **both** the go-git ref and the SQLite index in one operation — and clears a stale row even when the ref is already gone, so an already-stranded task recovers. Branch creation also **self-heals** a stale row and is now atomic across both stores (a failed index write no longer leaves a partial ref behind). (MGIT-42)
+
+### Documentation
+
+- Landing-page README reworked to lead with the benefit in plain language (run agents safely; keep a clean, reviewable history), with an independent-trial testimonial and a two-minute try-it CTA — the deep technical sections remain below.
+- The agent skill gains a **"Common pitfalls (and the fix)"** section so an agent working through mgit avoids the known friction (worktrees aren't git repos, build artifacts need `.mgit/seed-include`, `--task-id` flag, etc.) up front.
+
 ## [0.2.0-beta] - 2026-06-26
 
 First beta to ship the full agent-substrate **and** containment product. `main`
