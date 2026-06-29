@@ -8,13 +8,13 @@
   </p>
 </p>
 
-**Your AI coding agent just ran `npm install` on a package it found seconds ago &mdash; on the same computer as your passwords, your keys, and every project you own.** mgit runs everything the agent installs, builds, and runs inside a **throwaway sandbox** that can't reach your files or your network. A bad package gets trapped and thrown away &mdash; it never touches your real machine. So stop watching over the agent's shoulder. Turn it loose.
+Coding agents do their best work when you let them run on their own &mdash; installing dependencies, building, running tests, iterating, often several in parallel. In practice you end up supervising anyway: approving each command, keeping an eye on what gets installed, and untangling the commits they leave behind. **mgit removes that overhead, so running agents autonomously is something you can actually trust.**
 
-**And it keeps the agent's trial-and-error out of your real project.** mgit records every step the agent takes in its own separate space, so your git history stays clean. You see exactly what it did, keep only the finished result, and &mdash; if it went the wrong way &mdash; rewind to any point and reuse the good parts instead of starting over.
+Everything the agent installs, builds, or runs happens inside an isolated, per-task sandbox &mdash; with no access to your files or network beyond what the task needs. Its work is checkpointed in a store kept separate from your git, so you can review the full trail, roll back a wrong turn, and merge only the finished, squashed result into your repository &mdash; which mgit never modifies directly. **Let agents run on their own, in parallel, and trust what comes back.**
 
 ### What you get
 
-- 🛡️ **Run the agent's code without fear** &mdash; it's sealed in a sandbox, not on your computer.
+- 🛡️ **Agent code runs sandboxed** &mdash; installs, builds, and tests execute in an isolated VM, never on your machine.
 - 🔒 **It can't phone home** &mdash; the agent only reaches what the task needs; your secrets and network stay off-limits.
 - 🧬 **A clean project history** &mdash; the agent's mess stays in its own space; you keep only the polished result.
 - ↩️ **Undo any step** &mdash; rewind, branch, and reuse good work instead of rewriting it.
