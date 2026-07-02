@@ -13,6 +13,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
+	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/service"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 	"github.com/hyper-swe/mgit/internal/store/index"
@@ -27,6 +28,7 @@ type Server struct {
 	rollback  *service.RollbackService
 	branch    *service.BranchService
 	verify    *service.VerifyService
+	worktree  *service.WorktreeService
 }
 
 // NewServer creates an MCP server with all mgit tools registered.
@@ -35,12 +37,27 @@ func NewServer(
 	repo *gitstore.Repository,
 	idx *index.Store,
 ) *Server {
+	clock := func() time.Time { return time.Now().UTC() }
 	cs := gitstore.NewCommitStore(repo)
 	bs := gitstore.NewBranchStore(repo)
+	ws := gitstore.NewWorktreeStore(repo)
 
 	// Audit trail shared so commit/squash/rollback record operations (MGIT-20).
 	auditPath := filepath.Join(repo.MgitDir(), "audit.log")
-	audit := service.NewAuditService(auditPath, func() time.Time { return time.Now().UTC() })
+	audit := service.NewAuditService(auditPath, clock)
+
+	branchSvc := service.NewBranchService(repo, bs, idx)
+
+	// The worktree tools delegate to the SAME service the CLI uses, wired with
+	// the ADR-008 auto-housekeeping (WithSync) so an MCP-created worktree pins
+	// its fork-base and carries the local foundation identically to `mgit
+	// worktree add`. The server runs at the repo root (boundTask empty), and it
+	// already holds the process lock, so these operations do not contend.
+	// EnsureSynced degrades to a no-op when there is no readable project git
+	// (ADR-008 §6), so this is safe with or without a live `.git`. Refs: MGIT-45, FR-16, ADR-008
+	sync := service.NewSyncService(repo, ws, cs, "", clock)
+	worktreeSvc := service.NewWorktreeService(idx, branchSvc, ws, clock).
+		WithSync(sync, repo, cs)
 
 	s := &Server{
 		mcpServer: mcpserver.NewMCPServer(
@@ -51,8 +68,9 @@ func NewServer(
 		commit:   service.NewCommitService(repo, cs, idx).WithAudit(audit),
 		squash:   service.NewSquashService(repo, cs, idx).WithAudit(audit),
 		rollback: service.NewRollbackService(repo, cs, idx).WithAudit(audit),
-		branch:   service.NewBranchService(repo, bs, idx),
+		branch:   branchSvc,
 		verify:   service.NewVerifyService(cs, idx),
+		worktree: worktreeSvc,
 	}
 
 	s.registerTools()
@@ -138,11 +156,13 @@ func (s *Server) registerTools() {
 		mcp.WithString("value", mcp.Description("Value to set")),
 	), s.configTool)
 
-	// Worktree tools (3) — placeholders for Wave 11
+	// Worktree tools (3) — delegate to the same WorktreeService as the CLI.
 	s.mcpServer.AddTool(mcp.NewTool("mgit_worktree_add",
-		mcp.WithDescription("Add a linked worktree"),
+		mcp.WithDescription("Add a linked worktree bound to a task"),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Worktree path")),
-		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
+		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID to bind")),
+		mcp.WithString("agent_id", mcp.Description("Agent ID")),
+		mcp.WithString("branch", mcp.Description("Branch name (default: task/<task-id>)")),
 	), s.worktreeAddTool)
 
 	s.mcpServer.AddTool(mcp.NewTool("mgit_worktree_list",
@@ -152,6 +172,7 @@ func (s *Server) registerTools() {
 	s.mcpServer.AddTool(mcp.NewTool("mgit_worktree_remove",
 		mcp.WithDescription("Remove a linked worktree"),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Worktree path")),
+		mcp.WithBoolean("force", mcp.Description("Force remove even with uncommitted changes")),
 	), s.worktreeRemoveTool)
 }
 
@@ -300,14 +321,60 @@ func (s *Server) configTool(_ context.Context, _ mcp.CallToolRequest) (*mcp.Call
 	return mcp.NewToolResultText("config: default"), nil
 }
 
-func (s *Server) worktreeAddTool(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText("worktree add: not yet available (Wave 11)"), nil
+// worktreeAddTool materializes a task-bound linked worktree via the same
+// WorktreeService the CLI uses, returning the created worktree as JSON.
+// Required args are validated before delegation (agent input is untrusted);
+// the service re-validates the task-id grammar and enforces path/task
+// isolation. Refs: MGIT-45, FR-16
+func (s *Server) worktreeAddTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	path, _ := req.GetArguments()["path"].(string)
+	taskID, _ := req.GetArguments()["task_id"].(string)
+	agentID, _ := req.GetArguments()["agent_id"].(string)
+	branch, _ := req.GetArguments()["branch"].(string)
+	if path == "" {
+		return mcp.NewToolResultError("path is required"), nil
+	}
+	if taskID == "" {
+		return mcp.NewToolResultError("task_id is required"), nil
+	}
+
+	wt, err := s.worktree.Add(ctx, model.WorktreeAddOptions{
+		Path: path, TaskID: taskID, AgentID: agentID, Branch: branch,
+	})
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	data, err := json.Marshal(wt)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(string(data)), nil
 }
 
-func (s *Server) worktreeListTool(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText("worktree list: not yet available (Wave 11)"), nil
+// worktreeListTool returns all registered linked worktrees as a JSON array.
+// Refs: MGIT-45, FR-16
+func (s *Server) worktreeListTool(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	wts, err := s.worktree.List(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	data, err := json.Marshal(wts)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(string(data)), nil
 }
 
-func (s *Server) worktreeRemoveTool(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText("worktree remove: not yet available (Wave 11)"), nil
+// worktreeRemoveTool removes a linked worktree's registration by path.
+// Refs: MGIT-45, FR-16
+func (s *Server) worktreeRemoveTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	path, _ := req.GetArguments()["path"].(string)
+	force, _ := req.GetArguments()["force"].(bool)
+	if path == "" {
+		return mcp.NewToolResultError("path is required"), nil
+	}
+	if err := s.worktree.Remove(ctx, path, force); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("Removed worktree %s", path)), nil
 }

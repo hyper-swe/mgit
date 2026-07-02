@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The MCP worktree tools now work.** `mgit_worktree_add`, `mgit_worktree_list`, and `mgit_worktree_remove` previously returned a fake-success placeholder (`"not yet available (Wave 11)"`); a driving agent that relied on them got nothing. They now delegate to the same `WorktreeService` the CLI uses — `mgit_worktree_add` materializes a real task-bound worktree with the ADR-008 pinned fork-base, and the tools return structured JSON / errors. (MGIT-45)
 - **The sandbox daemon `mgit-sandboxd` is now shipped by every host channel.** Previously the release built only `mgit`, so Homebrew / `go install` / release-archive users never received the daemon and the microVM containment pillar was uninstallable — an external trial concluded mgit was unusable as a working substrate. Release archives (Linux any arch, macOS arm64) now contain **both** binaries side by side; the macOS daemon is built with CGO and code-signed with the `com.apple.security.virtualization` entitlement on an Apple Silicon runner; `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest` is documented (with the macOS signing caveat). `mgit-guest` continues to ship inside the guest image, not on host `PATH`. See [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md). (MGIT-44)
 
 ## [0.2.1-beta] - 2026-06-29

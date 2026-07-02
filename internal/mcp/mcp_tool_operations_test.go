@@ -80,30 +80,9 @@ func TestMCP_ConfigTool(t *testing.T) {
 	assert.False(t, result.IsError)
 }
 
-func TestMCP_WorktreeAddTool(t *testing.T) {
-	srv := setupTestMCP(t)
-	result, err := srv.worktreeAddTool(context.Background(), makeToolReq(map[string]any{
-		"path": "/tmp/wt", "task_id": "MGIT-1.1",
-	}))
-	require.NoError(t, err)
-	assert.False(t, result.IsError)
-}
-
-func TestMCP_WorktreeListTool(t *testing.T) {
-	srv := setupTestMCP(t)
-	result, err := srv.worktreeListTool(context.Background(), makeToolReq(map[string]any{}))
-	require.NoError(t, err)
-	assert.False(t, result.IsError)
-}
-
-func TestMCP_WorktreeRemoveTool(t *testing.T) {
-	srv := setupTestMCP(t)
-	result, err := srv.worktreeRemoveTool(context.Background(), makeToolReq(map[string]any{
-		"path": "/tmp/wt",
-	}))
-	require.NoError(t, err)
-	assert.False(t, result.IsError)
-}
+// Real worktree-tool behavior (add/list/remove happy + error paths) is
+// covered in worktree_tool_test.go. The former stub tests here asserted the
+// placeholder's fake success and are superseded (MGIT-45).
 
 func TestMCP_LogTool_WithTaskID(t *testing.T) {
 	srv := setupTestMCP(t)
