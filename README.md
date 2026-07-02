@@ -31,8 +31,8 @@ Coding agents increasingly run unattended, installing packages and executing bui
 - 🛡️ **Sandboxed execution**: installs, builds, and tests run in an isolated VM, never on the host.
 - 🔒 **Default-deny networking**: the agent reaches only what the task needs; your secrets and network stay unreachable.
 - ✅ **Verified land**: only changes that pass host-side re-verification (dual-hash, task binding, host-anchored attestation) reach your repo.
-- 🧬 **Isolated, clean history**: intermediate work stays in mgit's own store; only the squashed result lands in your git.
-- ↩️ **Reviewable and reversible**: every step is task-tagged and recorded, so you can roll back or branch from any point.
+- 🧬 **Isolated, clean history**: intermediate work stays in mgit's own store; only the squashed result lands in your git, and you can roll back or branch from any step.
+- 📜 **An audit trail you can stand behind**: append-only, task-tagged, dual-hash-verified history; trace any landed change back to the task, the agent, and every step that produced it.
 - 🤝 **Multi-agent parallelism**: per-task worktrees and per-task sandboxes let agents work different tasks side by side without collisions.
 - 🔌 **Fits what you have**: runs over your existing git repo without touching `.git`, stays in sync with it automatically, and wires into Claude Code, Codex, and Cursor with one command.
 
@@ -82,6 +82,7 @@ If a decision turns out wrong mid-task, [backtrack, fork, and salvage](#course-c
   <a href="#why-this-exists">Why</a> &middot;
   <a href="#how-containment-works">Containment</a> &middot;
   <a href="#course-correction-a-checkpointed-working-substrate">Course-correction</a> &middot;
+  <a href="#an-audit-trail-for-agent-work">Audit</a> &middot;
   <a href="#installation">Install</a> &middot;
   <a href="#commands">Commands</a> &middot;
   <a href="#security-model">Security</a> &middot;
@@ -135,6 +136,18 @@ When a decision turns out wrong, you don't reprompt the agent to rewrite hundred
 
 Micro-granularity earns its keep *in-task* (cheap course-correction plus a fine-grained review surface); the landed artifact is the squashed result. **You can always see and undo exactly what the agent did**: every step, including the abandoned line, stays in an append-only history for review.
 
+## An audit trail for agent work
+
+When an agent's change breaks something weeks later, `git blame` tells you which commit; mgit tells you the story behind it. The store is append-only (rollbacks create revert commits, nothing is ever deleted), every commit carries its task and agent identity, and integrity is dual-hashed (SHA-1 for git compatibility, SHA-256 for tamper detection):
+
+```bash
+mgit audit --task-id PROJ-12     # who did what, when, in order (including rollbacks)
+mgit log --task-id PROJ-12       # every micro-step behind the landed commit
+mgit verify --task-id PROJ-12    # prove the recorded chain has not been tampered with
+```
+
+That turns incident forensics from archaeology into a query: trace a landed commit back to its task, the agent that worked it, and every intermediate step including abandoned attempts; scope a regression's blast radius by asking what else that task touched. The trail is available for as long as the `.mgit` store is retained alongside the repo, which is how HyperSwe deployments run it.
+
 ## Installation
 
 ```bash
@@ -162,6 +175,7 @@ The everyday surface:
 | `mgit commit -m MSG` | Create a task-tagged micro-commit (task ID auto-inherited in a worktree) |
 | `mgit log --task-id ID` | View a task's step-by-step history |
 | `mgit rollback --task-id ID [--commit HASH]` | Revert a task or a specific step (append-only) |
+| `mgit audit --task-id ID` | Replay who did what, when, from the append-only audit trail |
 | `mgit squash --task-id ID [--to-git]` | Consolidate a task's micro-commits into one reviewable commit |
 | `mgit sandbox land --task-id ID` | Pull, host-verify, and land the sandbox's changes into your repo |
 
