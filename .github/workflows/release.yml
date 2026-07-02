@@ -49,10 +49,15 @@ jobs:
             exit 1
           fi
 
+  # The whole release runs on an Apple Silicon runner. The macOS sandbox
+  # daemon needs CGO + Virtualization.framework and can only be built (and
+  # entitlement-signed) natively on a mac; the CGO-free mgit and Linux daemon
+  # cross-compile from there. This is the OSS-goreleaser way to ship a CGO
+  # darwin binary in the same run as the cross-built targets. Refs: MGIT-44
   release:
     name: Release
     needs: preflight
-    runs-on: ubuntu-latest
+    runs-on: macos-14 # Apple Silicon — builds+signs the darwin daemon natively
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,6 +72,8 @@ jobs:
         with:
           cosign-release: v2.4.1
 
+      # goreleaser CGO-builds + entitlement-signs the darwin daemon (post
+      # hook in .goreleaser.yaml) and cross-builds the rest.
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

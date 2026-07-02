@@ -32,10 +32,72 @@ builds:
     goamd64:
       - v1
 
+  # mgit-sandboxd (Linux): the per-task microVM daemon (FR-17.16). On Linux
+  # it is PURE Go — firecracker is launched as a subprocess and the vzf
+  # (macOS) backend compiles to its unavailable stub off darwin — so it
+  # cross-builds CGO-free on the same ubuntu runner as mgit. It has no
+  # version vars, so it takes only -s -w. Refs: MGIT-44, FR-17.16
+  - id: mgit-sandboxd-linux
+    main: ./cmd/mgit-sandboxd/
+    binary: mgit-sandboxd
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    goamd64:
+      - v1
+
+  # mgit-sandboxd (macOS, arm64): the vzf backend needs CGO +
+  # Virtualization.framework, and the framework refuses to start a VM unless
+  # the binary carries com.apple.security.virtualization. So this build is
+  # CGO-enabled and native-only — the whole release therefore runs on a macos
+  # (Apple Silicon) runner, from which the CGO-free mgit and linux daemon
+  # cross-compile fine. A per-build post hook ad-hoc entitlement-signs the
+  # binary in place before it is archived. arm64 only: vzf is validated on
+  # Apple Silicon; Intel macs run core mgit without the sandbox (like
+  # Windows). Refs: MGIT-44, FR-17.15
+  - id: mgit-sandboxd-darwin
+    main: ./cmd/mgit-sandboxd/
+    binary: mgit-sandboxd
+    env:
+      - CGO_ENABLED=1
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    goos:
+      - darwin
+    goarch:
+      - arm64
+    hooks:
+      post:
+        # Ad-hoc sign (identity "-") with the virtualization entitlement.
+        # Not a restricted entitlement, so no notarization is needed for it
+        # to be honored on Apple Silicon. Refs: MGIT-44, FR-17.15
+        - cmd: codesign --force --sign - --entitlements build/darwin/vz.entitlements "{{ .Path }}"
+
 archives:
   - id: mgit-archive
+    # Each per-(os,arch) archive folds in every referenced build that
+    # targets it: linux archives get mgit + the linux daemon; darwin/arm64
+    # gets mgit + the signed daemon; darwin/amd64 and windows get mgit only
+    # (no sandbox backend there). mgit resolves mgit-sandboxd next to its own
+    # binary, so shipping them in one archive is what makes the sandbox work.
     ids:
       - mgit
+      - mgit-sandboxd-linux
+      - mgit-sandboxd-darwin
+    # Expected and intended: Linux and macOS-arm64 archives carry two binaries
+    # (mgit + mgit-sandboxd); Windows and Intel-macOS archives carry mgit only,
+    # because there is no sandbox backend there. Refs: MGIT-44
+    allow_different_binary_count: true
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
@@ -83,16 +145,27 @@ release:
 
     ### Install
 
+    Each archive below ships **two** host binaries: `mgit` and, where a
+    sandbox backend exists (Linux and macOS arm64), the `mgit-sandboxd`
+    daemon next to it. Homebrew installs both.
+
     ```bash
-    # Homebrew
+    # Homebrew (installs mgit + mgit-sandboxd)
     brew install hyper-swe/tap/mgit
 
-    # Go
+    # Go — core mgit
     go install github.com/hyper-swe/mgit/cmd/mgit@latest
 
-    # Binary
-    # Download from the assets below for your platform
+    # Go — the sandbox daemon (Linux works out of the box; on macOS the
+    # go-installed binary is unsigned and needs the virtualization
+    # entitlement — prefer brew or the release archive there)
+    go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest
+
+    # Binary — download the archive below for your platform (contains both)
     ```
+
+    The microVM sandbox also needs a guest image; see
+    [docs/INSTALL-SANDBOX.md](https://github.com/hyper-swe/mgit/blob/main/docs/INSTALL-SANDBOX.md).
 
     ### Pairs with [mtix](https://github.com/hyper-swe/mtix)
 

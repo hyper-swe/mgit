@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The sandbox daemon `mgit-sandboxd` is now shipped by every host channel.** Previously the release built only `mgit`, so Homebrew / `go install` / release-archive users never received the daemon and the microVM containment pillar was uninstallable — an external trial concluded mgit was unusable as a working substrate. Release archives (Linux any arch, macOS arm64) now contain **both** binaries side by side; the macOS daemon is built with CGO and code-signed with the `com.apple.security.virtualization` entitlement on an Apple Silicon runner; `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest` is documented (with the macOS signing caveat). `mgit-guest` continues to ship inside the guest image, not on host `PATH`. See [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md). (MGIT-44)
+
 ## [0.2.1-beta] - 2026-06-29
 
 ### Fixed

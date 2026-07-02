@@ -110,6 +110,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		"guestboot":    true, // host->guest worktree-mount boot contract (FR-17.3, MGIT-11.6.5)
 		"controlproto": true, // host CLI<->daemon control-plane protocol (FR-17.34, MGIT-11.10.7)
 		"agentadapter": true, // cooperative agent-harness routing config (FR-17, MGIT-11.11.1)
+		"packaging":    true, // release/distribution config regression guards (MGIT-44)
 	}
 
 	entries, err := os.ReadDir(filepath.Join(root, "internal"))
