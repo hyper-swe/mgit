@@ -19,12 +19,12 @@
 
 Coding agents increasingly run unattended, installing packages and executing build and test commands as they iterate. mgit makes that safe on a real codebase: execution is contained to a throwaway VM with access limited to what the task needs, the project's git is never modified directly, and every step the agent takes is preserved as a traceable, reviewable record.
 
-```mermaid
-flowchart LR
-    A(["agent"]) --> B["<b>per-task microVM</b><br/>installs, builds, and tests<br/>run here, not on your host"]
-    B --> C["<b>isolated history</b><br/>every step task-tagged,<br/>reviewable, reversible"]
-    C -->|"<b>verified land</b><br/>host re-verifies each change"| D(["<b>your git</b><br/>one reviewed, squashed commit"])
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/containment-flow-dark.svg">
+    <img src="docs/assets/containment-flow-light.svg" width="920" alt="agent, then per-task microVM where installs, builds, and tests run (not on your host), then isolated history where every step is task-tagged, reviewable, and reversible, then verified land where the host re-verifies each change, then your git receives one reviewed, squashed commit">
+  </picture>
+</p>
 
 ### What you get
 

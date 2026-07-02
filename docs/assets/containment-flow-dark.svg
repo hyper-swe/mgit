@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1048 140" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+
+  <!-- agent -->
+  <rect x="2" y="55" width="84" height="40" rx="20" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="44" y="80" text-anchor="middle" font-size="14" font-weight="600" fill="#e6edf3">agent</text>
+
+  <line x1="88" y1="75" x2="118" y2="75" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- per-task microVM -->
+  <rect x="124" y="30" width="240" height="90" rx="6" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="244" y="56" text-anchor="middle" font-size="14" font-weight="600" fill="#e6edf3">per-task microVM</text>
+  <text x="244" y="78" text-anchor="middle" font-size="12.5" fill="#8b949e">installs, builds, and tests</text>
+  <text x="244" y="96" text-anchor="middle" font-size="12.5" fill="#8b949e">run here, not on your host</text>
+
+  <line x1="366" y1="75" x2="398" y2="75" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- isolated history -->
+  <rect x="404" y="30" width="240" height="90" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="524" y="56" text-anchor="middle" font-size="14" font-weight="600" fill="#e6edf3">isolated history</text>
+  <text x="524" y="78" text-anchor="middle" font-size="12.5" fill="#8b949e">every step task-tagged,</text>
+  <text x="524" y="96" text-anchor="middle" font-size="12.5" fill="#8b949e">reviewable, reversible</text>
+
+  <!-- verified land (labelled arrow) -->
+  <line x1="646" y1="75" x2="818" y2="75" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="733" y="48" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e6edf3">verified land</text>
+  <text x="733" y="65" text-anchor="middle" font-size="11.5" fill="#8b949e">host re-verifies each change</text>
+
+  <!-- your git -->
+  <rect x="818" y="45" width="228" height="60" rx="30" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="932" y="70" text-anchor="middle" font-size="14" font-weight="600" fill="#e6edf3">your git</text>
+  <text x="932" y="90" text-anchor="middle" font-size="12" fill="#8b949e">one reviewed, squashed commit</text>
+</svg>
