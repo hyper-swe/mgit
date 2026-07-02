@@ -9,7 +9,7 @@
   <p align="center">
     <a href="https://github.com/hyper-swe/mgit/releases"><img src="https://img.shields.io/github/v/release/hyper-swe/mgit?include_prereleases&label=release" alt="Release"></a>
     <a href="https://github.com/hyper-swe/mgit/actions/workflows/ci.yml"><img src="https://github.com/hyper-swe/mgit/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-    <a href="https://goreportcard.com/report/github.com/hyper-swe/mgit"><img src="https://goreportcard.com/badge/github.com/hyper-swe/mgit" alt="Go Report Card"></a>
+    <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/hyper-swe/mgit" alt="Go Version"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
     <img src="https://img.shields.io/badge/platforms-linux%20%7C%20macos%20%7C%20windows-lightgrey" alt="Platforms">
   </p>
@@ -20,10 +20,13 @@
 Coding agents increasingly run unattended, installing packages and executing build and test commands as they iterate. mgit makes that safe on a real codebase: execution is contained to a throwaway VM with access limited to what the task needs, the project's git is never modified directly, and every step the agent takes is preserved as a traceable, reviewable record.
 
 ```
-agent ──▶ per-task microVM ──▶ isolated .mgit history ──▶ verified land ──▶ your git
-          installs, builds,    every step task-tagged,    host re-verifies   one reviewed,
-          and tests run here,  reviewable, reversible     each change        squashed commit
-          not on your host
+          ┌────────────────────┐     ┌────────────────────┐     ┌──────────────────┐
+          │  per-task microVM  │     │  isolated history  │     │  verified land   │
+agent ──▶ │                    │ ──▶ │                    │ ──▶ │                  │ ──▶ your git
+          │ installs, builds,  │     │ every step task-   │     │ host re-verifies │     one reviewed,
+          │ and tests run here,│     │ tagged, reviewable,│     │ each change      │     squashed commit
+          │ not on your host   │     │ and reversible     │     └──────────────────┘
+          └────────────────────┘     └────────────────────┘
 ```
 
 ### What you get
