@@ -43,8 +43,16 @@ Coding agents increasingly run unattended, installing packages and executing bui
 
 Two minutes, on top of your existing repo. Nothing to migrate; your git is left untouched.
 
+Install with Homebrew (macOS / Linux):
+
 ```bash
-brew install hyper-swe/tap/mgit    # macOS / Linux  (or: go install github.com/hyper-swe/mgit/cmd/mgit@latest)
+brew install hyper-swe/tap/mgit
+```
+
+or with Go:
+
+```bash
+go install github.com/hyper-swe/mgit/cmd/mgit@latest
 ```
 
 Start an agent on a task. `mgit work` provisions a task-bound worktree, wires the agent's shell to route through the sandbox, and (with `--sandbox`) launches the task's microVM:
@@ -150,18 +158,25 @@ That turns incident forensics from archaeology into a query: trace a landed comm
 
 ## Installation
 
+**Homebrew** (macOS / Linux):
+
 ```bash
-# Homebrew (macOS / Linux)
 brew install hyper-swe/tap/mgit
+```
 
-# Go
+**Go**:
+
+```bash
 go install github.com/hyper-swe/mgit/cmd/mgit@latest
+```
 
-# From source
+**From source**:
+
+```bash
 git clone https://github.com/hyper-swe/mgit.git && cd mgit && make build
 ```
 
-Pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are on [GitHub Releases](https://github.com/hyper-swe/mgit/releases).
+**Binary releases**: pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are on [GitHub Releases](https://github.com/hyper-swe/mgit/releases).
 
 ## Commands
 
