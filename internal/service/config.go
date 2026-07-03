@@ -29,10 +29,12 @@ type ProjectConfig struct {
 	Name   string `json:"name"`
 }
 
-// APIConfig holds REST API settings.
+// APIConfig holds REST API settings. There is deliberately no bind-address
+// setting: the REST API is unauthenticated and binds loopback only (hardcoded
+// in `mgit serve`); its trust model is same-user local processes. Exposing it
+// beyond localhost would require an authentication story first (MGIT-51).
 type APIConfig struct {
-	HTTPPort    int    `json:"http_port"`
-	BindAddress string `json:"bind_address"`
+	HTTPPort int `json:"http_port"`
 }
 
 // MCPConfig holds MCP server settings.
@@ -76,7 +78,7 @@ type AuditConfig struct {
 func DefaultConfig() Config {
 	return Config{
 		Project:  ProjectConfig{Prefix: "MGIT", Name: "mgit"},
-		API:      APIConfig{HTTPPort: 6860, BindAddress: "127.0.0.1"},
+		API:      APIConfig{HTTPPort: 6860},
 		MCP:      MCPConfig{Transport: "stdio"},
 		Logging:  LoggingConfig{Level: "info"},
 		Git:      GitConfig{AutoStage: false, SignCommits: false},

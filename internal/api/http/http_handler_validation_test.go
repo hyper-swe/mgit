@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -64,36 +63,4 @@ func TestRollback_BadJSON(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.Echo().ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestTokenStore_Reload(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tokens.json")
-	ts1, err := NewTokenStore(path)
-	require.NoError(t, err)
-
-	plaintext, err := ts1.Generate(90)
-	require.NoError(t, err)
-
-	// Reload from disk
-	ts2, err := NewTokenStore(path)
-	require.NoError(t, err)
-	assert.True(t, ts2.ValidateToken(plaintext), "reloaded store must validate existing token")
-}
-
-func TestTokenStore_ValidateToken_Invalid(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tokens.json")
-	ts, err := NewTokenStore(path)
-	require.NoError(t, err)
-
-	_, err = ts.Generate(90)
-	require.NoError(t, err)
-
-	assert.False(t, ts.ValidateToken("completely-wrong-token"))
-}
-
-func TestTokenStore_EmptyFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tokens.json")
-	ts, err := NewTokenStore(path)
-	require.NoError(t, err)
-	assert.Empty(t, ts.List())
 }

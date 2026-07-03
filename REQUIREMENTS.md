@@ -1260,15 +1260,13 @@ The `content_hash` (SHA-256) is the authoritative integrity field for mgit opera
 - Maximum concurrent connections: **50** (configurable via `api.max_connections`)
 - Request timeout: **30 seconds** (configurable via `api.request_timeout`)
 
-**NFR-5.11** API authentication token lifecycle:
-- Tokens MUST be generated via `mgit token generate` (cryptographically random, 32 bytes, base64-encoded)
-- Tokens MUST have a configurable expiry (default: 90 days, configurable via `api.token_expiry_days`)
-- Expired tokens MUST be rejected with HTTP 401 and descriptive error
-- Failed authentication attempts MUST be rate-limited: **5 failures per minute** per client IP, then 60-second lockout
-- Token rotation: `mgit token rotate` generates a new token and invalidates the previous one
-- Token revocation: `mgit token revoke` invalidates the current token immediately
-- Token listing: `mgit token list` shows active tokens with masked values (e.g., `****...abcd`) and expiry dates
-- Token storage: tokens stored in a **separate file** `.mgit/tokens.json` with file permissions `0600`. Tokens MUST NOT be stored in `config.yaml` to prevent accidental exposure through config sharing, logging, or `mgit config` output. The `tokens.json` file contains: `{"tokens": [{"hash": "sha256-of-token", "created_at": "ISO8601", "expires_at": "ISO8601", "revoked": false}]}`. Only the token hash is stored; the plaintext token is displayed once at generation time
+**NFR-5.11** REST API trust model (AMENDED 2026-07-03, decision record MGIT-51; supersedes the original token-lifecycle text below):
+- The REST API MUST bind loopback (`127.0.0.1`) only; the bind address MUST NOT be configurable
+- The REST API is unauthenticated by design; its trust model is **same-user local processes**, the same trust already granted to anyone who can run the mgit CLI against the repository (equivalent posture to the sandbox daemon's same-UID peer-credential socket)
+- No authentication code may exist unwired: a security control that is present but not enforced reads as protection that does not exist
+- Exposing the API beyond localhost is out of scope until a remote consumer exists; doing so REQUIRES reinstating an authentication lifecycle first (the superseded requirement below is the starting spec for that work)
+
+*Superseded original (token lifecycle, retained as the spec to reinstate if remote access is ever offered):* tokens generated via `mgit token generate` (cryptographically random, 32 bytes, base64-encoded); configurable expiry (default 90 days); expired tokens rejected with HTTP 401; failed-auth rate limiting (5/min per client IP, 60s lockout); `mgit token rotate` / `revoke` / `list` (masked values); hashes-only storage in `.mgit/tokens.json` (0600), plaintext shown once at generation. A partial, unwired implementation of this spec existed through v0.2.1-beta and was removed by MGIT-51.
 
 ---
 

@@ -69,6 +69,11 @@ func serveCmd() *cobra.Command {
 			}
 			defer app.Close()
 
+			// --port (explicit) > api.http_port (config) > built-in default.
+			// Refs: MGIT-51, FR-9.1
+			port = resolveServePort(cmd.Flags().Changed("port"), port,
+				app.Config.GetAll().API.HTTPPort)
+
 			// A long-lived server must NOT hold the exclusive repo lock for its
 			// lifetime — that starves every CLI command on the same repo (MGIT-46).
 			// Detach the lifetime lock and switch to per-operation guarding: each
@@ -110,8 +115,25 @@ func resolveServeMode(apiOnly, mcpOnly bool) (startAPI, startMCP bool, err error
 	return true, true, nil
 }
 
-// apiAddr is the localhost bind address for the REST API. Binding is
-// localhost-only by default (security: never 0.0.0.0). Refs: NFR-5
+// resolveServePort picks the REST port: an explicitly passed --port flag
+// wins; otherwise a positive api.http_port config value; otherwise the
+// built-in default. Refs: MGIT-51, FR-9.1
+func resolveServePort(flagChanged bool, flagPort, cfgPort int) int {
+	if flagChanged {
+		return flagPort
+	}
+	if cfgPort > 0 {
+		return cfgPort
+	}
+	return defaultServePort
+}
+
+// apiAddr is the localhost bind address for the REST API. The bind address
+// is HARDCODED to loopback and deliberately not configurable: the REST
+// surface is unauthenticated, so its trust model is "same-user local
+// processes" — exactly the trust already granted to anyone who can run the
+// mgit CLI against this repo. Exposing it beyond localhost would need a real
+// authentication story first (decision record: MGIT-51). Refs: NFR-5, NFR-5.11
 func apiAddr(port int) string {
 	return fmt.Sprintf("127.0.0.1:%d", port)
 }

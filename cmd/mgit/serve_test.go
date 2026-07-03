@@ -185,3 +185,28 @@ func TestServeModeLabel(t *testing.T) {
 	assert.Equal(t, "api", serveModeLabel(serveOptions{startAPI: true}))
 	assert.Equal(t, "mcp", serveModeLabel(serveOptions{startMCP: true}))
 }
+
+// resolveServePort precedence: an explicit --port flag wins; otherwise the
+// api.http_port config value; otherwise the built-in default. Makes the
+// documented api.http_port key real (it was previously never read).
+// Refs: MGIT-51, FR-9.1
+func TestResolveServePort_FlagConfigDefault_Precedence(t *testing.T) {
+	tests := []struct {
+		name        string
+		flagChanged bool
+		flagPort    int
+		cfgPort     int
+		want        int
+	}{
+		{name: "flag_wins_over_config", flagChanged: true, flagPort: 7001, cfgPort: 9000, want: 7001},
+		{name: "config_used_when_flag_unset", flagChanged: false, flagPort: defaultServePort, cfgPort: 9000, want: 9000},
+		{name: "default_when_neither_set", flagChanged: false, flagPort: defaultServePort, cfgPort: 0, want: defaultServePort},
+		{name: "invalid_config_falls_back_to_default", flagChanged: false, flagPort: defaultServePort, cfgPort: -1, want: defaultServePort},
+		{name: "flag_wins_even_at_default_value", flagChanged: true, flagPort: defaultServePort, cfgPort: 9000, want: defaultServePort},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, resolveServePort(tt.flagChanged, tt.flagPort, tt.cfgPort))
+		})
+	}
+}

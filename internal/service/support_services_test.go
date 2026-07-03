@@ -299,7 +299,7 @@ func TestConfigService_Get_DotNotation(t *testing.T) {
 		want any
 	}{
 		{"project.prefix", "MGIT"},
-		{"api.bind_address", "127.0.0.1"},
+		{"api.http_port", float64(6860)},
 		{"logging.level", "info"},
 		{"mcp.transport", "stdio"},
 		{"squash.auto_notify", true},
