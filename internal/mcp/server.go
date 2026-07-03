@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -46,6 +47,11 @@ type Server struct {
 	branch    *service.BranchService
 	verify    *service.VerifyService
 	worktree  *service.WorktreeService
+	audit     *service.AuditService
+	diff      *service.DiffService
+	config    *service.ConfigService
+	sync      *service.SyncService
+	wtStore   *gitstore.WorktreeStore
 }
 
 // NewServer creates an MCP server with all mgit tools registered.
@@ -81,6 +87,10 @@ func NewServer(
 	worktreeSvc := service.NewWorktreeService(idx, branchSvc, ws, clock).
 		WithSync(sync, repo, cs)
 
+	// config load is best-effort: a broken config file leaves the config tool to
+	// report a clear error rather than failing the whole server. Refs: MGIT-50
+	cfgSvc, _ := service.NewConfigService(filepath.Join(repo.MgitDir(), "config.json"))
+
 	s := &Server{
 		mcpServer: mcpserver.NewMCPServer(
 			"mgit",
@@ -93,6 +103,11 @@ func NewServer(
 		branch:   branchSvc,
 		verify:   service.NewVerifyService(cs, idx),
 		worktree: worktreeSvc,
+		audit:    audit,
+		diff:     service.NewDiffService(gitstore.NewDiffStore(repo), cs, idx),
+		config:   cfgSvc,
+		sync:     sync,
+		wtStore:  ws,
 	}
 
 	s.registerTools()
@@ -134,6 +149,34 @@ func lockingMiddleware(g *lock.Guarder) mcpserver.ToolHandlerMiddleware {
 // MCPServer returns the underlying mcp-go server (for testing/transport).
 func (s *Server) MCPServer() *mcpserver.MCPServer {
 	return s.mcpServer
+}
+
+// ToolDoc describes a registered MCP tool for documentation generation.
+// Refs: MGIT-50
+type ToolDoc struct {
+	Name        string
+	Description string
+	Parameters  []string
+}
+
+// ToolDocs returns the LIVE registered tool set as documentation records,
+// sorted by name (parameters sorted too). `mgit docs generate` builds the MCP
+// reference from this, so the generated docs cannot drift from what the server
+// actually serves — a new/removed/renamed tool changes the docs automatically.
+// Refs: MGIT-50
+func (s *Server) ToolDocs() []ToolDoc {
+	registered := s.mcpServer.ListTools()
+	out := make([]ToolDoc, 0, len(registered))
+	for name, st := range registered {
+		params := make([]string, 0, len(st.Tool.InputSchema.Properties))
+		for p := range st.Tool.InputSchema.Properties {
+			params = append(params, p)
+		}
+		sort.Strings(params)
+		out = append(out, ToolDoc{Name: name, Description: st.Tool.Description, Parameters: params})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // registerTools registers all 15 core MCP tools.
@@ -189,9 +232,10 @@ func (s *Server) registerTools() {
 	), s.verifyTool)
 
 	s.mcpServer.AddTool(mcp.NewTool("mgit_diff",
-		mcp.WithDescription("Show differences between commits"),
+		mcp.WithDescription("Show differences between commits or for a task"),
 		mcp.WithString("commit1", mcp.Description("From commit")),
 		mcp.WithString("commit2", mcp.Description("To commit")),
+		mcp.WithString("task_id", mcp.Description("Net change for a task (instead of commit1/commit2)")),
 	), s.diffTool)
 
 	s.mcpServer.AddTool(mcp.NewTool("mgit_export",
@@ -232,10 +276,30 @@ func (s *Server) registerTools() {
 
 // --- Tool Handlers ---
 
+// jsonResult marshals v to a JSON text tool result, or an error result if
+// marshaling fails. Centralizing this keeps the read handlers uniform and
+// avoids repeating the (unreachable) marshal-error guard in each. Refs: MGIT-50
+func jsonResult(v any) *mcp.CallToolResult {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error())
+	}
+	return mcp.NewToolResultText(string(data))
+}
+
 func (s *Server) commitTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	taskID, _ := req.GetArguments()["task_id"].(string)
 	message, _ := req.GetArguments()["message"].(string)
 	agentID, _ := req.GetArguments()["agent_id"].(string)
+	if err := validateTaskID(taskID); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if err := validateText("message", message); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if err := validateText("agent_id", agentID); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 	if agentID == "" {
 		agentID = "mcp-agent"
 	}
@@ -255,6 +319,12 @@ func (s *Server) rollbackTool(ctx context.Context, req mcp.CallToolRequest) (*mc
 	taskID, _ := req.GetArguments()["task_id"].(string)
 	reason, _ := req.GetArguments()["reason"].(string)
 	dryRun, _ := req.GetArguments()["dry_run"].(bool)
+	if err := validateTaskID(taskID); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if err := validateText("reason", reason); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
 	revert, err := s.rollback.RollbackTask(ctx, service.RollbackRequest{
 		TaskID: taskID, Reason: reason, DryRun: dryRun,
@@ -269,6 +339,12 @@ func (s *Server) squashTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	taskID, _ := req.GetArguments()["task_id"].(string)
 	message, _ := req.GetArguments()["message"].(string)
 	dryRun, _ := req.GetArguments()["dry_run"].(bool)
+	if err := validateTaskID(taskID); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if err := validateText("message", message); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
 	squashed, err := s.squash.SquashTask(ctx, service.SquashRequest{
 		TaskID: taskID, Message: message, DryRun: dryRun,
@@ -279,44 +355,60 @@ func (s *Server) squashTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	return mcp.NewToolResultText(squashed.Message), nil
 }
 
-func (s *Server) statusTool(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText("working tree clean"), nil
+// statusTool reports the working-tree status as JSON, matching `mgit status`:
+// it auto-housekeeps the base first (ADR-008) then reads the file status.
+// Refs: MGIT-50, FR-8.6
+func (s *Server) statusTool(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if err := s.sync.EnsureSynced(ctx); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	files, err := s.wtStore.Status(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return jsonResult(files), nil
 }
 
 func (s *Server) logTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	taskID, _ := req.GetArguments()["task_id"].(string)
 
 	if taskID != "" {
+		if err := validateTaskID(taskID); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		records, err := s.commit.GetTaskCommits(ctx, taskID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		data, _ := json.Marshal(records)
-		return mcp.NewToolResultText(string(data)), nil
+		return jsonResult(records), nil
 	}
 
 	commits, err := s.commit.ListCommits(ctx)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	data, _ := json.Marshal(commits)
-	return mcp.NewToolResultText(string(data)), nil
+	return jsonResult(commits), nil
 }
 
 func (s *Server) showTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	commitID, _ := req.GetArguments()["commit_id"].(string)
+	if err := validateToken("commit_id", commitID); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 	c, err := s.commit.GetCommit(ctx, commitID)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	data, _ := json.Marshal(c)
-	return mcp.NewToolResultText(string(data)), nil
+	return jsonResult(c), nil
 }
 
 func (s *Server) branchTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	taskID, _ := req.GetArguments()["task_id"].(string)
 
 	if taskID != "" {
+		if err := validateTaskID(taskID); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		branch, err := s.branch.CreateBranch(ctx, taskID)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -328,8 +420,7 @@ func (s *Server) branchTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	data, _ := json.Marshal(branches)
-	return mcp.NewToolResultText(string(data)), nil
+	return jsonResult(branches), nil
 }
 
 func (s *Server) verifyTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -349,30 +440,107 @@ func (s *Server) verifyTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	if len(issues) == 0 {
 		return mcp.NewToolResultText("All checks passed"), nil
 	}
-	data, _ := json.Marshal(issues)
-	return mcp.NewToolResultText(string(data)), nil
+	return jsonResult(issues), nil
 }
 
-func (s *Server) diffTool(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText("no changes"), nil
+// diffTool returns a unified diff, matching `mgit diff`: between two commits
+// when commit1/commit2 are given, or the net change for a task when task_id is
+// given. Refs: MGIT-50, FR-8
+func (s *Server) diffTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	commit1, _ := req.GetArguments()["commit1"].(string)
+	commit2, _ := req.GetArguments()["commit2"].(string)
+	taskID, _ := req.GetArguments()["task_id"].(string)
+	for name, v := range map[string]string{"commit1": commit1, "commit2": commit2} {
+		if v != "" {
+			if err := validateToken(name, v); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+		}
+	}
+	var (
+		diffs []model.FileDiff
+		err   error
+	)
+	switch {
+	case commit1 != "" && commit2 != "":
+		diffs, err = s.diff.DiffCommits(ctx, commit1, commit2)
+	case taskID != "":
+		if verr := validateTaskID(taskID); verr != nil {
+			return mcp.NewToolResultError(verr.Error()), nil
+		}
+		diffs, err = s.diff.DiffTask(ctx, taskID)
+	default:
+		return mcp.NewToolResultError("diff requires either commit1+commit2 or task_id"), nil
+	}
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(s.diff.FormatUnified(diffs)), nil
 }
 
 func (s *Server) exportTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	taskID, _ := req.GetArguments()["task_id"].(string)
+	if err := validateTaskID(taskID); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 	records, err := s.commit.GetTaskCommits(ctx, taskID)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	data, _ := json.Marshal(records)
-	return mcp.NewToolResultText(string(data)), nil
+	return jsonResult(records), nil
 }
 
-func (s *Server) auditTool(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText("no audit entries"), nil
+// auditTool returns the append-only audit trail as JSON, optionally filtered by
+// task_id, matching `mgit audit`. Refs: MGIT-50, MGIT-20
+func (s *Server) auditTool(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	taskID, _ := req.GetArguments()["task_id"].(string)
+	if taskID != "" {
+		if err := validateTaskID(taskID); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+	}
+	entries, err := s.audit.GetAuditLog(service.AuditFilters{TaskID: taskID})
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return jsonResult(entries), nil
 }
 
-func (s *Server) configTool(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText("config: default"), nil
+// configTool gets or sets configuration, matching `mgit config`: with a value it
+// sets+saves key, with only a key it gets that key, otherwise it returns the
+// full config as JSON. Refs: MGIT-50
+func (s *Server) configTool(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if s.config == nil {
+		return mcp.NewToolResultError("configuration is unavailable (config file could not be loaded)"), nil
+	}
+	key, _ := req.GetArguments()["key"].(string)
+	value, hasValue := req.GetArguments()["value"].(string)
+	if key != "" {
+		if err := validateToken("key", key); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+	}
+	switch {
+	case key != "" && hasValue:
+		if err := validateText("value", value); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if err := s.config.Set(key, value); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if err := s.config.Save(); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(fmt.Sprintf("set %s = %s", key, value)), nil
+	case key != "":
+		v, err := s.config.Get(key)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return jsonResult(map[string]any{key: v}), nil
+	default:
+		return jsonResult(s.config.GetAll()), nil
+	}
 }
 
 // worktreeAddTool materializes a task-bound linked worktree via the same
@@ -391,6 +559,15 @@ func (s *Server) worktreeAddTool(ctx context.Context, req mcp.CallToolRequest) (
 	if taskID == "" {
 		return mcp.NewToolResultError("task_id is required"), nil
 	}
+	if err := validatePath(path); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if err := validateTaskID(taskID); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if err := validateText("agent_id", agentID); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
 
 	wt, err := s.worktree.Add(ctx, model.WorktreeAddOptions{
 		Path: path, TaskID: taskID, AgentID: agentID, Branch: branch,
@@ -398,11 +575,7 @@ func (s *Server) worktreeAddTool(ctx context.Context, req mcp.CallToolRequest) (
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	data, err := json.Marshal(wt)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	return mcp.NewToolResultText(string(data)), nil
+	return jsonResult(wt), nil
 }
 
 // worktreeListTool returns all registered linked worktrees as a JSON array.
@@ -412,11 +585,7 @@ func (s *Server) worktreeListTool(ctx context.Context, _ mcp.CallToolRequest) (*
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	data, err := json.Marshal(wts)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	return mcp.NewToolResultText(string(data)), nil
+	return jsonResult(wts), nil
 }
 
 // worktreeRemoveTool removes a linked worktree's registration by path.
@@ -424,8 +593,8 @@ func (s *Server) worktreeListTool(ctx context.Context, _ mcp.CallToolRequest) (*
 func (s *Server) worktreeRemoveTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	path, _ := req.GetArguments()["path"].(string)
 	force, _ := req.GetArguments()["force"].(bool)
-	if path == "" {
-		return mcp.NewToolResultError("path is required"), nil
+	if err := validatePath(path); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.worktree.Remove(ctx, path, force); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil

@@ -9,7 +9,22 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mgit/internal/docs"
+	mcpapp "github.com/hyper-swe/mgit/internal/mcp"
 )
+
+// mcpToolInfos maps the MCP server's live registered tool set to the docs
+// generator's input type, so `mgit docs generate` documents exactly the tools
+// the server serves (no drift). Refs: MGIT-50
+func mcpToolInfos(srv *mcpapp.Server) []docs.MCPToolInfo {
+	tds := srv.ToolDocs()
+	infos := make([]docs.MCPToolInfo, 0, len(tds))
+	for _, td := range tds {
+		infos = append(infos, docs.MCPToolInfo{
+			Name: td.Name, Description: td.Description, Parameters: td.Parameters,
+		})
+	}
+	return infos
+}
 
 // docsCmd implements mgit docs generate. Refs: FR-15, MGIT-7.3.1
 func docsCmd() *cobra.Command {
@@ -31,24 +46,15 @@ func docsCmd() *cobra.Command {
 			outDir := filepath.Join(cwd, "docs")
 			clock := func() time.Time { return time.Now().UTC() }
 
-			// Build MCP tool info for docs
-			mcpTools := []docs.MCPToolInfo{
-				{Name: "mgit_commit", Description: "Create a task-tagged micro-commit", Parameters: []string{"task_id", "message", "agent_id"}},
-				{Name: "mgit_rollback", Description: "Rollback task commits", Parameters: []string{"task_id", "reason", "dry_run"}},
-				{Name: "mgit_squash", Description: "Squash micro-commits for a task", Parameters: []string{"task_id", "message", "dry_run"}},
-				{Name: "mgit_status", Description: "Show working tree status"},
-				{Name: "mgit_log", Description: "Show commit history", Parameters: []string{"task_id", "limit"}},
-				{Name: "mgit_show", Description: "Show commit details", Parameters: []string{"commit_id"}},
-				{Name: "mgit_branch", Description: "Manage branches", Parameters: []string{"task_id", "active_only"}},
-				{Name: "mgit_verify", Description: "Verify integrity", Parameters: []string{"task_id"}},
-				{Name: "mgit_diff", Description: "Show differences", Parameters: []string{"commit1", "commit2"}},
-				{Name: "mgit_export", Description: "Export task commits", Parameters: []string{"task_id"}},
-				{Name: "mgit_audit", Description: "View audit trail", Parameters: []string{"task_id"}},
-				{Name: "mgit_config", Description: "Get/set configuration", Parameters: []string{"key", "value"}},
-				{Name: "mgit_worktree_add", Description: "Add linked worktree", Parameters: []string{"path", "task_id"}},
-				{Name: "mgit_worktree_list", Description: "List linked worktrees"},
-				{Name: "mgit_worktree_remove", Description: "Remove linked worktree", Parameters: []string{"path"}},
+			// Derive the MCP tool reference from the LIVE registered tool set, so
+			// the generated docs can never drift from what the server serves
+			// (MGIT-50). This runs in the repo whose docs are being generated.
+			app, err := openAppFromCwd()
+			if err != nil {
+				return err
 			}
+			defer app.Close()
+			mcpTools := mcpToolInfos(mcpapp.NewServer(app.Repo, app.Index))
 
 			gen := docs.NewGenerator(outDir, rootCmd(), mcpTools, Version, clock)
 			results, err := gen.Generate(force)

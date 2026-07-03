@@ -36,9 +36,11 @@ func TestMCP_ShowTool(t *testing.T) {
 
 func TestMCP_DiffTool(t *testing.T) {
 	srv := setupTestMCP(t)
+	// With no commit pair and no task_id, diff has nothing to compare and
+	// returns a structured error (not a fake "no changes" success).
 	result, err := srv.diffTool(context.Background(), makeToolReq(map[string]any{}))
 	require.NoError(t, err)
-	assert.False(t, result.IsError)
+	assert.True(t, result.IsError, "diff with no arguments must be a tool error")
 }
 
 func TestMCP_ExportTool(t *testing.T) {
