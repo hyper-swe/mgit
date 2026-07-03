@@ -17,7 +17,23 @@ import (
 	"github.com/hyper-swe/mgit/internal/service"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 	"github.com/hyper-swe/mgit/internal/store/index"
+	"github.com/hyper-swe/mgit/internal/store/lock"
 )
+
+// Option configures a Server at construction. Refs: MGIT-46
+type Option func(*config)
+
+type config struct {
+	locker *lock.Guarder
+}
+
+// WithLocker makes every request acquire the repo process lock for the
+// duration of that request only (per-operation locking), so a long-lived REST
+// server can coexist with the CLI on the same repo. A nil locker (the default)
+// leaves requests unguarded. Refs: MGIT-46, ADR-009
+func WithLocker(g *lock.Guarder) Option {
+	return func(c *config) { c.locker = g }
+}
 
 // Server holds the Echo instance and all services.
 // Refs: FR-9, MGIT-5.1.1
@@ -29,6 +45,7 @@ type Server struct {
 	branch   *service.BranchService
 	verify   *service.VerifyService
 	clock    func() time.Time
+	locker   *lock.Guarder
 }
 
 // NewServer creates a configured REST API server.
@@ -37,7 +54,12 @@ func NewServer(
 	repo *gitstore.Repository,
 	idx *index.Store,
 	clock func() time.Time,
+	opts ...Option,
 ) *Server {
+	var cfg config
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	cs := gitstore.NewCommitStore(repo)
 	bs := gitstore.NewBranchStore(repo)
 
@@ -53,6 +75,7 @@ func NewServer(
 		branch:   service.NewBranchService(repo, bs, idx),
 		verify:   service.NewVerifyService(cs, idx),
 		clock:    clock,
+		locker:   cfg.locker,
 	}
 
 	s.echo.HideBanner = true
@@ -102,6 +125,33 @@ func (s *Server) setupMiddleware() {
 
 	// Recovery from panics
 	s.echo.Use(middleware.Recover())
+
+	// Per-operation locking: guard each request with the repo process lock so
+	// the server never holds the exclusive lock for its lifetime and starve the
+	// CLI (MGIT-46). Installed only when a locker is wired (serve).
+	if s.locker != nil {
+		s.echo.Use(s.lockingMiddleware())
+	}
+}
+
+// lockingMiddleware wraps each request handler so it runs while holding the
+// repo process lock for that request's duration only. A lock-acquisition
+// failure surfaces as 503 Service Unavailable naming the holder, rather than
+// hanging the request indefinitely. Refs: MGIT-46, ADR-009
+func (s *Server) lockingMiddleware() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			var handlerErr error
+			gerr := s.locker.Guard(func() error {
+				handlerErr = next(c)
+				return nil // handler errors propagate out-of-band, not as lock failures
+			})
+			if gerr != nil {
+				return echo.NewHTTPError(http.StatusServiceUnavailable, "repo busy: "+gerr.Error())
+			}
+			return handlerErr
+		}
+	}
 }
 
 // setupRoutes registers all API endpoints.

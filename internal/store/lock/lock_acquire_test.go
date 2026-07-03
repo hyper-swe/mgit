@@ -132,6 +132,22 @@ func TestAcquire_Timeout_WithPID(t *testing.T) {
 	assert.Contains(t, err.Error(), "held by PID")
 }
 
+// TestAcquire_Timeout_NamesHolderCommand verifies the contended-lock error
+// names the holding COMMAND, not just its PID, so a user can tell it is (say)
+// a running `mgit serve`. The child writes its own argv as the holder label.
+// Refs: MGIT-46
+func TestAcquire_Timeout_NamesHolderCommand(t *testing.T) {
+	mgitDir := filepath.Join(t.TempDir(), ".mgit")
+	_ = startLockHolder(t, mgitDir)
+
+	_, err := Acquire(mgitDir, 0)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrLockHeld))
+	assert.Contains(t, err.Error(), "held by PID")
+	assert.Contains(t, err.Error(), "TestHelperProcess_HoldLock",
+		"error should name the holder command (its argv), not only the PID")
+}
+
 // TestAcquire_Timeout_WithoutPID verifies that when the lock is held but the
 // lockfile has no PID written (e.g., truncated), the error still wraps
 // ErrLockHeld with a "timeout after" message.
@@ -239,11 +255,8 @@ func TestAcquire_WritesCurrentPID(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = lk.Release() }()
 
-	data, err := os.ReadFile(lk.Path())
-	require.NoError(t, err)
-
-	pid, err := strconv.Atoi(string(data))
-	require.NoError(t, err)
+	// The lockfile records "PID\ncommand"; the first line is the PID.
+	pid := readPID(lk.Path())
 	assert.Equal(t, os.Getpid(), pid)
 }
 

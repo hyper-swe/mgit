@@ -69,13 +69,20 @@ func serveCmd() *cobra.Command {
 			}
 			defer app.Close()
 
+			// A long-lived server must NOT hold the exclusive repo lock for its
+			// lifetime — that starves every CLI command on the same repo (MGIT-46).
+			// Detach the lifetime lock and switch to per-operation guarding: each
+			// REST request / MCP tool call acquires the lock only for its duration,
+			// so serve and the CLI (and concurrent server requests) interleave.
+			locker := app.DetachLock()
+
 			clock := func() time.Time { return time.Now().UTC() }
 			// SIGINT/SIGTERM trigger graceful shutdown.
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
 
-			api := apihttp.NewServer(app.Repo, app.Index, clock)
-			mcp := stdioMCP{srv: mcpapp.NewServer(app.Repo, app.Index).MCPServer()}
+			api := apihttp.NewServer(app.Repo, app.Index, clock, apihttp.WithLocker(locker))
+			mcp := stdioMCP{srv: mcpapp.NewServer(app.Repo, app.Index, mcpapp.WithLocker(locker)).MCPServer()}
 			return runServe(ctx, api, mcp, serveOptions{
 				port: port, startAPI: startAPI, startMCP: startMCP, asJSON: asJSON,
 			}, cmd.ErrOrStderr())

@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -85,7 +86,11 @@ func Acquire(mgitDir string, timeout time.Duration) (*FileLock, error) {
 
 		if time.Now().After(deadline) {
 			_ = f.Close()
-			holderPID := readPID(lockPath)
+			holderPID, holderCmd := readHolder(lockPath)
+			if holderPID != 0 && holderCmd != "" {
+				return nil, fmt.Errorf("%w: held by PID %d (%s) after %s",
+					ErrLockHeld, holderPID, holderCmd, timeout)
+			}
 			if holderPID != 0 {
 				return nil, fmt.Errorf("%w: held by PID %d after %s",
 					ErrLockHeld, holderPID, timeout)
@@ -113,7 +118,11 @@ func (l *FileLock) Path() string {
 	return l.path
 }
 
-// writePID writes the current process ID to the lockfile.
+// writePID writes the holder's identity to the lockfile: the PID on the first
+// line and a short command label on the second (e.g. "mgit serve"), so a
+// contended waiter can name WHICH command holds the lock, not just its PID
+// (MGIT-46). The format is backward compatible — readers parse the first line
+// as the PID, so an older bare-PID lockfile still reads correctly.
 func writePID(f *os.File) error {
 	if err := f.Truncate(0); err != nil {
 		return fmt.Errorf("truncate lockfile: %w", err)
@@ -121,18 +130,56 @@ func writePID(f *os.File) error {
 	if _, err := f.Seek(0, 0); err != nil {
 		return fmt.Errorf("seek lockfile: %w", err)
 	}
-	if _, err := f.WriteString(strconv.Itoa(os.Getpid())); err != nil {
+	if _, err := fmt.Fprintf(f, "%d\n%s", os.Getpid(), holderLabel()); err != nil {
 		return fmt.Errorf("write pid: %w", err)
 	}
 	return nil
 }
 
-// readPID reads the PID from an existing lockfile (best effort).
-func readPID(path string) int {
+// holderLabel is a concise, human-readable description of the current process's
+// command (e.g. "mgit serve"), used only for diagnostics in a contended-lock
+// error.
+func holderLabel() string {
+	return holderLabelFrom(os.Args)
+}
+
+// holderLabelFrom builds the label from an argv. Split out from holderLabel so
+// the edge cases (empty argv, over-long argv, embedded newlines) are testable
+// without mutating the os.Args global. It is capped so a pathological argv
+// cannot bloat the lockfile, and kept single-line so the first-line-is-PID
+// contract holds.
+func holderLabelFrom(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	label := filepath.Base(args[0])
+	if len(args) > 1 {
+		label += " " + strings.Join(args[1:], " ")
+	}
+	const maxLabel = 120
+	if len(label) > maxLabel {
+		label = label[:maxLabel]
+	}
+	return strings.ReplaceAll(label, "\n", " ")
+}
+
+// readHolder reads the holder PID (first line) and command label (second line,
+// if any) from an existing lockfile (best effort). Refs: MGIT-46
+func readHolder(path string) (pid int, cmd string) {
 	data, err := os.ReadFile(path) //nolint:gosec // internal lockfile
 	if err != nil {
-		return 0
+		return 0, ""
 	}
-	pid, _ := strconv.Atoi(string(data))
+	lines := strings.SplitN(string(data), "\n", 2)
+	pid, _ = strconv.Atoi(strings.TrimSpace(lines[0]))
+	if len(lines) > 1 {
+		cmd = strings.TrimSpace(lines[1])
+	}
+	return pid, cmd
+}
+
+// readPID reads the PID from an existing lockfile (best effort).
+func readPID(path string) int {
+	pid, _ := readHolder(path)
 	return pid
 }

@@ -38,6 +38,11 @@ type App struct {
 	// repository). Commands run from inside a worktree default to it. Refs: MGIT-24
 	BoundTask string
 
+	// storeDir is the directory holding the shared store + file lock (the repo's
+	// .mgit, or a worktree's shared parent store). It is where DetachLock builds
+	// its per-operation Guarder. Refs: MGIT-46
+	storeDir string
+
 	fileLock *lock.FileLock
 }
 
@@ -131,8 +136,25 @@ func OpenApp(path string) (*App, error) {
 		Bundle:    service.NewBundleService(idx, clock),
 		Sync:      service.NewSyncService(repo, ws, cs, boundTask, clock),
 		BoundTask: boundTask,
+		storeDir:  storeDir,
 		fileLock:  fileLock,
 	}, nil
+}
+
+// DetachLock releases the process lock the App holds for its lifetime and
+// returns a Guarder that re-acquires it PER OPERATION on the same store. It is
+// how `mgit serve` avoids starving the CLI: a long-lived server must not hold
+// the exclusive repo lock for its whole lifetime (MGIT-46), so it detaches the
+// lifetime lock at startup and guards each server operation instead. After
+// DetachLock the App no longer owns the lock (Close will not release it), so
+// only the server's per-operation guarding serializes access from then on.
+// Refs: MGIT-46, ADR-009
+func (a *App) DetachLock() *lock.Guarder {
+	if a.fileLock != nil {
+		_ = a.fileLock.Release()
+		a.fileLock = nil
+	}
+	return lock.NewGuarder(a.storeDir, lock.DefaultTimeout)
 }
 
 // Close shuts down all stores and releases the process-level lock.

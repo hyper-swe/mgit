@@ -17,7 +17,24 @@ import (
 	"github.com/hyper-swe/mgit/internal/service"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 	"github.com/hyper-swe/mgit/internal/store/index"
+	"github.com/hyper-swe/mgit/internal/store/lock"
 )
+
+// Option configures a Server at construction. Refs: MGIT-46
+type Option func(*config)
+
+type config struct {
+	locker *lock.Guarder
+}
+
+// WithLocker makes every tool call acquire the repo process lock for the
+// duration of that call only (per-operation locking), so a long-lived MCP
+// server can coexist with the CLI on the same repo instead of holding the
+// exclusive lock for its lifetime. A nil locker (the default, e.g. in unit
+// tests) leaves tool calls unguarded. Refs: MGIT-46, ADR-009
+func WithLocker(g *lock.Guarder) Option {
+	return func(c *config) { c.locker = g }
+}
 
 // Server wraps the MCP server with mgit services.
 // Refs: FR-10, MGIT-5.2.1
@@ -36,7 +53,12 @@ type Server struct {
 func NewServer(
 	repo *gitstore.Repository,
 	idx *index.Store,
+	opts ...Option,
 ) *Server {
+	var cfg config
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	clock := func() time.Time { return time.Now().UTC() }
 	cs := gitstore.NewCommitStore(repo)
 	bs := gitstore.NewBranchStore(repo)
@@ -74,7 +96,39 @@ func NewServer(
 	}
 
 	s.registerTools()
+
+	// Per-operation locking: guard every tool call with the repo process lock so
+	// the server never holds it for its lifetime (MGIT-46). Installed only when a
+	// locker is wired (serve); unset for direct-handler unit tests.
+	if cfg.locker != nil {
+		s.mcpServer.Use(lockingMiddleware(cfg.locker))
+	}
 	return s
+}
+
+// lockingMiddleware wraps each tool handler so it runs while holding the repo
+// process lock for that call's duration only. If the lock cannot be acquired,
+// the call returns a structured tool error naming the holder rather than
+// hanging or crashing. Refs: MGIT-46, ADR-009
+func lockingMiddleware(g *lock.Guarder) mcpserver.ToolHandlerMiddleware {
+	return func(next mcpserver.ToolHandlerFunc) mcpserver.ToolHandlerFunc {
+		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var res *mcp.CallToolResult
+			var nerr error
+			gerr := g.Guard(func() error {
+				res, nerr = next(ctx, req)
+				return nil // handler errors propagate out-of-band, not as lock failures
+			})
+			if gerr != nil {
+				// MCP convention: a lock-acquisition failure is surfaced as a tool
+				// result with IsError set, not as a Go error (same as every handler
+				// above). The gerr is carried in the message.
+				//nolint:nilerr // intentional: error is returned as a tool result, not a Go error
+				return mcp.NewToolResultError("repo busy: " + gerr.Error()), nil
+			}
+			return res, nerr
+		}
+	}
 }
 
 // MCPServer returns the underlying mcp-go server (for testing/transport).
