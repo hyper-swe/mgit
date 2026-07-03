@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Install-channel + posture e2e in CI (release gates).** New jobs exercise what a real user gets — an installed binary, no repo checkout — across both postures: the core loop over an installed `mgit` (`squash --to-git | git apply` round-trip included), the daemon-less honest degraded mode, the full MCP tool surface driven through a real stdio client, and a virtualization-gated sandbox pass. A regression like "mgit-sandboxd missing from the archives" or "an MCP tool returns placeholder" now fails CI before users see it. Run locally with `make e2e`. (MGIT-48)
 
+### Changed
+
+- **Dead REST auth code removed; trust model made explicit.** The unwired `TokenStore`/Bearer middleware (a security control that was present but never enforced) is deleted, and the REST API's real model is now stated everywhere: it always binds `127.0.0.1` (hardcoded; the former `api.bind_address` config key is gone) and is unauthenticated by design — its callers are same-user local processes, the same trust as running the CLI. NFR-5.11 amended with the decision; the token-lifecycle spec is retained there for reinstatement if remote access is ever offered. The `api.http_port` config key now actually works: `mgit serve` uses it when `--port` is not passed. (MGIT-51)
+- **REST formally scoped as a minimal same-host integration surface** (health, commits, task commits, branches, squash artifact, rollback, verify) — the parity matrix's REST gaps are now a recorded decision with rationale, not drift. Expansion requires a named consumer plus the NFR-5.11 auth lifecycle. See [docs/MCP-PARITY.md](docs/MCP-PARITY.md). (MGIT-52)
+
 ### Fixed
 
 - **`mgit serve` shuts down when its MCP stdio client disconnects** (stdin EOF) instead of blocking until a signal — a stdio server's client connection is its lifecycle. (MGIT-48)

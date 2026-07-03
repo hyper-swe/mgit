@@ -46,6 +46,28 @@ These are intentional or deferred; recorded here so an agent is not surprised
   either destructive (checkout/cherry-pick/merge), local maintenance
   (gc/restore/import/bundle), or require the sandbox daemon (run/sandbox).
 
+## REST scope (decision record, MGIT-52)
+
+The REST column's gaps are a **decision, not drift**. REST is formally scoped
+as a minimal same-host integration surface: health, commits (create/get/list),
+task commits, branches (create/list), squash artifact, rollback, and verify.
+Everything else (worktrees, diff/status/audit/config, export formats, sandbox)
+is served by the CLI (humans, scripts) and MCP (agents).
+
+Rationale:
+
+- **Trust model bounds the surface.** REST always binds `127.0.0.1` and is
+  unauthenticated (NFR-5.11 as amended by MGIT-51): its callers are same-user
+  local processes, which could equally invoke the CLI. A broader REST surface
+  adds parity-maintenance load without adding capability.
+- **Three surfaces at full parity is permanent drift risk.** MCP has a drift
+  guard tied to the live tool registry; REST does not, so its scope is kept
+  small and stable instead.
+- **Expansion has prerequisites.** Any route beyond this list, or any
+  non-localhost exposure, first requires a named consumer and the
+  authentication lifecycle reinstated per NFR-5.11's superseded spec
+  (MGIT-51).
+
 ## GA-quality guarantees (all MCP tools)
 
 - **Same service layer as the CLI.** Handlers contain no business logic; they

@@ -305,7 +305,7 @@ claude mcp add mgit -- mgit serve --mcp-only
 { "mcpServers": { "mgit": { "command": "mgit", "args": ["serve", "--mcp-only"] } } }
 ```
 
-A REST API (`mgit serve`, bound to `127.0.0.1` only) covers a subset of the same operations for service integration: commits, branches, squash, rollback, and verify under `/api/v1/`. The full CLI-parity matrix, including which capabilities each surface offers, is in [docs/MCP-PARITY.md](docs/MCP-PARITY.md).
+A REST API (`mgit serve`) covers a deliberately minimal subset for same-host service integration: commits, branches, squash, rollback, and verify under `/api/v1/`. It always binds `127.0.0.1` and is unauthenticated by design; the trust model is same-user local processes, the same trust as running the CLI. The full parity matrix, including the formal REST scope decision, is in [docs/MCP-PARITY.md](docs/MCP-PARITY.md).
 
 > A long-running `mgit serve` no longer blocks the CLI: it takes the repo lock only for the duration of each operation, so an agent driving mgit over MCP and a human using the CLI can work the same repo at once.
 
@@ -398,8 +398,7 @@ Stored in `.mgit/config.json`, managed via `mgit config get/set/list`.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `project.prefix` | `MGIT` | Task ID prefix |
-| `api.http_port` | `6860` | REST API port |
-| `api.bind_address` | `127.0.0.1` | API bind address (localhost only by default) |
+| `api.http_port` | `6860` | REST API port (the bind address is always `127.0.0.1`, not configurable) |
 | `squash.auto_notify` | `true` | Notify mtix on squash |
 | `rollback.auto_reopen` | `true` | Reopen tasks on rollback |
 | `branch.auto_create` | `true` | Auto-create branch on first task commit |
