@@ -87,9 +87,12 @@ mgit commit -m "add validation helper"   # task ID auto-inherited in the worktre
 mgit commit --task-id MGIT-12.3 -m "add validation helper"
 ```
 
-`mgit commit` takes `--task-id` (NOT `--task`). `mgit run -- <cmd>` routes
-builds/tests/installs into the sandbox; in a wired worktree your shell already
-does this transparently.
+`mgit commit` takes `--task-id` (NOT `--task`). When a sandbox is active for the
+worktree, `mgit run -- <cmd>` routes builds/tests/installs into the microVM and
+your wired shell does this transparently. When no sandbox is active (none was
+requested, or the daemon is not installed), the worktree's `CLAUDE.md` says so
+plainly and you run commands normally on the host — there is no routing to
+worry about.
 
 ## 4. Orient between steps
 
@@ -247,6 +250,35 @@ don't rediscover them by stumbling:
    task&rarr;commit audit trail + the mtix loop, or you need the microVM sandbox
    for untrusted code. If you push WIP freely and the code is trusted, a plain
    `git worktree` is lighter — use it instead.
+
+10. **A missing sandbox does not make mgit unusable.** On a machine without
+    `mgit-sandboxd`, `mgit work` still gives you a real, usable worktree — it
+    just does not install the fail-closed routing, and the `CLAUDE.md` block
+    states "no sandbox on this host; commands run on the host". Build, test, and
+    `mgit commit` normally. `mgit work` prints one parseable line —
+    `Containment: none|requested|active` — so you can tell the posture at a
+    glance. Only `mgit run` (which fails closed with an install pointer) and
+    `mgit sandbox land` require the daemon.
+
+11. **Landing without a sandbox.** `mgit sandbox land` is sandbox-only (it
+    host-verifies the guest's attested changes). With no sandbox, land a task by
+    exporting its squash and applying it to your git:
+    `mgit squash --task-id <ID> --to-git | git apply` (or `git am`), from the
+    project root. See [docs/INSTALL-SANDBOX.md](../../docs/INSTALL-SANDBOX.md) to
+    enable the sandbox.
+
+12. **"another mgit process is running" means a server holds the lock.** A
+    running `mgit serve` / MCP server used to hold the repo lock for its whole
+    lifetime and starve the CLI; it now takes the lock only per operation, so
+    this error is brief and self-clears. If it persists, a stuck command or
+    server is holding it — the error names the holding command, not just a PID.
+
+13. **The MCP worktree tools are real.** `mgit_worktree_add` / `list` / `remove`
+    (and every other MCP tool) delegate to the same service layer as the CLI and
+    return real results — they are no longer placeholders. `mgit_worktree_add`
+    materializes a real task-bound worktree. Agent input is validated as
+    hostile, so a malformed task id or a traversal path comes back as a
+    structured tool error.
 
 ## Honest caveats
 

@@ -55,7 +55,7 @@ or with Go:
 go install github.com/hyper-swe/mgit/cmd/mgit@latest
 ```
 
-Start an agent on a task. `mgit work` provisions a task-bound worktree, wires the agent's shell to route through the sandbox, and (with `--sandbox`) launches the task's microVM:
+Start an agent on a task. `mgit work` provisions a task-bound worktree and wires the agent's harness; with `--sandbox` it also launches the task's microVM. The `--sandbox` leg requires [enabling the sandbox](#enable-the-sandbox) first (the daemon and a guest image); everything else in this walkthrough works without it.
 
 ```bash
 mgit init                                    # set mgit up alongside your existing git repo
@@ -178,6 +178,24 @@ git clone https://github.com/hyper-swe/mgit.git && cd mgit && make build
 
 **Binary releases**: pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are on [GitHub Releases](https://github.com/hyper-swe/mgit/releases).
 
+Everything above installs the `mgit` binary, which is all you need for the version-control workflow: init, worktrees, commit, log, squash, and landing by patch. The microVM sandbox (`mgit run`, `mgit work --sandbox`) is a separate, optional layer with its own prerequisites.
+
+### Enable the sandbox
+
+The sandbox needs a second host binary, `mgit-sandboxd`, and a guest image. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`.
+
+- **Linux** requires KVM (`/dev/kvm`) and the `firecracker` binary on `PATH`.
+- **macOS** requires Apple Silicon (arm64), macOS 13+; the release/brew daemon is code-signed with the virtualization entitlement (a `go install`-ed daemon is unsigned and must be signed locally).
+- **Windows and Intel macOS** have no sandbox backend yet; core mgit runs without it.
+
+The daemon boots a guest image (kernel + rootfs) that must be provisioned and pinned separately. The full walkthrough, platform prerequisites, and the guest-image story are in [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md).
+
+**Without the sandbox**, mgit is still a complete checkpointed working substrate. `mgit run` and `mgit sandbox land` are the only sandbox-gated commands; integrate a task's result by exporting its squash as a patch and applying it to your git:
+
+```bash
+mgit squash --task-id PROJ-12 --to-git | git apply   # or: git am
+```
+
 ## Commands
 
 The everyday surface:
@@ -194,7 +212,7 @@ The everyday surface:
 | `mgit squash --task-id ID [--to-git]` | Consolidate a task's micro-commits into one reviewable commit |
 | `mgit sandbox land --task-id ID` | Pull, host-verify, and land the sandbox's changes into your repo |
 
-All commands support `--json` for structured output.
+All commands support `--json` for structured output. `mgit run` and `mgit sandbox land` are the only sandbox-gated commands; see [Enable the sandbox](#enable-the-sandbox). Without a sandbox, land a task with `mgit squash --task-id ID --to-git | git apply`.
 
 <details>
 <summary><strong>Core</strong> (init, commit, log, status, show, branch, config)</summary>
@@ -275,19 +293,21 @@ Sandbox commands require the host daemon and a guest image, and run on Linux (Fi
 
 ## MCP and REST integration
 
-mgit exposes 15 MCP tools for direct use by LLM coding agents (`mgit_commit`, `mgit_log`, `mgit_squash`, `mgit_rollback`, `mgit_verify`, `mgit_worktree_*`, and more):
+mgit exposes 15 MCP tools for direct use by LLM coding agents (`mgit_commit`, `mgit_log`, `mgit_status`, `mgit_diff`, `mgit_squash`, `mgit_rollback`, `mgit_verify`, `mgit_audit`, `mgit_config`, `mgit_worktree_add/list/remove`, and more). Each tool delegates to the same service layer as the CLI, so semantics, validation, and the append-only audit guarantee are identical. The MCP server is `mgit serve --mcp-only` (stdio); point your harness at it from the project directory:
 
 ```bash
-# Claude Code
-claude mcp add mgit -- mgit mcp --project /path/to/your/project
+# Claude Code (run from your project directory)
+claude mcp add mgit -- mgit serve --mcp-only
 ```
 
 ```json
 // Cursor (.cursor/mcp.json)
-{ "mcpServers": { "mgit": { "command": "mgit", "args": ["mcp", "--project", "/path/to/your/project"] } } }
+{ "mcpServers": { "mgit": { "command": "mgit", "args": ["serve", "--mcp-only"] } } }
 ```
 
-A REST API (`mgit serve`, localhost-only by default, Bearer-token auth via `mgit token generate`) covers the same operations for service integration: commits, branches, squash, rollback, and verify under `/api/v1/`.
+A REST API (`mgit serve`, bound to `127.0.0.1` only) covers a subset of the same operations for service integration: commits, branches, squash, rollback, and verify under `/api/v1/`. The full CLI-parity matrix, including which capabilities each surface offers, is in [docs/MCP-PARITY.md](docs/MCP-PARITY.md).
+
+> A long-running `mgit serve` no longer blocks the CLI: it takes the repo lock only for the duration of each operation, so an agent driving mgit over MCP and a human using the CLI can work the same repo at once.
 
 ## mgit + mtix: a closed loop for AI coding
 
