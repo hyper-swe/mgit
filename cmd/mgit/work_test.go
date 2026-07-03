@@ -74,14 +74,16 @@ func TestWorkSetup_CreatesAndBindsWorktree(t *testing.T) {
 	assert.Equal(t, "task/MGIT-7.1", wt.Branch)
 }
 
-// TestWorkSetup_WritesAdapterWiring verifies the agent-integration files are
-// written into the worktree: the Claude settings hook routing through `mgit
-// run`, the CLAUDE.md sandbox-env block, and the cooperative shims.
-// Refs: MGIT-34, MGIT-11.11.1, MGIT-11.11.2, MGIT-11.11.3
-func TestWorkSetup_WritesAdapterWiring(t *testing.T) {
+// TestWorkSetup_Contained_WritesAdapterWiring verifies that when containment is
+// requested (--sandbox), the agent-integration files are written: the Claude
+// settings hook routing through `mgit run`, the CLAUDE.md sandbox-env block, and
+// the cooperative shims. Refs: MGIT-34, MGIT-11.11.1, MGIT-11.11.2, MGIT-11.11.3, MGIT-47
+func TestWorkSetup_Contained_WritesAdapterWiring(t *testing.T) {
 	adder := &fakeWorktreeAdder{}
 	path := filepath.Join(t.TempDir(), "wt")
-	_, _, err := runWorkSetup(t, adder, workOptions{Path: path, TaskID: "MGIT-7.2"}, nil)
+	// --sandbox (no --image): posture is Pending, so the fail-closed routing
+	// wiring is installed; the launch leg degrades harmlessly (no image).
+	_, _, err := runWorkSetup(t, adder, workOptions{Path: path, TaskID: "MGIT-7.2", LaunchSandbox: true}, nil)
 	require.NoError(t, err)
 
 	// .claude/settings.json routes the agent's Bash through the mgit hook.
@@ -96,11 +98,38 @@ func TestWorkSetup_WritesAdapterWiring(t *testing.T) {
 	md, rerr := os.ReadFile(filepath.Join(path, "CLAUDE.md")) //nolint:gosec // test temp path
 	require.NoError(t, rerr)
 	assert.Contains(t, string(md), "microVM", "CLAUDE.md describes the sandbox environment")
-	assert.Contains(t, string(md), path, "CLAUDE.md cites the identical-path mount")
+	assert.Contains(t, string(md), path, "CLAUDE.md cites the worktree path")
 
 	// Cooperative generic adapter is installed (PATH shim via .envrc).
 	_, rerr = os.Stat(filepath.Join(path, ".envrc"))
 	assert.NoError(t, rerr, "cooperative PATH-shim adapter installed")
+}
+
+// TestWorkSetup_OpenPosture_HonestNoWiring is the core MGIT-47 guard: on a
+// worktree created WITHOUT --sandbox (no containment requested), no fail-closed
+// routing wiring is installed and the CLAUDE.md tells the truth — commands run
+// on the host, containment is unavailable — with a parseable "Containment: none"
+// status line. Refs: MGIT-47
+func TestWorkSetup_OpenPosture_HonestNoWiring(t *testing.T) {
+	adder := &fakeWorktreeAdder{}
+	path := filepath.Join(t.TempDir(), "wt")
+	out, _, err := runWorkSetup(t, adder, workOptions{Path: path, TaskID: "MGIT-7.9"}, nil)
+	require.NoError(t, err)
+
+	// No routing wiring: no settings hook, no shims.
+	_, statErr := os.Stat(filepath.Join(path, ".claude", "settings.json"))
+	assert.True(t, os.IsNotExist(statErr), "open posture must not install the Claude routing hook")
+	_, statErr = os.Stat(filepath.Join(path, ".envrc"))
+	assert.True(t, os.IsNotExist(statErr), "open posture must not install PATH shims")
+
+	// CLAUDE.md is honest about the open posture.
+	md, rerr := os.ReadFile(filepath.Join(path, "CLAUDE.md")) //nolint:gosec // test temp path
+	require.NoError(t, rerr)
+	assert.NotContains(t, string(md), "routes through `mgit run`", "must not claim routing is active")
+	assert.Contains(t, string(md), "mgit-sandboxd", "must point at how to enable containment")
+
+	// One parseable containment-status line.
+	assert.Contains(t, out, "Containment: none")
 }
 
 // TestWorkSetup_WorktreeFailure_Aborts verifies a worktree-add failure is a
@@ -123,7 +152,8 @@ func TestWorkSetup_WorktreeFailure_Aborts(t *testing.T) {
 func TestWorkSetup_Idempotent_ReRun(t *testing.T) {
 	adder := &fakeWorktreeAdder{}
 	path := filepath.Join(t.TempDir(), "wt")
-	opts := workOptions{Path: path, TaskID: "MGIT-7.4"}
+	// --sandbox so the routing wiring is installed and its idempotency is tested.
+	opts := workOptions{Path: path, TaskID: "MGIT-7.4", LaunchSandbox: true}
 
 	_, _, err := runWorkSetup(t, adder, opts, nil)
 	require.NoError(t, err)

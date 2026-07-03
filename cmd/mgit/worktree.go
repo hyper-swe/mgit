@@ -47,7 +47,10 @@ func worktreeCmd() *cobra.Command {
 				return fmt.Errorf("worktree add: %w", err)
 			}
 			_, _ = fmt.Fprintf(os.Stdout, "Created worktree %s -> task %s (branch %s)\n", wt.Path, wt.TaskID, wt.Branch)
-			injectAgentAdapters(os.Stderr, wt.Path)
+			// `worktree add` is plumbing (mirrors `git worktree add`) and launches
+			// no sandbox, so the honest-open posture applies: no fail-closed routing
+			// wiring is installed. Use `mgit work --sandbox` for containment. MGIT-47
+			injectAgentAdapters(os.Stderr, wt.Path, false)
 			return nil
 		},
 	}

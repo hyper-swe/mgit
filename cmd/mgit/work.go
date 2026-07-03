@@ -43,8 +43,8 @@ type workOptions struct {
 // Refs: MGIT-34
 type workDeps struct {
 	addWorktree    func(ctx context.Context, opts model.WorktreeAddOptions) (*model.WorktreeInfo, error)
-	writeAdapters  func(warn io.Writer, worktreePath string)
-	upsertEnvDoc   func(worktreePath, taskID string) error
+	writeAdapters  func(warn io.Writer, worktreePath string, contained bool)
+	upsertEnvDoc   func(worktreePath string, c agentadapter.Containment) error
 	connect        connectFunc
 	mgitBinForDocs string
 }
@@ -130,11 +130,27 @@ func workSetup(ctx context.Context, out io.Writer, deps workDeps, opts workOptio
 	}
 	_, _ = fmt.Fprintf(out, "Created worktree %s -> task %s (branch %s)\n", wt.Path, wt.TaskID, wt.Branch)
 
-	deps.writeAdapters(out, wt.Path)
-	if envErr := deps.upsertEnvDoc(wt.Path, wt.TaskID); envErr != nil {
+	// Containment posture for a freshly created worktree: nothing is bound yet,
+	// so it is Pending when --sandbox was requested (we install fail-closed
+	// routing and the launch leg below brings it up), else Open (honest-open;
+	// no routing wiring, commands run on the host). The security invariant
+	// (MGIT-47): fail-closed whenever containment was requested; honest-open only
+	// when it was never requested.
+	posture := agentadapter.ContainmentOpen
+	if opts.LaunchSandbox {
+		posture = agentadapter.ContainmentPending
+	}
+	contained := posture != agentadapter.ContainmentOpen
+
+	deps.writeAdapters(out, wt.Path, contained)
+	if envErr := deps.upsertEnvDoc(wt.Path, posture); envErr != nil {
 		_, _ = fmt.Fprintf(out, "warning: could not write CLAUDE.md sandbox section (%v)\n", envErr)
 	}
-	_, _ = fmt.Fprintf(out, "Wired agent routing (CLAUDE.md + .claude/settings.json -> mgit run)\n")
+	if contained {
+		_, _ = fmt.Fprintf(out, "Wired agent routing (CLAUDE.md + .claude/settings.json -> mgit run)\n")
+	}
+	// One machine-parseable line stating containment status (MGIT-47).
+	_, _ = fmt.Fprintln(out, agentadapter.ContainmentStatusLine(posture))
 
 	if opts.LaunchSandbox {
 		launchWorkSandbox(ctx, out, deps, opts, wt)
@@ -177,14 +193,17 @@ func launchWorkSandbox(ctx context.Context, out io.Writer, deps workDeps, opts w
 	_, _ = fmt.Fprintf(out, "Launched sandbox %s for task %s (%s)\n", info.ID, info.TaskID, info.State)
 }
 
-// upsertWorktreeEnvDoc writes the worktree's CLAUDE.md sandbox-env block from
-// only the task binding (no live sandbox yet), so the agent's knowledge layer
-// describes the microVM/identical-path-mount posture from the moment the
-// worktree is created. It fails safe to "no network" until a sandbox is
-// launched (which regenerates the block to the live posture). Refs: MGIT-34, MGIT-11.11.2
-func upsertWorktreeEnvDoc(worktreePath, _ string) error {
+// upsertWorktreeEnvDoc writes the worktree's CLAUDE.md sandbox-env block for the
+// given containment posture at creation time (no live sandbox yet). For an Open
+// posture it states honestly that commands run on the host and containment is
+// unavailable; for Pending it states the sandbox was requested and routed
+// commands fail closed until it starts. A successful `--sandbox` launch later
+// regenerates the block to the live (Active) posture via writeSandboxEnvDoc.
+// Refs: MGIT-34, MGIT-11.11.2, MGIT-47
+func upsertWorktreeEnvDoc(worktreePath string, c agentadapter.Containment) error {
 	return agentadapter.UpsertClaudeMd(worktreePath, agentadapter.SandboxEnv{
 		WorktreePath: worktreePath,
 		NetworkMode:  model.NetworkModeNone,
+		Containment:  c,
 	})
 }

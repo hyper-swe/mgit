@@ -14,15 +14,27 @@ import (
 // environment. Refs: MGIT-11.11.1
 const claudeHookCommand = "mgit sandbox claude-hook"
 
-// injectAgentAdapters writes the cooperative agent-integration config into
-// a freshly created worktree so harness commands route into the task
-// sandbox: the Claude Code PreToolUse hook (MGIT-11.11.1) plus the
-// cooperative Codex/Cursor/generic PATH-shim adapters (MGIT-11.11.3). It is
-// best-effort: a write failure is surfaced as a warning but does NOT fail
-// worktree creation (the worktree is already registered), and the agent
-// simply falls back to the normal permission prompt — never silent host
-// execution. Refs: MGIT-11.11.1, MGIT-11.11.3
-func injectAgentAdapters(warn io.Writer, worktreePath string) {
+// injectAgentAdapters writes the cooperative agent-integration config into a
+// freshly created worktree so harness commands route into the task sandbox: the
+// Claude Code PreToolUse hook (MGIT-11.11.1) plus the cooperative
+// Codex/Cursor/generic PATH-shim adapters (MGIT-11.11.3).
+//
+// The routing wiring is installed ONLY when containment was requested or is
+// active (contained == true). On a machine where no sandbox was requested and
+// none is available, installing the fail-closed shims + the "your shell routes
+// through mgit run" hook would make even `echo` fail and mislead the agent
+// (MGIT-47) — so nothing is installed and the agent runs commands normally on
+// the host (the honest-open posture, made explicit in the CLAUDE.md block).
+//
+// It is best-effort: a write failure is surfaced as a warning but does NOT fail
+// worktree creation. Refs: MGIT-11.11.1, MGIT-11.11.3, MGIT-47
+func injectAgentAdapters(warn io.Writer, worktreePath string, contained bool) {
+	if !contained {
+		// Honest-open: no sandbox requested or available. Install no routing
+		// wiring — the agent runs commands directly on the host, as the CLAUDE.md
+		// block now states. Never a fail-closed shim that blocks basic commands.
+		return
+	}
 	if err := agentadapter.WriteClaudeSettings(worktreePath, claudeHookCommand); err != nil {
 		_, _ = fmt.Fprintf(warn, "warning: could not write Claude sandbox routing config (%v); "+
 			"agent commands will prompt instead of auto-routing\n", err)

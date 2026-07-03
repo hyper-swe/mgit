@@ -156,12 +156,28 @@ func TestClaudeHook_EmptyCwd_FallsBackToGetwd(t *testing.T) {
 func TestInjectAgentAdapters_WritesClaudeSettings(t *testing.T) {
 	wt := t.TempDir()
 	var warn bytes.Buffer
-	injectAgentAdapters(&warn, wt)
+	injectAgentAdapters(&warn, wt, true)
 
 	b, err := os.ReadFile(filepath.Join(wt, ".claude", "settings.json")) //nolint:gosec // test-owned temp path
 	require.NoError(t, err)
 	assert.Contains(t, string(b), claudeHookCommand)
 	assert.Empty(t, warn.String(), "no warning on success")
+}
+
+// TestInjectAgentAdapters_OpenPosture_InstallsNothing verifies the honest-open
+// posture (no sandbox requested/available) installs NO routing wiring: no
+// settings.json hook and no PATH shims, so basic commands are never blocked by
+// a fail-closed shim. Refs: MGIT-47
+func TestInjectAgentAdapters_OpenPosture_InstallsNothing(t *testing.T) {
+	wt := t.TempDir()
+	var warn bytes.Buffer
+	injectAgentAdapters(&warn, wt, false)
+
+	_, err := os.Stat(filepath.Join(wt, ".claude", "settings.json"))
+	assert.True(t, os.IsNotExist(err), "no Claude hook settings in open posture")
+	_, err = os.Stat(filepath.Join(wt, ".mgit", "shims"))
+	assert.True(t, os.IsNotExist(err), "no routing shims in open posture")
+	assert.Empty(t, warn.String())
 }
 
 // TestInjectAgentAdapters_WarnsOnFailure verifies an unwritable target
@@ -171,6 +187,6 @@ func TestInjectAgentAdapters_WarnsOnFailure(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "afile")
 	require.NoError(t, os.WriteFile(file, []byte("x"), 0o600))
 	var warn bytes.Buffer
-	injectAgentAdapters(&warn, file)
+	injectAgentAdapters(&warn, file, true)
 	assert.Contains(t, warn.String(), "warning")
 }
