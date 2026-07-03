@@ -18,6 +18,19 @@ LDFLAGS  := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X mai
 build:
 	CGO_ENABLED=0 go build -trimpath $(LDFLAGS) -o $(BINARY_PATH) ./cmd/mgit/
 
+## e2e: Install/posture e2e against a freshly built binary (what a user gets)
+# Builds mgit into a scratch bindir (NO mgit-sandboxd — the daemon-less posture)
+# and runs the core-loop, daemon-less, MCP, and sandbox (skips without virt)
+# e2e. This is the local mirror of the CI e2e jobs (MGIT-48).
+.PHONY: e2e
+e2e:
+	@set -e; bindir="$$(mktemp -d)"; trap 'rm -rf "$$bindir"' EXIT; \
+	CGO_ENABLED=0 go build -trimpath $(LDFLAGS) -o "$$bindir/mgit" ./cmd/mgit/; \
+	echo "== core loop =="; bash scripts/e2e/core_loop.sh "$$bindir"; \
+	echo "== daemon-less posture =="; bash scripts/e2e/daemonless_posture.sh "$$bindir"; \
+	echo "== MCP posture =="; MGIT_BIN="$$bindir/mgit" go run ./scripts/e2e/mcpdrive; \
+	echo "== sandbox posture =="; bash scripts/e2e/sandbox_posture.sh "$$bindir"
+
 ## test: Run all unit tests
 .PHONY: test
 test:

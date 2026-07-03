@@ -39,3 +39,4 @@ import-to-mtix.py
 .mtix/data/*.lock
 .mtix/data/*.sha256
 .mtix/logs/
+/mcpdrive

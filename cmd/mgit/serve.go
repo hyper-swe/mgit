@@ -133,9 +133,17 @@ func runServe(ctx context.Context, api apiServer, mcp mcpRunner, opts serveOptio
 	}
 	if opts.startMCP {
 		go func() {
-			if err := mcp.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			err := mcp.Serve(ctx)
+			if err != nil && !errors.Is(err, context.Canceled) {
 				errc <- fmt.Errorf("mcp server: %w", err)
+				return
 			}
+			// The MCP stdio stream ended (stdin EOF = the client disconnected) or
+			// the context was canceled. For a stdio server the client connection
+			// IS the lifecycle, so signal a clean shutdown rather than block until
+			// a signal — otherwise a disconnected client leaves serve running
+			// forever. Refs: MGIT-48, MGIT-46
+			errc <- nil
 		}()
 	}
 

@@ -54,9 +54,17 @@ jobs:
   # entitlement-signed) natively on a mac; the CGO-free mgit and Linux daemon
   # cross-compile from there. This is the OSS-goreleaser way to ship a CGO
   # darwin binary in the same run as the cross-built targets. Refs: MGIT-44
+  # Install-channel + posture e2e as a release gate (MGIT-48): a regression like
+  # "sandboxd missing from archives" or "an MCP tool returns placeholder" fails
+  # the release before users see it. Reuses the standalone e2e workflow.
+  e2e:
+    name: e2e gate
+    needs: preflight
+    uses: ./.github/workflows/e2e.yml
+
   release:
     name: Release
-    needs: preflight
+    needs: [preflight, e2e]
     runs-on: macos-14 # Apple Silicon — builds+signs the darwin daemon natively
     steps:
       - uses: actions/checkout@v4

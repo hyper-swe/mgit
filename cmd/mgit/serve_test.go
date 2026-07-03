@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,6 +55,32 @@ func (f *fakeAPI) didShutdown() bool {
 type fakeMCP struct{}
 
 func (fakeMCP) Serve(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+
+// eofMCP models a stdio MCP server whose client disconnected (stdin EOF):
+// Serve returns nil right away. Refs: MGIT-48
+type eofMCP struct{}
+
+func (eofMCP) Serve(context.Context) error { return nil }
+
+// TestRunServe_MCPStreamEnd_ShutsDown proves that when the MCP stdio stream
+// ends (client disconnect), serve shuts down instead of blocking forever — the
+// gap the MCP-posture e2e revealed. The test is time-bounded so a regression
+// (hang) fails rather than stalls the suite. Refs: MGIT-48
+func TestRunServe_MCPStreamEnd_ShutsDown(t *testing.T) {
+	api := newFakeAPI()
+	done := make(chan error, 1)
+	go func() {
+		done <- runServe(context.Background(), api, eofMCP{},
+			serveOptions{port: 6860, startAPI: true, startMCP: true}, io.Discard)
+	}()
+	select {
+	case err := <-done:
+		require.NoError(t, err, "clean shutdown on MCP stream end")
+		assert.True(t, api.didShutdown(), "REST API is shut down when the MCP client disconnects")
+	case <-time.After(5 * time.Second):
+		t.Fatal("runServe did not return after the MCP stream ended — it hung")
+	}
+}
 
 // TestServe_Command_Help verifies the command documents its flags.
 func TestServe_Command_Help(t *testing.T) {

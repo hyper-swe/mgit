@@ -1,0 +1,108 @@
+# Install-channel + posture e2e (MGIT-48).
+#
+# CI historically ran unit/integration tests from the repo checkout, where a
+# dev-built mgit-sandboxd sits next to mgit and masks exactly the failures real
+# users hit on a clean machine (two external trials failed on DISTRIBUTION, not
+# the product). These jobs exercise what a user actually gets — an installed
+# binary, no repo, both postures — and are reusable (workflow_call) so the
+# release pipeline gates on them.
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+jobs:
+  # Daemon-less posture + core loop + MCP surface, on a host with NO
+  # mgit-sandboxd. This is the always-on gate; it needs no virtualization.
+  posture:
+    name: Posture (daemon-less core loop + MCP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build mgit only (no mgit-sandboxd — daemon-less posture)
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/bin/mgit" ./cmd/mgit/
+
+      - name: Core-loop e2e (init/work/commit/squash→git apply/worktree/verify/audit)
+        run: bash scripts/e2e/core_loop.sh "$RUNNER_TEMP/bin"
+
+      - name: Daemon-less posture e2e (honest wiring, run fails-closed with pointer)
+        run: bash scripts/e2e/daemonless_posture.sh "$RUNNER_TEMP/bin"
+
+      - name: MCP posture e2e (drive every documented tool via a scripted client)
+        env:
+          MGIT_BIN: ${{ runner.temp }}/bin/mgit
+        run: go run ./scripts/e2e/mcpdrive
+
+  # Install-channel matrix: prove the documented install paths produce working
+  # binaries. go install is validated on every run; the release-archive channel
+  # is validated from goreleaser's own snapshot artifacts.
+  install-channels:
+    name: Install channel (${{ matrix.channel }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [go-install, release-archive]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install via go install
+        if: matrix.channel == 'go-install'
+        run: |
+          bin="$RUNNER_TEMP/gobin"; mkdir -p "$bin"
+          GOBIN="$bin" go install ./cmd/mgit ./cmd/mgit-sandboxd
+          test -x "$bin/mgit" || { echo "mgit not installed"; exit 1; }
+          test -x "$bin/mgit-sandboxd" || { echo "mgit-sandboxd not installed by go install"; exit 1; }
+          echo "BINDIR=$bin" >> "$GITHUB_ENV"
+
+      - name: Build release archive (Linux) and extract
+        if: matrix.channel == 'release-archive'
+        run: |
+          go install github.com/goreleaser/goreleaser/v2@latest
+          # Only the Linux builds — the darwin daemon is CGO/native (built on a
+          # mac in release.yml), so it is excluded from this ubuntu snapshot.
+          goreleaser build --snapshot --clean --skip=before \
+            --id mgit --id mgit-sandboxd-linux --single-target
+          bin="$RUNNER_TEMP/archbin"; mkdir -p "$bin"
+          cp "$(find dist -type f -name mgit -perm -u+x | head -1)" "$bin/mgit"
+          cp "$(find dist -type f -name mgit-sandboxd -perm -u+x | head -1)" "$bin/mgit-sandboxd"
+          echo "BINDIR=$bin" >> "$GITHUB_ENV"
+
+      - name: Core-loop e2e against the installed binaries
+        run: bash scripts/e2e/core_loop.sh "$BINDIR"
+
+  # Live sandbox posture. GitHub-hosted runners have no nested virtualization,
+  # so sandbox_posture.sh SKIPs here (exit 0) — its purpose in CI is to prove
+  # the gate logic and the skip message. A real per-platform live pass is
+  # mandated by docs/release/RELEASE-CHECKLIST.md and run on a KVM-capable
+  # Linux runner / an entitled macOS arm64 runner at release time.
+  sandbox-posture:
+    name: Sandbox posture (gated; skips without virtualization)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Build mgit
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/bin/mgit" ./cmd/mgit/
+      - name: Sandbox posture e2e (skips gracefully without a daemon/KVM)
+        run: bash scripts/e2e/sandbox_posture.sh "$RUNNER_TEMP/bin"

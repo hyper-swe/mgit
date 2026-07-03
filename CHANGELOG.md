@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Install-channel + posture e2e in CI (release gates).** New jobs exercise what a real user gets — an installed binary, no repo checkout — across both postures: the core loop over an installed `mgit` (`squash --to-git | git apply` round-trip included), the daemon-less honest degraded mode, the full MCP tool surface driven through a real stdio client, and a virtualization-gated sandbox pass. A regression like "mgit-sandboxd missing from the archives" or "an MCP tool returns placeholder" now fails CI before users see it. Run locally with `make e2e`. (MGIT-48)
+
 ### Fixed
 
+- **`mgit serve` shuts down when its MCP stdio client disconnects** (stdin EOF) instead of blocking until a signal — a stdio server's client connection is its lifecycle. (MGIT-48)
 - **`mgit work` on a machine without the sandbox no longer misleads the agent.** Previously it installed PATH shims that routed every command through fail-closed `mgit run` (so the agent "couldn't even echo") and wrote a CLAUDE.md claiming "your shell already routes through `mgit run`" — even with no sandbox daemon present. Now the wiring is containment-aware: with no `--sandbox` (honest-open) no routing shims or hook are installed and CLAUDE.md states plainly that commands run on the host and how to enable containment; with `--sandbox` (containment requested) the fail-closed routing stays, and the security invariant holds — mgit never silently bypasses a requested sandbox. `mgit work` also prints a single parseable `Containment: …` status line. (MGIT-47)
 - **A long-running `mgit serve` no longer starves the CLI.** The server used to hold the exclusive repo lock for its entire lifetime, so with `mgit serve` running (e.g. an agent's MCP server), every CLI command on the same repo failed after a 30-second wait (`another mgit process is running`). The server now acquires the lock **per operation** — the same scope a CLI command holds it — so a driving agent over MCP/REST and a human on the CLI can work the same repo concurrently. A contended-lock error now also names the holding command, not just its PID. See [ADR-009](docs/adr/009-per-operation-locking.md). (MGIT-46)
 - **The MCP worktree tools now work.** `mgit_worktree_add`, `mgit_worktree_list`, and `mgit_worktree_remove` previously returned a fake-success placeholder (`"not yet available (Wave 11)"`); a driving agent that relied on them got nothing. They now delegate to the same `WorktreeService` the CLI uses — `mgit_worktree_add` materializes a real task-bound worktree with the ADR-008 pinned fork-base, and the tools return structured JSON / errors. (MGIT-45)
