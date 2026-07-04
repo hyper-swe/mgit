@@ -40,8 +40,12 @@ echo "== commit + log + status + verify (inside the worktree) =="
 ( cd wt
   printf 'package main\n\nfunc main() {}\n' > main.go
   mgit add .
+  out="$(mgit status)"
+  assert_contains "$out" "main.go" "status shows the staged file before commit"
   out="$(mgit commit -m 'add main')"
   assert_contains "$out" "E2E-1" "commit is task-tagged"
+  out="$(mgit status)"
+  assert_contains "$out" "working tree clean" "status reports clean after commit"
   out="$(mgit log --oneline)"
   assert_contains "$out" "add main" "log shows the commit"
   assert_ok "verify passes" -- mgit verify

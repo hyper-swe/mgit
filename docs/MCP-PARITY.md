@@ -85,4 +85,6 @@ Rationale:
   an in-process MCP client through the real dispatch (initialize → list → call),
   covering happy, error, boundary, and hostile-input paths.
 
-Refs: MGIT-50, MGIT-45, MGIT-41, MGIT-20
+Refs: MGIT-50, MGIT-45, MGIT-41, MGIT-20. Companion:
+[E2E-MATRIX.md](E2E-MATRIX.md) maps every capability (all surfaces) to its
+end-to-end proof.

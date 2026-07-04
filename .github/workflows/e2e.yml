@@ -35,13 +35,19 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bin"
           CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/bin/mgit" ./cmd/mgit/
 
-      - name: Core-loop e2e (init/work/commit/squash→git apply/worktree/verify/audit)
+      - name: Core-loop e2e (init/work/commit/status/squash→git apply/worktree/verify/audit)
         run: bash scripts/e2e/core_loop.sh "$RUNNER_TEMP/bin"
+
+      - name: Course-correction e2e (rollback→fork→restore/cherry-pick→squash, append-only)
+        run: bash scripts/e2e/course_correction.sh "$RUNNER_TEMP/bin"
 
       - name: Daemon-less posture e2e (honest wiring, run fails-closed with pointer)
         run: bash scripts/e2e/daemonless_posture.sh "$RUNNER_TEMP/bin"
 
-      - name: MCP posture e2e (drive every documented tool via a scripted client)
+      - name: REST posture e2e (real serve process, /api/v1 routes, serve+CLI lock coexistence)
+        run: bash scripts/e2e/rest_posture.sh "$RUNNER_TEMP/bin"
+
+      - name: MCP posture e2e (drive every registered tool via a real stdio client)
         env:
           MGIT_BIN: ${{ runner.temp }}/bin/mgit
         run: go run ./scripts/e2e/mcpdrive

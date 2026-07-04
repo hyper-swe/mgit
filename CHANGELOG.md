@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Install-channel + posture e2e in CI (release gates).** New jobs exercise what a real user gets — an installed binary, no repo checkout — across both postures: the core loop over an installed `mgit` (`squash --to-git | git apply` round-trip included), the daemon-less honest degraded mode, the full MCP tool surface driven through a real stdio client, and a virtualization-gated sandbox pass. A regression like "mgit-sandboxd missing from the archives" or "an MCP tool returns placeholder" now fails CI before users see it. Run locally with `make e2e`. (MGIT-48)
 
+### Added
+
+- **The flagship claims now have e2e proof (release gates).** New always-on e2e legs: the course-correction loop end to end (micro-commits with a wrong step → append-only rollback → fork → salvage from a checkpoint → squash, with the abandoned attempt asserted to survive in log + audit); the REST surface driven route-by-route against a real `mgit serve` process; serve/CLI **lock coexistence proven as two real processes** (CLI commit/status/worktree complete promptly while serve runs); and the MCP e2e now **calls every registered tool** through the real stdio server (previously 11 of 15 were only registration-checked). A feature→e2e coverage matrix lives at [docs/E2E-MATRIX.md](docs/E2E-MATRIX.md) so gaps stay visible (Windows and brew-in-CI are listed as uncovered rather than papered over). `core_loop.sh` now actually asserts `mgit status`, which its header claimed. (MGIT-53)
+
+### Fixed (documentation honesty)
+
+- **The README's course-correction steps now match verified CLI behavior.** e2e-proving the loop surfaced that `mgit checkout <hash>` does not exist (checkout is branch-only), `rollback` reverts the owning task as an append-only record (and does not restore content), and `cherry-pick` records provenance rather than materializing bytes — salvage is `mgit restore <file> --commit <hash>`. The diagram, steps, and command tables now describe the loop that actually works; the underlying product gaps are tracked (MGIT-54 content-restoring rollback/cherry-pick, MGIT-55 whole-tree checkpoint recovery, MGIT-56 status-time auto-sync emptying a task's first-commit diff). (MGIT-53)
+
 ### Changed
 
 - **Dead REST auth code removed; trust model made explicit.** The unwired `TokenStore`/Bearer middleware (a security control that was present but never enforced) is deleted, and the REST API's real model is now stated everywhere: it always binds `127.0.0.1` (hardcoded; the former `api.bind_address` config key is gone) and is unauthenticated by design — its callers are same-user local processes, the same trust as running the CLI. NFR-5.11 amended with the decision; the token-lifecycle spec is retained there for reinstatement if remote access is ever offered. The `api.http_port` config key now actually works: `mgit serve` uses it when `--port` is not passed. (MGIT-51)

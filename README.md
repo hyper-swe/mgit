@@ -125,22 +125,23 @@ Instead of crowding your git history with agent micro-commit noise, the agent co
 ```
 mgit work -> commit -> commit -> commit -> (wrong lib chosen) -> commit
                           \                        |
-                           \                       +-- rollback / checkout to here
+                           \                       +-- rollback: revert the wrong step (append-only)
                             \                              |
                              \                             +-- checkout -b: fork a new line, continue the right way
                               \                                          |
-                               +-- cherry-pick the good bits ------------+
-                                          (the old line stays preserved in history)
+                               +-- restore the good bits from -----------+
+                                   any earlier checkpoint
+                                   (the old line stays preserved in history)
                                                   |
                                                   +-- squash -> land only the reviewed result
 ```
 
 When a decision turns out wrong, you don't reprompt the agent to rewrite hundreds of lines from scratch:
 
-1. **Backtrack** to the exact micro-commit where it went wrong (`mgit rollback` / `mgit checkout`),
-2. **Fork** a new line from there (`mgit checkout -b`), preserving the old attempt,
-3. **Cherry-pick** the still-good work from the old line onto the new one (`mgit cherry-pick`), and
-4. **Squash** the corrected micro-commits into one reviewable commit at land.
+1. **Backtrack**: `mgit rollback` reverts the wrong step's task as a new commit; nothing is deleted, and the wrong attempt stays in the history.
+2. **Fork**: `mgit checkout -b` opens a new line, preserving the old attempt.
+3. **Salvage**: `mgit restore <file> --commit <hash>` brings known-good content back from any checkpoint, and `mgit cherry-pick` re-records a step from the old line with its provenance.
+4. **Squash**: the corrected micro-commits land as one reviewable commit.
 
 Micro-granularity earns its keep *in-task* (cheap course-correction plus a fine-grained review surface); the landed artifact is the squashed result. **You can always see and undo exactly what the agent did**: every step, including the abandoned line, stays in an append-only history for review.
 
@@ -207,7 +208,7 @@ The everyday surface:
 | `mgit run -- <command>` | Run a command in the task's microVM (fail-closed; never on the host) |
 | `mgit commit -m MSG` | Create a task-tagged micro-commit (task ID auto-inherited in a worktree) |
 | `mgit log --task-id ID` | View a task's step-by-step history |
-| `mgit rollback --task-id ID [--commit HASH]` | Revert a task or a specific step (append-only) |
+| `mgit rollback --task-id ID [--commit HASH]` | Revert a task with a new commit (append-only; a step's hash resolves its task) |
 | `mgit audit --task-id ID` | Replay who did what, when, from the append-only audit trail |
 | `mgit squash --task-id ID [--to-git]` | Consolidate a task's micro-commits into one reviewable commit |
 | `mgit sandbox land --task-id ID` | Pull, host-verify, and land the sandbox's changes into your repo |
@@ -236,7 +237,7 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 | Command | Description |
 |---------|-------------|
 | `mgit squash --task-id ID [--to-git \| --to-main]` | Consolidate micro-commits into one |
-| `mgit rollback --task-id ID [--commit HASH]` | Revert task or specific commit (append-only) |
+| `mgit rollback --task-id ID [--commit HASH]` | Revert a task with a new commit (append-only; a step's hash resolves its task) |
 | `mgit verify [--task-id ID] [--fix]` | Verify commit chain and index integrity |
 | `mgit audit [--task-id ID] [--since --until]` | View the audit trail |
 | `mgit export --task-id ID --format json\|git\|audit-log` | Export task data |
@@ -283,7 +284,7 @@ Sandbox commands require the host daemon and a guest image, and run on Linux (Fi
 | `mgit diff [--from --to \| --task-id \| --staged]` | Show differences between commits, tasks, or staged files |
 | `mgit checkout BRANCH` | Switch branches (blocks on uncommitted changes) |
 | `mgit merge BRANCH [--squash \| --no-ff]` | Merge with fast-forward, squash, or no-ff strategy |
-| `mgit cherry-pick HASH [--no-commit \| --onto]` | Apply a commit to current or target branch |
+| `mgit cherry-pick HASH [--no-commit \| --onto]` | Re-record a commit on the current or target branch with provenance (byte-level salvage: `mgit restore`) |
 | `mgit restore FILE --commit HASH` | Restore a single file from a commit |
 | `mgit gc [--aggressive]` | Pack loose objects and report space saved |
 | `mgit import --file BUNDLE [--mode merge\|replace]` | Import a bundle with SHA-256 manifest verification |
@@ -348,7 +349,7 @@ mgit is in beta, and this section states plainly what is and is not there yet.
 
 - **Sandbox platforms.** The microVM sandbox ships for Linux (Firecracker/KVM) and macOS, where the default profile runs a **Linux guest** under Apple Virtualization.framework (the right fit for Linux and cross-platform workloads). A mac-native profile for Swift/Xcode/Homebrew workloads is a planned opt-in. On Windows, mgit's core version control runs without the sandbox until the native backend lands.
 - **What mgit is underneath.** mgit is git (go-git) plus an isolated store; the value is the agent workflow and the sandbox-to-land integration, not novel storage. The closest alternative is "git + a scratch-branch convention."
-- **Course-correction maturity.** The backtrack/fork/cherry-pick loop is cheap to do and the agent skills instruct it, but autonomous use by agents has not yet been validated head-to-head. Today the most reliable actor directing course-correction is a reviewer reading the history.
+- **Course-correction maturity.** The backtrack/fork/salvage loop is cheap to do, e2e-tested, and the agent skills instruct it, but autonomous use by agents has not yet been validated head-to-head. Today the most reliable actor directing course-correction is a reviewer reading the history. Two primitives are record-level today: `rollback` and `cherry-pick` write the revert/pick into the append-only history, while byte-level restoration is done with `mgit restore --commit`; making them content-restoring is on the roadmap.
 - **When plain git worktrees are enough.** If you push WIP freely and your agent runs only trusted code, native `git worktree` is lighter and git-native. mgit earns its keep when you can't or won't push WIP (an mgit worktree carries your unpushed local state), when you want a task-to-commit audit trail, and above all when the agent runs untrusted code, which is the capability plain worktrees fundamentally lack.
 
 ## Architecture
