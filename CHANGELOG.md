@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0-beta] - 2026-07-04
+
 ### Documentation
 
 - **README and agent docs now match shipped reality.** Added an "Enable the sandbox" section (install `mgit-sandboxd` per channel, guest image, platform prerequisites) and stated in Quick start that `--sandbox` requires it while everything else works without it, with the no-sandbox integration path (`squash --to-git | git apply`). Corrected two wrong commands the docs advertised: the MCP server is `mgit serve --mcp-only` (there is no `mgit mcp`), and the REST API is `127.0.0.1`-only covering a subset of operations (dropped the unimplemented `mgit token generate` bearer-auth claim). The agent working-discipline skill gains pitfalls for the daemon-less posture, sandbox-only landing, the serve lock, and the now-working MCP worktree tools. (MGIT-49)
