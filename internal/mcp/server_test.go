@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,6 +21,14 @@ func fixedClock() func() time.Time {
 
 func setupTestMCP(t *testing.T) *Server {
 	t.Helper()
+	srv, _ := setupTestMCPWithRepo(t)
+	return srv
+}
+
+// setupTestMCPWithRepo also returns the backing repository, for tests that
+// need to stage real working files (content-bearing commits, MGIT-54).
+func setupTestMCPWithRepo(t *testing.T) (*Server, *gitstore.Repository) {
+	t.Helper()
 	tmpDir := t.TempDir()
 	clock := fixedClock()
 
@@ -32,7 +41,7 @@ func setupTestMCP(t *testing.T) *Server {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = idx.Close() })
 
-	return NewServer(repo, idx)
+	return NewServer(repo, idx), repo
 }
 
 func makeToolReq(args map[string]any) mcptypes.CallToolRequest {
@@ -108,8 +117,12 @@ func TestMCP_SquashTool(t *testing.T) {
 }
 
 func TestMCP_RollbackTool(t *testing.T) {
-	srv := setupTestMCP(t)
+	srv, repo := setupTestMCPWithRepo(t)
 	ctx := context.Background()
+
+	// Rollback reverts REAL tree changes (MGIT-54): stage a file first.
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Root(), "rb.txt"), []byte("v1\n"), 0o600))
+	require.NoError(t, gitstore.NewWorktreeStore(repo).Add(ctx, "rb.txt"))
 
 	_, err := srv.commitTool(ctx, makeToolReq(map[string]any{
 		"task_id": "MGIT-4.1", "message": "to rollback",

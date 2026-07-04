@@ -13,9 +13,9 @@ import (
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
-// --- invertDiffs: comprehensive tests for all operation types ---
+// --- foldDiffs + inverseFromStates: net-and-invert (MGIT-54) ---
 
-func TestInvertDiffs_AllOperations(t *testing.T) {
+func TestFoldAndInvert_AllOperations(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   []model.FileDiff
@@ -28,7 +28,7 @@ func TestInvertDiffs_AllOperations(t *testing.T) {
 			wantLen: 0,
 		},
 		{
-			name: "added_becomes_deleted",
+			name: "added_inverts_to_deleted",
 			input: []model.FileDiff{
 				{Path: "new.go", Operation: model.DiffAdded, NewHash: "abc"},
 			},
@@ -36,7 +36,7 @@ func TestInvertDiffs_AllOperations(t *testing.T) {
 			wantOps: []model.DiffOperation{model.DiffDeleted},
 		},
 		{
-			name: "deleted_becomes_added",
+			name: "deleted_inverts_to_added",
 			input: []model.FileDiff{
 				{Path: "old.go", Operation: model.DiffDeleted, OldHash: "def"},
 			},
@@ -52,15 +52,32 @@ func TestInvertDiffs_AllOperations(t *testing.T) {
 			wantOps: []model.DiffOperation{model.DiffModified},
 		},
 		{
-			name: "renamed_becomes_modified",
+			name: "add_then_delete_nets_to_nothing",
 			input: []model.FileDiff{
-				{Path: "renamed.go", Operation: model.DiffRenamed, OldHash: "x", NewHash: "y"},
+				{Path: "tmp.go", Operation: model.DiffAdded, NewHash: "x"},
+				{Path: "tmp.go", Operation: model.DiffDeleted, OldHash: "x"},
+			},
+			wantLen: 0,
+		},
+		{
+			name: "modify_back_to_original_nets_to_nothing",
+			input: []model.FileDiff{
+				{Path: "a.go", Operation: model.DiffModified, OldHash: "v1", NewHash: "v2"},
+				{Path: "a.go", Operation: model.DiffModified, OldHash: "v2", NewHash: "v1"},
+			},
+			wantLen: 0,
+		},
+		{
+			name: "chain_of_modifies_nets_to_single_inverse",
+			input: []model.FileDiff{
+				{Path: "a.go", Operation: model.DiffModified, OldHash: "v1", NewHash: "v2"},
+				{Path: "a.go", Operation: model.DiffModified, OldHash: "v2", NewHash: "v3"},
 			},
 			wantLen: 1,
 			wantOps: []model.DiffOperation{model.DiffModified},
 		},
 		{
-			name: "multiple_mixed",
+			name: "multiple_mixed_sorted_by_path",
 			input: []model.FileDiff{
 				{Path: "a.go", Operation: model.DiffAdded, NewHash: "1"},
 				{Path: "b.go", Operation: model.DiffDeleted, OldHash: "2"},
@@ -72,13 +89,28 @@ func TestInvertDiffs_AllOperations(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := invertDiffs(tt.input)
+			states := map[string]*pathState{}
+			require.NoError(t, foldDiffs(states, tt.input))
+			result := inverseFromStates(states)
 			assert.Len(t, result, tt.wantLen)
 			for i, wantOp := range tt.wantOps {
 				assert.Equal(t, wantOp, result[i].Operation)
 			}
 		})
 	}
+}
+
+// The inverse of a net modification restores the ORIGINAL hash. Refs: MGIT-54
+func TestInverseFromStates_ModifiedRestoresOriginalHash(t *testing.T) {
+	states := map[string]*pathState{}
+	require.NoError(t, foldDiffs(states, []model.FileDiff{
+		{Path: "a.go", Operation: model.DiffModified, OldHash: "orig", NewHash: "mid"},
+		{Path: "a.go", Operation: model.DiffModified, OldHash: "mid", NewHash: "last"},
+	}))
+	inv := inverseFromStates(states)
+	assert.Len(t, inv, 1)
+	assert.Equal(t, "last", inv[0].OldHash, "inverse expects the task's final state")
+	assert.Equal(t, "orig", inv[0].NewHash, "inverse restores the pre-task state")
 }
 
 // --- mergeDiffs: edge cases ---

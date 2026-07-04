@@ -449,38 +449,36 @@ func TestRollbackService_InvertDiffs_Deleted(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-6.5", AgentID: "a",
-		FileDiffs: []model.FileDiff{
-			{Path: "del.go", Operation: model.DiffDeleted, OldHash: "old"},
-		},
-	})
-	require.NoError(t, err)
+	// A prior task adds the file; the target task deletes it.
+	stageAndCommit(t, env, "MGIT-6.4", "del.go", "package del\n")
+	removeAndCommit(t, env, "MGIT-6.5", "drop del.go", "del.go")
 
 	revert, err := env.rollbk.RollbackTask(ctx, RollbackRequest{
 		TaskID: "MGIT-6.5", DryRun: true,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, model.CommitTypeRollback, revert.CommitType)
+	// Deleting inverts to re-adding the original blob (MGIT-54).
+	require.Len(t, revert.FileDiffs, 1)
+	assert.Equal(t, model.DiffAdded, revert.FileDiffs[0].Operation)
+	assert.Equal(t, "del.go", revert.FileDiffs[0].Path)
 }
 
 func TestRollbackService_InvertDiffs_Modified(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-6.6", AgentID: "a",
-		FileDiffs: []model.FileDiff{
-			{Path: "mod.go", Operation: model.DiffModified, OldHash: "o", NewHash: "n"},
-		},
-	})
-	require.NoError(t, err)
+	stageAndCommit(t, env, "MGIT-6.4", "mod.go", "old\n")
+	stageAndCommit(t, env, "MGIT-6.6", "mod.go", "new\n")
 
 	revert, err := env.rollbk.RollbackTask(ctx, RollbackRequest{
 		TaskID: "MGIT-6.6", DryRun: true,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, model.CommitTypeRollback, revert.CommitType)
+	// Modifying inverts to restoring the original blob (MGIT-54).
+	require.Len(t, revert.FileDiffs, 1)
+	assert.Equal(t, model.DiffModified, revert.FileDiffs[0].Operation)
 }
 
 // --- SquashService gaps ---

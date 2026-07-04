@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -118,6 +119,16 @@ func OpenApp(path string) (*App, error) {
 	// surfaced by `mgit audit` (MGIT-20).
 	audit := service.NewAuditService(auditPath, clock)
 
+	// Complete any content-apply (rollback/cherry-pick) interrupted mid-write:
+	// under the lock, before any command logic or auto-resync can observe a
+	// tip/disk divergence. Refs: MGIT-54 (review finding H3)
+	if err := service.RecoverPendingApply(context.Background(), repo, cs, idx); err != nil {
+		_ = idx.Close()
+		_ = repo.Close()
+		_ = fileLock.Release()
+		return nil, fmt.Errorf("recover pending apply: %w", err)
+	}
+
 	return &App{
 		Repo:      repo,
 		Index:     idx,
@@ -129,7 +140,7 @@ func OpenApp(path string) (*App, error) {
 		Audit:     audit,
 		Config:    cfgSvc,
 		Diff:      service.NewDiffService(ds, cs, idx),
-		Restore:   service.NewRestoreService(cs, path),
+		Restore:   service.NewRestoreService(repo, cs, path),
 		Checkout:  service.NewCheckoutService(bs, ws),
 		Merge:     service.NewMergeService(repo, bs, ms, cs),
 		GC:        service.NewGCService(gcs),

@@ -15,19 +15,16 @@
 #      carries the corrected content, while the abandoned attempt remains
 #      in the append-only history
 #
-# Verified-against-code adaptations vs the README's shorthand:
-#   - `mgit rollback` is TASK-scoped (service.RollbackService.RollbackTask):
-#     a positional commit hash only resolves the owning task; the revert
-#     commit undoes the whole task, append-only. There is no single-commit
-#     revert.
-#   - `mgit checkout` accepts BRANCH NAMES only (cmd/mgit/checkout.go,
-#     cobra.ExactArgs(1) -> CheckoutService.Checkout), so the fork point is
-#     current HEAD, not an arbitrary earlier hash.
-#   - `mgit cherry-pick` records a provenance commit (message + derived task
-#     ID) but does NOT materialize the source content: commit trees are built
-#     from HEAD + staging (internal/store/git/commit.go buildTreeFromStaging);
-#     FileDiffs are metadata. Content-level salvage is `mgit restore <file>
-#     --commit <hash>`, which this script asserts byte-for-byte.
+# Semantics under test (content-restoring since MGIT-54/55):
+#   - `mgit rollback` is TASK-scoped and RESTORES CONTENT: the revert commit's
+#     tree and the working directory return to the pre-task state (append-only;
+#     a positional commit hash resolves its owning task).
+#   - `mgit restore --all --commit <hash>` recovers the WHOLE working tree to a
+#     checkpoint (MGIT-55) — the mechanical "go back to the good point".
+#   - `mgit cherry-pick` MATERIALIZES the picked commit's content on the new
+#     line (conflict-safe) and records its provenance.
+#   - `mgit checkout` remains branch-only; the fork is `checkout -b` at HEAD
+#     after recovering the desired state.
 #
 # Usage: course_correction.sh [bindir]
 #   bindir (optional): a directory to prepend to PATH (where an extracted
@@ -87,6 +84,12 @@ log="$(mgit log --oneline)"
 assert_contains "$log" "$c2" "bad commit is STILL in history after rollback"
 assert_contains "$log" "WRONG DECISION" "bad commit message still readable"
 assert_contains "$(mgit log --task-id "$task")" "pos=3" "revert is indexed as a NEW task position"
+# MGIT-54: the rollback RESTORES the pre-task state on disk (the whole task
+# is reverted — the good parts come back via restore/cherry-pick below).
+[ ! -f config.txt ] || _e2e_fail "config.txt must be gone after rollback (pre-task state)"
+[ ! -f feature.txt ] || _e2e_fail "feature.txt must be gone after rollback (pre-task state)"
+[ ! -f util.txt ] || _e2e_fail "util.txt must be gone after rollback (pre-task state)"
+pass "rollback restored the pre-task working tree (content-level, MGIT-54)"
 audit="$(mgit audit)"
 assert_contains "$audit" "ROLLBACK" "audit records the rollback"
 assert_contains "$audit" "$c2" "audit still holds the bad commit (append-only)"
@@ -97,21 +100,24 @@ assert_contains "$out" "Switched to branch rescue/$task" "checkout -b switched t
 assert_contains "$(mgit branch)" "* rescue/$task" "fork line is the current branch"
 assert_contains "$(mgit log --oneline)" "$c2" "old attempt visible from the fork line"
 
-echo "== salvage: restore good content from a checkpoint + cherry-pick =="
-out="$(mgit restore config.txt --commit "$c1")"
-assert_contains "$out" "Restored config.txt" "restore pulls the file from the good checkpoint"
-assert_contains "$(cat config.txt)" "mode = safe" "restored content is the pre-mistake bytes"
+echo "== salvage: restore --all to the good checkpoint + cherry-pick =="
+# MGIT-55: one command returns the whole tree to the good checkpoint.
+out="$(mgit restore --all --commit "$c1")"
+assert_contains "$out" "Restored working tree to checkpoint" "restore --all recovers the checkpoint"
+assert_contains "$(cat config.txt)" "mode = safe" "restored config is the pre-mistake bytes"
 assert_not_contains "$(cat config.txt)" "WRONG" "wrong content is gone from the working tree"
-mgit add config.txt >/dev/null
-fix="$(short_hash "$(mgit commit --task-id "$task" -m 'course-correct: restore safe config')")"
+assert_contains "$(cat feature.txt)" "feature v1" "good feature work recovered with the checkpoint"
+[ ! -f util.txt ] || _e2e_fail "util.txt postdates the checkpoint and must not be restored by it"
+mgit add . >/dev/null
+fix="$(short_hash "$(mgit commit --task-id "$task" -m 'course-correct: recover good checkpoint')")"
 [ -n "$fix" ] || _e2e_fail "course-correction commit not created"
-pass "course-correction committed on the fork ($fix)"
-# cherry-pick re-records the still-good commit on the new line with derived
-# task provenance (content already carried by ancestry; see header note).
+pass "recovered checkpoint committed on the fork ($fix)"
+# MGIT-54: cherry-pick MATERIALIZES the still-good commit's content (util.txt
+# was NOT on disk before this — the bytes below prove real application).
 out="$(mgit cherry-pick "$c3")"
 assert_contains "$out" "cherry-picked from $c3" "cherry-pick recorded the salvaged commit"
 assert_contains "$(mgit log --oneline)" "cherry-pick $c3" "pick commit carries source provenance"
-assert_contains "$(cat util.txt)" "util v1" "salvaged util content present on the fork line"
+assert_contains "$(cat util.txt)" "util v1" "picked content MATERIALIZED on disk (MGIT-54)"
 
 echo "== land: squash to ONE artifact; abandoned attempt stays visible =="
 out="$(mgit squash --task-id "$task" --to-git --to-git-output "$work/cc.patch")"
@@ -119,6 +125,8 @@ assert_contains "$out" "Wrote git patch" "squash exported the task patch"
 assert_file "$work/cc.patch" "squash artifact patch exists"
 assert_contains "$(head -1 "$work/cc.patch")" "From " "patch is git format-patch shaped"
 assert_contains "$(cat "$work/cc.patch")" "+mode = safe" "landed artifact carries the CORRECTED content"
+assert_contains "$(cat "$work/cc.patch")" "+feature v1" "landed artifact carries the recovered feature work"
+assert_contains "$(cat "$work/cc.patch")" "+util v1" "landed artifact carries the cherry-picked util"
 assert_not_contains "$(grep '^+mode' "$work/cc.patch")" "WRONG" "landed artifact does NOT carry the wrong content"
 assert_contains "$(mgit branch)" "task/$task" "squash landed on its own task branch"
 squashes="$(mgit audit --type SQUASH | wc -l | tr -d ' ')"

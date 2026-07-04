@@ -125,7 +125,12 @@ mgit checkout <good-hash>          # move to the decision point
 mgit checkout -b task/MGIT-12.3-v2 # fork a new branch from here
 ```
 
-**Salvage** — cherry-pick the still-good work from the old line onto the new one:
+**Salvage** — recover the good state, then re-apply still-good work. `mgit
+restore --all --commit <good-hash>` returns the whole working tree to any
+checkpoint (nothing is committed; review and commit it as your next step).
+Then cherry-pick the still-good work from the old line onto the new one
+(cherry-pick applies real content, conflict-safe; it refuses rather than
+clobbering a diverged or dirty path):
 
 ```bash
 mgit cherry-pick <useful-hash>                       # apply onto current branch

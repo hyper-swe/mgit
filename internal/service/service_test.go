@@ -235,10 +235,7 @@ func TestRollbackService_RollbackTask(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-6.1", AgentID: "agent-01", Message: "to be reverted",
-	})
-	require.NoError(t, err)
+	stageAndCommit(t, env, "MGIT-6.1", "reverted.txt", "to be reverted\n")
 
 	revert, err := env.rollbk.RollbackTask(ctx, RollbackRequest{TaskID: "MGIT-6.1"})
 	require.NoError(t, err)
@@ -250,10 +247,7 @@ func TestRollbackService_RollbackTask_DryRun(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-6.2", AgentID: "agent-01", Message: "commit",
-	})
-	require.NoError(t, err)
+	stageAndCommit(t, env, "MGIT-6.2", "dry.txt", "content\n")
 
 	before, err := env.idx.GetTaskCommits(ctx, "MGIT-6.2")
 	require.NoError(t, err)
@@ -271,33 +265,25 @@ func TestRollbackService_RollbackTask_InverseDiff(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-6.3", AgentID: "agent-01",
-		FileDiffs: []model.FileDiff{
-			{Path: "new.go", Operation: model.DiffAdded, NewHash: "abc"},
-		},
-	})
-	require.NoError(t, err)
+	stageAndCommit(t, env, "MGIT-6.3", "new.go", "package new\n")
 
 	revert, err := env.rollbk.RollbackTask(ctx, RollbackRequest{TaskID: "MGIT-6.3", DryRun: true})
 	require.NoError(t, err)
 	assert.Equal(t, model.CommitTypeRollback, revert.CommitType)
-	// go-git commits don't carry mgit FileDiffs, so inverse diffs
-	// will be empty when read back from go-git. Full diff tracking
-	// requires storing diffs in the SQLite index (future enhancement).
-	assert.NotNil(t, revert.FileDiffs)
+	// The inverse diffs are REAL (derived from trees, MGIT-54): the task added
+	// new.go, so its rollback deletes it.
+	require.Len(t, revert.FileDiffs, 1)
+	assert.Equal(t, "new.go", revert.FileDiffs[0].Path)
+	assert.Equal(t, model.DiffDeleted, revert.FileDiffs[0].Operation)
 }
 
 func TestRollbackService_RollbackTask_KeepsHistory(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
-	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-6.4", AgentID: "agent-01", Message: "original",
-	})
-	require.NoError(t, err)
+	stageAndCommit(t, env, "MGIT-6.4", "orig.txt", "original\n")
 
-	_, err = env.rollbk.RollbackTask(ctx, RollbackRequest{TaskID: "MGIT-6.4"})
+	_, err := env.rollbk.RollbackTask(ctx, RollbackRequest{TaskID: "MGIT-6.4"})
 	require.NoError(t, err)
 
 	// Both original and revert should be in index

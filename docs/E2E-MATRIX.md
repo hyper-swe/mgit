@@ -20,8 +20,8 @@ environment (skips in hosted CI) · **unit** unit/integration tests only ·
 | task-tagged `commit` in a worktree (auto-inherited task) | e2e | core_loop.sh |
 | `add`, `status`, `log`, `verify`, `audit` | e2e | core_loop.sh |
 | `squash --to-git \| git apply` round-trip | e2e | core_loop.sh |
-| **Course-correction loop** (rollback record → fork → `restore --commit` salvage → provenance cherry-pick → squash, append-only) | e2e | course_correction.sh |
-| `checkout -b` / `cherry-pick` / `rollback` / `restore --commit` | e2e | course_correction.sh (note: rollback/cherry-pick are record-level today → MGIT-54; whole-tree checkpoint recovery → MGIT-55) |
+| **Course-correction loop** (content-restoring rollback → fork → `restore --all` checkpoint recovery → materializing cherry-pick → squash, append-only) | e2e | course_correction.sh |
+| `checkout -b` / `cherry-pick` / `rollback` / `restore [--all] --commit` | e2e | course_correction.sh (content-restoring semantics since MGIT-54/55) |
 | Install channels produce working binaries (`go install`, release archive incl. `mgit-sandboxd`) | e2e | e2e.yml install-channels matrix |
 | Daemon-less honest posture (`mgit work` open, no shims, truthful CLAUDE.md, `Containment:` line) | e2e | daemonless_posture.sh |
 | `mgit run` fails closed with install pointer when no daemon | e2e | daemonless_posture.sh |

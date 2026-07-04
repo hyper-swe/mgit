@@ -57,7 +57,7 @@ func TestRestore_ValidFileAndCommit_RestoresContent(t *testing.T) {
 	target := filepath.Join(env.repo.Root(), relPath)
 	require.NoError(t, os.WriteFile(target, []byte(modified), 0o600))
 
-	rs := service.NewRestoreService(gitstore.NewCommitStore(env.repo), env.repo.Root())
+	rs := service.NewRestoreService(env.repo, gitstore.NewCommitStore(env.repo), env.repo.Root())
 	result, err := rs.RestoreFile(ctx, relPath, hash)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -82,7 +82,7 @@ func TestRestore_InvalidCommit_ReturnsError(t *testing.T) {
 	// Seed at least one valid commit so the worktree is non-empty.
 	stageAndCommit(t, env, "a.txt", "hello\n", "MGIT-4.2.8")
 
-	rs := service.NewRestoreService(gitstore.NewCommitStore(env.repo), env.repo.Root())
+	rs := service.NewRestoreService(env.repo, gitstore.NewCommitStore(env.repo), env.repo.Root())
 	_, err := rs.RestoreFile(ctx, "a.txt", "0000000000000000000000000000000000000000")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, model.ErrCommitNotFound),
@@ -98,7 +98,7 @@ func TestRestore_FileNotInCommit_ReturnsError(t *testing.T) {
 
 	hash := stageAndCommit(t, env, "exists.txt", "yes\n", "MGIT-4.2.8")
 
-	rs := service.NewRestoreService(gitstore.NewCommitStore(env.repo), env.repo.Root())
+	rs := service.NewRestoreService(env.repo, gitstore.NewCommitStore(env.repo), env.repo.Root())
 	_, err := rs.RestoreFile(ctx, "missing.txt", hash)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, model.ErrFileNotFound),
@@ -113,7 +113,7 @@ func TestRestore_NoArgs_ReturnsUsageError(t *testing.T) {
 	env := setupServiceEnv(t)
 	ctx := context.Background()
 
-	rs := service.NewRestoreService(gitstore.NewCommitStore(env.repo), env.repo.Root())
+	rs := service.NewRestoreService(env.repo, gitstore.NewCommitStore(env.repo), env.repo.Root())
 
 	_, err := rs.RestoreFile(ctx, "", "deadbeef")
 	require.Error(t, err)

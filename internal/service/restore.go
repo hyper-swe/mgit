@@ -7,25 +7,111 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hyper-swe/mgit/internal/model"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
-// RestoreService restores a single file from a specific commit without
-// performing a rollback or creating a new commit.
-// Refs: FR-6.7, MGIT-4.2.8
+// RestoreService restores file content from a specific commit without
+// performing a rollback or creating a new commit — per file (RestoreFile) or
+// the whole working tree (RestoreAll, MGIT-55).
+// Refs: FR-6.7, MGIT-4.2.8, MGIT-55
 type RestoreService struct {
 	commitStore *gitstore.CommitStore
+	repo        *gitstore.Repository
 	repoRoot    string
 }
 
-// NewRestoreService creates a RestoreService backed by the given commit
-// store. repoRoot is the working-directory root into which restored
-// files will be written.
-func NewRestoreService(cs *gitstore.CommitStore, repoRoot string) *RestoreService {
+// NewRestoreService creates a RestoreService backed by the given repository
+// and commit store. repoRoot is the working-directory root into which
+// restored files will be written.
+func NewRestoreService(repo *gitstore.Repository, cs *gitstore.CommitStore, repoRoot string) *RestoreService {
 	return &RestoreService{
 		commitStore: cs,
+		repo:        repo,
 		repoRoot:    repoRoot,
 	}
+}
+
+// RestoreAllResult holds the outcome of a whole-tree restore.
+// Refs: MGIT-55
+type RestoreAllResult struct {
+	CommitHash   string `json:"commit_hash"`
+	FilesChanged int    `json:"files_changed"`
+	Status       string `json:"status"`
+}
+
+// RestoreAll returns the entire working tree to the state of the given
+// checkpoint commit, comparing the checkpoint against the DISK state (not
+// the committed tree), so it recovers a trashed-but-uncommitted tree — the
+// scenario checkpoint recovery exists for. Files are rewritten to the
+// checkpoint's content/mode; paths tracked at the tip but absent from the
+// checkpoint are removed; untracked files unknown to both are left alone.
+//
+// Safety: when the restore would overwrite UNCOMMITTED local state (staged
+// paths, or disk diverging from the current tip) it refuses with
+// ErrContentConflict unless force is set — recovery of a trashed tree is
+// exactly that overwrite, so it is an explicit `--force` away, never silent.
+//
+// No commit is minted; the restored paths are STAGED so the agent's next
+// commit lands them as its task step — and so the status-time auto-resync
+// treats them as task work-in-progress rather than absorbing them into an
+// anonymous base commit (the MGIT-56 failure mode). Restoring to a state
+// disk already matches is an idempotent no-op.
+// Refs: MGIT-55, FR-6.7 (review findings M1, M2)
+func (s *RestoreService) RestoreAll(ctx context.Context, hash string, force bool) (*RestoreAllResult, error) {
+	target, err := s.commitStore.GetCommit(ctx, hash)
+	if err != nil {
+		return nil, fmt.Errorf("restore --all: %w", err)
+	}
+
+	apply, uncommitted, err := s.repo.ComputeRestoreDiffs(target.CommitID)
+	if err != nil {
+		return nil, fmt.Errorf("restore --all: %w", err)
+	}
+	if len(apply) == 0 {
+		return &RestoreAllResult{CommitHash: target.CommitID, Status: "unchanged"}, nil
+	}
+	if len(uncommitted) > 0 && !force {
+		return nil, fmt.Errorf("restore --all: %w: would overwrite uncommitted local changes on %s "+
+			"(pass --force to restore over them)", model.ErrContentConflict, strings.Join(uncommitted, ", "))
+	}
+
+	if err := s.repo.MaterializeDiffs(apply); err != nil {
+		return nil, fmt.Errorf("restore --all: %w", err)
+	}
+	// Stage the restored paths (task WIP for the next commit; keeps the
+	// auto-resync from absorbing them — MGIT-56).
+	if err := s.stageRestored(apply); err != nil {
+		return nil, fmt.Errorf("restore --all: %w", err)
+	}
+	return &RestoreAllResult{
+		CommitHash:   target.CommitID,
+		FilesChanged: len(apply),
+		Status:       "restored",
+	}, nil
+}
+
+// stageRestored adds the restored paths to the staging selection, preserving
+// whatever was already staged. Refs: MGIT-55 (review finding M2)
+func (s *RestoreService) stageRestored(apply []model.FileDiff) error {
+	staged, err := s.repo.StagedSnapshot()
+	if err != nil {
+		return fmt.Errorf("snapshot staging: %w", err)
+	}
+	have := make(map[string]bool, len(staged))
+	for _, p := range staged {
+		have[p] = true
+	}
+	for _, d := range apply {
+		if !have[d.Path] {
+			staged = append(staged, d.Path)
+			have[d.Path] = true
+		}
+	}
+	if err := s.repo.RestoreStaging(staged); err != nil {
+		return fmt.Errorf("stage restored paths: %w", err)
+	}
+	return nil
 }
 
 // RestoreResult holds the outcome of a restore operation, suitable for

@@ -94,14 +94,9 @@ func TestE2E_RollbackWorkflow(t *testing.T) {
 	env := setupServiceEnv(t)
 	ctx := context.Background()
 
-	// 1. Create 3 commits
+	// 1. Create 3 commits with real tree changes (MGIT-54)
 	for i := range 3 {
-		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  "MGIT-3.1",
-			AgentID: "e2e-agent",
-			Message: fmt.Sprintf("commit %d", i+1),
-		})
-		require.NoError(t, err)
+		stageFileCommit(t, env, "MGIT-3.1", "life.txt", fmt.Sprintf("version %d\n", i+1))
 	}
 
 	// 2. Rollback

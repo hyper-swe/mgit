@@ -43,7 +43,7 @@ func TestRestoreService_RestoreFile_Valid(t *testing.T) {
 	// Remove the file so we can restore it.
 	require.NoError(t, os.Remove(filepath.Join(repoRoot, "hello.txt")))
 
-	restoreSvc := NewRestoreService(env.cs, repoRoot)
+	restoreSvc := NewRestoreService(env.repo, env.cs, repoRoot)
 	result, err := restoreSvc.RestoreFile(ctx, "hello.txt", c.CommitID)
 	require.NoError(t, err)
 	assert.Equal(t, "hello.txt", result.Path)
@@ -60,7 +60,7 @@ func TestRestoreService_RestoreFile_EmptyPath(t *testing.T) {
 	ctx := context.Background()
 	repoRoot := filepath.Dir(env.repo.MgitDir())
 
-	restoreSvc := NewRestoreService(env.cs, repoRoot)
+	restoreSvc := NewRestoreService(env.repo, env.cs, repoRoot)
 	_, err := restoreSvc.RestoreFile(ctx, "", "somehash")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "path must not be empty")
@@ -71,7 +71,7 @@ func TestRestoreService_RestoreFile_EmptyHash(t *testing.T) {
 	ctx := context.Background()
 	repoRoot := filepath.Dir(env.repo.MgitDir())
 
-	restoreSvc := NewRestoreService(env.cs, repoRoot)
+	restoreSvc := NewRestoreService(env.repo, env.cs, repoRoot)
 	_, err := restoreSvc.RestoreFile(ctx, "main.go", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "commit hash must not be empty")
@@ -82,7 +82,7 @@ func TestRestoreService_RestoreFile_PathTraversal(t *testing.T) {
 	ctx := context.Background()
 	repoRoot := filepath.Dir(env.repo.MgitDir())
 
-	restoreSvc := NewRestoreService(env.cs, repoRoot)
+	restoreSvc := NewRestoreService(env.repo, env.cs, repoRoot)
 
 	tests := []struct {
 		name string
@@ -106,7 +106,7 @@ func TestRestoreService_RestoreFile_InvalidHash(t *testing.T) {
 	ctx := context.Background()
 	repoRoot := filepath.Dir(env.repo.MgitDir())
 
-	restoreSvc := NewRestoreService(env.cs, repoRoot)
+	restoreSvc := NewRestoreService(env.repo, env.cs, repoRoot)
 	_, err := restoreSvc.RestoreFile(ctx, "main.go", "nonexistenthash")
 	assert.Error(t, err)
 }
@@ -128,7 +128,7 @@ func TestRestoreService_RestoreFile_CreatesParentDir(t *testing.T) {
 	// Remove the parent dir.
 	require.NoError(t, os.RemoveAll(filepath.Join(repoRoot, "sub")))
 
-	restoreSvc := NewRestoreService(env.cs, repoRoot)
+	restoreSvc := NewRestoreService(env.repo, env.cs, repoRoot)
 	result, err := restoreSvc.RestoreFile(ctx, "sub/dir/nested.txt", c.CommitID)
 	require.NoError(t, err)
 	assert.Equal(t, "restored", result.Status)

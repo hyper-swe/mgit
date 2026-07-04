@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	fmtdiff "github.com/go-git/go-git/v5/plumbing/format/diff"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/utils/merkletrie"
@@ -134,19 +135,39 @@ func changeToFileDiff(change *object.Change) model.FileDiff {
 		fd.Path = change.To.Name
 		fd.Operation = model.DiffAdded
 		fd.NewHash = change.To.TreeEntry.Hash.String()
+		fd.Mode = diffModeFromGit(change.To.TreeEntry.Mode)
 	case merkletrie.Delete:
 		fd.Path = change.From.Name
 		fd.Operation = model.DiffDeleted
 		fd.OldHash = change.From.TreeEntry.Hash.String()
+		fd.Mode = diffModeFromGit(change.From.TreeEntry.Mode)
+		fd.OldMode = diffModeFromGit(change.From.TreeEntry.Mode)
 	case merkletrie.Modify:
 		fd.Path = change.To.Name
 		fd.Operation = model.DiffModified
 		fd.OldHash = change.From.TreeEntry.Hash.String()
 		fd.NewHash = change.To.TreeEntry.Hash.String()
+		fd.Mode = diffModeFromGit(change.To.TreeEntry.Mode)
+		fd.OldMode = diffModeFromGit(change.From.TreeEntry.Mode)
 	}
 
 	fd.Hunks = changeHunks(change)
 	return fd
+}
+
+// diffModeFromGit is the inverse of gitModeFromDiff (tree.go): it records the
+// git file mode on a FileDiff so a tree rebuilt from diffs (rollback,
+// cherry-pick — MGIT-54) preserves the executable bit / symlink-ness instead
+// of collapsing everything to a regular file. Refs: MGIT-54, MGIT-16
+func diffModeFromGit(m filemode.FileMode) model.FileDiffMode {
+	switch m {
+	case filemode.Executable:
+		return model.FileModeExecutable
+	case filemode.Symlink:
+		return model.FileModeSymlink
+	default:
+		return model.FileModeRegular
+	}
 }
 
 // changeHunks renders a single display hunk (line content with +/-/space

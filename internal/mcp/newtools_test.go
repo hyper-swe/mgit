@@ -171,8 +171,12 @@ func TestMCP_DiffTool_CommitPair(t *testing.T) {
 // TestMCP_SquashRollbackBranch_SuccessPaths covers the write tools' success
 // paths end to end: commit → squash → rollback, and branch create. Refs: MGIT-50
 func TestMCP_SquashRollbackBranch_SuccessPaths(t *testing.T) {
-	srv := setupTestMCP(t)
+	srv, repo := setupTestMCPWithRepo(t)
 	ctx := context.Background()
+
+	// Rollback reverts REAL tree changes (MGIT-54): stage a file first.
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Root(), "sq.txt"), []byte("v1\n"), 0o600))
+	require.NoError(t, gitstore.NewWorktreeStore(repo).Add(ctx, "sq.txt"))
 
 	_, err := srv.commitTool(ctx, makeToolReq(map[string]any{"task_id": "MGIT-8.1", "message": "s1"}))
 	require.NoError(t, err)

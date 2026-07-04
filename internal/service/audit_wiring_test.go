@@ -103,10 +103,7 @@ func TestRollbackService_RollbackTask_AppendsAuditEntry(t *testing.T) {
 	env, audit := setupAuditEnv(t)
 	ctx := context.Background()
 
-	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-20.5", AgentID: "agent-audit", Message: "c",
-	})
-	require.NoError(t, err)
+	stageAndCommit(t, env, "MGIT-20.5", "audited.txt", "c\n")
 
 	rb, err := env.rollbk.RollbackTask(ctx, RollbackRequest{TaskID: "MGIT-20.5"})
 	require.NoError(t, err)
@@ -123,12 +120,9 @@ func TestRollbackService_RollbackTask_DryRun_NoAuditEntry(t *testing.T) {
 	env, audit := setupAuditEnv(t)
 	ctx := context.Background()
 
-	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-20.6", AgentID: "agent-audit", Message: "c",
-	})
-	require.NoError(t, err)
+	stageAndCommit(t, env, "MGIT-20.6", "audited2.txt", "c\n")
 
-	_, err = env.rollbk.RollbackTask(ctx, RollbackRequest{TaskID: "MGIT-20.6", DryRun: true})
+	_, err := env.rollbk.RollbackTask(ctx, RollbackRequest{TaskID: "MGIT-20.6", DryRun: true})
 	require.NoError(t, err)
 
 	entries, err := audit.GetAuditLog(AuditFilters{Operation: AuditRollback})

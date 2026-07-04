@@ -53,6 +53,13 @@ var (
 	// ErrRollbackConflict indicates a rollback conflicts with current state.
 	ErrRollbackConflict = errors.New("rollback conflict")
 
+	// ErrContentConflict indicates a diff cannot be applied because the target
+	// tree's content at a path no longer matches the diff's expected old state
+	// (the file changed since the diff was computed). Content-applying verbs
+	// (rollback, cherry-pick) fail with this rather than silently clobbering.
+	// Refs: MGIT-54
+	ErrContentConflict = errors.New("content conflict")
+
 	// ErrInvalidDiff indicates a diff structure is malformed.
 	ErrInvalidDiff = errors.New("invalid diff")
 

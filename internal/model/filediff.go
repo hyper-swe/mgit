@@ -75,6 +75,12 @@ type FileDiff struct {
 	// (120000) entry through the diff-apply path. Ignored for deletions.
 	// Refs: FR-11, MGIT-16
 	Mode FileDiffMode `json:"mode,omitempty"`
+	// OldMode is the git file mode of the PRE-change entry (the From side of a
+	// modify/delete). It lets an inverse application (rollback) restore the
+	// original object type — without it a regular↔symlink type change would be
+	// reverted with the post-change mode, corrupting the restored entry.
+	// Zero value means regular, mirroring Mode. Refs: MGIT-54
+	OldMode FileDiffMode `json:"old_mode,omitempty"`
 }
 
 // Validate checks that the FileDiff has a non-empty path and valid operation.

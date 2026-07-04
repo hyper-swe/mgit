@@ -179,15 +179,9 @@ func TestWorktreeIntegration_RollbackInWorktree(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Create two commits on the bound task, then roll back the task.
-	_, err = env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-		TaskID: taskID, AgentID: "agent-rb", Message: "first",
-	})
-	require.NoError(t, err)
-	_, err = env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-		TaskID: taskID, AgentID: "agent-rb", Message: "second",
-	})
-	require.NoError(t, err)
+	// Create two content-bearing commits on the bound task, then roll back.
+	stageFileCommit(t, env, taskID, "wtrb.txt", "first\n")
+	stageFileCommit(t, env, taskID, "wtrb.txt", "second\n")
 
 	rb, err := env.rollback.RollbackTask(ctx, service.RollbackRequest{
 		TaskID: taskID,

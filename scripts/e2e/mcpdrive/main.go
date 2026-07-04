@@ -243,18 +243,26 @@ func driveConfig(ctx context.Context, cli *client.Client) error {
 }
 
 // driveCommitAndReads stages a real file (via the CLI — staging has no MCP
-// tool), commits it through mgit_commit, and asserts the read tools (log,
-// show, diff) all agree on the result. Returns the new commit's hash prefix
-// parsed from the mgit_commit response.
+// tool), checks status, commits it through mgit_commit, and asserts the read
+// tools (log, show, diff) all agree on the result. Returns the new commit's
+// hash prefix parsed from the mgit_commit response.
 //
-// Deliberately NO mgit_status call between staging and this commit: status
-// runs the ADR-008 base resync, which absorbs new working files into a
-// [mgit-sync] base commit and would make this task's net diff empty (the CLI
-// behaves identically). The status assertions run in driveRollback instead.
+// The stage -> status -> commit order is deliberate: this is the NATURAL
+// agent flow, and it regresses MGIT-56 — the status-time ADR-008 resync used
+// to absorb the staged file into the [mgit-sync] base, silently emptying this
+// task's net diff (asserted non-empty in assertLogShowDiff below).
 func driveCommitAndReads(ctx context.Context, cli *client.Client, mgitBin, repo string) (string, error) {
 	if err := stageFile(ctx, mgitBin, repo, "feature.txt", "hello from mcpdrive\n"); err != nil {
 		return "", err
 	}
+	statusText, err := callText(ctx, cli, "mgit_status", nil)
+	if err != nil {
+		return "", err
+	}
+	if !strings.Contains(statusText, "feature.txt") {
+		return "", fmt.Errorf("mgit_status did not report the staged file pre-commit: %s", statusText)
+	}
+	ok("mgit_status between stage and first commit (natural order, MGIT-56)")
 
 	commitText, err := callText(ctx, cli, "mgit_commit", map[string]any{
 		"task_id": "MCP-CORE-1", "message": "add feature file", "agent_id": "mcpdrive-e2e",
@@ -405,11 +413,8 @@ func driveSquash(ctx context.Context, cli *client.Client) error {
 }
 
 // driveRollback commits a second task and rolls it back, asserting the
-// append-only revert commit appears in mgit_log afterwards. The mgit_status
-// assertions live here (staged file visible, then clean after commit): status
-// triggers the ADR-008 base resync, which is harmless to this task's
-// assertions but would have emptied MCP-CORE-1's net diff (see
-// driveCommitAndReads).
+// append-only revert commit appears in mgit_log AND that the rollback
+// restored content (MGIT-54): the task-added file is gone from disk after.
 func driveRollback(ctx context.Context, cli *client.Client, mgitBin, repo string) error {
 	if err := stageFile(ctx, mgitBin, repo, "rollme.txt", "to be rolled back\n"); err != nil {
 		return err
@@ -442,6 +447,10 @@ func driveRollback(ctx context.Context, cli *client.Client, mgitBin, repo string
 	if err != nil {
 		return err
 	}
+	if _, statErr := os.Stat(filepath.Join(repo, "rollme.txt")); !os.IsNotExist(statErr) {
+		return fmt.Errorf("rollback must remove the task-added file from disk (MGIT-54); stat err: %w", statErr)
+	}
+	ok("mgit_rollback restored the working tree (task file removed, MGIT-54)")
 	if !strings.Contains(rbText, "Revert") || !strings.Contains(rbText, "MCP-CORE-3") {
 		return fmt.Errorf("mgit_rollback result is not a revert for the task: %s", rbText)
 	}

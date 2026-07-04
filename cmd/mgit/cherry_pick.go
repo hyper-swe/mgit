@@ -40,47 +40,37 @@ func cherryPickCmd() *cobra.Command {
 				return fmt.Errorf("cannot cherry-pick --onto from a linked worktree (bound to task %s)", app.BoundTask)
 			}
 
-			// --onto: switch to the target branch before cherry-picking.
+			// --onto: switch to the target branch via the CHECKOUT service so the
+			// working tree is materialized to the target (and dirty trees are
+			// blocked) — a bare ref switch would leave disk reflecting the old
+			// branch while the content-applying pick writes into it (MGIT-54 M5).
 			if onto != "" {
-				if err := app.Branch.SwitchBranch(ctx, onto); err != nil {
-					return fmt.Errorf("cherry-pick --onto: switch branch: %w", err)
+				if _, err := app.Checkout.Checkout(ctx, onto); err != nil {
+					return fmt.Errorf("cherry-pick --onto: %w", err)
 				}
-			}
-
-			// Get the source commit
-			source, err := app.Commit.GetCommit(ctx, args[0])
-			if err != nil {
-				return fmt.Errorf("cherry-pick: %w", err)
 			}
 
 			// --no-commit: print what would be cherry-picked without creating a commit.
 			if noCommit {
+				source, err := app.Commit.GetCommit(ctx, args[0])
+				if err != nil {
+					return fmt.Errorf("cherry-pick: %w", err)
+				}
 				_, _ = fmt.Fprintf(os.Stdout, "[no-commit] Would cherry-pick %s: %s\n", source.ShortID(), source.Message)
 				return nil
 			}
 
-			// Resolve the task for the new commit: explicit --task-id wins,
-			// otherwise derive it from the source commit's provenance.
-			pickTask := taskID
-			if pickTask == "" {
-				pickTask = source.TaskID.String()
-			}
-			if pickTask == "" {
-				return fmt.Errorf("cherry-pick: source commit %s has no task ID; pass --task-id", source.ShortID())
-			}
-
-			// Create a new commit with the same content on current branch
-			c, err := app.Commit.CreateCommit(ctx, service.CreateCommitRequest{
-				TaskID:    pickTask,
-				AgentID:   "mgit-cherry-pick",
-				Message:   fmt.Sprintf("cherry-pick %s: %s", source.ShortID(), source.Message),
-				FileDiffs: source.FileDiffs,
+			// The pick itself (content-applying, conflict-safe -- MGIT-54)
+			// lives in the service layer.
+			c, err := app.Commit.CherryPick(ctx, service.CherryPickRequest{
+				SourceHash: args[0],
+				TaskID:     taskID,
 			})
 			if err != nil {
-				return fmt.Errorf("cherry-pick: %w", err)
+				return err
 			}
 
-			_, _ = fmt.Fprintf(os.Stdout, "[%s] cherry-picked from %s\n", c.ShortID(), source.ShortID())
+			_, _ = fmt.Fprintf(os.Stdout, "[%s] cherry-picked from %s\n", c.ShortID(), args[0])
 			return nil
 		},
 	}

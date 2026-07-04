@@ -143,6 +143,21 @@ func (s *SyncService) resync(ctx context.Context, local *gitref.LocalState, live
 	if err := s.worktree.Add(ctx, "."); err != nil {
 		return fmt.Errorf("sync: stage working tree: %w", err)
 	}
+	// MGIT-56: paths the user had ALREADY staged are pending task work, not
+	// project drift — exclude their content from base absorption, or the
+	// task's first commit has no delta against the base (an empty net diff,
+	// losing the review surface and squash content). The base advances on the
+	// project's state, never on the task's in-flight work. (H2 above restored
+	// the staging SELECTION; this keeps the CONTENT out of the base too.)
+	if len(stagedBefore) > 0 {
+		all, snapErr := s.repo.StagedSnapshot()
+		if snapErr != nil {
+			return fmt.Errorf("sync: snapshot absorbed staging: %w", snapErr)
+		}
+		if err := s.repo.RestoreStaging(subtractPaths(all, stagedBefore)); err != nil {
+			return fmt.Errorf("sync: exclude task WIP from base: %w", err)
+		}
+	}
 	clean, err := s.commitStore.StagedTreeMatchesHead()
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)
@@ -188,6 +203,22 @@ func (s *SyncService) applyResync(ctx context.Context, clean bool, local *gitref
 		return "", fmt.Errorf("sync: append base commit: %w", err)
 	}
 	return hash, nil
+}
+
+// subtractPaths returns the elements of all that are not in exclude,
+// preserving order. Refs: MGIT-56
+func subtractPaths(all, exclude []string) []string {
+	ex := make(map[string]bool, len(exclude))
+	for _, p := range exclude {
+		ex[p] = true
+	}
+	var out []string
+	for _, p := range all {
+		if !ex[p] {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // short returns a 12-char prefix of a commit id for log messages.

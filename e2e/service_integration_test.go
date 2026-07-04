@@ -6,6 +6,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -80,6 +81,20 @@ func setupServiceEnv(t *testing.T) *serviceEnv {
 	}
 }
 
+// stageFileCommit writes a file into the repo root, stages it, and commits it
+// under taskID — rollback needs commits with REAL tree changes (MGIT-54).
+func stageFileCommit(t *testing.T, env *serviceEnv, taskID, rel, content string) *model.Commit {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, os.WriteFile(filepath.Join(env.repo.Root(), rel), []byte(content), 0o600))
+	require.NoError(t, env.worktree.Add(ctx, rel))
+	c, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
+		TaskID: taskID, AgentID: "e2e-agent", Message: "edit " + rel,
+	})
+	require.NoError(t, err)
+	return c
+}
+
 // --- MGIT-3.3.1: Commit + Squash Integration ---
 
 func TestIntegration_CommitAndSquash_Successful(t *testing.T) {
@@ -127,14 +142,9 @@ func TestIntegration_RollbackAndVerify_Successful(t *testing.T) {
 	env := setupServiceEnv(t)
 	ctx := context.Background()
 
-	// 1. Create 3 commits
+	// 1. Create 3 commits with real tree changes (MGIT-54)
 	for i := range 3 {
-		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  "MGIT-2.1.1",
-			AgentID: "agent-01",
-			Message: fmt.Sprintf("commit %d", i+1),
-		})
-		require.NoError(t, err)
+		stageFileCommit(t, env, "MGIT-2.1.1", "rb.txt", fmt.Sprintf("version %d\n", i+1))
 	}
 
 	// 2. Dry-run rollback

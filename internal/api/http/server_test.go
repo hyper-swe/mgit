@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,6 +24,14 @@ func fixedClock() func() time.Time {
 
 func setupTestServer(t *testing.T) *Server {
 	t.Helper()
+	srv, _ := setupTestServerWithRepo(t)
+	return srv
+}
+
+// setupTestServerWithRepo also returns the backing repository, for tests that
+// need to stage real working files (content-bearing commits, MGIT-54).
+func setupTestServerWithRepo(t *testing.T) (*Server, *gitstore.Repository) {
+	t.Helper()
 	tmpDir := t.TempDir()
 	clock := fixedClock()
 
@@ -35,7 +44,7 @@ func setupTestServer(t *testing.T) *Server {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = idx.Close() })
 
-	return NewServer(repo, idx, clock)
+	return NewServer(repo, idx, clock), repo
 }
 
 func TestHealth_Endpoint(t *testing.T) {
@@ -154,7 +163,12 @@ func TestSquash_Endpoint(t *testing.T) {
 }
 
 func TestRollback_Endpoint(t *testing.T) {
-	srv := setupTestServer(t)
+	srv, repo := setupTestServerWithRepo(t)
+
+	// Rollback reverts REAL tree changes (MGIT-54): stage a file first so the
+	// commit carries content.
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Root(), "rb.txt"), []byte("v1\n"), 0o600))
+	require.NoError(t, gitstore.NewWorktreeStore(repo).Add(context.Background(), "rb.txt"))
 
 	// Create a commit first
 	body := `{"task_id":"MGIT-4.1","agent_id":"test","message":"to rollback"}`
