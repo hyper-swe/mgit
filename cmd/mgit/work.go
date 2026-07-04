@@ -181,7 +181,7 @@ func launchWorkSandbox(ctx context.Context, out io.Writer, deps workDeps, opts w
 		return
 	}
 	info, err := cl.Launch(ctx, model.SandboxLaunchOptions{
-		TaskID: wt.TaskID, WorktreePath: wt.Path, ImageRef: opts.Image,
+		TaskID: wt.TaskID, WorktreePath: canonicalPath(wt.Path), ImageRef: opts.Image,
 		Network: model.NetworkPolicy{Mode: opts.Network, Allowlist: opts.Allow},
 	})
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -228,4 +229,42 @@ func TestRunCmd_ProductionWiring(t *testing.T) {
 	cmd := runCmd()
 	assert.Equal(t, "run", cmd.Name())
 	assert.NotNil(t, cmd.RunE)
+}
+
+// TestRun_SymlinkedCwdAndRelativeRecord_StillMatches is the MGIT-57
+// path-identity regression: the sandbox record and the runner's cwd must be
+// compared in CANONICAL form. On macOS the temp dir is reached through the
+// /var -> /private/var symlink, and `mgit work wt` used to record the
+// worktree path exactly as the user typed it (relative "wt"), so
+// `mgit run` inside the worktree matched nothing and failed closed.
+// Refs: MGIT-57
+func TestRun_SymlinkedCwdAndRelativeRecord_StillMatches(t *testing.T) {
+	real := t.TempDir()
+	wtReal := filepath.Join(real, "wt")
+	require.NoError(t, os.MkdirAll(wtReal, 0o750))
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(real, link))
+
+	// Record carries the canonical (symlink-resolved, absolute) path...
+	canonical := canonicalPath(filepath.Join(link, "wt"))
+	require.Equal(t, wtRealResolved(t, wtReal), canonical, "canonicalPath must resolve symlinks and absolutize")
+
+	list := []model.SandboxInfo{{ID: "s1", TaskID: "T-1", State: model.StateRunning, WorktreePath: canonical}}
+
+	// ...and the runner reaches the worktree THROUGH the symlink.
+	cl := &fakeSandboxClient{listResult: list}
+	_, dir, sb, err := resolveRun(context.Background(), okConnect(cl),
+		func() (string, error) { return filepath.Join(link, "wt"), nil })
+	require.NoError(t, err)
+	assert.Equal(t, "s1", sb.ID)
+	assert.Equal(t, canonical, dir, "resolveRun must canonicalize the cwd before matching")
+}
+
+// wtRealResolved resolves the expected canonical form of a t.TempDir path
+// (t.TempDir itself may sit behind /var -> /private/var).
+func wtRealResolved(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	require.NoError(t, err)
+	return r
 }

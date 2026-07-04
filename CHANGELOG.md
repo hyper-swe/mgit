@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`mgit run` inside a worktree now finds its sandbox.** The documented `mgit work ./wt --sandbox` then `cd wt && mgit run` flow failed two ways, both found by the first live sandbox pass: from inside a linked worktree the daemon was keyed on the worktree (not the shared parent), spawning a second daemon against a nonexistent host root that died; and the sandbox's worktree path was recorded verbatim (relative) while `mgit run` matched an absolute, symlink-resolved cwd, so they never matched. Both sides now resolve the owning repo and canonicalize the path. (MGIT-57)
+
 ## [0.3.0-beta] - 2026-07-04
 
 ### Documentation

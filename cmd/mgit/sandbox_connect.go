@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/sandboxd"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // sandboxPaths locates the daemon socket plus the host config root and
@@ -53,6 +54,28 @@ func runtimeBase() string {
 	return os.TempDir()
 }
 
+// sandboxRepoRoot resolves the repo root that OWNS the sandbox daemon for a
+// working directory: the nearest ancestor with a .mgit directory, and — when
+// that ancestor is a linked worktree (its .mgit carries a marker, not the
+// store) — the shared parent repo the marker points at. The daemon socket
+// key, host root (images/policy/audit), and --repo-root must all be the
+// parent's; sandbox-to-worktree routing is handled by the sandbox records'
+// WorktreePath matching, not by per-worktree daemons. Refs: MGIT-57
+func sandboxRepoRoot(cwd string) (string, error) {
+	root, err := findRepoRoot(cwd)
+	if err != nil {
+		return "", err
+	}
+	marker, isWorktree, err := gitstore.ReadWorktreeMarker(root)
+	if err != nil {
+		return "", fmt.Errorf("read worktree marker: %w", err)
+	}
+	if isWorktree {
+		return filepath.Dir(marker.Store), nil
+	}
+	return root, nil
+}
+
 // locateSandboxd finds the mgit-sandboxd binary: first alongside this
 // executable (the normal install layout), then on PATH.
 func locateSandboxd() (string, error) {
@@ -78,7 +101,17 @@ func productionSandboxConnect(ctx context.Context) (sandboxClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get working directory: %w", err)
 	}
-	p, err := resolveSandboxPaths(cwd)
+	// Resolve the OWNING repo, not the raw cwd: from inside a linked worktree
+	// (whose .mgit is a directory holding only the marker + shims) the sandbox
+	// daemon, socket key, and host root all belong to the SHARED PARENT repo —
+	// keying them on the worktree spawned a second daemon against a
+	// nonexistent host root, which died, breaking `mgit run` inside the very
+	// worktree `mgit work --sandbox` creates. Refs: MGIT-57
+	repoRoot, err := sandboxRepoRoot(cwd)
+	if err != nil {
+		return nil, err
+	}
+	p, err := resolveSandboxPaths(repoRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +125,7 @@ func productionSandboxConnect(ctx context.Context) (sandboxClient, error) {
 		// to ctx would kill it the moment this command returns.
 		//nolint:gosec,noctx // fixed binary + derived owner-only paths, no shell; long-lived daemon must not die with the request ctx
 		c := exec.Command(bin, "--socket", p.socket, "--host-root", p.hostRoot,
-			"--repo-root", cwd, "--work-dir", p.workDir)
+			"--repo-root", repoRoot, "--work-dir", p.workDir)
 		configureDaemonCmd(c) // detach into its own session (platform-guarded)
 		return c.Start()
 	}

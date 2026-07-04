@@ -147,7 +147,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 				return err
 			}
 			info, err := cl.Launch(cmd.Context(), model.SandboxLaunchOptions{
-				TaskID: task, WorktreePath: worktree, ImageRef: image,
+				TaskID: task, WorktreePath: canonicalPath(worktree), ImageRef: image,
 				Network:      model.NetworkPolicy{Mode: network, Allowlist: allow},
 				PublishPorts: ports,
 			})

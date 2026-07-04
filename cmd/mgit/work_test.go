@@ -190,7 +190,10 @@ func TestWorkSetup_SandboxRequested_Launches(t *testing.T) {
 	require.NotNil(t, wt)
 	require.NotNil(t, fc.launched, "sandbox launch was requested")
 	assert.Equal(t, "MGIT-7.5", fc.launched.TaskID)
-	assert.Equal(t, path, fc.launched.WorktreePath, "sandbox mounts the worktree")
+	// The record carries the CANONICAL path (absolute, symlink-resolved) so
+	// `mgit run` inside the worktree matches it regardless of how the user
+	// spelled the path (MGIT-57).
+	assert.Equal(t, canonicalPath(path), fc.launched.WorktreePath, "sandbox mounts the canonical worktree path")
 	assert.Equal(t, model.NetworkModeAllowlist, fc.launched.Network.Mode)
 	assert.Contains(t, out, "sandbox", "launch outcome reported")
 }

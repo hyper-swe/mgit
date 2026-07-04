@@ -102,7 +102,12 @@ func resolveRun(ctx context.Context, connect connectFunc, getwd func() (string, 
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("get working directory: %w", err)
 	}
-	dir = filepath.Clean(dir)
+	// Canonical form on BOTH sides of the sandbox match: the record side
+	// (work/launch) stores canonicalPath, so the runner's cwd must be
+	// canonicalized too — on macOS the temp tree is reached through the
+	// /var -> /private/var symlink, and a lexical-only comparison never
+	// matches. Refs: MGIT-57
+	dir = canonicalPath(dir)
 	cl, err := connect(ctx)
 	if err != nil {
 		return nil, "", nil, err
@@ -116,6 +121,22 @@ func resolveRun(ctx context.Context, connect connectFunc, getwd func() (string, 
 		return nil, "", nil, fmt.Errorf("no sandbox bound for %s (run `mgit sandbox launch` first; commands never run on the host)", dir)
 	}
 	return cl, dir, sb, nil
+}
+
+// canonicalPath returns the absolute, symlink-resolved form of p — the ONE
+// spelling both the sandbox records (work/launch) and the runner's cwd are
+// reduced to before matching. Resolution is best-effort: if the path (or its
+// tail) does not exist yet, the cleaned absolute form is returned.
+// Refs: MGIT-57
+func canonicalPath(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return filepath.Clean(abs)
 }
 
 // sandboxForDir picks the live sandbox whose worktree is dir or the

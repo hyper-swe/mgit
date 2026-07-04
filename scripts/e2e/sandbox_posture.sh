@@ -10,8 +10,15 @@
 # live pass per platform, so the skip never hides an untested release.
 #
 # Usage: sandbox_posture.sh [bindir]
-#   Env: MGIT_GUEST_IMAGE  path/ref of the provisioned guest image (required
-#        for the live path; without it the job skips).
+#   Env (either form provisions the live path; with neither, the job skips):
+#     MGIT_GUEST_IMAGE    a digest-pinned image ref ALREADY registered in the
+#                         scratch repo's image set (rarely what you have), or
+#     MGIT_GUEST_KERNEL + MGIT_GUEST_ROOTFS [+ MGIT_GUEST_CMDLINE]
+#                         raw artifact paths; the script registers them inside
+#                         its scratch repo (`sandbox image init` + `add`) and
+#                         uses the resulting ref. This is the release-checklist
+#                         form: image registration is PER-REPO (.mgit/sandbox),
+#                         so a ref from another repo cannot resolve here.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
@@ -48,7 +55,9 @@ Darwin)
 	;;
 esac
 
-[ -n "${MGIT_GUEST_IMAGE:-}" ] || skip "MGIT_GUEST_IMAGE not set (no provisioned guest image)"
+if [ -z "${MGIT_GUEST_IMAGE:-}" ] && { [ -z "${MGIT_GUEST_KERNEL:-}" ] || [ -z "${MGIT_GUEST_ROOTFS:-}" ]; }; then
+	skip "no guest image (set MGIT_GUEST_IMAGE, or MGIT_GUEST_KERNEL + MGIT_GUEST_ROOTFS)"
+fi
 
 # --- Live path --------------------------------------------------------------
 work="$(mktemp -d)"
@@ -57,6 +66,19 @@ cd "$work"
 git init -q
 git -c user.email=e2e@mgit.local -c user.name=e2e commit -q --allow-empty -m init
 mgit init >/dev/null
+
+# Register the guest image inside THIS repo when raw artifacts were given
+# (the image set is per-repo; refs do not carry across repos).
+if [ -z "${MGIT_GUEST_IMAGE:-}" ]; then
+	echo "== register guest image (kernel + rootfs) in the scratch repo =="
+	mgit sandbox image init >/dev/null
+	MGIT_GUEST_IMAGE="$(mgit sandbox image add --name base \
+		--kernel "$MGIT_GUEST_KERNEL" --rootfs "$MGIT_GUEST_ROOTFS" \
+		${MGIT_GUEST_CMDLINE:+--cmdline "$MGIT_GUEST_CMDLINE"} --json |
+		sed -n 's/.*"image_ref":"\([^"]*\)".*/\1/p')"
+	[ -n "$MGIT_GUEST_IMAGE" ] || _e2e_fail "image add produced no reference"
+	pass "registered $MGIT_GUEST_IMAGE"
+fi
 
 echo "== launch a task sandbox and exec inside it =="
 mgit work wt --task-id SB-1 --sandbox --image "$MGIT_GUEST_IMAGE" >/dev/null
