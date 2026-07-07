@@ -54,6 +54,7 @@ type serveOptions struct {
 func serveCmd() *cobra.Command {
 	var port int
 	var apiOnly, mcpOnly, asJSON bool
+	var project string
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the REST API and/or MCP server (localhost-bound)",
@@ -63,7 +64,11 @@ func serveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			app, err := openAppFromCwd()
+			// --project selects the repo explicitly; without it, cwd (the
+			// Claude Code / Cursor pattern). The Claude Desktop app launches
+			// the MCP server from an arbitrary cwd, so it needs --project.
+			// Refs: MGIT-60
+			app, err := openServeApp(project)
 			if err != nil {
 				return err
 			}
@@ -97,7 +102,18 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&apiOnly, "api-only", false, "start only the REST API")
 	cmd.Flags().BoolVar(&mcpOnly, "mcp-only", false, "start only the MCP server (stdio)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit structured startup info (to stderr)")
+	cmd.Flags().StringVar(&project, "project", "",
+		"path to the mgit project to serve (default: current directory; required when launched from an arbitrary cwd, e.g. the Claude Desktop app)")
 	return cmd
+}
+
+// openServeApp opens the app for `mgit serve`: the --project repo when set,
+// otherwise the repo containing the current working directory. Refs: MGIT-60
+func openServeApp(project string) (*App, error) {
+	if project != "" {
+		return openAppAt(project)
+	}
+	return openAppFromCwd()
 }
 
 // resolveServeMode maps the --api-only/--mcp-only flags to which servers

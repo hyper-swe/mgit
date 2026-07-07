@@ -294,7 +294,7 @@ Sandbox commands require the host daemon and a guest image, and run on Linux (Fi
 
 ## MCP and REST integration
 
-mgit exposes 15 MCP tools for direct use by LLM coding agents (`mgit_commit`, `mgit_log`, `mgit_status`, `mgit_diff`, `mgit_squash`, `mgit_rollback`, `mgit_verify`, `mgit_audit`, `mgit_config`, `mgit_worktree_add/list/remove`, and more). Each tool delegates to the same service layer as the CLI, so semantics, validation, and the append-only audit guarantee are identical. The MCP server is `mgit serve --mcp-only` (stdio); point your harness at it from the project directory:
+mgit exposes 15 MCP tools for direct use by LLM coding agents (`mgit_commit`, `mgit_log`, `mgit_status`, `mgit_diff`, `mgit_squash`, `mgit_rollback`, `mgit_verify`, `mgit_audit`, `mgit_config`, `mgit_worktree_add/list/remove`, and more). Each tool delegates to the same service layer as the CLI, so semantics, validation, and the append-only audit guarantee are identical. The MCP server is `mgit serve --mcp-only` (stdio). It serves the current directory's repo by default, or the one given by `--project <path>` (use `--project` when the harness launches the server from an arbitrary working directory, e.g. the Claude desktop app):
 
 ```bash
 # Claude Code (run from your project directory)
@@ -304,6 +304,11 @@ claude mcp add mgit -- mgit serve --mcp-only
 ```json
 // Cursor (.cursor/mcp.json)
 { "mcpServers": { "mgit": { "command": "mgit", "args": ["serve", "--mcp-only"] } } }
+```
+
+```json
+// Claude desktop app (claude_desktop_config.json) — pin the project explicitly
+{ "mcpServers": { "mgit": { "command": "mgit", "args": ["serve", "--mcp-only", "--project", "/absolute/path/to/your/project"] } } }
 ```
 
 A REST API (`mgit serve`) covers a deliberately minimal subset for same-host service integration: commits, branches, squash, rollback, and verify under `/api/v1/`. It always binds `127.0.0.1` and is unauthenticated by design; the trust model is same-user local processes, the same trust as running the CLI. The full parity matrix, including the formal REST scope decision, is in [docs/MCP-PARITY.md](docs/MCP-PARITY.md).

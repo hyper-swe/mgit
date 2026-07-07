@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.1-beta] - 2026-07-07
 
+### Added
+
+- **`mgit serve --project <path>`** targets a specific repo instead of relying on the current working directory — needed by the Claude desktop app, which launches the MCP server from an arbitrary cwd. Claude Code / Cursor still work unchanged (cwd is the default). The README MCP section shows the desktop config. (MGIT-60)
+
 ### Fixed
 
 - **Three firecracker e2e workflow tests no longer skip the guest on a stale digest.** They pinned a hardcoded placeholder image digest that no longer matched what `images.Register` computes for the real rootfs, so the launch's `ImageRef` failed verification (~0.2s, before any VM boot) — silently not exercising the guest. They now launch with the actually-registered ref and assert against its real digest. Test-only; the product was unaffected. (MGIT-59)

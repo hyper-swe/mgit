@@ -85,7 +85,16 @@ func openAppFromCwd() (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get working directory: %w", err)
 	}
-	root, err := findRepoRoot(cwd)
+	return openAppAt(cwd)
+}
+
+// openAppAt opens the mgit app for the repo containing start (start or its
+// nearest ancestor with a .mgit directory). It backs `mgit serve --project`,
+// where the repo must be selected explicitly rather than inferred from cwd
+// (the Claude Desktop app launches the MCP server from an arbitrary cwd).
+// Refs: MGIT-60
+func openAppAt(start string) (*App, error) {
+	root, err := findRepoRoot(start)
 	if err != nil {
 		return nil, err
 	}
