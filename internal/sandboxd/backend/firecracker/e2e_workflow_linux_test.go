@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,21 +43,25 @@ import (
 // main index for assertions, the per-sandbox state root, and the sandbox/task
 // identifiers. It is the backend-agnostic spine shared by all three tests.
 type e2eWorkflowHarness struct {
-	mgr       *microvm.Manager
-	landSvc   *service.LandService
-	branches  *gitstore.BranchStore
-	mainIdx   *index.Store
-	workDir   string // per-sandbox state root (SandboxStateDir base)
-	sandboxID string
-	task      string
-	netMode   string
-	newCommit string // the agent's commit in the private store, pending land
+	mgr         *microvm.Manager
+	landSvc     *service.LandService
+	branches    *gitstore.BranchStore
+	mainIdx     *index.Store
+	workDir     string // per-sandbox state root (SandboxStateDir base)
+	sandboxID   string
+	task        string
+	netMode     string
+	newCommit   string // the agent's commit in the private store, pending land
+	imageDigest string // the digest images.Register computed for the test rootfs
 }
 
-// e2eWorkflowImageDigest is the image_digest provenance the launch records: the
-// sha256 the backend extracts from the pinned ImageRef.
-const e2eWorkflowImageDigest = "sha256:" +
-	"e2e0000000000000000000000000000000000000000000000000000000000001"
+// imageDigestOf extracts the sha256 digest from a "name@sha256:..." image ref
+// (what images.Register returns). Refs: MGIT-59
+func imageDigestOf(ref string) string {
+	_, digest, _ := strings.Cut(ref, "@")
+	return digest
+}
+
 
 // stateDir is the per-sandbox host state directory (overlay, sockets, private
 // store) created at launch and removed at teardown. Refs: FR-17.19
@@ -90,7 +95,7 @@ func setupE2EWorkflow(t *testing.T, task string) *e2eWorkflowHarness {
 	return &e2eWorkflowHarness{
 		mgr: mgr, landSvc: landSvc, branches: gitstore.NewBranchStore(hostRepo), mainIdx: mainIdx,
 		workDir: workDir, sandboxID: info.ID, task: task,
-		netMode: model.NetworkModeNone, newCommit: newCommit,
+		netMode: model.NetworkModeNone, newCommit: newCommit, imageDigest: imageDigestOf(ref),
 	}
 }
 
@@ -184,10 +189,12 @@ func e2eBootGuest(t *testing.T, kernel, rootfs string, binder *sandboxd.PeerBind
 func e2eLaunch(t *testing.T, mgr *microvm.Manager, mainIdx *index.Store,
 	wtPath, ref, task string) *model.SandboxInfo {
 	t.Helper()
-	_ = ref // the digest provenance is pinned via the ImageRef below
+	// Launch with the REAL registered ref (its digest is what images.Register
+	// computed for the test rootfs); the manager's Resolve verifies the ref
+	// against the lock, so a hardcoded placeholder digest fails (MGIT-59).
 	info, err := mgr.Launch(context.Background(), model.SandboxLaunchOptions{
 		TaskID: task, WorktreePath: wtPath,
-		ImageRef: "mgit-guest@" + e2eWorkflowImageDigest,
+		ImageRef: ref,
 		Network:  model.NetworkPolicy{Mode: model.NetworkModeNone}, CPUs: 1, MemoryMB: 256,
 	})
 	require.NoError(t, err)
@@ -195,7 +202,7 @@ func e2eLaunch(t *testing.T, mgr *microvm.Manager, mainIdx *index.Store,
 
 	require.NoError(t, mainIdx.AppendSandboxEvent(context.Background(), &model.SandboxEvent{
 		SandboxID: info.ID, TaskID: task, EventType: model.EventCreated,
-		Backend: model.BackendKVM, ImageDigest: e2eWorkflowImageDigest, NetworkMode: model.NetworkModeNone,
+		Backend: model.BackendKVM, ImageDigest: imageDigestOf(ref), NetworkMode: model.NetworkModeNone,
 	}))
 	return info
 }
@@ -327,7 +334,7 @@ func TestE2E_ProvenanceRecordedPerCommit(t *testing.T) {
 	require.NoError(t, err)
 	created := findCreatedEvent(t, events)
 	assert.Equal(t, model.BackendKVM, created.Backend, "the event records the backend")
-	assert.Equal(t, e2eWorkflowImageDigest, created.ImageDigest, "the event records the rootfs image digest")
+	assert.Equal(t, h.imageDigest, created.ImageDigest, "the event records the rootfs image digest")
 	assert.Equal(t, h.netMode, created.NetworkMode, "the event records the network mode")
 }
 
