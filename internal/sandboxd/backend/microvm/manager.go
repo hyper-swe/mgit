@@ -196,6 +196,13 @@ type Config struct {
 	SensitivePaths []string
 	Logger         *slog.Logger
 	Clock          func() time.Time
+	// GuestReadyTimeout bounds how long the first exec after a lazy launch
+	// waits for the guest's control vsock to accept a connection. A launched
+	// VM is StateRunning as soon as the VMM is up, but the guest userspace
+	// (mgit-guest binding its vsock port) needs ~1s more to boot; without a
+	// wait the first exec dials too early and the handshake resets (EOF).
+	// Zero uses guestReadyTimeoutDefault. Refs: MGIT-58, FR-17.10, FR-17.11
+	GuestReadyTimeout time.Duration
 }
 
 // sandbox is one supervised microVM.
@@ -237,12 +244,25 @@ func NewManager(cfg Config) (*Manager, error) {
 	if err := os.MkdirAll(cfg.WorkDir, 0o700); err != nil {
 		return nil, fmt.Errorf("microvm: create work dir: %w", err)
 	}
+	if cfg.GuestReadyTimeout <= 0 {
+		cfg.GuestReadyTimeout = guestReadyTimeoutDefault
+	}
 	return &Manager{
 		cfg:       cfg,
 		sandboxes: make(map[string]*sandbox),
 		entropy:   ulid.Monotonic(rand.Reader, 0),
 	}, nil
 }
+
+// guestReadyTimeoutDefault bounds the first-exec wait for the guest vsock
+// listener after a lazy launch. Generous headroom over the ~1s guest boot,
+// so a genuinely dead guest still fails in bounded time. Refs: MGIT-58
+const guestReadyTimeoutDefault = 15 * time.Second
+
+// guestReadyPollInterval is the backoff between guest vsock dial attempts
+// while the guest boots. Small enough that exec latency tracks actual guest
+// readiness, not the poll grain. Refs: MGIT-58
+const guestReadyPollInterval = 50 * time.Millisecond
 
 // Launch boots one microVM bound to the task's worktree and registers
 // it before returning (the FR-17.26 ceiling depends on that ordering).
@@ -474,7 +494,7 @@ func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*
 			model.ErrSandboxBackendUnavailable)
 	}
 
-	conn, err := m.cfg.GuestDialer.DialGuest(ctx, id)
+	conn, err := m.dialGuestReady(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("%s exec: dial guest: %w", m.cfg.Backend, err)
 	}
@@ -489,6 +509,49 @@ func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*
 		return nil, fmt.Errorf("%s exec: %w", m.cfg.Backend, err)
 	}
 	return &model.ExecResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ExitCode: result.ExitCode}, nil
+}
+
+// dialGuestReady dials the guest control vsock, retrying on failure until
+// the guest's listener is up or GuestReadyTimeout elapses. The sandbox is
+// already StateRunning (the VMM is up), so a dial failure here means the
+// guest userspace has not finished booting and bound its vsock port yet —
+// a transient, retryable "not ready" condition, not a permanent fault.
+// Without this, the first exec after a lazy launch (FR-17.10) races the
+// ~1s guest boot and the firecracker/vz handshake resets with EOF (MGIT-58).
+// Backend-agnostic: both the firecracker and vzf dialers benefit. The
+// caller's ctx still bounds and cancels the wait; the readiness timeout is
+// the upper bound when ctx has none. Refs: MGIT-58, FR-17.10, FR-17.11
+func (m *Manager) dialGuestReady(ctx context.Context, id string) (net.Conn, error) {
+	deadline := time.Now().Add(m.cfg.GuestReadyTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d // never wait past the caller's own deadline
+	}
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			if lastErr != nil {
+				return nil, fmt.Errorf("guest not ready: %w", lastErr)
+			}
+			return nil, err
+		}
+		conn, err := m.cfg.GuestDialer.DialGuest(ctx, id)
+		if err == nil {
+			if attempt > 0 {
+				m.cfg.Logger.Debug("guest vsock ready after retry",
+					"event", "guest_ready", "sandbox_id", id, "attempts", attempt+1)
+			}
+			return conn, nil
+		}
+		lastErr = err
+		if !time.Now().Add(guestReadyPollInterval).Before(deadline) {
+			return nil, fmt.Errorf("guest vsock not ready within %s: %w", m.cfg.GuestReadyTimeout, lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("guest not ready: %w", lastErr)
+		case <-time.After(guestReadyPollInterval):
+		}
+	}
 }
 
 // Stop halts the sandbox's VM and records it suspended. v1 does not

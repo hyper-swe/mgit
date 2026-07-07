@@ -218,3 +218,64 @@ func readResponse(t *testing.T, r io.Reader) (stdout, stderr string, outcome Out
 	}
 	return out.String(), errb.String(), outcome
 }
+
+// TestGuestAgent_BareCommand_ResolvesViaBaseEnvPath is the MGIT-58 (guest
+// leg) regression: a bare command name (no slash) must resolve against the
+// GUEST's PATH, not PID 1's ambient env. On the real guest, mgit-guest runs
+// as PID 1 with no PATH set, so `mgit run -- echo ok` (bare argv) failed
+// "executable file not found" even though BaseEnv carries a correct PATH.
+func TestGuestAgent_BareCommand_ResolvesViaBaseEnvPath(t *testing.T) {
+	skipWithoutPOSIXShell(t)
+	// A private bin dir with an executable, exposed only via BaseEnv PATH.
+	bin := t.TempDir()
+	script := filepath.Join(bin, "greet")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\necho resolved-ok\n"), 0o755)) //nolint:gosec // test fixture must be executable
+
+	sup := testSupervisor(t)
+	sup.BaseEnv = []string{"PATH=" + bin + ":/usr/bin:/bin"}
+
+	stdout, _, outcome := run(t, sup, model.ExecRequest{Command: []string{"greet"}})
+	assert.Zero(t, outcome.ExitCode)
+	assert.Equal(t, "resolved-ok\n", stdout, "a bare command resolves against the guest PATH")
+}
+
+// TestGuestAgent_BareCommand_NotFound_StartError: an unresolvable bare
+// command fails clearly at start, not as a fake success. Refs: MGIT-58
+func TestGuestAgent_BareCommand_NotFound_StartError(t *testing.T) {
+	sup := testSupervisor(t)
+	sup.BaseEnv = []string{"PATH=/nonexistent"}
+	_, err := sup.Execute(context.Background(), model.ExecRequest{Command: []string{"definitely-not-a-real-cmd"}},
+		&strings.Builder{}, &strings.Builder{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "executable file not found")
+}
+
+// TestLookPathIn covers the resolver directly: separator-bearing paths pass
+// through; bare names search PATH; missing ones error. Refs: MGIT-58
+func TestLookPathIn(t *testing.T) {
+	bin := t.TempDir()
+	exe := filepath.Join(bin, "tool")
+	require.NoError(t, os.WriteFile(exe, []byte("x"), 0o755)) //nolint:gosec // fixture executable
+	nonexe := filepath.Join(bin, "data")
+	require.NoError(t, os.WriteFile(nonexe, []byte("x"), 0o600))
+
+	got, err := lookPathIn("tool", bin+":/bin")
+	require.NoError(t, err)
+	assert.Equal(t, exe, got)
+
+	got, err = lookPathIn("/abs/path/cmd", bin)
+	require.NoError(t, err)
+	assert.Equal(t, "/abs/path/cmd", got, "a path with a separator passes through unchanged")
+
+	_, err = lookPathIn("data", bin)
+	assert.Error(t, err, "a non-executable file is not a match")
+
+	_, err = lookPathIn("missing", bin)
+	assert.Error(t, err)
+}
+
+// TestEnvValue verifies last-wins PATH precedence. Refs: MGIT-58
+func TestEnvValue(t *testing.T) {
+	assert.Equal(t, "/second", envValue([]string{"PATH=/first", "X=1", "PATH=/second"}, "PATH"))
+	assert.Equal(t, "", envValue([]string{"X=1"}, "PATH"))
+}

@@ -62,6 +62,10 @@ func execManager(t *testing.T, dialer GuestDialer) *Manager {
 		GuestDialer: dialer,
 		Logger:      slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
 		Clock:       func() time.Time { return time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC) },
+		// Short readiness bound so the always-fail dial tests surface quickly
+		// (the retry-then-succeed test overrides nothing — it just succeeds
+		// within this window). Refs: MGIT-58
+		GuestReadyTimeout: 300 * time.Millisecond,
 	})
 	require.NoError(t, err)
 	return mgr
@@ -127,7 +131,8 @@ func TestExec_InvalidRequest(t *testing.T) {
 	assert.Zero(t, dialer.calls, "an invalid request never dials the guest")
 }
 
-// TestExec_DialError_Surfaces verifies a dial failure surfaces.
+// TestExec_DialError_Surfaces verifies a persistent dial failure surfaces
+// after the readiness window (the guest never comes up).
 func TestExec_DialError_Surfaces(t *testing.T) {
 	mgr := execManager(t, &pipeDialer{err: errors.New("vsock refused")})
 	ctx := context.Background()
@@ -136,6 +141,55 @@ func TestExec_DialError_Surfaces(t *testing.T) {
 	_, err = mgr.Exec(ctx, info.ID, model.ExecRequest{Command: []string{"/bin/true"}})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "dial guest")
+	assert.Contains(t, err.Error(), "not ready", "a never-ready guest reports a readiness timeout")
+}
+
+// TestExec_RetriesUntilGuestReady is the MGIT-58 regression: the first exec
+// after a lazy launch must WAIT for the guest vsock listener instead of
+// EOFing on a too-early dial. A dialer that fails a few times (guest still
+// booting) then succeeds must yield a working exec, not an error.
+func TestExec_RetriesUntilGuestReady(t *testing.T) {
+	skipWithoutPOSIXShell(t)
+	dialer := &flakyDialer{failFirst: 3, inner: &pipeDialer{}}
+	mgr := execManager(t, dialer)
+	ctx := context.Background()
+	info, err := mgr.Launch(ctx, launchOpts("MGIT-58", model.NetworkModeNone))
+	require.NoError(t, err)
+
+	res, err := mgr.Exec(ctx, info.ID, model.ExecRequest{Command: []string{"/bin/sh", "-c", "echo ready"}})
+	require.NoError(t, err, "exec must wait out the guest boot, not EOF on the first dial")
+	assert.Equal(t, "ready\n", string(res.Stdout))
+	assert.Equal(t, 4, dialer.calls, "3 not-ready dials then the successful one")
+}
+
+// TestExec_ReadinessRespectsContextCancel verifies the readiness wait stops
+// promptly when the caller's context is canceled, surfacing the last dial
+// error rather than spinning to the timeout. Refs: MGIT-58
+func TestExec_ReadinessRespectsContextCancel(t *testing.T) {
+	mgr := execManager(t, &pipeDialer{err: errors.New("vsock refused")})
+	ctx, cancel := context.WithCancel(context.Background())
+	info, err := mgr.Launch(context.Background(), launchOpts("MGIT-58b", model.NetworkModeNone))
+	require.NoError(t, err)
+	cancel() // canceled before exec
+	_, err = mgr.Exec(ctx, info.ID, model.ExecRequest{Command: []string{"/bin/true"}})
+	assert.Error(t, err)
+}
+
+// flakyDialer fails its first failFirst DialGuest calls (guest still
+// booting), then delegates to inner (guest ready). Models the lazy-boot
+// readiness window. Refs: MGIT-58
+type flakyDialer struct {
+	failFirst int
+	calls     int
+	inner     GuestDialer
+}
+
+func (d *flakyDialer) DialGuest(ctx context.Context, id string) (net.Conn, error) {
+	d.calls++
+	if d.calls <= d.failFirst {
+		return nil, errors.New("fcvsock: read handshake reply: EOF")
+	}
+	return d.inner.DialGuest(ctx, id)
 }
 
 // TestExec_GuestStartFailure_Surfaces verifies a guest-reported start

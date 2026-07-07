@@ -15,7 +15,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/hyper-swe/mgit/internal/execwire"
 	"github.com/hyper-swe/mgit/internal/model"
@@ -66,12 +69,25 @@ func (s *Supervisor) Execute(ctx context.Context, req model.ExecRequest, stdout,
 		return Outcome{}, fmt.Errorf("guest exec: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, req.Command[0], req.Command[1:]...) //nolint:gosec // argv is the host-routed whole command (FR-17.11)
 	// Clean environment: explicit base + per-exec injections, never the
 	// inherited (host) environment.
-	cmd.Env = make([]string, 0, len(s.BaseEnv)+len(req.Env))
-	cmd.Env = append(cmd.Env, s.BaseEnv...)
-	cmd.Env = append(cmd.Env, req.Env...)
+	env := make([]string, 0, len(s.BaseEnv)+len(req.Env))
+	env = append(env, s.BaseEnv...)
+	env = append(env, req.Env...)
+
+	// Resolve the program against the GUEST's PATH (from env), not PID 1's
+	// ambient environment. exec.Command would LookPath req.Command[0] against
+	// the running process's own PATH — but mgit-guest runs as PID 1 with no
+	// PATH set, so a bare command (`echo`, `npm`) would fail "executable file
+	// not found" even though the child env carries a correct PATH. Resolving
+	// here makes `mgit run -- <bare cmd>` behave like a shell. Refs: FR-17.11
+	prog, err := lookPathIn(req.Command[0], envValue(env, "PATH"))
+	if err != nil {
+		return Outcome{}, fmt.Errorf("guest exec: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, prog, req.Command[1:]...) //nolint:gosec // argv is the host-routed whole command (FR-17.11)
+	cmd.Env = env
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
 	}
@@ -96,4 +112,47 @@ func (s *Supervisor) Execute(ctx context.Context, req model.ExecRequest, stdout,
 		return outcome, fmt.Errorf("guest exec: start %q: %w", req.Command[0], runErr)
 	}
 	return outcome, nil
+}
+
+// envValue returns the value of the last key= entry in env (last-wins, the
+// same precedence the OS applies), or "" when unset.
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	val := ""
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			val = e[len(prefix):]
+		}
+	}
+	return val
+}
+
+// lookPathIn resolves prog against pathEnv (a ":"-separated PATH), mirroring
+// exec.LookPath but searching the GUEST's PATH rather than the running
+// process's. A prog containing a separator is returned unchanged (run as
+// given, relative to the child's Dir). Otherwise each PATH entry is probed
+// for an executable regular file. Refs: FR-17.11
+func lookPathIn(prog, pathEnv string) (string, error) {
+	if strings.ContainsRune(prog, filepath.Separator) {
+		return prog, nil
+	}
+	for _, dir := range filepath.SplitList(pathEnv) {
+		if dir == "" {
+			continue
+		}
+		cand := filepath.Join(dir, prog)
+		if isExecutable(cand) {
+			return cand, nil
+		}
+	}
+	return "", fmt.Errorf("%q: executable file not found in $PATH", prog)
+}
+
+// isExecutable reports whether path is a regular file with an executable bit.
+func isExecutable(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil || fi.IsDir() {
+		return false
+	}
+	return fi.Mode().Perm()&0o111 != 0
 }
