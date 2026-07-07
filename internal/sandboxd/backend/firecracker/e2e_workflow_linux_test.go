@@ -62,7 +62,6 @@ func imageDigestOf(ref string) string {
 	return digest
 }
 
-
 // stateDir is the per-sandbox host state directory (overlay, sockets, private
 // store) created at launch and removed at teardown. Refs: FR-17.19
 func (h *e2eWorkflowHarness) stateDir() string {
