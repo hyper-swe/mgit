@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Build
+
+- **Reproducible, SOUP-pinned guest-image build** under `scripts/sandbox-image/`: every external input is pinned by content digest (kernel source sha256, toolchain + busybox image `@sha256`, an explicit kernel-config symbol list) and every non-deterministic knob fixed (`SOURCE_DATE_EPOCH`, `KBUILD_BUILD_*`, a fixed rootfs UUID). The arm64 vz (Apple Virtualization.framework) kernel is **bit-for-bit reproducible** — two builds produce an identical `Image`, asserted against a recorded digest. `build-bundle.sh` emits the install bundle (`manifest.json` + kernel + rootfs) that `mgit sandbox image install` consumes; live-validated end-to-end on macOS (build → install → `mgit run` in-guest). Replaces the ad-hoc `/tmp` build used during the vzf validation. (MGIT-30)
+
 ### Added
 
 - **`mgit sandbox image install --from <dir-or-url>`** activates the sandbox in one step: it fetches a pinned guest-image bundle for the host platform (a `manifest.json` + kernel + rootfs), verifies each artifact's sha256 (fail-closed on mismatch), auto-creates the signing trust root if absent, and registers the digest-pinned, Ed25519-signed image — no manual `image init`/`add` or kernel build. Idempotent. Part of the sandbox-active milestone (MGIT-61); images are digest-pinned + locally signed (local-trust), with published image bundles and a distribution-signing key tracked as follow-ups. Live-validated end-to-end on macOS (Apple Virtualization.framework): install from a bundle → `mgit run` executes in-guest. (MGIT-61.1)
