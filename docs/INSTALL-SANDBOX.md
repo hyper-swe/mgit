@@ -80,18 +80,50 @@ rootfs bakes in `mgit-guest` (the PID-1 supervisor) plus a busybox shell and
 toolchain; **`mgit-guest` is never a host binary** — it only has meaning inside
 the guest, so it is not shipped on `PATH` and not in the release archives.
 
-Build the rootfs with:
+### Install a shipped image (recommended)
+
+From within an mgit repo, one command fetches a pinned image **bundle** for
+your platform, verifies each artifact's sha256, sets up the local signing
+trust root if needed, and registers the digest-pinned, signed image:
+
+```bash
+mgit sandbox image install --from <dir-or-https-url>
+```
+
+The `--from` source is a directory or `https://` base holding a `manifest.json`
+plus the named `kernel` and `rootfs` artifacts. `manifest.json` maps
+`"os/arch"` to the platform's artifacts, their pinned `sha256`, and the guest
+`cmdline`:
+
+```json
+{
+  "schema": 1,
+  "images": {
+    "linux/amd64":  { "kernel": "vmlinux", "kernel_sha256": "sha256:…", "rootfs": "rootfs-linux-amd64.ext4",  "rootfs_sha256": "sha256:…", "cmdline": "console=ttyS0 … root=/dev/vda ro rootfstype=ext4 init=/sbin/mgit-guest" },
+    "darwin/arm64": { "kernel": "vmlinux-arm64", "kernel_sha256": "sha256:…", "rootfs": "rootfs-darwin-arm64.ext4", "rootfs_sha256": "sha256:…", "cmdline": "console=hvc0 root=/dev/vda ro rootfstype=ext4 init=/sbin/mgit-guest" }
+  }
+}
+```
+
+Install fails closed on any digest mismatch and is idempotent. `mgit run` and
+`mgit work --sandbox` then use the registered image automatically. **Trust
+model:** the image is digest-pinned and Ed25519-signed into your repo's own
+trust root (local-trust); the `sha256` pin plus HTTPS provide distribution
+integrity. Published, checksummed image bundles ship with the release
+(tracked by MGIT-61.2); a signed-by-the-project distribution key is a planned
+upgrade (MGIT-61.4).
+
+### Build your own image
 
 ```bash
 scripts/build-guest-image.sh out/rootfs.ext4
 ```
 
-then register it (digest-pinned, Ed25519-signed) into `images.lock` before use.
-The end-to-end guest-image provisioning story — the pinned kernel, the signed
-`images.lock` entry, and the one-command bootstrap — is tracked by **MGIT-30**;
-this page will point at that bootstrap once it lands. Until then, provision the
-image on a KVM host per `scripts/build-guest-image.sh` and the SOUP register
-(`SANDBOX-IMAGES.md`).
+then either point `mgit sandbox image install --from <dir>` at a directory
+containing a hand-written `manifest.json` + your kernel/rootfs, or register
+directly with `mgit sandbox image init` + `mgit sandbox image add --kernel …
+--rootfs … --cmdline …`. The reproducible, SOUP-pinned kernel + rootfs build
+(both backends) is tracked by **MGIT-30**.
 
 ## Distribution decision: why the guest binary is not shipped on the host
 

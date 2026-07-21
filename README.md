@@ -189,7 +189,13 @@ The sandbox needs a second host binary, `mgit-sandboxd`, and a guest image. On L
 - **macOS** requires Apple Silicon (arm64), macOS 13+; the release/brew daemon is code-signed with the virtualization entitlement (a `go install`-ed daemon is unsigned and must be signed locally).
 - **Windows and Intel macOS** have no sandbox backend yet; core mgit runs without it.
 
-The daemon boots a guest image (kernel + rootfs) that must be provisioned and pinned separately. The full walkthrough, platform prerequisites, and the guest-image story are in [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md).
+The daemon boots a guest image (kernel + rootfs). Register a pinned one in a repo with a single command: it fetches the image bundle, verifies each artifact's sha256, sets up the signing trust root, and registers the digest-pinned image:
+
+```bash
+mgit sandbox image install --from <dir-or-https-url>   # verifies + signs + registers; prints the image ref
+```
+
+`mgit run` and `mgit work --sandbox` then use it automatically. The full walkthrough, platform prerequisites, building your own image, and the guest-image story are in [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md).
 
 **Without the sandbox**, mgit is still a complete checkpointed working substrate. `mgit run` and `mgit sandbox land` are the only sandbox-gated commands; integrate a task's result by exporting its squash as a patch and applying it to your git:
 
@@ -307,7 +313,7 @@ claude mcp add mgit -- mgit serve --mcp-only
 ```
 
 ```json
-// Claude desktop app (claude_desktop_config.json) — pin the project explicitly
+// Claude desktop app (claude_desktop_config.json): pin the project explicitly
 { "mcpServers": { "mgit": { "command": "mgit", "args": ["serve", "--mcp-only", "--project", "/absolute/path/to/your/project"] } } }
 ```
 

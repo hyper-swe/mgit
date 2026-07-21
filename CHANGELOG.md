@@ -5,6 +5,12 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`mgit sandbox image install --from <dir-or-url>`** activates the sandbox in one step: it fetches a pinned guest-image bundle for the host platform (a `manifest.json` + kernel + rootfs), verifies each artifact's sha256 (fail-closed on mismatch), auto-creates the signing trust root if absent, and registers the digest-pinned, Ed25519-signed image — no manual `image init`/`add` or kernel build. Idempotent. Part of the sandbox-active milestone (MGIT-61); images are digest-pinned + locally signed (local-trust), with published image bundles and a distribution-signing key tracked as follow-ups. Live-validated end-to-end on macOS (Apple Virtualization.framework): install from a bundle → `mgit run` executes in-guest. (MGIT-61.1)
+
 ## [0.3.1-beta] - 2026-07-07
 
 ### Added

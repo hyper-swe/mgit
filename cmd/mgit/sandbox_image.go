@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mgit/internal/sandboxd/imageinstall"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 )
 
@@ -23,7 +24,52 @@ func sandboxImageCmd() *cobra.Command {
 		Use:   "image",
 		Short: "Manage signed, digest-pinned guest images (host operator)",
 	}
-	cmd.AddCommand(sandboxImageInitCmd(), sandboxImageAddCmd())
+	cmd.AddCommand(sandboxImageInitCmd(), sandboxImageAddCmd(), sandboxImageInstallCmd())
+	return cmd
+}
+
+// sandboxImageInstallCmd fetches a shipped, pinned guest-image bundle for
+// this host platform, verifies each artifact's sha256, ensures the trust
+// root, and registers the image — the single step that makes the sandbox
+// active without a manual kernel/rootfs build. Refs: MGIT-61.1
+func sandboxImageInstallCmd() *cobra.Command {
+	var from, name string
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "install --from <dir-or-url> [--name base]",
+		Short: "Fetch, verify, and register a shipped guest image (activates the sandbox)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if from == "" {
+				return fmt.Errorf("--from is required: a directory or https URL holding manifest.json + the guest artifacts " +
+					"(shipped image bundles are published with the release; see docs/INSTALL-SANDBOX.md)")
+			}
+			hostRoot, err := sandboxHostRoot()
+			if err != nil {
+				return err
+			}
+			in := &imageinstall.Installer{
+				HostRoot: hostRoot,
+				Audit:    printTrustRootAuditor{w: cmd.OutOrStdout()},
+			}
+			res, err := in.Install(cmd.Context(), from, name)
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]string{
+					"image_ref": res.Ref, "platform": res.Platform,
+				})
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"Installed %s for %s\nThe sandbox will use it automatically; or pass --image %s to mgit work.\n",
+				res.Ref, res.Platform, res.Ref)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&from, "from", "", "directory or https URL with manifest.json + guest artifacts (required)")
+	cmd.Flags().StringVar(&name, "name", "base", "image name to register")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "output the digest-pinned reference as JSON")
 	return cmd
 }
 
