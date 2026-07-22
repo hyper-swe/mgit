@@ -189,10 +189,11 @@ The sandbox needs a second host binary, `mgit-sandboxd`, and a guest image. On L
 - **macOS** requires Apple Silicon (arm64), macOS 13+; the release/brew daemon is code-signed with the virtualization entitlement (a `go install`-ed daemon is unsigned and must be signed locally).
 - **Windows and Intel macOS** have no sandbox backend yet; core mgit runs without it.
 
-The daemon boots a guest image (kernel + rootfs). Register a pinned one in a repo with a single command: it fetches the image bundle, verifies each artifact's sha256, sets up the signing trust root, and registers the digest-pinned image:
+The daemon boots a guest image (kernel + rootfs). Register a pinned one in a repo with a single command: it fetches the platform's image bundle from the release, verifies each artifact's sha256, sets up the signing trust root, and registers the digest-pinned image:
 
 ```bash
-mgit sandbox image install --from <dir-or-https-url>   # verifies + signs + registers; prints the image ref
+mgit sandbox image install                       # fetches the shipped bundle for your platform
+mgit sandbox image install --from <dir-or-url>   # or from a local dir / your own build
 ```
 
 `mgit run` and `mgit work --sandbox` then use it automatically. The full walkthrough, platform prerequisites, building your own image, and the guest-image story are in [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md).

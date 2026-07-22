@@ -17,17 +17,19 @@ VZ_CMDLINE="console=hvc0 root=/dev/vda ro rootfstype=ext4 init=/sbin/mgit-guest"
 
 case "$PLATFORM" in
 darwin/arm64)
-	kernel="vmlinux-arm64"; rootfs="rootfs-darwin-arm64.ext4"; cmdline="$VZ_CMDLINE"
+	kernel="vmlinux-darwin-arm64"; rootfs="rootfs-darwin-arm64.ext4"; cmdline="$VZ_CMDLINE"
 	echo "== $PLATFORM: build vz kernel =="
 	bash "$HERE/build-kernel-vz.sh" "$DIR/$kernel"
 	echo "== $PLATFORM: build arm64 rootfs =="
 	bash "$HERE/build-rootfs.sh" arm64 "$DIR/$rootfs"
 	;;
 linux/amd64|linux/arm64)
-	echo "FATAL: $PLATFORM firecracker kernel vendoring is not wired yet (MGIT-61.2)." >&2
-	echo "  The rootfs build works: bash $HERE/build-rootfs.sh ${PLATFORM#linux/} <out.ext4>" >&2
-	echo "  Pin FC_KERNEL_* in pins.env, then extend this case to vendor+verify the vmlinux." >&2
-	exit 2
+	arch="${PLATFORM#linux/}"
+	kernel="vmlinux-linux-$arch"; rootfs="rootfs-linux-$arch.ext4"; cmdline="$FC_CMDLINE"
+	echo "== $PLATFORM: fetch pinned firecracker kernel =="
+	bash "$HERE/fetch-kernel-fc.sh" "$arch" "$DIR/$kernel"
+	echo "== $PLATFORM: build $arch rootfs =="
+	bash "$HERE/build-rootfs.sh" "$arch" "$DIR/$rootfs"
 	;;
 *)
 	echo "FATAL: unknown platform $PLATFORM (want darwin/arm64|linux/amd64|linux/arm64)" >&2

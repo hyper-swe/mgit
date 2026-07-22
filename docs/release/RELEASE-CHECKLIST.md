@@ -53,7 +53,16 @@ sandbox pass per supported platform** and record the result on the release:
    the change in `docs/release/homebrew-tap-formula.md` to the separate
    `hyper-swe/homebrew-tap` repo (must not touch the `mtix` formula). MGIT-44.
 4. Complete the two live sandbox passes above and note them on the release.
-5. Post-publish smoke: `brew install hyper-swe/tap/mgit` on a clean machine and
+5. **Publish the guest-image bundle** so `mgit sandbox image install` works with
+   no `--from` (sandbox-active out of the box, MGIT-61.2):
+   ```
+   scripts/sandbox-image/publish.sh out/publish        # builds all platform bundles + checksums
+   gh release upload <tag> out/publish/*               # attach manifest.json + kernels + rootfs + checksums.txt
+   ```
+   The install default resolves to the latest release's assets. Then verify on a
+   clean host: `mgit sandbox image install` → `mgit run --sandbox -- echo ok`.
+   (The vz kernel build needs docker; run `publish.sh` on a machine with it.)
+6. Post-publish smoke: `brew install hyper-swe/tap/mgit` on a clean machine and
    confirm `command -v mgit && command -v mgit-sandboxd`.
 
-Refs: MGIT-48, MGIT-44
+Refs: MGIT-48, MGIT-44, MGIT-61.2

@@ -27,20 +27,28 @@ CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -C "$REPO_ROOT" \
 	-trimpath -buildvcs=false -ldflags='-buildid=' \
 	-o "$stage/mgit-guest" ./cmd/mgit-guest/
 
-# 2) busybox — extract the pinned image's static binary for the target arch.
-echo "extracting busybox from $BUSYBOX_IMAGE ($ARCH)…"
-cid="$(docker create --platform "linux/$ARCH" "$BUSYBOX_IMAGE")"
+# 2) busybox — extract the pinned per-arch image's static binary. The digest
+# is arch-specific, so no --platform (which is unreliable with an index digest).
+case "$ARCH" in
+amd64) busybox_image="$BUSYBOX_AMD64"; builder_image="$BUILDER_AMD64" ;;
+arm64) busybox_image="$BUSYBOX_ARM64"; builder_image="$BUILDER_ARM64" ;;
+*) echo "FATAL: no pins for arch $ARCH" >&2; exit 2 ;;
+esac
+echo "extracting busybox from ${busybox_image}"
+cid="$(docker create "$busybox_image")"
 docker cp "$cid:/bin/busybox" "$stage/busybox" >/dev/null
 docker rm "$cid" >/dev/null
 
-# 3) Assemble the tree + pack ext4 in the pinned builder (deterministic).
-docker run --rm --platform "linux/$ARCH" \
+# 3) Assemble the tree + pack ext4 in the pinned builder (deterministic). The
+# arch-specific builder digest selects the arch (docker emulates if cross), so
+# no --platform (which is unreliable with a multi-arch index digest).
+docker run --rm \
 	-e "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" \
 	-e "ROOTFS_UUID=$ROOTFS_UUID" \
 	-e "SIZE_MB=$SIZE_MB" \
 	-v "$stage:/stage:ro" \
 	-v "$(dirname "$OUT"):/out" \
-	"$BUILDER_IMAGE" bash -euo pipefail -c '
+	"$builder_image" bash -euo pipefail -c '
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq e2fsprogs >/dev/null

@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -150,4 +153,83 @@ func TestImageCmd_Help(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	assert.Contains(t, out.String(), "init")
 	assert.Contains(t, out.String(), "add")
+	assert.Contains(t, out.String(), "install")
+}
+
+// TestResolveInstallSource verifies --from override vs the default published
+// bundle URL (the "out of the box" path). Refs: MGIT-61.2
+func TestResolveInstallSource(t *testing.T) {
+	assert.Equal(t, defaultImageBundleURL, resolveInstallSource(""),
+		"no --from defaults to the published release bundle")
+	assert.Equal(t, "/local/bundle", resolveInstallSource("/local/bundle"), "an explicit --from wins")
+	assert.True(t, strings.HasPrefix(defaultImageBundleURL, "https://github.com/hyper-swe/mgit/releases/latest/download"),
+		"default resolves to the latest release assets (updates need no code change)")
+}
+
+// TestImageInstall_FromLocalBundle_EndToEnd drives the CLI `install --from
+// <dir>` against a local bundle for the host platform: it verifies sha256,
+// auto-creates the trust root, and registers a resolvable digest-pinned image.
+// Refs: MGIT-61.1, MGIT-61.2
+func TestImageInstall_FromLocalBundle_EndToEnd(t *testing.T) {
+	repo := newRepo(t)
+	bundle := t.TempDir()
+	kernel := []byte("host-kernel-bytes")
+	rootfs := []byte("host-rootfs-bytes")
+	require.NoError(t, os.WriteFile(filepath.Join(bundle, "vmlinux"), kernel, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(bundle, "rootfs.ext4"), rootfs, 0o600))
+	plat := runtime.GOOS + "/" + runtime.GOARCH
+	manifest := `{"schema":1,"images":{"` + plat + `":{` +
+		`"kernel":"vmlinux","kernel_sha256":"` + sha256Hex(kernel) + `",` +
+		`"rootfs":"rootfs.ext4","rootfs_sha256":"` + sha256Hex(rootfs) + `",` +
+		`"cmdline":"console=hvc0 root=/dev/vda ro init=/sbin/mgit-guest"}}}`
+	require.NoError(t, os.WriteFile(filepath.Join(bundle, "manifest.json"), []byte(manifest), 0o600))
+
+	out, err := runImage(t, repo, "install", "--from", bundle, "--json")
+	require.NoError(t, err)
+	require.Contains(t, out, `"image_ref"`)
+	require.Contains(t, out, "base@sha256:")
+
+	// The installed image resolves against the auto-created trust root.
+	store, err := images.NewStore(filepath.Join(repo, ".mgit", "sandbox"), clockUTC())
+	require.NoError(t, err)
+	_, err = store.Resolve(extractRef(out))
+	require.NoError(t, err, "the installed image must resolve")
+}
+
+// TestImageInstall_SHA256Mismatch_CLI: a tampered artifact fails the install
+// at the CLI layer. Refs: MGIT-61.2
+func TestImageInstall_SHA256Mismatch_CLI(t *testing.T) {
+	repo := newRepo(t)
+	bundle := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bundle, "vmlinux"), []byte("real"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(bundle, "rootfs.ext4"), []byte("rootfs"), 0o600))
+	plat := runtime.GOOS + "/" + runtime.GOARCH
+	// Manifest pins a WRONG kernel digest.
+	manifest := `{"schema":1,"images":{"` + plat + `":{"kernel":"vmlinux",` +
+		`"kernel_sha256":"sha256:0000000000000000000000000000000000000000000000000000000000000000",` +
+		`"rootfs":"rootfs.ext4","rootfs_sha256":"` + sha256Hex([]byte("rootfs")) + `","cmdline":"x"}}}`
+	require.NoError(t, os.WriteFile(filepath.Join(bundle, "manifest.json"), []byte(manifest), 0o600))
+
+	_, err := runImage(t, repo, "install", "--from", bundle)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sha256 mismatch")
+}
+
+func sha256Hex(b []byte) string {
+	h := sha256.Sum256(b)
+	return "sha256:" + hex.EncodeToString(h[:])
+}
+
+func extractRef(jsonOut string) string {
+	// crude but sufficient for the test: pull the value of "image_ref"
+	i := strings.Index(jsonOut, `"image_ref"`)
+	if i < 0 {
+		return ""
+	}
+	rest := jsonOut[i:]
+	start := strings.Index(rest, `:`) + 1
+	rest = strings.TrimSpace(rest[start:])
+	rest = strings.TrimPrefix(rest, `"`)
+	end := strings.Index(rest, `"`)
+	return rest[:end]
 }

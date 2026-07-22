@@ -28,22 +28,36 @@ func sandboxImageCmd() *cobra.Command {
 	return cmd
 }
 
+// defaultImageBundleURL is the base URL `mgit sandbox image install` fetches
+// from when --from is omitted: the mgit LATEST release's asset base, where the
+// publish step (MGIT-61.2) attaches manifest.json + the pinned guest
+// artifacts. GitHub redirects /releases/latest/download/<asset> to the current
+// release, so this stays correct across image updates. Refs: MGIT-61.2
+const defaultImageBundleURL = "https://github.com/hyper-swe/mgit/releases/latest/download"
+
+// resolveInstallSource returns the explicit --from source, or the default
+// published bundle URL when unset. Refs: MGIT-61.2
+func resolveInstallSource(from string) string {
+	if from != "" {
+		return from
+	}
+	return defaultImageBundleURL
+}
+
 // sandboxImageInstallCmd fetches a shipped, pinned guest-image bundle for
 // this host platform, verifies each artifact's sha256, ensures the trust
 // root, and registers the image — the single step that makes the sandbox
-// active without a manual kernel/rootfs build. Refs: MGIT-61.1
+// active without a manual kernel/rootfs build. Defaults to the published
+// release bundle; --from overrides with a local dir or URL. Refs: MGIT-61.1, MGIT-61.2
 func sandboxImageInstallCmd() *cobra.Command {
 	var from, name string
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use:   "install --from <dir-or-url> [--name base]",
+		Use:   "install [--from <dir-or-url>] [--name base]",
 		Short: "Fetch, verify, and register a shipped guest image (activates the sandbox)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if from == "" {
-				return fmt.Errorf("--from is required: a directory or https URL holding manifest.json + the guest artifacts " +
-					"(shipped image bundles are published with the release; see docs/INSTALL-SANDBOX.md)")
-			}
+			source := resolveInstallSource(from)
 			hostRoot, err := sandboxHostRoot()
 			if err != nil {
 				return err
@@ -52,7 +66,7 @@ func sandboxImageInstallCmd() *cobra.Command {
 				HostRoot: hostRoot,
 				Audit:    printTrustRootAuditor{w: cmd.OutOrStdout()},
 			}
-			res, err := in.Install(cmd.Context(), from, name)
+			res, err := in.Install(cmd.Context(), source, name)
 			if err != nil {
 				return err
 			}
@@ -67,7 +81,7 @@ func sandboxImageInstallCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&from, "from", "", "directory or https URL with manifest.json + guest artifacts (required)")
+	cmd.Flags().StringVar(&from, "from", "", "directory or https URL with manifest.json + guest artifacts (default: the latest mgit release's published bundle)")
 	cmd.Flags().StringVar(&name, "name", "base", "image name to register")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output the digest-pinned reference as JSON")
 	return cmd

@@ -60,10 +60,27 @@ scripts/sandbox-image/build-kernel-vz.sh out/vmlinux-arm64   # vz kernel (reprod
 scripts/sandbox-image/build-rootfs.sh   arm64 out/rootfs.ext4 # rootfs (content-deterministic)
 ```
 
-`linux/amd64` / `linux/arm64`: the rootfs builds today
-(`build-rootfs.sh amd64 …`); the firecracker kernel is vendored (pin
-`FC_KERNEL_*` in `pins.env`) — wiring the firecracker case into
-`build-bundle.sh` is tracked by **MGIT-61.2**.
+`linux/amd64` / `linux/arm64` (firecracker): `build-bundle.sh linux/amd64`
+fetches the pinned firecracker kernel (`fetch-kernel-fc.sh`, vendored from
+firecracker-ci and sha256-verified) and builds the reproducible rootfs. The
+firecracker kernel is vendored (not built by us) — a reproducible-by-us
+firecracker kernel is a follow-up; its sha256 pin is the integrity anchor.
+
+## Publish (all platforms)
+
+`publish.sh` builds every platform's bundle into one directory — a combined
+`manifest.json` covering all platforms, the per-platform artifacts, and a
+`checksums.txt`:
+
+```bash
+scripts/sandbox-image/publish.sh out/publish              # darwin/arm64 + linux/{amd64,arm64}
+scripts/sandbox-image/publish.sh out/publish linux/amd64  # a subset
+```
+
+Attach every file in the output directory to a GitHub release (owner-triggered).
+`mgit sandbox image install` with no `--from` then fetches from the latest
+release's assets, so a `brew install` user activates the sandbox with one
+command.
 
 ## Install + run
 

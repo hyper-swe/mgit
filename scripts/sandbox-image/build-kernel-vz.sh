@@ -36,7 +36,9 @@ echo "kernel source sha256 OK: $got"
 
 # Build in the pinned builder image (arm64), with fixed timestamp/user/host so
 # the Image is reproducible given the same pinned toolchain digest.
-docker run --rm --platform linux/arm64 \
+# The vz kernel is arm64-only; use the arch-pinned arm64 builder digest (no
+# --platform, unreliable with a multi-arch index digest).
+docker run --rm \
 	-e "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" \
 	-e "KBUILD_BUILD_TIMESTAMP=@$SOURCE_DATE_EPOCH" \
 	-e "KBUILD_BUILD_USER=$KBUILD_BUILD_USER" \
@@ -45,7 +47,7 @@ docker run --rm --platform linux/arm64 \
 	-e "SYMS=$config_symbols" \
 	-v "$tarball:/src/linux.tar.xz:ro" \
 	-v "$(dirname "$OUT"):/out" \
-	"$BUILDER_IMAGE" bash -euo pipefail -c '
+	"$BUILDER_ARM64" bash -euo pipefail -c '
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq build-essential flex bison bc libssl-dev libelf-dev python3 xz-utils >/dev/null

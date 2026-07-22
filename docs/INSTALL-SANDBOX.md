@@ -87,10 +87,13 @@ your platform, verifies each artifact's sha256, sets up the local signing
 trust root if needed, and registers the digest-pinned, signed image:
 
 ```bash
-mgit sandbox image install --from <dir-or-https-url>
+mgit sandbox image install                     # from the shipped release bundle
+mgit sandbox image install --from <dir-or-url> # or a local dir / your own build
 ```
 
-The `--from` source is a directory or `https://` base holding a `manifest.json`
+With no `--from`, install fetches from the latest mgit release's published
+bundle (the release attaches per-platform artifacts + `manifest.json`). A
+`--from` source is a directory or `https://` base holding a `manifest.json`
 plus the named `kernel` and `rootfs` artifacts. `manifest.json` maps
 `"os/arch"` to the platform's artifacts, their pinned `sha256`, and the guest
 `cmdline`:
