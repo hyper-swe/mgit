@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-28T20:20:01Z",
+  "exported_at": "2026-07-28T20:30:45Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6741,7 +6741,7 @@
       "priority": 2,
       "labels": "[]",
       "status": "open",
-      "progress": 0.3076923076923077,
+      "progress": 0.38461538461538464,
       "assignee": "",
       "creator": "mcp",
       "agent_state": "",
@@ -6813,15 +6813,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-fable-5",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "c6065b9f8a095d68523aa8fba8f1c2449ba8e34e828470b37ae8ac52770eb348",
       "created_at": "2026-07-28T19:04:46Z",
-      "updated_at": "2026-07-28T20:17:25Z"
+      "updated_at": "2026-07-28T20:26:31Z",
+      "closed_at": "2026-07-28T20:26:31Z"
     },
     {
       "id": "MGIT-61.12",
@@ -9380,5 +9381,5 @@
   ],
   "sessions": null,
   "node_count": 321,
-  "checksum": "07e89c152c816a11e4534730e8f0e22323cff00ad059b397198ebd69442b3dac"
+  "checksum": "431ae0d4c6a4a8d4d7f922382ae8dd8c761b72a2610db81d220c902a88174066"
 }
