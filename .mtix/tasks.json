@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-28T20:15:25Z",
+  "exported_at": "2026-07-28T20:20:01Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6741,7 +6741,7 @@
       "priority": 2,
       "labels": "[]",
       "status": "open",
-      "progress": 0.3333333333333333,
+      "progress": 0.3076923076923077,
       "assignee": "",
       "creator": "mcp",
       "agent_state": "",
@@ -6789,7 +6789,7 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "in_progress",
+      "status": "blocked",
       "progress": 0,
       "assignee": "claude-fable-5",
       "creator": "mcp",
@@ -6797,7 +6797,7 @@
       "weight": 1,
       "content_hash": "968999aa689c2030de19c1fc95c6f8904a933a6113d6de8498ba03e38fecabc2",
       "created_at": "2026-07-28T19:04:20Z",
-      "updated_at": "2026-07-28T20:08:06Z"
+      "updated_at": "2026-07-28T20:19:38Z"
     },
     {
       "id": "MGIT-61.11",
@@ -6813,15 +6813,15 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "claude-fable-5",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "c6065b9f8a095d68523aa8fba8f1c2449ba8e34e828470b37ae8ac52770eb348",
       "created_at": "2026-07-28T19:04:46Z",
-      "updated_at": "2026-07-28T19:04:46Z"
+      "updated_at": "2026-07-28T20:17:25Z"
     },
     {
       "id": "MGIT-61.12",
@@ -6846,6 +6846,30 @@
       "content_hash": "29c9f034eadd36d1b92df29c2a8b7b77d836f7636356210a4a5eeed90221cdd3",
       "created_at": "2026-07-28T19:09:08Z",
       "updated_at": "2026-07-28T19:09:08Z"
+    },
+    {
+      "id": "MGIT-61.13",
+      "parent_id": "MGIT-61",
+      "depth": 1,
+      "seq": 13,
+      "project": "MGIT",
+      "title": "Sequenced retirement of firecracker, vzf, MGIT-30's kernel build and the bundle distribution path",
+      "description": "The owner directed consolidation onto libkrun (MGIT-61 epic annotation, 2026-07-29; ADR-010 Decision revised in MGIT-61.11). This task executes the removal — and ONLY after every precondition below is met. Retirement is the LAST step of the milestone, not a cleanup that can be pulled forward: deleting a working backend before its replacement is validated on both platforms would leave mgit with no sandbox at all on whichever platform turns out to be unfinished.",
+      "prompt": "Read FIRST: docs/adr/010-libkrun-backend-and-guest-distribution.md (Decision + Consequences, revised 2026-07-29) and the MGIT-61 epic annotation \"STRATEGIC DIRECTION CHANGE\".\n\nDO NOT START THIS TASK until ALL of these are true. Check each one and record the evidence on this ticket; if any is unmet, stop and say which.\n\n P1. MGIT-61.8 re-exec lifecycle + Hypervisor.CreateVM — DONE (commit c8c02b2).\n P2. MGIT-61.10 real-VM validation green — PARTIAL. Boot + none-mode + allowlist default-deny pass on macOS/HVF (commit 2f59d52). The host-\u003eguest leg does NOT pass: SEC-09 port publishing is unwired on libkrun (see P6).\n P3. MGIT-61.7 mgit CLI in the guest — DONE for the ext4 image (commit c0c571d). NOT done for the libkrun delivery, where the guest root is a shared host DIRECTORY: the mgit binary must be staged into that tree instead of installed into an image. Doing this is part of retirement, because it is what makes the ext4 path removable.\n P4. Linux/KVM parity validated on the Linux runner — NOT DONE. libkrun must be built from source there (Ubuntu 20.04 has no package). Until libkrun is proven on KVM, deleting firecracker would leave Linux with NO sandbox.\n P5. virtio-fs perf measured — DONE on macOS (ADR-010 Gate 2: 0.216 ms/file write, 4.0x host). The Linux/KVM figure is still owed and belongs with P4.\n P6. SEC-09 host-\u003eguest port publishing works on libkrun. Today netGateway.DialGuestPort lives in the VM CHILD process and the daemon holds no reference to it, so there is no host-\u003eguest path at all. The fix is krun_add_vsock_port2(..., listen=true) — libkrun listens on a host unix socket and forwards into a guest vsock port, exactly firecracker's shape. Do NOT plumb the netstack gateway across processes.\n P7. SEC-03 quarantine DELIVERED on libkrun. CreateVM currently REFUSES any launch carrying a private store (fail-closed, correct as an interim) — which means the quarantined staged-worktree delivery is unimplemented. firecracker/vzf cannot be removed while libkrun cannot do the thing they do.\n P8. Gate 5 (macOS 14+ floor) accepted as a product decision, or vzf explicitly retained for macOS 13 — in which case this task is NOT a full vzf retirement and must say so.\n\nTHEN, IN THIS ORDER (each step independently revertable; do not batch):\n 1. Flip the default: make libkrun the selected backend on Linux and macOS in cmd/mgit-sandboxd (today it is behind the \"libkrun\" build tag with !(libkrun \u0026\u0026 cgo) on the darwin/linux files). Decide whether libkrun stops being tag-gated at all — that is a release-packaging question (CGO in goreleaser, the libkrun runtime prerequisite, brew), so co-ordinate with the release checklist.\n 2. Remove the firecracker backend + its e2e, then vzf + its e2e. Keep internal/sandboxd/backend/microvm untouched: it is the shared lifecycle and the seam a future backend plugs into. Watch for shared code that firecracker/vzf currently own — microvm.GuestMAC was already hoisted; check egress tap/iptables code (internal/sandboxd/egress/network_linux.go and the TapPlan machinery) which becomes dead with firecracker.\n 3. Remove MGIT-30's kernel build (scripts/sandbox-image/build-kernel-vz.sh, fetch-kernel-fc.sh), the rootfs builders, build-bundle.sh and publish.sh, and internal/sandboxd/imageinstall + the bundle fetch/verify code — but ONLY after deciding what the libkrun deliverable IS (see below), because some of the signing/pinning machinery may be reused for it.\n 4. Update every document that describes two/three backends: ADR-005, ADR-010, REQUIREMENTS FR-17.15, docs/release/RELEASE-CHECKLIST.md, CLAUDE.md's sandbox section, README/CHANGELOG. A doc that still promises firecracker is worse than no doc.\n\nTHE DELIVERABLE QUESTION (answer before step 3): under libkrun there may be NO kernel and NO ext4 rootfs to distribute — libkrunfw brings the kernel and the guest root is a shared host directory. The artifact may reduce to a guest userspace TREE (which must contain the mgit CLI). Re-derive it from what the libkrun path actually needs; do not assume today's manifest.json/checksums.txt layout survives. This directly determines what MGIT-61.12 eventually hands to HyperSwe.\n\nConstraints: never put the Linux runner's LAN IP in the repo/CI/commits; no AI-attribution trailers; keep ADR-010 local/untracked unless the owner says otherwise.",
+      "acceptance": "Every precondition P1–P8 is checked with evidence recorded on this ticket, and the task did not start until all were met (or the owner explicitly waived one, recorded here). The default backend is libkrun on Linux and macOS. firecracker and vzf are removed along with their now-dead shared code, with microvm's seam intact. The kernel build, rootfs builders, bundle build/publish and fetch/verify code are removed only after the libkrun deliverable is defined. No document still describes firecracker/vzf as supported backends. Each removal step is a separate revertable commit.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "9fb4d04073e8c21624b75ac340260adc375f22dd0aff8021867329ca4e550f1a",
+      "created_at": "2026-07-28T20:19:32Z",
+      "updated_at": "2026-07-28T20:19:32Z"
     },
     {
       "id": "MGIT-61.2",
@@ -6951,8 +6975,8 @@
       "depth": 1,
       "seq": 6,
       "project": "MGIT",
-      "title": "Implement the libkrun hypervisor backend (cross-platform microVM, behind the microvm.Hypervisor seam)",
-      "description": "Implement libkrun as an additional microVM backend, carrying the spike's deferred gates (virtiofs perf, land+SEC-03 e2e, macOS floor, KVM/concurrent churn) as acceptance criteria. libkrun (Apache-2.0) gives one linked VMM across Linux/KVM + macOS/HVF and bundles its own guest kernel (libkrunfw), which retires the kernel build (MGIT-30), the rootfs image, the bespoke bundle distribution, and the external firecracker-binary requirement. Spike MGIT-61.5 returned GO: all existential kill-tests passed (API fit, real microVM boot on HVF, default-deny egress provable, 40/40 churn with no leak, ~120ms boot). Decision + evidence: docs/adr/010-libkrun-backend-and-guest-distribution.md (Accepted). firecracker/vzf are RETAINED — this is additive, which is what caps the dependency bet.",
+      "title": "Implement the libkrun hypervisor backend (mgit's single cross-platform microVM backend, behind the microvm.Hypervisor seam)",
+      "description": "Implement libkrun as mgit's microVM backend, carrying the spike's deferred gates (virtiofs perf, land+SEC-03 e2e, macOS floor, KVM/concurrent churn) as acceptance criteria. libkrun (Apache-2.0) gives one linked VMM across Linux/KVM + macOS/HVF and bundles its own guest kernel (libkrunfw), which retires the kernel build (MGIT-30), the rootfs image, the bespoke bundle distribution, and the external firecracker-binary requirement. Spike MGIT-61.5 returned GO: all existential kill-tests passed (API fit, real microVM boot on HVF, default-deny egress provable, 40/40 churn with no leak, ~120ms boot). Decision + evidence: docs/adr/010-libkrun-backend-and-guest-distribution.md (Accepted).\n\nSCOPE CORRECTION (owner decision 2026-07-29, see the MGIT-61 epic annotation): this is NO LONGER additive. mgit CONSOLIDATES on libkrun — firecracker and vzf are retired once the MGIT-61.11 preconditions are met. This task still does not DELETE them (retirement is sequenced separately and is the last step), but the acceptance no longer requires that they remain functional and selectable, and no design decision here should be shaped by preserving them.",
       "prompt": "Read FIRST: docs/adr/010-libkrun-backend-and-guest-distribution.md (rationale, license analysis, full spike evidence) and the MGIT-61.5 annotation (kill-test results + guardrails). Then internal/sandboxd/backend/microvm/manager.go and internal/sandboxd/backend/vzf/hypervisor_darwin.go — vzf is the closest analog to copy structure from.\n\n## Architecture: implement the Hypervisor SEAM, not a new SandboxManager\n\nA backend is NOT a full model.SandboxManager. The shared microvm.Manager already implements SandboxManager over a small per-platform seam. You implement:\n\n  microvm.Hypervisor  — CreateVM(cfg VMConfig) (VM, error)\n  microvm.VM          — Start(ctx), Stop(ctx, force)\n\nand, as needed, the OPTIONAL seams the manager probes: GuestDialer (DialGuest — the vsock exec channel), GuestPortDialer (DialGuestPort — SEC-09 one-way publish), PeerIdentifier (PeerIdentity — host-observed, NEVER guest-asserted, SEC-05), NotifyListenerProvider (NotifySocketPath — guest-\u003ehost land-ready auto-land trigger).\n\nConsequence: SEC-03 quarantine, worktree staging, exec, land, attestation and notify logic are INHERITED from microvm.Manager + internal/sandboxd/staging. Do not reimplement them. Gate 4 is therefore mostly a matter of proving the inherited contract still holds on libkrun — not building it.\n\nPackage: internal/sandboxd/backend/libkrun/ (mirror vzf's file layout: hypervisor_\u003cplat\u003e.go, hypervisor_other.go, dialer.go, manager.go + _test.go peers).\n\n## CRITICAL SECURITY GUARDRAIL (spike-proven, non-negotiable)\n\nThe spike empirically proved libkrun's DEFAULT LEAKS EGRESS: with no explicit net device, libkrun auto-enables TSI (Transparent Socket Impersonation), which proxies guest sockets through the host — the guest reached 1.1.1.1:443. Adding an explicit virtio-net device DISABLES TSI (same probe then returned \"network is unreachable\"). krun_add_vsock(ctx, 0) CANNOT retro-disable it (returns EEXIST; libkrun pre-creates its TSI vsock at ctx creation).\n\nThis collides head-on with the existing contract: VMConfig.AttachNIC == false currently means \"attach no NIC\" (none mode, FR-17.7). Under libkrun that is a FAIL-OPEN EGRESS LEAK.\n\nTherefore, in the libkrun backend:\n  - ALWAYS add an explicit net device (krun_add_net_unixgram/unixstream) in EVERY mode — none, allowlist and open.\n  - AttachNIC == false / NetworkModeNone MUST map to \"explicit net device wired to a deny/dead backend\", NOT to \"no net device\".\n  - If the net-device add fails, FAIL CLOSED — never proceed to krun_start_enter (proceeding would silently boot with TSI).\n  - mgit's existing egress engine (internal/sandboxd/egress, MGIT-11.7) is the host backend that does allowlist filtering; allowlist/open route through it (gvproxy/passt-style unixgram/unixstream backend + guest DHCP/route).\nThis guardrail must be enforced structurally (in construction) AND covered by a regression test. A config path that can omit the net device is a defect, not a style issue.\n\n## Packaging / platform constraints (spike-found)\n\n  - libkrun dlopens libkrunfw.5.dylib BY LEAF NAME -\u003e the daemon process needs DYLD_FALLBACK_LIBRARY_PATH (or an install-name/rpath fixup). mgit-sandboxd must arrange this; a missing libkrunfw must produce an ACTIONABLE error, not a bare -2.\n  - macOS/HVF needs the com.apple.security.hypervisor entitlement — DISTINCT from vzf's com.apple.security.virtualization. Update build/darwin (+ release signing) accordingly.\n  - libkrun requires macOS 14+ (vzf path is 13+). Gate 5 is a product decision: raise the floor or keep vzf for 13.\n  - DO NOT BREAK THE DEFAULT BUILD. The Linux daemon is currently pure Go (no CGO); libkrun is CGO + a native lib. Put the backend behind a build tag (e.g. //go:build libkrun \u0026\u0026 cgo) with a hypervisor_other.go stub so `go install` / goreleaser keep working on hosts without libkrun. Verify: default `go build ./...` and `go test ./...` still pass on a machine with NO libkrun installed.\n  - Ubuntu 20.04 (the Linux runner) has NO libkrun package — Linux validation needs a from-source libkrun + libkrunfw (a real kernel build). Budget for it; do not attempt it on a resource-constrained machine.\n  - Add model.BackendLibkrun and register it in validBackends (internal/model/sandbox.go). Wire it into sandboxd.SelectBackend as a Hypervisor factory — it must NEVER be auto-selected as a silent downgrade, and must never displace firecracker/vzf.\n\n## API shape (verified against libkrun 1.19.4 include/libkrun.h)\n\nkrun_create_ctx -\u003e krun_set_vm_config(ctx, vcpus, ram_mib) -\u003e krun_add_virtiofs(ctx, KRUN_FS_ROOT_TAG \"/dev/root\", rootdir) [+ a second virtiofs tag for the staged worktree at the identical path] -\u003e krun_set_workdir -\u003e krun_add_net_unixgram/unixstream(ctx, sock, fd, mac, features, flags) -\u003e krun_add_vsock_port/vsock_port2(ctx, port, path, listen) -\u003e krun_set_port_map (SEC-09) -\u003e krun_set_rlimits (T7 caps) -\u003e krun_set_exec(ctx, path, argv, envp) -\u003e krun_start_enter (BLOCKS until guest shutdown; returns control cleanly — fits the VM.Start/Stop lifecycle).\nNote the guest root is a HOST DIRECTORY shared over virtiofs, not an ext4 image — so the staging package's staged tree is shared directly. Confirm the staged-tree + private-store delivery (SEC-03) maps onto virtiofs tags correctly.\n\n## SCENARIO-BASED TEST CASES (required; table-driven per CLAUDE.md)\n\nA. Construction / unit (fake the krun layer; no VM boot; must run everywhere)\n 1. TestLibkrunHypervisor_ConstructsFullConfiguration — VMConfig -\u003e the expected krun call sequence/args (mirror TestVZHypervisor_ConstructsFullConfiguration).\n 2. TestLibkrunHypervisor_BadImagePathsSurface — bad kernel/rootfs path surfaces, no partial VM.\n 3. TestLibkrunHypervisor_NetworkNone_AttachesExplicitDenyNIC — THE guardrail regression: AttachNIC=false STILL adds an explicit net device bound to a deny backend. Fails if any path yields \"no net device\".\n 4. TestLibkrunHypervisor_AllNetworkModes_AttachExplicitNIC — table over none|allowlist|open; every mode attaches an explicit NIC (no TSI fallback reachable).\n 5. TestLibkrunHypervisor_NetDeviceAddFails_FailsClosedBeforeStart — krun_add_net_* error =\u003e VM never starts (no TSI-enabled boot).\n 6. TestLibkrunHypervisor_RootfsReadOnly_Enforced — pinned image immutable (FR-17.17).\n 7. TestLibkrunHypervisor_ResourceCaps_Applied — cpus/mem/rlimits reach the VM (T7).\n 8. TestLibkrunHypervisor_PeerIdentity_HostObserved — identity is host-assigned, never guest-asserted (SEC-05/SEC-10).\n 9. TestLibkrunHypervisor_WorktreeSharedAtIdenticalPath — virtiofs tag/mount yields the identical guest path (FR-17.3).\n10. TestLibkrunLoader_MissingLibkrunfw_ReturnsActionableError — the leaf-name dlopen failure maps to a remediation message, not \"-2\".\n11. TestLibkrunBackend_UnsupportedPlatform_Unavailable — no KVM / Intel mac / macOS\u003c14 =\u003e unavailable, fail-closed (never a silent container downgrade).\n12. TestSelectBackend_Libkrun_NotAutoDowngraded — selection wiring keeps FR-17.15 semantics.\n\nB. Egress e2e (SECURITY — the spike's core finding; gate on libkrun present)\n13. TestE2E_Libkrun_Network_None_NoEgress — mirrors firecracker's TestE2E_Network_None_NoEgress.\n14. TestE2E_Libkrun_Network_Allowlist_ProxyAndDNSEnforced — allowlisted host reachable, off-list host refused, DNS enforced.\n15. TestE2E_Libkrun_Network_Open_NATEgress — open mode reaches the network (and is audited as reduced control).\n16. TestE2E_Libkrun_Network_TSIDisabled_NoImplicitEgress — the spike regression encoded: a guest that would have reached the internet under libkrun's default CANNOT under mgit's config. This is the test that would have caught the leak.\n\nC. Containment / inherited contract (Gate 4)\n17. TestE2E_Libkrun_Exec_RealGuest_RoundTrip\n18. TestE2E_Libkrun_Land_RealGuest_RoundTrip\n19. TestE2E_Libkrun_HostileGuest_SharedStoreUnreachable (SEC-03: host .mgit never reachable)\n20. TestE2E_Libkrun_HostileGuest_EscapingSymlinkRejected\n21. TestE2E_Libkrun_HostileGuest_LandIsOnlyBridge\n22. TestE2E_Libkrun_PortPublish_OneWayOnly (SEC-09: host-\u003eguest only; no path back)\n\nD. Churn / concurrency / perf (Gates 6 + 2)\n23. TestE2E_Libkrun_Churn_SequentialLaunches_NoLeak — N launch/teardown cycles; no fd/process/mem growth, no latency drift. (Spike: 40/40, ~120ms, zero drift on HVF.)\n24. TestE2E_Libkrun_Churn_ConcurrentLaunches_Isolated — M concurrent sandboxes; each sees ONLY its own staged worktree (cross-task contamination = T6).\n25. TestE2E_Libkrun_Teardown_NoResidue — no leftover sockets/state dirs/processes after Stop+Remove (SEC-10 \"no residue\").\n26. BenchmarkLibkrun_BootLatency + TestE2E_Libkrun_VirtiofsPerf_SmallFileWorkload — Gate 2: an npm-install-class workload (tens of thousands of small files) at acceptable latency. Record the number in the ADR; only hard-fail on a documented threshold.\n\nE. Cross-platform parity\n27. Run B/C/D on BOTH macOS/HVF and Linux/KVM (the Linux runner). Any gate that cannot run must SKIP loudly with the reason — never silently pass.\n\n## Acceptance criteria\n\n- libkrun backend implements microvm.Hypervisor (+ the optional seams it can honor) and passes A–E above on macOS/HVF and Linux/KVM.\n- The egress guardrail is structural + regression-tested (tests 3, 4, 5, 16). No code path can boot a libkrun VM without an explicit host-controlled net device.\n- firecracker/vzf remain fully functional and selectable; nothing is deleted in this task.\n- Default (non-libkrun) build and test suite still pass on a host with NO libkrun installed (build-tag isolation verified).\n- mgit-sandboxd resolves libkrunfw reliably; missing-lib and wrong-entitlement failures produce actionable errors.\n- ADR-010 updated with the measured Gate 2 perf numbers, the Linux/KVM churn result, and the Gate 5 macOS-floor decision.\n- Coverage per CLAUDE.md (store/service 95%, overall \u003e=90% line); golangci-lint, go vet, -race, govulncheck all clean; anti-stub grep clean.\n- License guardrails honored: link libkrunfw DYNAMICALLY; ship Apache NOTICE + LGPL-2.1 text; do NOT redistribute libkrunfw/busybox binaries — treat libkrun as a user-installed prerequisite (same posture as the firecracker binary today). Keeps mgit Apache-2.0 with GPL confined to the guest.\n\n## Out of scope (do NOT do here)\n\n- Do NOT delete firecracker/vzf, MGIT-30's kernel build, publish.sh, or the bundle install path. Retirement is a SEPARATE decision, taken only after this backend proves out in production use.\n- Do NOT run the MGIT-61 owner-gated publish.\n- OCI-based distribution is a separate follow-up (it addresses distribution; this task addresses the VMM).\n- Snapshot/restore, GPU passthrough, nested virt: out of scope (and a reason firecracker stays first-class).\n\n## Constraints\n\n- Never put the Linux runner's LAN IP in the repo, CI logs, or commits — call it \"the Linux runner\".\n- No AI-attribution / Co-Authored-By trailers in commits.\n- TDD per CLAUDE.md: failing test first, then implementation.\n- This task is large and SHOULD be decomposed (suggested split: (a) seam + construction + guardrail unit tests, (b) vsock dialer + exec/land wiring, (c) egress/net backend integration, (d) packaging/entitlement/build-tag + platform gating, (e) churn/perf + cross-platform validation).",
       "acceptance": "libkrun backend implements microvm.Hypervisor behind a build tag; test groups A–E pass on macOS/HVF and Linux/KVM (or SKIP loudly with reason); the always-explicit-NIC egress guardrail is structural and regression-tested (tests 3/4/5/16); firecracker/vzf untouched and still selectable; default build+tests pass with NO libkrun installed; missing-libkrunfw and entitlement failures give actionable errors; ADR-010 updated with Gate 2 perf, Linux/KVM churn, and the Gate 5 macOS-floor decision; lint/vet/race/govulncheck/coverage per CLAUDE.md clean; libkrunfw linked dynamically with NOTICE+LGPL text and no self-redistribution of GPL binaries; MGIT-61 publish NOT run.",
       "node_type": "story",
@@ -6965,9 +6989,9 @@
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
-      "content_hash": "cfc9c14d4f065aecb21ed3c2b33fcd400611973eb6d8b67f3f8c55b991a07e5c",
+      "content_hash": "eab987ddf5d23c5bbaead57745e16e7f17ccd893f40a5743d045fe65cbffaf9e",
       "created_at": "2026-07-27T15:18:51Z",
-      "updated_at": "2026-07-27T17:03:28Z"
+      "updated_at": "2026-07-28T20:18:40Z"
     },
     {
       "id": "MGIT-61.7",
@@ -9197,6 +9221,12 @@
       "created_at": "2026-04-02T13:34:51Z"
     },
     {
+      "from_id": "MGIT-61.13",
+      "to_id": "MGIT-61.10",
+      "dep_type": "blocks",
+      "created_at": "2026-07-28T20:19:38Z"
+    },
+    {
       "from_id": "MGIT-7.1.1",
       "to_id": "MGIT-7.2.6",
       "dep_type": "blocks",
@@ -9275,7 +9305,7 @@
       "agent_id": "claude-fable-5",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-61.10",
+      "current_node_id": "MGIT-61.11",
       "last_heartbeat": "2026-07-28T19:19:31Z"
     },
     {
@@ -9349,6 +9379,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 320,
-  "checksum": "55cca09dd21e32159eea82049903385c7599fcea7d0c598b5d81518ca6d061cf"
+  "node_count": 321,
+  "checksum": "07e89c152c816a11e4534730e8f0e22323cff00ad059b397198ebd69442b3dac"
 }
