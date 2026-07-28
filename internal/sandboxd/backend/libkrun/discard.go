@@ -47,10 +47,11 @@ type hostNetPeer interface{ Close() error }
 //
 //   - "none" gets a socket that discards everything: the NIC has a willing
 //     peer but no route anywhere.
-//   - allowlist/open get the userspace netstack gateway, which terminates the
-//     guest's connections and admits only what the authorizer allows. TCP
-//     ONLY today: there is no UDP forwarder, so guest DNS does not resolve
-//     and allowlisted NAMES are unreachable — only IP/CIDR entries work.
+//   - allowlist gets the userspace netstack gateway, which terminates the
+//     guest's connections and admits only what the authorizer allows, and
+//     serves the pinning DNS resolver at the gateway address. (Open mode is
+//     refused earlier, by vmSpec.Validate: it has no authorizer assembly yet,
+//     and a gateway with no policy is an open network.)
 //
 // Either way the peer is BOUND before the NIC is attached, because libkrun
 // hangs at boot on a socket nothing is listening to.
@@ -116,8 +117,8 @@ func bindDiscardSocket(path string) (*discardSocket, error) {
 // drain reads and discards until the socket is closed, so the guest's NIC
 // always has a willing peer. It exits on the read error Close provokes; any
 // other read error also stops the drain, which would leave the guest's NIC
-// unserved — surfacing that needs the injected logger the backend gets when
-// the Hypervisor is wired (MGIT-61.6).
+// unserved and wedge the VM with nothing in the log. The backend still has no
+// injected logger to surface that — MGIT-61.9 item 4, still open.
 func (d *discardSocket) drain() {
 	buf := make([]byte, maxFrameBytes)
 	for {

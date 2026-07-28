@@ -78,15 +78,14 @@ type dnsResolver interface {
 //
 // The guest's only TCP path out is handleForward below.
 //
-// LIMITATION (be precise — this shapes what allowlist mode actually means):
-// only TCP is registered. Guest UDP, including DNS, is DROPPED, so a guest
-// resolver hangs to timeout. Because egress.Authorizer admits a raw IP only
-// when a prior HOST-side resolution pinned it, allowlist mode is effectively
-// an IP/CIDR allowlist here — allowlisted NAMES cannot be reached. Closing
-// that gap means registering udp.NewProtocol plus a UDP forwarder and serving
-// the existing egress DNS server (which already does the SEC-07 pinning) on
-// the gateway address. Dropping is fail-closed, so this is a functional gap,
-// not a containment one. Refs: FR-17.7, FR-17.8, SEC-04, SEC-07, SEC-10, ADR-010
+// UDP POSTURE (be precise — this shapes what allowlist mode means): exactly
+// ONE UDP endpoint is bound, the DNS resolver at gatewayIP:53 (serveDNS), and
+// there is deliberately NO general UDP forwarder. Every other guest datagram
+// therefore has no listener and is dropped, so UDP cannot become an
+// unauthorized egress path — there is no per-flow authorization for it to
+// pass through. Name resolution goes through the host resolver, which PINS
+// the address (SEC-07), which is what lets allowlisted NAMES work rather than
+// only IP/CIDR entries. Refs: FR-17.7, FR-17.8, SEC-04, SEC-07, SEC-10, ADR-010
 type netGateway struct {
 	conn  *net.UnixConn
 	path  string

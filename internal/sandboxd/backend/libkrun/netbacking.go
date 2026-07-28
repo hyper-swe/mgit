@@ -3,15 +3,36 @@
 // bundled by libkrunfw, giving one hypervisor across Linux/KVM and
 // macOS/HVF.
 //
-// The backend plugs into the microvm.Hypervisor seam, so SEC-03 quarantine,
-// worktree staging, exec, land and notify come from the shared
-// microvm.Manager rather than being reimplemented here.
+// The backend plugs into the microvm.Hypervisor seam, so the lifecycle,
+// exec, land and notify orchestration come from the shared microvm.Manager
+// rather than being reimplemented here.
 //
-// STATUS: under construction (MGIT-61.6). In place: the host-side network
-// decision, the CGO binding, the context constructor that enforces the NIC +
-// host-peer invariant, and the allowlist/open host network gateway
-// (TCP only — see netGateway). Not yet: UDP/DNS, virtiofs shares, vsock, and
-// Hypervisor.CreateVM — so nothing outside this package constructs a VM yet.
+// ONE VM PER PROCESS. krun_start_enter never returns: it seizes the calling
+// process's stdio and exit()s with the guest's exit code when the VM shuts
+// down. So VMs cannot run inside the daemon — Hypervisor re-execs the daemon
+// binary per VM (ChildCommand), and the child builds the context, hosts the
+// VM's host-side network peer, and enters the VM. See ADR-010.
+//
+// STATUS (MGIT-61.6/61.8): in place — the host-side network decision, the
+// CGO binding, the NIC + host-peer invariant, the netstack egress gateway
+// with TCP policy enforcement and the SEC-07 pinning DNS resolver, the
+// virtiofs root and worktree shares, the control-plane vsock ports, the
+// re-exec lifecycle, and the guest dialers. Validated on real hardware
+// (macOS/HVF): boot, none-mode deny, allowlist default-deny, virtio-fs perf.
+//
+// NOT YET, and each fails CLOSED rather than degrading quietly:
+//   - SEC-03 quarantine DELIVERY. CreateVM refuses any launch carrying a
+//     private store: the staged-worktree layout firecracker/vzf build is not
+//     implemented here, and sharing the live worktree instead would be
+//     silently weaker.
+//   - OPEN network mode. No allow-all authorizer exists (MGIT-61.9), and a
+//     gateway with no policy is an unaudited open network; vmSpec.Validate
+//     refuses the mode in both processes.
+//   - SEC-09 host->guest port publishing. netGateway.DialGuestPort lives in
+//     the VM child, so the daemon cannot reach it; the right mechanism is
+//     libkrun's own listening vsock ports (MGIT-61.13 P6).
+//   - Linux/KVM validation. Everything above was proven on macOS/HVF only.
+//
 // Refs: FR-17.15, ADR-005, ADR-010
 package libkrun
 

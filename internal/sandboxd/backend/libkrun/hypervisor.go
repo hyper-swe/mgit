@@ -98,7 +98,7 @@ func (h *Hypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
 	if cfg.PrivateStorePath != "" {
 		return nil, fmt.Errorf(
 			"%w: the libkrun backend does not deliver the SEC-03 private-store "+
-				"quarantine yet (MGIT-61.6); refusing to launch without it",
+				"quarantine yet (MGIT-61.13 P7); refusing to launch without it",
 			model.ErrSandboxBackendUnavailable)
 	}
 	spec := vmSpec{
