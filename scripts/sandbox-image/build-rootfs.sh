@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Reproducibly build the guest rootfs ext4 for a target arch: a static,
-# CGO-free mgit-guest as PID 1 plus the pinned busybox shell/toolchain. The
+# CGO-free mgit-guest as PID 1, the mgit CLI itself (so agents can commit
+# in-sandbox against the SEC-03 private store, MGIT-61.7), plus the pinned
+# busybox shell/toolchain. Payload is ~31 MiB of the 128 MiB default. The
 # tree assembly + mke2fs run INSIDE the pinned builder image (GNU coreutils +
 # e2fsprogs) with a fixed UUID and SOURCE_DATE_EPOCH, so the output is
 # byte-reproducible given the pins. Generalizes scripts/build-guest-image.sh
@@ -26,6 +28,16 @@ echo "building mgit-guest ($ARCH, static, reproducible)…"
 CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -C "$REPO_ROOT" \
 	-trimpath -buildvcs=false -ldflags='-buildid=' \
 	-o "$stage/mgit-guest" ./cmd/mgit-guest/
+
+# 1b) mgit — the CLI itself, so an agent whose shell is routed into the
+# sandbox can actually run `mgit commit`/`status`/`log` against the SEC-03
+# private store. Without it the checkpoint loop is unavailable exactly where
+# the agent works. Same reproducible flags: the rootfs digest is signed into
+# images.lock. Refs: MGIT-61.7, SEC-03
+echo "building mgit CLI ($ARCH, static, reproducible)…"
+CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -C "$REPO_ROOT" \
+	-trimpath -buildvcs=false -ldflags='-buildid=' \
+	-o "$stage/mgit" ./cmd/mgit/
 
 # 2) busybox — extract the pinned per-arch image's static binary. The digest
 # is arch-specific, so no --platform (which is unreliable with an index digest).
@@ -55,6 +67,7 @@ docker run --rm \
 		root="$(mktemp -d)"
 		mkdir -p "$root"/{sbin,bin,proc,dev,tmp,mnt}
 		install -m 0755 /stage/mgit-guest "$root/sbin/mgit-guest"
+		install -m 0755 /stage/mgit       "$root/bin/mgit"
 		install -m 0755 /stage/busybox    "$root/bin/busybox"
 		# Same applet set as build-guest-image.sh (shell/coreutils + network
 		# probes for SEC-04 e2e + fs probes for SEC-03 + mke2fs for the COW

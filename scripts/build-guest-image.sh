@@ -6,6 +6,9 @@
 #
 # Output: an ext4 rootfs containing
 #   /sbin/mgit-guest   - the PID-1 supervisor (static, CGO-free)
+#   /bin/mgit          - the mgit CLI, so an agent whose shell is routed
+#                         into the sandbox can commit/status/log against the
+#                         SEC-03 private store (MGIT-61.7)
 #   /bin/busybox + sh  - a shell + coreutils for the guest to exec
 #   /proc /dev /tmp     - pseudo-fs mount points (mgit-guest mounts them)
 #   /mnt                - scratch mount point for the writable-root overlay
@@ -35,6 +38,9 @@ mkdir -p "$root"/{sbin,bin,proc,dev,tmp,mnt}
 
 echo "building mgit-guest (static, CGO-free)…"
 CGO_ENABLED=0 GOOS=linux go build -C "$REPO_ROOT" -o "$root/sbin/mgit-guest" ./cmd/mgit-guest/
+
+echo "building mgit CLI (static, CGO-free)…"
+CGO_ENABLED=0 GOOS=linux go build -C "$REPO_ROOT" -o "$root/bin/mgit" ./cmd/mgit/
 
 echo "installing busybox shell…"
 bb="$(command -v busybox)"
