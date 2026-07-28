@@ -570,3 +570,80 @@ func TestSpawnChild_RealProcess_HandshakeStdinAndReap(t *testing.T) {
 		t.Errorf("console log %q lacks the child's failure record", console)
 	}
 }
+
+// TestKrunVM_ExitClassification pins how a stopped VM is reported. The child's
+// exit code IS the guest workload's exit code — EXCEPT when the boot never
+// reached the guest (a late handshake error) or when the code is one libkrun's
+// in-guest init reserves. Conflating those would tell an agent its command
+// failed when in fact the VM never ran it. Refs: MGIT-61.8, ADR-010
+func TestKrunVM_ExitClassification(t *testing.T) {
+	tests := []struct {
+		name      string
+		handshake string
+		exitCode  int
+		wantEvent string
+	}{
+		{
+			// Configured, then the boot itself failed before the guest ran.
+			name:      "late_handshake_error_is_a_boot_failure",
+			handshake: `{"ok":true}` + "\n" + `{"error":"krun_start_enter: -22"}` + "\n",
+			wantEvent: "krun_vm_bootfail",
+		},
+		{
+			// libkrun reserves 125/126/127 for in-guest init failures.
+			name:      "reserved_code_is_a_guest_init_failure",
+			handshake: `{"ok":true}` + "\n",
+			exitCode:  127,
+			wantEvent: "krun_vm_initfail",
+		},
+		{
+			name:      "ordinary_code_is_a_workload_exit",
+			handshake: `{"ok":true}` + "\n",
+			exitCode:  3,
+			wantEvent: "krun_vm_exit",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logged strings.Builder
+			child := newFakeChild(tt.handshake)
+			child.exitCode = tt.exitCode
+			spawner := &fakeSpawner{next: func() *fakeChild { return child }}
+			h := &Hypervisor{
+				exePath: "/fake/mgit-sandboxd",
+				spawn:   spawner.spawn,
+				logger:  slog.New(slog.NewTextHandler(&logged, nil)),
+			}
+
+			vm, err := h.CreateVM(vmCfg(t, model.NetworkModeNone))
+			if err != nil {
+				t.Fatalf("CreateVM: %v", err)
+			}
+			if err := vm.Start(context.Background()); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			// Stop waits for the watcher to reap and classify.
+			if err := vm.Stop(context.Background(), true); err != nil {
+				t.Fatalf("Stop: %v", err)
+			}
+			if !strings.Contains(logged.String(), tt.wantEvent) {
+				t.Errorf("log %q lacks event %q", logged.String(), tt.wantEvent)
+			}
+		})
+	}
+}
+
+// TestWriteHandshake_BrokenPipe_IsLoggedNotFatal: if the parent died, the
+// child must still finish its own teardown rather than dying on the report.
+func TestWriteHandshake_BrokenPipe_IsLoggedNotFatal(t *testing.T) {
+	var logged strings.Builder
+	writeHandshake(errWriter{}, slog.New(slog.NewTextHandler(&logged, nil)), childHandshake{OK: true})
+	if !strings.Contains(logged.String(), "krun_handshake_writefail") {
+		t.Errorf("a failed handshake write must be logged, got %q", logged.String())
+	}
+}
+
+// errWriter fails every write, standing in for a parent that has exited.
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
