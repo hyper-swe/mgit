@@ -4,6 +4,7 @@ package libkrun
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -58,6 +59,14 @@ func requireRealVM(t *testing.T) {
 // directory, which libkrun shares over virtiofs (there is no rootfs image).
 func buildGuest(t *testing.T) string {
 	t.Helper()
+	return buildGuestWorkload(t, "netguest")
+}
+
+// buildGuestWorkload cross-compiles one testdata guest workload and installs
+// it at the guest init path in a fresh root directory, which libkrun shares
+// over virtiofs (there is no rootfs image).
+func buildGuestWorkload(t *testing.T, name string) string {
+	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "sbin"), 0o755); err != nil {
 		t.Fatalf("guest root: %v", err)
@@ -72,7 +81,7 @@ func buildGuest(t *testing.T) string {
 	if !ok {
 		t.Fatal("cannot locate the test source to find testdata/netguest")
 	}
-	src := filepath.Join(filepath.Dir(thisFile), "testdata", "netguest")
+	src := filepath.Join(filepath.Dir(thisFile), "testdata", name)
 
 	cmd := exec.Command("go", "build", "-o", out, ".") //nolint:gosec // fixed argv
 	// Run the build IN the guest source dir (-C equivalent) so module
@@ -193,4 +202,107 @@ func TestE2E_Libkrun_RealVM_Allowlist_DefaultDeny(t *testing.T) {
 		t.Fatalf("an off-allowlist destination was reachable from the guest (T3 exfiltration); console:\n%s", console)
 	}
 	t.Logf("REAL VM PASS: allowlist mode default-denied an off-list destination\n%s", console)
+}
+
+// TestE2E_Libkrun_RealVM_VirtiofsPerf is ADR-010 Gate 2: virtio-fs must be
+// fast enough for the agent loop under an npm-install-class workload — many
+// thousands of SMALL files, where per-file overhead dominates and virtio-fs
+// is at its worst.
+//
+// It measures rather than gates: the ADR wanted a number, and a hard
+// threshold on shared CI hardware would be a flake generator. The only
+// failure is a result so slow it would make the loop unusable, plus the
+// same workload timed on the HOST filesystem for a ratio that means
+// something across machines. Refs: ADR-010 Gate 2, NFR-17.2
+func TestE2E_Libkrun_RealVM_VirtiofsPerf(t *testing.T) {
+	requireRealVM(t)
+
+	guestRoot := buildGuestWorkload(t, "fsbench")
+	cfg := realVMConfig(t, guestRoot, model.NetworkModeNone, nil)
+	// The guest writes into /bench on its root — which IS the shared host
+	// directory, so every operation crosses virtio-fs.
+	cfg.RootfsReadOnly = false
+
+	start := time.Now()
+	console := bootVM(t, cfg)
+	bootAndRun := time.Since(start)
+
+	line := ""
+	for _, l := range strings.Split(console, "\n") {
+		if strings.HasPrefix(l, "BENCH-RESULT") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("no benchmark result in the guest console:\n%s", console)
+	}
+
+	var files, writeMS, readMS, bytesRead int
+	if _, err := fmt.Sscanf(line, "BENCH-RESULT files=%d write_ms=%d read_ms=%d bytes_read=%d",
+		&files, &writeMS, &readMS, &bytesRead); err != nil {
+		t.Fatalf("parse %q: %v", line, err)
+	}
+
+	hostWrite, hostRead := hostBaseline(t, files)
+
+	t.Logf("VIRTIOFS GATE 2 — %d small files (512B each)", files)
+	t.Logf("  guest (virtio-fs): write %d ms (%.3f ms/file), read+stat %d ms (%.3f ms/file)",
+		writeMS, float64(writeMS)/float64(files), readMS, float64(readMS)/float64(files))
+	t.Logf("  host (native fs):  write %d ms (%.3f ms/file), read+stat %d ms (%.3f ms/file)",
+		hostWrite, float64(hostWrite)/float64(files), hostRead, float64(hostRead)/float64(files))
+	t.Logf("  ratio: write %.1fx host, read %.1fx host; whole boot+workload %s",
+		ratio(writeMS, hostWrite), ratio(readMS, hostRead), bootAndRun.Round(time.Millisecond))
+
+	// The usability floor, not a performance target: slower than this and a
+	// dependency install inside the sandbox stops being viable.
+	const maxMSPerFileWrite = 5.0
+	if got := float64(writeMS) / float64(files); got > maxMSPerFileWrite {
+		t.Errorf("virtio-fs write is %.3f ms/file, over the %.1f ms/file usability floor — "+
+			"an npm install of 30k files would take %.0f s", got, maxMSPerFileWrite, got*30000/1000)
+	}
+}
+
+// ratio guards against a zero-millisecond baseline.
+func ratio(guest, host int) float64 {
+	if host == 0 {
+		return float64(guest)
+	}
+	return float64(guest) / float64(host)
+}
+
+// hostBaseline runs the same shape of workload on the host filesystem, so the
+// guest number can be read as a multiple rather than an absolute that only
+// means something on one machine.
+func hostBaseline(t *testing.T, files int) (writeMS, readMS int) {
+	t.Helper()
+	root := t.TempDir()
+	payload := make([]byte, 512)
+	for i := range payload {
+		payload[i] = byte('a' + i%26)
+	}
+
+	start := time.Now()
+	for i := 0; i < files; i++ {
+		dir := filepath.Join(root, fmt.Sprintf("pkg%03d", i%64))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("baseline mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%05d.js", i)), payload, 0o644); err != nil {
+			t.Fatalf("baseline write: %v", err)
+		}
+	}
+	writeMS = int(time.Since(start).Milliseconds())
+
+	start = time.Now()
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		_, err = os.ReadFile(path) //nolint:gosec // test-owned path
+		return err
+	})
+	if err != nil {
+		t.Fatalf("baseline walk: %v", err)
+	}
+	return writeMS, int(time.Since(start).Milliseconds())
 }
