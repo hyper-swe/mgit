@@ -130,6 +130,10 @@ func TestManager_Launch_IsolationContract(t *testing.T) {
 
 	cfg := hv.configs[0]
 	assert.Equal(t, info.ID, cfg.SandboxID, "VM config carries the sandbox ID so a backend can key a live-VM registry (FR-17.16)")
+	assert.Equal(t, SandboxStateDir(workDir, info.ID), cfg.StateDir,
+		"VM config carries the per-sandbox state dir: a backend that derives it (e.g. from the overlay path) breaks when it has no overlay (libkrun, ADR-010)")
+	assert.Equal(t, "MGIT-4.2", cfg.TaskID,
+		"VM config carries the task so a backend that enforces egress in its own process can audit per task (libkrun)")
 	assert.True(t, cfg.RootfsReadOnly, "rootfs immutable (FR-17.17)")
 	assert.True(t, strings.HasPrefix(cfg.OverlayPath, workDir), "overlay never in the worktree")
 	assert.FileExists(t, cfg.OverlayPath)
@@ -144,9 +148,13 @@ func TestManager_Launch_IsolationContract(t *testing.T) {
 	assert.Equal(t, info.ID, listed[0].ID)
 
 	t.Run("allowlist_attaches_nic", func(t *testing.T) {
-		_, err := mgr.Launch(ctx, launchOpts("MGIT-4.3", model.NetworkModeAllowlist))
+		opts := launchOpts("MGIT-4.3", model.NetworkModeAllowlist)
+		opts.Network.Allowlist = []string{"proxy.golang.org:443"}
+		_, err := mgr.Launch(ctx, opts)
 		require.NoError(t, err)
 		assert.True(t, hv.configs[1].AttachNIC, "allowlist gets a NIC (host proxy enforces, FR-17.8)")
+		assert.Equal(t, []string{"proxy.golang.org:443"}, hv.configs[1].NetworkAllowlist,
+			"the policy crosses the Hypervisor seam for backends that enforce egress in the VM's own process (libkrun)")
 	})
 }
 

@@ -9,6 +9,10 @@ import (
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 )
 
+// rootFSTag is libkrun's well-known virtiofs tag for the guest root
+// (KRUN_FS_ROOT_TAG in libkrun.h).
+const rootFSTag = "/dev/root"
+
 // krunAPI is the libkrun C surface the backend drives, injected so the
 // configuration sequence — above all the mandatory NIC — is testable on any
 // host, with or without libkrun installed. The real implementation is the
@@ -29,6 +33,25 @@ type krunAPI interface {
 	AddNetUnixgram(ctx uint32, socketPath, mac string) error
 	// SetVMConfig applies the vCPU and memory caps.
 	SetVMConfig(ctx uint32, vcpus uint8, ramMiB uint32) error
+	// AddVirtiofs shares a host directory into the guest under a tag
+	// (krun_add_virtiofs3; the rootFSTag tag is the guest root).
+	AddVirtiofs(ctx uint32, tag, hostDir string, readOnly bool) error
+	// SetWorkdir sets the workload's working directory, guest-root-relative.
+	SetWorkdir(ctx uint32, dir string) error
+	// AddVsockPort maps a guest vsock port to a host unix socket path
+	// (krun_add_vsock_port2). hostInitiates=true means the host connects in
+	// (libkrun listens on the path); false means the guest dials out (libkrun
+	// connects to a daemon-owned listener).
+	AddVsockPort(ctx uint32, port uint32, socketPath string, hostInitiates bool) error
+	// SetExec sets the guest PID-1 workload. args are the arguments ONLY —
+	// libkrun prepends the executable itself — and env is passed explicitly
+	// even when empty, because a NULL envp would inject the calling process's
+	// environment into the guest (SEC-05).
+	SetExec(ctx uint32, path string, args, env []string) error
+	// StartEnter boots the VM and NEVER RETURNS on success: libkrun seizes
+	// the process and exit()s with the guest's exit code at shutdown. A
+	// return is always a pre-boot failure. Refs: ADR-010
+	StartEnter(ctx uint32) error
 	// FreeCtx releases a context that will not be started.
 	FreeCtx(ctx uint32) error
 }
@@ -59,16 +82,18 @@ type guestCtx struct {
 	peer hostNetPeer // host end of the NIC; owned for the context's lifetime
 }
 
-// newGuestCtx creates and configures a libkrun context for one launch.
+// newGuestCtx creates and fully configures a libkrun context for one launch,
+// from the network wiring through filesystem shares, control-plane vsock
+// ports and the guest workload.
 //
 // Order matters: the network wiring is resolved BEFORE libkrun is touched (an
 // unresolvable mode must not leave a context allocated), and the NIC is
 // attached IMMEDIATELY after the context exists, so no window exists in which
 // a context is live without one. Every failure after creation frees the
 // context rather than leaking it. Refs: FR-17.7, SEC-04, ADR-010
-func newGuestCtx(api krunAPI, cfg microvm.VMConfig, stateDir string, auth flowAuthorizer, dns dnsResolver) (*guestCtx, error) {
+func newGuestCtx(api krunAPI, spec vmSpec, auth flowAuthorizer, dns dnsResolver) (*guestCtx, error) {
 	// Resolve first: fail closed without allocating anything.
-	backing, err := netBackingFor(cfg.SandboxID, cfg.NetworkMode, stateDir)
+	backing, err := netBackingFor(spec.SandboxID, spec.NetworkMode, spec.StateDir)
 	if err != nil {
 		return nil, err
 	}
@@ -95,10 +120,59 @@ func newGuestCtx(api krunAPI, cfg microvm.VMConfig, stateDir string, auth flowAu
 			"libkrun attach net device (%s mode): %w", backing.Mode, err))
 	}
 
-	if err := api.SetVMConfig(id, vcpuCount(cfg.CPUs), memoryMiB(cfg.MemoryMB)); err != nil {
+	if err := api.SetVMConfig(id, vcpuCount(spec.CPUs), memoryMiB(spec.MemoryMB)); err != nil {
 		return nil, gc.abort(fmt.Errorf("libkrun set vm config: %w", err))
 	}
+	if err := gc.configureGuest(spec); err != nil {
+		return nil, gc.abort(err)
+	}
 	return gc, nil
+}
+
+// configureGuest applies the non-network guest configuration: the virtiofs
+// root (and worktree share), working directory, control-plane vsock ports,
+// and the PID-1 workload. Split from newGuestCtx only to keep each function
+// within the complexity budget; it is not independently callable with an
+// unconfigured NIC. Refs: FR-17.3, FR-17.11, FR-17.17
+func (g *guestCtx) configureGuest(spec vmSpec) error {
+	if err := g.api.AddVirtiofs(g.id, rootFSTag, spec.RootDir, spec.RootReadOnly); err != nil {
+		return fmt.Errorf("libkrun share guest root %s: %w", spec.RootDir, err)
+	}
+	workdir := "/"
+	if spec.WorktreePath != "" {
+		if err := g.api.AddVirtiofs(g.id, spec.WorktreeTag, spec.WorktreePath, false); err != nil {
+			return fmt.Errorf("libkrun share worktree %s: %w", spec.WorktreePath, err)
+		}
+		workdir = spec.WorktreePath
+	}
+	if err := g.api.SetWorkdir(g.id, workdir); err != nil {
+		return fmt.Errorf("libkrun set workdir: %w", err)
+	}
+	if spec.VsockEnabled {
+		for _, port := range controlVsockPorts() {
+			// Only the notify port is guest-initiated: the guest dials the
+			// host's land-ready listener; exec and land are host-initiated.
+			hostInitiates := port != microvm.GuestNotifyPort
+			if err := g.api.AddVsockPort(g.id, port, vsockSocketPath(spec.StateDir, port), hostInitiates); err != nil {
+				return fmt.Errorf("libkrun add vsock port %d: %w", port, err)
+			}
+		}
+	}
+	if err := g.api.SetExec(g.id, spec.ExecPath, spec.ExecArgs, spec.ExecEnv); err != nil {
+		return fmt.Errorf("libkrun set guest exec: %w", err)
+	}
+	return nil
+}
+
+// enter boots the configured VM. On success it NEVER RETURNS: libkrun seizes
+// the process and exit()s with the guest's exit code when the VM shuts down
+// (ADR-010) — which is why only the re-exec child calls this, never the
+// daemon. A return is a pre-boot failure; the context and host peer are
+// released before it surfaces.
+func (g *guestCtx) enter() error {
+	err := g.api.StartEnter(g.id)
+	// Unreachable after a successful boot; anything here failed pre-boot.
+	return g.abort(fmt.Errorf("libkrun start vm: %w", err))
 }
 
 // abort releases everything behind a failed configuration and returns the

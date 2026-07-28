@@ -64,7 +64,20 @@ type ImagePaths struct {
 // builds; each platform translates it to its native configuration. It
 // carries the FR-17 isolation contract.
 type VMConfig struct {
-	SandboxID      string // host-assigned lifecycle ID; lets a backend key a live-VM registry to its dialer (vzf, FR-17.16)
+	SandboxID string // host-assigned lifecycle ID; lets a backend key a live-VM registry to its dialer (vzf, FR-17.16)
+	// StateDir is the per-sandbox state directory (SandboxStateDir) every
+	// host-side per-VM artifact belongs under, so teardown stays one RemoveAll
+	// (FR-17.19). It is carried explicitly because deriving it — vzf's
+	// filepath.Dir(OverlayPath) trick — breaks for a backend with no overlay:
+	// libkrun boots a virtiofs root, and a derived "." would drop its net
+	// backing sockets in the daemon cwd, shared across sandboxes and surviving
+	// teardown. Refs: FR-17.19, ADR-010
+	StateDir string
+	// TaskID is the task this sandbox serves, carried so a backend that
+	// enforces egress in the VM's own process (libkrun's re-exec child) can
+	// stamp its audit records; the daemon-side backends take it from the
+	// service wiring instead. Refs: FR-17.8
+	TaskID         string
 	CPUs           int
 	MemoryMB       int
 	KernelPath     string
@@ -87,10 +100,16 @@ type VMConfig struct {
 	// off NetworkMode: libkrun, for one, silently enables TSI when a VM has no
 	// net device, so honoring AttachNIC=false there is an egress leak, not a
 	// closed network. Refs: FR-17.7, ADR-010
-	AttachNIC      bool
-	NetworkMode    string // model.NetworkMode*: backend wires NAT (open) vs proxy-route (allowlist) vs no NIC (none) (FR-17.7, FR-17.8)
-	VsockEnabled   bool
-	BalloonEnabled bool
+	AttachNIC   bool
+	NetworkMode string // model.NetworkMode*: backend wires NAT (open) vs proxy-route (allowlist) vs no NIC (none) (FR-17.7, FR-17.8)
+	// NetworkAllowlist is the launch policy's allowlist, verbatim. Backends
+	// whose egress enforcement runs in the daemon (firecracker's proxy) get
+	// the policy from the service wiring and may ignore this; a backend whose
+	// enforcement lives in the VM's own process (libkrun) has only this seam
+	// to receive it. Refs: FR-17.8, SEC-04, ADR-010
+	NetworkAllowlist []string
+	VsockEnabled     bool
+	BalloonEnabled   bool
 	// PublishPorts are the GUEST TCP ports the guest must expose for one-way
 	// host->guest port publishing (SEC-09): the backend puts them on the guest
 	// kernel cmdline (guestboot) so mgit-guest runs an AF_VSOCK->TCP-localhost
@@ -307,7 +326,7 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 		return nil, fmt.Errorf("%s launch: %w", m.cfg.Backend, err)
 	}
 
-	vm, err := m.cfg.Hypervisor.CreateVM(vmConfig(id, opts, images, overlay, privateStore))
+	vm, err := m.cfg.Hypervisor.CreateVM(vmConfig(id, dir, opts, images, overlay, privateStore))
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("%s launch: create vm: %w", m.cfg.Backend, err)
@@ -405,9 +424,11 @@ func (m *Manager) quarantine(taskID, worktreePath, stateDir string) (string, err
 // overlay (FR-17.17), worktree share, the SEC-03 private store, vsock
 // control plane, and a NIC only when the network mode is not "none"
 // (FR-17.7). Refs: FR-17.3, FR-17.17, SEC-03
-func vmConfig(id string, opts model.SandboxLaunchOptions, images ImagePaths, overlay, privateStore string) VMConfig {
+func vmConfig(id, stateDir string, opts model.SandboxLaunchOptions, images ImagePaths, overlay, privateStore string) VMConfig {
 	return VMConfig{
 		SandboxID:        id,
+		StateDir:         stateDir,
+		TaskID:           opts.TaskID,
 		CPUs:             opts.CPUs,
 		MemoryMB:         opts.MemoryMB,
 		KernelPath:       images.KernelPath,
@@ -420,6 +441,7 @@ func vmConfig(id string, opts model.SandboxLaunchOptions, images ImagePaths, ove
 		WorktreeTag:      "work",
 		AttachNIC:        opts.Network.Mode != model.NetworkModeNone,
 		NetworkMode:      opts.Network.Mode,
+		NetworkAllowlist: opts.Network.Allowlist,
 		VsockEnabled:     true,
 		BalloonEnabled:   true,
 		PublishPorts:     guestPublishPorts(opts.PublishPorts),

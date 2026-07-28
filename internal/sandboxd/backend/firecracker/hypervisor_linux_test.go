@@ -129,10 +129,10 @@ func TestKVM_RootfsReadOnly_OverlayCOW(t *testing.T) {
 	cfg := microvm.VMConfig{
 		CPUs: 2, MemoryMB: 512,
 		KernelPath: "/img/vmlinux", RootfsPath: "/img/rootfs.sqfs", RootfsReadOnly: true,
-		Cmdline: bootCmdline, OverlayPath: "/state/sb1/overlay.img",
+		Cmdline: bootCmdline, StateDir: "/state/sb1", OverlayPath: "/state/sb1/overlay.img",
 		VsockEnabled: true,
 	}
-	fcfg := buildConfig(cfg, sandboxPaths(filepath.Dir(cfg.OverlayPath)), "")
+	fcfg := buildConfig(cfg, sandboxPaths(cfg.StateDir), "")
 
 	require.Len(t, fcfg.Drives, 2, "exactly a rootfs + overlay drive")
 	root := fcfg.Drives[0]
@@ -236,9 +236,9 @@ func TestKVM_BuildConfig_VsockDisabled(t *testing.T) {
 	cfg := microvm.VMConfig{
 		CPUs: 1, MemoryMB: 256,
 		KernelPath: "/img/vmlinux", RootfsPath: "/img/rootfs.sqfs", RootfsReadOnly: true,
-		OverlayPath: "/state/sb1/overlay.img", VsockEnabled: false,
+		StateDir: "/state/sb1", OverlayPath: "/state/sb1/overlay.img", VsockEnabled: false,
 	}
-	fcfg := buildConfig(cfg, sandboxPaths(filepath.Dir(cfg.OverlayPath)), "")
+	fcfg := buildConfig(cfg, sandboxPaths(cfg.StateDir), "")
 	assert.Empty(t, fcfg.VsockDevices, "no vsock device when the control plane is disabled")
 }
 

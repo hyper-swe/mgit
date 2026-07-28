@@ -39,6 +39,16 @@ e2e:
 test:
 	go test ./... -count=1
 
+## test-libkrun: Build+vet+test the opt-in libkrun backend (-tags libkrun).
+# Needs libkrun installed (macOS: brew tap slp/krun && brew install libkrun;
+# Linux: from source) — nothing else in CI compiles the tagged CGO binding,
+# so this target is the only check that it still builds. Refs: ADR-010
+.PHONY: test-libkrun
+test-libkrun:
+	go build -tags libkrun ./...
+	go vet -tags libkrun ./internal/sandboxd/backend/libkrun/ ./cmd/mgit-sandboxd/
+	go test -tags libkrun ./internal/sandboxd/backend/libkrun/ -count=1
+
 ## test-race: Run tests with race detector
 .PHONY: test-race
 test-race:

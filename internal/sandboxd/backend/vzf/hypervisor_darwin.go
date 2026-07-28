@@ -177,11 +177,21 @@ func storageDevices(cfg microvm.VMConfig) ([]vz.StorageDeviceConfiguration, erro
 func worktreeShare(cfg microvm.VMConfig) (vz.DirectorySharingDeviceConfiguration, error) {
 	source := cfg.WorktreePath
 	if cfg.PrivateStorePath != "" {
-		// Build the quarantined staging tree in the sandbox state dir (the
-		// overlay's dir), cleaned by the manager's teardown RemoveAll. Build
-		// fails closed (staging.ErrSymlinkEscape) on an escaping symlink, so an
+		// Build the quarantined staging tree in the sandbox state dir, cleaned
+		// by the manager's teardown RemoveAll. Build fails closed
+		// (staging.ErrSymlinkEscape) on an escaping symlink, so an
 		// unquarantined worktree is never shared.
-		stagingDir := filepath.Join(filepath.Dir(cfg.OverlayPath), stagingDirName)
+		//
+		// An absent state dir is refused rather than resolved relatively: the
+		// staged tree carries the private store, so writing it to a
+		// process-relative path would put quarantined content outside the
+		// sandbox's own dir and leave it behind at teardown.
+		if cfg.StateDir == "" {
+			return nil, fmt.Errorf(
+				"%w: vz worktree quarantine needs a sandbox state dir to stage into",
+				model.ErrSandboxBackendUnavailable)
+		}
+		stagingDir := filepath.Join(cfg.StateDir, stagingDirName)
 		if err := staging.Build(cfg.WorktreePath, cfg.PrivateStorePath, stagingDir); err != nil {
 			return nil, fmt.Errorf("vz worktree quarantine: %w", err)
 		}

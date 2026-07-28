@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/sandboxd"
+	"github.com/hyper-swe/mgit/internal/sandboxd/backend/libkrun"
 )
 
 // slogBackendAuditor records backend selections in the daemon's
@@ -91,6 +92,14 @@ func parseFlags(args []string, logSink io.Writer) (*daemonOpts, int) {
 // run wires flags into the daemon and blocks until exit. Split from
 // main for testability (DI; no globals).
 func run(args []string, logSink io.Writer) int {
+	// The hidden re-exec subcommand: run ONE libkrun microVM and nothing
+	// else. Dispatched before flag parsing — it is not a flag-shaped verb,
+	// and the child must never wander into daemon startup. On success the
+	// call never returns (libkrun exit()s with the guest's exit code).
+	// Refs: ADR-010, MGIT-61.8
+	if len(args) > 0 && args[0] == libkrun.ChildCommand {
+		return libkrun.ChildMain(os.Stdin, logSink)
+	}
 	opts, code := parseFlags(args, logSink)
 	if opts == nil {
 		return code

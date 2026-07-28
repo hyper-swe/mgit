@@ -30,6 +30,7 @@ func shareConfig(t *testing.T, worktree, privateStore string) microvm.VMConfig {
 	return microvm.VMConfig{
 		WorktreePath:     worktree,
 		WorktreeTag:      "work",
+		StateDir:         stateDir,
 		OverlayPath:      overlay,
 		PrivateStorePath: privateStore,
 	}
@@ -44,9 +45,9 @@ func privateStoreWith(t *testing.T) string {
 	return priv
 }
 
-// stagingDirFor returns where worktreeShare stages, given a config's overlay.
+// stagingDirFor returns where worktreeShare stages, given a config.
 func stagingDirFor(cfg microvm.VMConfig) string {
-	return filepath.Join(filepath.Dir(cfg.OverlayPath), stagingDirName)
+	return filepath.Join(cfg.StateDir, stagingDirName)
 }
 
 // TestWorktreeShare_PrivateStore_SharesStagedTree proves that with a private

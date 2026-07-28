@@ -3,7 +3,6 @@
 package libkrun
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -22,23 +21,27 @@ func TestBinding_ConfiguresARealContextThroughNewGuestCtx(t *testing.T) {
 	}
 
 	dir := shortTempDir(t)
+	// The full production configuration — root virtiofs, worktree share,
+	// vsock control ports, guest exec — against the REAL C calls. The host
+	// peer is bound by newGuestCtx itself (it owns the NIC's host end).
+	spec := baseSpec(model.NetworkModeNone, dir)
+	spec.RootDir = t.TempDir()
+	spec.WorktreePath = t.TempDir()
+	spec.WorktreeTag = "work"
+	spec.VsockEnabled = true
+	spec.ExecArgs = []string{"--vsock-port", "1024"}
+	spec.ExecEnv = []string{"PATH=/bin"}
 
-	// "none" mode needs its host end bound and draining before the VM would
-	// boot; binding it here is also what makes the add realistic.
-	deny, err := bindDiscardSocket(filepath.Join(dir, denySocketName))
-	if err != nil {
-		t.Fatalf("bind deny socket: %v", err)
-	}
-	defer deny.Close()
-
-	cfg := baseCfg(model.NetworkModeNone)
-	gc, err := newGuestCtx(api, cfg, dir)
+	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil)
 	if err != nil {
 		t.Fatalf("newGuestCtx against real libkrun: %v", err)
 	}
-	// Nothing will start this context; release it.
-	if err := gc.api.FreeCtx(gc.id); err != nil {
-		t.Errorf("FreeCtx: %v", err)
+	// Nothing will start this context; release it (and its host peer).
+	if err := gc.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+	if denySocketExists(dir) {
+		t.Error("host peer socket still bound after Close")
 	}
 }
 

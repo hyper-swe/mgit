@@ -31,6 +31,10 @@ const (
 	BackendVZF = "vzf"
 	// BackendHyperV is the Windows Hyper-V/WHP backend.
 	BackendHyperV = "hyperv"
+	// BackendLibkrun is the cross-platform linked-VMM backend (KVM on
+	// Linux, Hypervisor.framework on macOS/arm64), opt-in at build time
+	// via the "libkrun" tag. Refs: ADR-010
+	BackendLibkrun = "libkrun"
 	// BackendContainer is the reduced-isolation fallback, permitted only
 	// with explicit acknowledgment recorded in the audit trail.
 	BackendContainer = "container"
@@ -55,7 +59,7 @@ const (
 // validBackends and validStates close the vocabularies above so writers
 // of the append-only audit trail cannot fork them with typos.
 var (
-	validBackends = map[string]bool{BackendKVM: true, BackendVZF: true, BackendHyperV: true, BackendContainer: true}
+	validBackends = map[string]bool{BackendKVM: true, BackendVZF: true, BackendHyperV: true, BackendLibkrun: true, BackendContainer: true}
 	validStates   = map[string]bool{StateCreated: true, StateRunning: true, StateSuspended: true, StateLanded: true, StateDestroyed: true}
 )
 

@@ -29,13 +29,23 @@ type fakeKrun struct {
 	lastNetSoc string
 	lastVCPUs  uint8
 	lastRAM    uint32
+	rootDir    string
+	rootRO     bool
+	workdir    string
+	vsockPaths map[uint32]string
+	vsockHost  map[uint32]bool
+	execPath   string
+	execArgs   []string
+	execEnv    []string
 }
 
 // record appends an op and fails it when it is the scripted failure point.
+// Parameterized ops fail on their base name (before the ':').
 func (f *fakeKrun) record(op string) error {
 	f.calls = append(f.calls, op)
-	if op == f.failOn {
-		return fmt.Errorf("krun_%s: -22", op)
+	base, _, _ := strings.Cut(op, ":")
+	if base == f.failOn {
+		return fmt.Errorf("krun_%s: -22", base)
 	}
 	return nil
 }
@@ -57,6 +67,39 @@ func (f *fakeKrun) SetVMConfig(_ uint32, vcpus uint8, ramMiB uint32) error {
 	return f.record("set_vm_config")
 }
 
+func (f *fakeKrun) AddVirtiofs(_ uint32, tag, hostDir string, readOnly bool) error {
+	if tag == rootFSTag {
+		f.rootDir, f.rootRO = hostDir, readOnly
+	}
+	return f.record("add_fs:" + tag)
+}
+
+func (f *fakeKrun) SetWorkdir(_ uint32, dir string) error {
+	f.workdir = dir
+	return f.record("set_workdir")
+}
+
+func (f *fakeKrun) AddVsockPort(_ uint32, port uint32, socketPath string, hostInitiates bool) error {
+	if f.vsockPaths == nil {
+		f.vsockPaths = make(map[uint32]string)
+		f.vsockHost = make(map[uint32]bool)
+	}
+	f.vsockPaths[port], f.vsockHost[port] = socketPath, hostInitiates
+	return f.record(fmt.Sprintf("add_vsock:%d", port))
+}
+
+func (f *fakeKrun) SetExec(_ uint32, path string, args, env []string) error {
+	f.execPath, f.execArgs, f.execEnv = path, args, env
+	return f.record("set_exec")
+}
+
+func (f *fakeKrun) StartEnter(uint32) error {
+	// The fake can only model the FAILURE branch: a real StartEnter never
+	// returns on success (ADR-010), which no in-process fake can imitate.
+	_ = f.record("start_enter")
+	return fmt.Errorf("krun_start_enter: -22")
+}
+
 func (f *fakeKrun) FreeCtx(uint32) error {
 	_ = f.record("free_ctx")
 	return f.freeErr
@@ -64,12 +107,17 @@ func (f *fakeKrun) FreeCtx(uint32) error {
 
 func (f *fakeKrun) seq() string { return strings.Join(f.calls, ",") }
 
-func baseCfg(mode string) microvm.VMConfig {
-	return microvm.VMConfig{
+// baseSpec is a minimal bootable spec: none-mode network, no worktree share,
+// no vsock (each test opts in to what it exercises).
+func baseSpec(mode, stateDir string) vmSpec {
+	return vmSpec{
 		SandboxID:   "sbx-abc123",
 		NetworkMode: mode,
 		CPUs:        2,
 		MemoryMB:    1024,
+		StateDir:    stateDir,
+		RootDir:     "/img/guest-root",
+		ExecPath:    "/sbin/mgit-guest",
 	}
 }
 
@@ -84,7 +132,7 @@ func TestNewGuestCtx_AttachesTheNICBeforeAnythingElse(t *testing.T) {
 	dir := shortTempDir(t)
 	api := &fakeKrun{}
 
-	gc, err := newGuestCtx(api, baseCfg(model.NetworkModeNone), dir, &stubAuthorizer{}, nil)
+	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -92,18 +140,113 @@ func TestNewGuestCtx_AttachesTheNICBeforeAnythingElse(t *testing.T) {
 
 	// The NIC must be attached immediately after the context exists, so there
 	// is no window in which a live context lacks one.
-	if want := "create_ctx,add_net,set_vm_config"; api.seq() != want {
+	if want := "create_ctx,add_net,set_vm_config,add_fs:/dev/root,set_workdir,set_exec"; api.seq() != want {
 		t.Errorf("call sequence = %q, want %q", api.seq(), want)
 	}
 	if want := filepath.Join(dir, denySocketName); api.lastNetSoc != want {
 		t.Errorf("net backing socket = %q, want %q", api.lastNetSoc, want)
 	}
-	if api.lastMAC != microvm.GuestMAC(baseCfg(model.NetworkModeNone).SandboxID) {
+	if api.lastMAC != microvm.GuestMAC("sbx-abc123") {
 		t.Errorf("MAC = %q, want the sandbox's derived address", api.lastMAC)
 	}
 	// The peer must be live, not merely named: an unserved socket hangs the VM.
 	if !denySocketExists(dir) {
 		t.Error("no host peer bound for the attached NIC")
+	}
+}
+
+func TestNewGuestCtx_ConfiguresGuestRootWorkdirAndExec(t *testing.T) {
+	dir := shortTempDir(t)
+	api := &fakeKrun{}
+
+	spec := baseSpec(model.NetworkModeNone, dir)
+	spec.RootReadOnly = true
+	spec.ExecArgs = []string{"--vsock-port", "1024"}
+	spec.ExecEnv = []string{"PATH=/bin:/usr/bin"}
+
+	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = gc.Close() })
+
+	if api.rootDir != spec.RootDir || !api.rootRO {
+		t.Errorf("guest root = (%q, ro=%v), want (%q, ro=true)", api.rootDir, api.rootRO, spec.RootDir)
+	}
+	if api.workdir != "/" {
+		t.Errorf("workdir = %q, want / when no worktree is shared", api.workdir)
+	}
+	if api.execPath != spec.ExecPath {
+		t.Errorf("exec path = %q, want %q", api.execPath, spec.ExecPath)
+	}
+	// Args must NOT include the executable: libkrun prepends it, so a
+	// duplicated argv[0] shifts every guest argument by one (ADR-010).
+	if len(api.execArgs) != 2 || api.execArgs[0] != "--vsock-port" {
+		t.Errorf("exec args = %q, want the arguments only (no argv[0])", api.execArgs)
+	}
+	// Env must be passed through explicitly — a nil env at the binding would
+	// inject the daemon's environment into the guest (SEC-05).
+	if len(api.execEnv) != 1 || api.execEnv[0] != "PATH=/bin:/usr/bin" {
+		t.Errorf("exec env = %q, want the spec's env verbatim", api.execEnv)
+	}
+}
+
+func TestNewGuestCtx_SharesWorktreeAndSetsWorkdirToIt(t *testing.T) {
+	api := &fakeKrun{}
+	spec := baseSpec(model.NetworkModeNone, shortTempDir(t))
+	spec.WorktreePath = "/work/repos/mgit/worktrees/MGIT-61.8"
+	spec.WorktreeTag = "work"
+
+	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = gc.Close() })
+
+	if !strings.Contains(api.seq(), "add_fs:/dev/root,add_fs:work,set_workdir") {
+		t.Errorf("call sequence %q lacks the worktree share after the root share", api.seq())
+	}
+	if api.workdir != spec.WorktreePath {
+		t.Errorf("workdir = %q, want the worktree path (FR-17.3)", api.workdir)
+	}
+}
+
+func TestNewGuestCtx_WiresControlVsockPortsWithCorrectDirections(t *testing.T) {
+	dir := shortTempDir(t)
+	api := &fakeKrun{}
+	spec := baseSpec(model.NetworkModeNone, dir)
+	spec.VsockEnabled = true
+
+	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = gc.Close() })
+
+	tests := []struct {
+		name          string
+		port          uint32
+		hostInitiates bool
+	}{
+		// exec and land are host-initiated (the daemon dials the guest);
+		// notify is the ONLY guest-initiated direction (MGIT-11.10.11).
+		{name: "exec_host_initiated", port: microvm.GuestExecPort, hostInitiates: true},
+		{name: "land_host_initiated", port: microvm.GuestLandPort, hostInitiates: true},
+		{name: "notify_guest_initiated", port: microvm.GuestNotifyPort, hostInitiates: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path, ok := api.vsockPaths[tt.port]
+			if !ok {
+				t.Fatalf("vsock port %d not wired", tt.port)
+			}
+			if want := vsockSocketPath(dir, tt.port); path != want {
+				t.Errorf("port %d socket = %q, want %q", tt.port, path, want)
+			}
+			if api.vsockHost[tt.port] != tt.hostInitiates {
+				t.Errorf("port %d hostInitiates = %v, want %v", tt.port, api.vsockHost[tt.port], tt.hostInitiates)
+			}
+		})
 	}
 }
 
@@ -116,13 +259,23 @@ func TestNewGuestCtx_AnyConfigureStepFails_FailsClosedWithoutLeakingContextOrPee
 		{name: "create_fails", failOn: "create_ctx", wantSeq: "create_ctx"},
 		{name: "net_attach_fails", failOn: "add_net", wantSeq: "create_ctx,add_net,free_ctx"},
 		{name: "vm_config_fails", failOn: "set_vm_config", wantSeq: "create_ctx,add_net,set_vm_config,free_ctx"},
+		{name: "root_share_fails", failOn: "add_fs",
+			wantSeq: "create_ctx,add_net,set_vm_config,add_fs:/dev/root,free_ctx"},
+		{name: "workdir_fails", failOn: "set_workdir",
+			wantSeq: "create_ctx,add_net,set_vm_config,add_fs:/dev/root,set_workdir,free_ctx"},
+		{name: "vsock_fails", failOn: "add_vsock",
+			wantSeq: "create_ctx,add_net,set_vm_config,add_fs:/dev/root,set_workdir,add_vsock:1024,free_ctx"},
+		{name: "exec_fails", failOn: "set_exec",
+			wantSeq: "create_ctx,add_net,set_vm_config,add_fs:/dev/root,set_workdir,add_vsock:1024,add_vsock:1025,add_vsock:1026,set_exec,free_ctx"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := shortTempDir(t)
 			api := &fakeKrun{failOn: tt.failOn}
+			spec := baseSpec(model.NetworkModeNone, dir)
+			spec.VsockEnabled = true
 
-			gc, err := newGuestCtx(api, baseCfg(model.NetworkModeNone), dir, &stubAuthorizer{}, nil)
+			gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil)
 			if err == nil {
 				t.Fatal("expected an error: a half-configured context could boot on TSI")
 			}
@@ -141,11 +294,33 @@ func TestNewGuestCtx_AnyConfigureStepFails_FailsClosedWithoutLeakingContextOrPee
 	}
 }
 
+func TestGuestCtx_Enter_PreBootFailure_ReleasesContextAndPeer(t *testing.T) {
+	dir := shortTempDir(t)
+	api := &fakeKrun{}
+
+	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The fake's StartEnter always fails (a fake cannot model "never
+	// returns"); enter must surface that AND release everything.
+	if err := gc.enter(); err == nil {
+		t.Fatal("expected the pre-boot failure to surface")
+	}
+	if !strings.HasSuffix(api.seq(), "start_enter,free_ctx") {
+		t.Errorf("call sequence %q: start failure must free the context", api.seq())
+	}
+	if denySocketExists(dir) {
+		t.Error("host peer socket still bound after a failed start")
+	}
+}
+
 func TestNewGuestCtx_Close_ReleasesBothContextAndHostPeer(t *testing.T) {
 	dir := shortTempDir(t)
 	api := &fakeKrun{}
 
-	gc, err := newGuestCtx(api, baseCfg(model.NetworkModeNone), dir, &stubAuthorizer{}, nil)
+	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +339,7 @@ func TestNewGuestCtx_FreeAlsoFails_ReportsBothErrors(t *testing.T) {
 	dir := shortTempDir(t)
 	api := &fakeKrun{failOn: "add_net", freeErr: errors.New("krun_free_ctx: -1")}
 
-	_, err := newGuestCtx(api, baseCfg(model.NetworkModeNone), dir, &stubAuthorizer{}, nil)
+	_, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -179,7 +354,7 @@ func TestNewGuestCtx_FreeAlsoFails_ReportsBothErrors(t *testing.T) {
 
 func TestNewGuestCtx_InvalidNetworkMode_NeverTouchesLibkrun(t *testing.T) {
 	api := &fakeKrun{}
-	if _, err := newGuestCtx(api, baseCfg("bogus-mode"), shortTempDir(t), &stubAuthorizer{}, nil); err == nil {
+	if _, err := newGuestCtx(api, baseSpec("bogus-mode", shortTempDir(t)), &stubAuthorizer{}, nil); err == nil {
 		t.Fatal("expected an error for an unknown network mode")
 	}
 	if len(api.calls) != 0 {
@@ -204,10 +379,10 @@ func TestNewGuestCtx_ResourceCaps(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := &fakeKrun{}
-			cfg := baseCfg(model.NetworkModeNone)
-			cfg.CPUs, cfg.MemoryMB = tt.cpus, tt.mb
+			spec := baseSpec(model.NetworkModeNone, shortTempDir(t))
+			spec.CPUs, spec.MemoryMB = tt.cpus, tt.mb
 
-			gc, err := newGuestCtx(api, cfg, shortTempDir(t), &stubAuthorizer{}, nil)
+			gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

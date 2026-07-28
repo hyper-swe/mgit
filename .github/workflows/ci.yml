@@ -41,3 +41,31 @@ jobs:
 
       - name: Test coverage
         run: make test-cover
+
+  # The libkrun backend is opt-in at build time (-tags libkrun, CGO + the
+  # libkrun library); the default jobs never compile its binding. This job is
+  # the only CI check that the tagged path still builds and passes. macOS 14
+  # runner: libkrun needs macOS 14+ and the slp/krun tap ships bottles for it
+  # (no kernel compile). Refs: ADR-010, MGIT-61.8
+  libkrun:
+    name: libkrun backend (tagged build)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install libkrun (bottled)
+        run: |
+          brew tap slp/krun
+          brew install libkrun
+
+      - name: Build, vet and test the tagged path
+        # DYLD_FALLBACK_LIBRARY_PATH: libkrun dlopens libkrunfw by leaf name
+        # (ADR-010 packaging finding).
+        run: |
+          export PKG_CONFIG_PATH="$(brew --prefix libkrun)/lib/pkgconfig"
+          export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix libkrunfw)/lib:$(brew --prefix libkrun)/lib"
+          make test-libkrun

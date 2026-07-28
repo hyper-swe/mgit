@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin && !(libkrun && cgo)
 
 package main
 

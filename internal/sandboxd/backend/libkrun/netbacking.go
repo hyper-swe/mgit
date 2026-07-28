@@ -110,12 +110,21 @@ func netBackingFor(sandboxID, mode, stateDir string) (netBacking, error) {
 	// Checked here so BOTH socket paths are covered, and at resolve time —
 	// before anything is bound or allocated. bind(2) would otherwise report a
 	// bare "invalid argument" with no hint at the real cause.
-	if len(backing.SocketPath) > maxUnixSocketPath {
-		return netBacking{}, fmt.Errorf(
-			"%w: net backing socket path is %d bytes, over the %d-byte unix socket "+
-				"limit: %s (use a shorter sandbox state directory)",
-			model.ErrSandboxBackendUnavailable,
-			len(backing.SocketPath), maxUnixSocketPath, backing.SocketPath)
+	if err := checkSocketPathLen("net backing socket", backing.SocketPath); err != nil {
+		return netBacking{}, err
 	}
 	return backing, nil
+}
+
+// checkSocketPathLen rejects a unix socket path over the portable sun_path
+// ceiling, naming which socket it is. One helper for every socket the backend
+// binds, so the limit and its remedy cannot drift per call site.
+func checkSocketPathLen(kind, path string) error {
+	if len(path) <= maxUnixSocketPath {
+		return nil
+	}
+	return fmt.Errorf(
+		"%w: %s path is %d bytes, over the %d-byte unix socket limit: %s "+
+			"(use a shorter sandbox state directory)",
+		model.ErrSandboxBackendUnavailable, kind, len(path), maxUnixSocketPath, path)
 }
