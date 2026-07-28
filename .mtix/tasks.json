@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-28T19:04:47Z",
+  "exported_at": "2026-07-28T19:09:09Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6741,7 +6741,7 @@
       "priority": 2,
       "labels": "[]",
       "status": "open",
-      "progress": 0.2727272727272727,
+      "progress": 0.25,
       "assignee": "",
       "creator": "mcp",
       "agent_state": "",
@@ -6822,6 +6822,30 @@
       "content_hash": "c6065b9f8a095d68523aa8fba8f1c2449ba8e34e828470b37ae8ac52770eb348",
       "created_at": "2026-07-28T19:04:46Z",
       "updated_at": "2026-07-28T19:04:46Z"
+    },
+    {
+      "id": "MGIT-61.12",
+      "parent_id": "MGIT-61",
+      "depth": 1,
+      "seq": 12,
+      "project": "MGIT",
+      "title": "DECISION: publish the guest-image bundles now (unblocks HyperSwe pin) vs hold pending the libkrun consolidation",
+      "description": "HyperSwe devs report the image bundles are built and waiting on a publish trigger; publishing completes HyperSwe's sandbox-setup pin. This is an OWNER-TRIGGERED, outward-facing action (no agent may run it), and it is a ONE-WAY DOOR that now conflicts with the consolidation decision recorded on MGIT-61: publishing commits mgit publicly to the kernel-distributor path that consolidating on libkrun is meant to retire, and creates a digest HyperSwe will pin against. There is also an unmet GPL precondition. This ticket forces the decision explicitly rather than letting it happen by default.",
+      "prompt": "DO NOT PUBLISH FROM AN AGENT SESSION. Release cuts and outward-facing publishes are owner-triggered. This ticket exists to surface the decision, its preconditions, and the cost of each branch — not to authorise the action.\n\nTHE REQUEST: HyperSwe devs report the multi-platform bundles are built and waiting on a trigger; publishing them completes HyperSwe's sandbox-setup pin (so `mgit sandbox image install` with no --from resolves from the latest release).\n\nMECHANICS IF IT GOES AHEAD (docs/release/RELEASE-CHECKLIST.md step 5):\n  scripts/sandbox-image/publish.sh out/publish     # all platform bundles + checksums.txt\n  gh release upload \u003ctag\u003e out/publish/*\n  then verify on a CLEAN host: mgit sandbox image install \u0026\u0026 mgit run --sandbox -- echo ok\n(The vz kernel build needs docker, so publish.sh must run on a machine that has it.)\n\nWHY THIS IS NOT A ROUTINE STEP ANY MORE — THREE CONFLICTS:\n\n1. IT CONTRADICTS THE CONSOLIDATION DECISION. See the MGIT-61 annotation \"STRATEGIC DIRECTION CHANGE\" and ADR-010. Consolidating on libkrun deletes MGIT-30's kernel build, the rootfs images, publish.sh and the bundle install path — libkrun brings its own kernel via libkrunfw and shares a virtiofs root. Publishing now makes mgit a public kernel distributor for artifacts we plan to retire, and gives HyperSwe a pin against them.\n\n2. UNMET GPL PRECONDITION (flagged earlier, still open). The published bundle RE-HOSTS a Linux kernel binary (vendored from firecracker-ci) and a busybox-based rootfs. Both are GPL-2.0. Re-hosting makes US the distributor, so GPL §3 requires we make the CORRESPONDING SOURCE available, plus license notices, for the kernel AND busybox. Under libkrun that burden moves to upstream (libkrunfw publishes its source); today it is ours and it is NOT yet satisfied. This must be resolved BEFORE any public publish, independent of the consolidation question.\n\n3. THE PIN IS THE POINT. Once HyperSwe pins a published digest, retiring the bundle path becomes a coordinated migration rather than a deletion. That is a real cost to pay knowingly, not by accident.\n\nHYPERSWE IS NOT ACTUALLY BLOCKED — CHECK THIS FIRST. Development does not need the published bundle. A local install works today and is the same runtime:\n  mgit sandbox image install --from \u003clocal bundle dir\u003e\nA validated darwin/arm64 bundle already exists at ~/mgit-vz-cache/bundle (kernel + rootfs + manifest.json), and publish.sh produces the multi-platform layout locally. Confirm with the HyperSwe devs whether their blocker is genuinely \"we need a PUBLISHED artifact to pin\" or just \"we need a working sandbox\" — those have very different answers.\n\nTHE DECISION TO MAKE (owner):\n  A. PUBLISH NOW — accept the GPL obligations (satisfy them first), accept that HyperSwe pins something we intend to retire, and accept the migration cost later. Justified if HyperSwe genuinely needs a published, pinned artifact and cannot wait for the libkrun path.\n  B. HOLD — keep HyperSwe on local bundle installs until the consolidation resolves (MGIT-61.8 lifecycle, 61.10 real-VM litmus, 61.7 mgit-in-guest, Linux/KVM parity, virtiofs perf), then publish whatever the libkrun path actually needs. Avoids distributing artifacts with a planned end-of-life and defers the GPL burden to upstream.\n  C. PUBLISH AS EXPLICITLY PROVISIONAL — publish, but mark the bundle in release notes as a development pin with a stated end-of-life, so the later migration is expected rather than a surprise.\n\nWHICHEVER IS CHOSEN: record it here and reconcile ADR-010 + docs/release/RELEASE-CHECKLIST.md so the next agent is not left with contradictory guidance. If A or C, satisfy the GPL corresponding-source + notices requirement first and record how.\n\nRefs: MGIT-61.2 (bundle publish mechanics), MGIT-61.11 (consolidation reconciliation), ADR-010, docs/release/RELEASE-CHECKLIST.md",
+      "acceptance": "The owner has recorded decision A, B or C on this ticket with reasoning; if publishing, the GPL corresponding-source + license notices for the re-hosted Linux kernel and busybox are satisfied and the method recorded, the release notes state the bundle's status (provisional or supported), and a clean-host verification of `mgit sandbox image install` + `mgit run --sandbox` is done; ADR-010 and the release checklist are updated so they no longer contradict the chosen path; the HyperSwe devs' actual blocker (published-pin vs working-sandbox) is confirmed and answered.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "29c9f034eadd36d1b92df29c2a8b7b77d836f7636356210a4a5eeed90221cdd3",
+      "created_at": "2026-07-28T19:09:08Z",
+      "updated_at": "2026-07-28T19:09:08Z"
     },
     {
       "id": "MGIT-61.2",
@@ -9317,6 +9341,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 319,
-  "checksum": "fbb9ebeae01e02eebc111f9fc59330250066da1645a9a9e012ade27c6035ed8a"
+  "node_count": 320,
+  "checksum": "d54d3feea6f98593da412a2d9db94ab27ad846b004207b43570ecafc93718290"
 }
