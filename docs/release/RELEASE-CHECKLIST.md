@@ -53,8 +53,17 @@ sandbox pass per supported platform** and record the result on the release:
    the change in `docs/release/homebrew-tap-formula.md` to the separate
    `hyper-swe/homebrew-tap` repo (must not touch the `mtix` formula). MGIT-44.
 4. Complete the two live sandbox passes above and note them on the release.
-5. **Publish the guest-image bundle** so `mgit sandbox image install` works with
-   no `--from` (sandbox-active out of the box, MGIT-61.2):
+5. **Publish the guest-image bundle** — ⛔ **ON HOLD, DO NOT RUN (MGIT-61.12).**
+   The owner decided 2026-07-29 to complete the libkrun path before publishing.
+   Publishing is a one-way door: it makes mgit a public distributor of a kernel
+   the libkrun consolidation intends to retire, and gives HyperSwe a digest to
+   pin that would later need migrating off. It also has an UNMET GPL
+   corresponding-source obligation for the re-hosted Linux kernel and busybox.
+   Teams that need a sandbox today use a LOCAL install instead — same runtime:
+   `mgit sandbox image install --from <local bundle dir>`.
+   Resume only when MGIT-61.12's gate is met; the artifact may not be this
+   bundle format at all (libkrunfw supplies the kernel, virtiofs supplies the
+   root). Steps kept for when the hold lifts:
    ```
    scripts/sandbox-image/publish.sh out/publish        # builds all platform bundles + checksums
    gh release upload <tag> out/publish/*               # attach manifest.json + kernels + rootfs + checksums.txt
