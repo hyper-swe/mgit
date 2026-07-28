@@ -185,7 +185,7 @@ func buildConfig(cfg microvm.VMConfig, p vmPaths, worktreeImg string) fc.Config 
 		out.NetworkInterfaces = fc.NetworkInterfaces{{
 			StaticConfiguration: &fc.StaticNetworkConfiguration{
 				HostDevName: egress.TapName(cfg.SandboxID),
-				MacAddress:  guestMAC(cfg.SandboxID),
+				MacAddress:  microvm.GuestMAC(cfg.SandboxID),
 				IPConfiguration: &fc.IPConfiguration{
 					IPAddr:      guestNet,
 					Gateway:     net.IP(gw.AsSlice()),

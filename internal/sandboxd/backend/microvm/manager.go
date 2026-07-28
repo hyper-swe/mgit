@@ -81,10 +81,16 @@ type VMConfig struct {
 	// Refs: SEC-03, FR-17.3, FR-17.5
 	PrivateStorePath string
 	WorktreeTag      string // mount tag
-	AttachNIC        bool   // false in none mode (FR-17.7)
-	NetworkMode      string // model.NetworkMode*: backend wires NAT (open) vs proxy-route (allowlist) vs no NIC (none) (FR-17.7, FR-17.8)
-	VsockEnabled     bool
-	BalloonEnabled   bool
+	// AttachNIC is DERIVED (NetworkMode != none), not authoritative — it is a
+	// convenience for backends whose "no device" default is fail-CLOSED (vzf,
+	// firecracker). A backend whose default is fail-OPEN must ignore it and key
+	// off NetworkMode: libkrun, for one, silently enables TSI when a VM has no
+	// net device, so honoring AttachNIC=false there is an egress leak, not a
+	// closed network. Refs: FR-17.7, ADR-010
+	AttachNIC      bool
+	NetworkMode    string // model.NetworkMode*: backend wires NAT (open) vs proxy-route (allowlist) vs no NIC (none) (FR-17.7, FR-17.8)
+	VsockEnabled   bool
+	BalloonEnabled bool
 	// PublishPorts are the GUEST TCP ports the guest must expose for one-way
 	// host->guest port publishing (SEC-09): the backend puts them on the guest
 	// kernel cmdline (guestboot) so mgit-guest runs an AF_VSOCK->TCP-localhost

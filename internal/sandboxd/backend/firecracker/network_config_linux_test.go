@@ -49,7 +49,7 @@ func TestBuildConfig_AttachesStaticNIC(t *testing.T) {
 			sc := out.NetworkInterfaces[0].StaticConfiguration
 			require.NotNil(t, sc, "a static NIC config")
 			assert.Equal(t, egress.TapName(cfg.SandboxID), sc.HostDevName, "NIC bound to the per-sandbox tap")
-			assert.Equal(t, guestMAC(cfg.SandboxID), sc.MacAddress)
+			assert.Equal(t, microvm.GuestMAC(cfg.SandboxID), sc.MacAddress)
 
 			require.NotNil(t, sc.IPConfiguration)
 			gw, _, guestNet := subnetFor(cfg.SandboxID)

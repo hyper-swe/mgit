@@ -65,4 +65,37 @@ sandbox pass per supported platform** and record the result on the release:
 6. Post-publish smoke: `brew install hyper-swe/tap/mgit` on a clean machine and
    confirm `command -v mgit && command -v mgit-sandboxd`.
 
+## Dependency step — re-pin gvisor to the version Tailscale ships (every release)
+
+The sandbox's egress enforcement embeds gVisor's userspace netstack, which sits
+directly on the containment boundary — a stale netstack means missing security
+fixes in the code that decides what a hostile guest may reach. gvisor publishes
+**no semver versions**, so the pin is a deliberate, maintained choice.
+
+**Until mgit forks and maintains its own netstack, track Tailscale's pin.**
+Tailscale is the largest production consumer of gVisor netstack, and vets the
+version it ships. Before each release:
+
+```bash
+# 1. What does the current Tailscale release pin?
+TS=$(curl -s https://proxy.golang.org/tailscale.com/@latest | \
+     python3 -c 'import sys,json;print(json.load(sys.stdin)["Version"])')
+curl -s "https://proxy.golang.org/tailscale.com/@v/$TS.mod" | grep gvisor.dev
+
+# 2. Match it (or a gvisor release tag no older than it), then verify.
+go get gvisor.dev/gvisor@<that-pseudo-version>
+go build ./... && go test ./internal/sandboxd/... -count=1
+```
+
+- [ ] gvisor pin compared against Tailscale's current pin, and updated or
+      consciously held back (record which, and why, in the release notes).
+- [ ] Egress tests pass after the bump — the netstack forwarder is what
+      enforces default-deny/allowlist (SEC-04).
+
+> **Never pin `gvisor.dev/gvisor@latest`.** gvisor's tip has broken external
+> module consumers (a `bridge_test.go` declaring package `bridge` inside
+> `pkg/tcpip/stack`). Always pin a release tag or a known-good pseudo-version.
+
+Refs: ADR-010, SEC-04, FR-17.8
+
 Refs: MGIT-48, MGIT-44, MGIT-61.2
