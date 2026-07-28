@@ -49,6 +49,20 @@ test-libkrun:
 	go vet -tags libkrun ./internal/sandboxd/backend/libkrun/ ./cmd/mgit-sandboxd/
 	go test -tags libkrun ./internal/sandboxd/backend/libkrun/ -count=1
 
+## e2e-libkrun: Boot REAL libkrun microVMs and assert the egress contract.
+# Separate from test-libkrun because it needs more than the library: the
+# re-exec child IS the test binary, so that binary must carry the macOS
+# hypervisor entitlement — hence build, sign, run rather than `go test`.
+# Skips loudly without MGIT_E2E_LIBKRUN=1. Refs: MGIT-61.10, ADR-010
+.PHONY: e2e-libkrun
+e2e-libkrun:
+	@set -e; bin="$$(mktemp -d)/libkrun.test"; \
+	export PKG_CONFIG_PATH="$$(brew --prefix libkrun)/lib/pkgconfig"; \
+	export DYLD_FALLBACK_LIBRARY_PATH="$$(brew --prefix libkrunfw)/lib:$$(brew --prefix libkrun)/lib"; \
+	go test -c -tags libkrun -o "$$bin" ./internal/sandboxd/backend/libkrun/; \
+	codesign --force --sign - --entitlements build/darwin/vz.entitlements "$$bin"; \
+	MGIT_E2E_LIBKRUN=1 "$$bin" -test.run TestE2E_Libkrun_RealVM -test.v -test.timeout 300s
+
 ## test-race: Run tests with race detector
 .PHONY: test-race
 test-race:
