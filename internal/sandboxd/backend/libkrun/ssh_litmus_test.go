@@ -115,7 +115,7 @@ func serveSSHConn(c net.Conn, cfg *ssh.ServerConfig) {
 func TestLitmus_HostCanSSHIntoTheGuest(t *testing.T) {
 	dir := shortTempDir(t)
 	gwPath := filepath.Join(dir, proxySocketName)
-	gw, err := bindNetGateway(gwPath, &stubAuthorizer{}, nil, nil)
+	gw, err := bindNetGateway(gwPath, netDeps{auth: &stubAuthorizer{}})
 	if err != nil {
 		t.Fatalf("bindNetGateway: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestLitmus_GuestReverseTunnel_IsGovernedByPolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := shortTempDir(t)
 			gwPath := filepath.Join(dir, proxySocketName)
-			gw, err := bindNetGateway(gwPath, &stubAuthorizer{allowed: tt.allowed}, nil, nil)
+			gw, err := bindNetGateway(gwPath, netDeps{auth: &stubAuthorizer{allowed: tt.allowed}})
 			if err != nil {
 				t.Fatalf("bindNetGateway: %v", err)
 			}
@@ -325,7 +325,7 @@ func TestLitmus3_RealAuthorizer_PermitsTheTunnelOnlyWhenPolicyDoes(t *testing.T)
 			gwPath := filepath.Join(dir, proxySocketName)
 			dial, pinnedAddrs := redirectDial(t, relayPort)
 
-			gw, err := bindNetGateway(gwPath, realAuthorizer(t, tt.allowlist), nil, dial)
+			gw, err := bindNetGateway(gwPath, netDeps{auth: realAuthorizer(t, tt.allowlist), dial: dial})
 			if err != nil {
 				t.Fatalf("bindNetGateway: %v", err)
 			}

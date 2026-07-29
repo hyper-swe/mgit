@@ -20,7 +20,7 @@ func TestNetGateway_Close_LeaksNoGoroutines(t *testing.T) {
 	}
 	before := settle()
 	for i := 0; i < 5; i++ {
-		gw, err := bindNetGateway(filepath.Join(shortTempDir(t), proxySocketName), &stubAuthorizer{}, nil, nil)
+		gw, err := bindNetGateway(filepath.Join(shortTempDir(t), proxySocketName), netDeps{auth: &stubAuthorizer{}})
 		if err != nil {
 			t.Fatalf("bind: %v", err)
 		}

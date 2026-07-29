@@ -1,13 +1,16 @@
 package libkrun
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/hyper-swe/mgit/internal/model"
-	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 )
 
 const (
@@ -57,11 +60,11 @@ type hostNetPeer interface{ Close() error }
 // Either way the peer is BOUND before the NIC is attached, because libkrun
 // hangs at boot on a socket nothing is listening to.
 // Refs: FR-17.7, FR-17.8, SEC-04, ADR-010
-func bindHostPeer(backing netBacking, auth flowAuthorizer, dns dnsResolver, dial egress.DialFunc) (hostNetPeer, error) {
+func bindHostPeer(backing netBacking, deps netDeps) (hostNetPeer, error) {
 	if backing.Deny() {
-		return bindDiscardSocket(backing.SocketPath)
+		return bindDiscardSocket(backing.SocketPath, deps.logger)
 	}
-	gw, err := bindNetGateway(backing.SocketPath, auth, dns, dial)
+	gw, err := bindNetGateway(backing.SocketPath, deps)
 	if err != nil {
 		return nil, fmt.Errorf("%w: libkrun %s-mode host network: %w",
 			model.ErrSandboxBackendUnavailable, backing.Mode, err)
@@ -79,10 +82,15 @@ func bindHostPeer(backing netBacking, auth flowAuthorizer, dns dnsResolver, dial
 // wedges the guest the same way, only later. Measured on libkrun 1.19.4 —
 // see ADR-010. Refs: FR-17.7, SEC-04, SEC-10, ADR-010
 type discardSocket struct {
-	conn *net.UnixConn
-	path string
-	once sync.Once
-	err  error
+	conn   *net.UnixConn
+	path   string
+	logger *slog.Logger
+	once   sync.Once
+	err    error
+	// closing marks a teardown in progress, so drain can tell the read error
+	// Close provokes (normal) from one that leaves the NIC unserved (fatal
+	// to the VM, and previously silent).
+	closing atomic.Bool
 }
 
 // bindDiscardSocket binds the deny backing at path and starts draining it.
@@ -90,7 +98,10 @@ type discardSocket struct {
 // as a failure (per-sandbox state dirs mean the stale entry is always this
 // sandbox's own). The caller owns the socket for the VM's lifetime and must
 // Close it at teardown. Refs: FR-17.7, SEC-10
-func bindDiscardSocket(path string) (*discardSocket, error) {
+func bindDiscardSocket(path string, logger *slog.Logger) (*discardSocket, error) {
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	// A unix socket cannot be bound over an existing path; a leftover from a
 	// previous run must not make the next launch unbootable.
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -110,20 +121,27 @@ func bindDiscardSocket(path string) (*discardSocket, error) {
 	// Best-effort: the default buffer still works, it just drops sooner.
 	_ = conn.SetReadBuffer(denySocketRcvBufBytes)
 
-	d := &discardSocket{conn: conn, path: path}
+	d := &discardSocket{conn: conn, path: path, logger: logger}
 	go d.drain()
 	return d, nil
 }
 
 // drain reads and discards until the socket is closed, so the guest's NIC
-// always has a willing peer. It exits on the read error Close provokes; any
-// other read error also stops the drain, which would leave the guest's NIC
-// unserved and wedge the VM with nothing in the log. The backend still has no
-// injected logger to surface that — MGIT-61.9 item 4, still open.
+// always has a willing peer.
+//
+// Exiting on the read error Close provokes is normal and stays quiet. Any
+// OTHER read error also stops the drain, which leaves the guest's NIC
+// unserved and wedges the VM — so that one is logged. It used to be silent,
+// which made a hung sandbox indistinguishable from a slow one.
+// Refs: MGIT-61.9 item 4, FR-17.7
 func (d *discardSocket) drain() {
 	buf := make([]byte, maxFrameBytes)
 	for {
 		if _, err := d.conn.Read(buf); err != nil {
+			if !d.closing.Load() && !errors.Is(err, net.ErrClosed) {
+				d.logger.Error("deny-socket drain stopped; the guest NIC is now unserved and the VM will hang",
+					"event", "discard_drain_failed", "socket", d.path, "error", err.Error())
+			}
 			return
 		}
 	}
@@ -133,6 +151,7 @@ func (d *discardSocket) drain() {
 // (SEC-10). It is idempotent, and later calls report the first call's result.
 func (d *discardSocket) Close() error {
 	d.once.Do(func() {
+		d.closing.Store(true)
 		d.err = d.conn.Close()
 		// Go unlinks a socket it bound, but a partially torn-down state must
 		// not leave the path behind for the next launch to trip over.

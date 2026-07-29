@@ -203,7 +203,7 @@ func TestNetGateway_DialGuestPort_FailsClosed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := shortTempDir(t)
-			gw, err := bindNetGateway(filepath.Join(dir, proxySocketName), &stubAuthorizer{}, nil, nil)
+			gw, err := bindNetGateway(filepath.Join(dir, proxySocketName), netDeps{auth: &stubAuthorizer{}})
 			if err != nil {
 				t.Fatalf("bindNetGateway: %v", err)
 			}
@@ -334,7 +334,7 @@ func TestBindNetGateway_FailsClosedOnUnusablePaths(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gw, err := bindNetGateway(tt.path(t), &stubAuthorizer{}, nil, nil)
+			gw, err := bindNetGateway(tt.path(t), netDeps{auth: &stubAuthorizer{}})
 			if err == nil {
 				_ = gw.Close()
 				t.Fatal("an unusable gateway socket path must fail the launch")

@@ -139,7 +139,7 @@ func TestNewGuestCtx_AttachesTheNICBeforeAnythingElse(t *testing.T) {
 	dir := shortTempDir(t)
 	api := &fakeKrun{}
 
-	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil, nil)
+	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), netDeps{auth: &stubAuthorizer{}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestNewGuestCtx_ConfiguresGuestRootWorkdirAndExec(t *testing.T) {
 	spec.ExecArgs = []string{"--vsock-port", "1024"}
 	spec.ExecEnv = []string{"PATH=/bin:/usr/bin"}
 
-	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
+	gc, err := newGuestCtx(api, spec, netDeps{auth: &stubAuthorizer{}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestNewGuestCtx_SharesWorktreeAndSetsWorkdirToIt(t *testing.T) {
 	spec.WorktreePath = "/work/repos/mgit/worktrees/MGIT-61.8"
 	spec.WorktreeTag = "work"
 
-	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
+	gc, err := newGuestCtx(api, spec, netDeps{auth: &stubAuthorizer{}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestNewGuestCtx_WiresControlVsockPortsWithCorrectDirections(t *testing.T) {
 	spec := baseSpec(model.NetworkModeNone, dir)
 	spec.VsockEnabled = true
 
-	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
+	gc, err := newGuestCtx(api, spec, netDeps{auth: &stubAuthorizer{}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestNewGuestCtx_AnyConfigureStepFails_FailsClosedWithoutLeakingContextOrPee
 			spec := baseSpec(model.NetworkModeNone, dir)
 			spec.VsockEnabled = true
 
-			gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
+			gc, err := newGuestCtx(api, spec, netDeps{auth: &stubAuthorizer{}})
 			if err == nil {
 				t.Fatal("expected an error: a half-configured context could boot on TSI")
 			}
@@ -314,7 +314,7 @@ func TestGuestCtx_Enter_PreBootFailure_ReleasesContextAndPeer(t *testing.T) {
 	dir := shortTempDir(t)
 	api := &fakeKrun{}
 
-	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil, nil)
+	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), netDeps{auth: &stubAuthorizer{}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestNewGuestCtx_Close_ReleasesBothContextAndHostPeer(t *testing.T) {
 	dir := shortTempDir(t)
 	api := &fakeKrun{}
 
-	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil, nil)
+	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), netDeps{auth: &stubAuthorizer{}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestNewGuestCtx_FreeAlsoFails_ReportsBothErrors(t *testing.T) {
 	dir := shortTempDir(t)
 	api := &fakeKrun{failOn: "add_net", freeErr: errors.New("krun_free_ctx: -1")}
 
-	_, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil, nil)
+	_, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), netDeps{auth: &stubAuthorizer{}})
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -370,7 +370,7 @@ func TestNewGuestCtx_FreeAlsoFails_ReportsBothErrors(t *testing.T) {
 
 func TestNewGuestCtx_InvalidNetworkMode_NeverTouchesLibkrun(t *testing.T) {
 	api := &fakeKrun{}
-	if _, err := newGuestCtx(api, baseSpec("bogus-mode", shortTempDir(t)), &stubAuthorizer{}, nil, nil); err == nil {
+	if _, err := newGuestCtx(api, baseSpec("bogus-mode", shortTempDir(t)), netDeps{auth: &stubAuthorizer{}}); err == nil {
 		t.Fatal("expected an error for an unknown network mode")
 	}
 	if len(api.calls) != 0 {
@@ -398,7 +398,7 @@ func TestNewGuestCtx_ResourceCaps(t *testing.T) {
 			spec := baseSpec(model.NetworkModeNone, shortTempDir(t))
 			spec.CPUs, spec.MemoryMB = tt.cpus, tt.mb
 
-			gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
+			gc, err := newGuestCtx(api, spec, netDeps{auth: &stubAuthorizer{}})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -434,7 +434,7 @@ func TestNewGuestCtx_PublishedPorts_AreListeningVsockPorts(t *testing.T) {
 	spec.VsockEnabled = true
 	spec.PublishPorts = []int{8080, 5173}
 
-	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
+	gc, err := newGuestCtx(api, spec, netDeps{auth: &stubAuthorizer{}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -465,7 +465,7 @@ func TestNewGuestCtx_InvalidPublishedPort_FailsClosed(t *testing.T) {
 	spec := baseSpec(model.NetworkModeNone, dir)
 	spec.PublishPorts = []int{70000}
 
-	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
+	gc, err := newGuestCtx(api, spec, netDeps{auth: &stubAuthorizer{}})
 	if err == nil {
 		_ = gc.Close()
 		t.Fatal("an out-of-range published port must fail the launch")
@@ -485,7 +485,7 @@ func TestNewGuestCtx_UnbindableHostPeer_FailsBeforeTouchingLibkrun(t *testing.T)
 	api := &fakeKrun{}
 	spec := baseSpec(model.NetworkModeNone, filepath.Join(shortTempDir(t), "no-such-dir"))
 
-	if _, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil); err == nil {
+	if _, err := newGuestCtx(api, spec, netDeps{auth: &stubAuthorizer{}}); err == nil {
 		t.Fatal("an unbindable host peer must fail the launch")
 	}
 	if len(api.calls) != 0 {

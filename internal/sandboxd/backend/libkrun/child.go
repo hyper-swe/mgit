@@ -83,7 +83,7 @@ func childRun(api krunAPI, spec vmSpec, handshake io.Writer, logger *slog.Logger
 	if err != nil {
 		return childFail(handshake, logger, err)
 	}
-	gc, err := newGuestCtx(api, spec, auth, dns, nil)
+	gc, err := newGuestCtx(api, spec, netDeps{auth: auth, dns: dns, logger: logger})
 	if err != nil {
 		return childFail(handshake, logger, err)
 	}

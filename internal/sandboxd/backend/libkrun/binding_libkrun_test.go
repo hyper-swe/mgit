@@ -32,7 +32,7 @@ func TestBinding_ConfiguresARealContextThroughNewGuestCtx(t *testing.T) {
 	spec.ExecArgs = []string{"--vsock-port", "1024"}
 	spec.ExecEnv = []string{"PATH=/bin"}
 
-	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
+	gc, err := newGuestCtx(api, spec, netDeps{auth: &stubAuthorizer{}})
 	if err != nil {
 		t.Fatalf("newGuestCtx against real libkrun: %v", err)
 	}

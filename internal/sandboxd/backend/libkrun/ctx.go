@@ -7,7 +7,6 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
-	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 )
 
 // rootFSTag is libkrun's well-known virtiofs tag for the guest root
@@ -97,7 +96,7 @@ type guestCtx struct {
 // attached IMMEDIATELY after the context exists, so no window exists in which
 // a context is live without one. Every failure after creation frees the
 // context rather than leaking it. Refs: FR-17.7, SEC-04, ADR-010
-func newGuestCtx(api krunAPI, spec vmSpec, auth flowAuthorizer, dns dnsResolver, dial egress.DialFunc) (*guestCtx, error) {
+func newGuestCtx(api krunAPI, spec vmSpec, deps netDeps) (*guestCtx, error) {
 	// Resolve first: fail closed without allocating anything.
 	backing, err := netBackingFor(spec.SandboxID, spec.NetworkMode, spec.StateDir)
 	if err != nil {
@@ -107,7 +106,7 @@ func newGuestCtx(api krunAPI, spec vmSpec, auth flowAuthorizer, dns dnsResolver,
 	// Bind the host end BEFORE the context exists, so a context can never
 	// carry a NIC whose peer is missing — that combination boots into a hang
 	// rather than failing, which is worse than not launching (ADR-010).
-	peer, err := bindHostPeer(backing, auth, dns, dial)
+	peer, err := bindHostPeer(backing, deps)
 	if err != nil {
 		return nil, err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"sync"
@@ -65,6 +66,34 @@ type dnsResolver interface {
 	ServeUDP(ctx context.Context, pc net.PacketConn) error
 }
 
+// netDeps are the per-VM collaborators the host-side network wiring needs.
+//
+// They travel together because they are acquired together and every one of
+// them is per-launch: the policy that decides a flow, the resolver that pins
+// a name, the transport that carries an approved connection, and the logger
+// that records what happened. Passing them as one value also keeps the
+// constructors inside CLAUDE.md's parameter budget as the set grows.
+// Refs: SEC-04, FR-17.8, MGIT-61.9
+type netDeps struct {
+	auth   flowAuthorizer
+	dns    dnsResolver
+	dial   egress.DialFunc
+	logger *slog.Logger
+}
+
+// withDefaults fills the optional collaborators. A nil logger is discarded
+// rather than left nil: this runs in the VM child, where a nil-pointer
+// dereference on the data path kills the sandbox.
+func (d netDeps) withDefaults() netDeps {
+	if d.dial == nil {
+		d.dial = egress.HostDial
+	}
+	if d.logger == nil {
+		d.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	return d
+}
+
 // netGateway is the host end of an allowlist/open-mode NIC: a USERSPACE
 // TCP/IP stack that terminates every connection the guest opens and admits
 // only those the authorizer allows.
@@ -86,13 +115,14 @@ type dnsResolver interface {
 // the address (SEC-07), which is what lets allowlisted NAMES work rather than
 // only IP/CIDR entries. Refs: FR-17.7, FR-17.8, SEC-04, SEC-07, SEC-10, ADR-010
 type netGateway struct {
-	conn  *net.UnixConn
-	path  string
-	ch    *channel.Endpoint
-	stack *stack.Stack
-	auth  flowAuthorizer
-	dns   dnsResolver
-	dial  egress.DialFunc
+	conn   *net.UnixConn
+	path   string
+	ch     *channel.Endpoint
+	stack  *stack.Stack
+	auth   flowAuthorizer
+	dns    dnsResolver
+	dial   egress.DialFunc
+	logger *slog.Logger
 
 	// cancel stops the DNS server (and anything else scoped to the
 	// gateway's lifetime) at teardown.
@@ -120,8 +150,9 @@ type netGateway struct {
 // faults become injectable. nil selects egress.HostDial. Substituting it
 // changes only the transport — every allow/deny decision still comes from
 // the authorizer. Refs: FR-17.7, SEC-04, SEC-10
-func bindNetGateway(path string, auth flowAuthorizer, dns dnsResolver, dial egress.DialFunc) (*netGateway, error) {
-	if auth == nil {
+func bindNetGateway(path string, deps netDeps) (*netGateway, error) {
+	deps = deps.withDefaults()
+	if deps.auth == nil {
 		return nil, fmt.Errorf(
 			"%w: refusing to serve guest egress with no authorizer — that would be an open network",
 			model.ErrSandboxBackendUnavailable)
@@ -138,17 +169,15 @@ func bindNetGateway(path string, auth flowAuthorizer, dns dnsResolver, dial egre
 		return nil, fmt.Errorf("restrict gateway socket %s: %w", path, err)
 	}
 
-	if dial == nil {
-		dial = egress.HostDial
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	g := &netGateway{
 		conn:      conn,
 		path:      path,
 		ch:        channel.New(256, guestMTU, gatewayMAC),
-		auth:      auth,
-		dns:       dns,
-		dial:      dial,
+		auth:      deps.auth,
+		dns:       deps.dns,
+		dial:      deps.dial,
+		logger:    deps.logger,
 		cancel:    cancel,
 		peerReady: make(chan struct{}),
 	}
@@ -245,7 +274,18 @@ func (g *netGateway) handleForward(r *tcp.ForwarderRequest) {
 	decision, err := g.auth.Authorize(context.Background(), egress.Flow{
 		Protocol: "tcp", Host: dst, Port: port,
 	})
-	if err != nil || !decision.Allow {
+	if err != nil {
+		// A policy DENY is an expected outcome the authorizer already
+		// audits; an authorizer that could not decide is a fault, and the
+		// two need different operator responses even though the guest sees
+		// the same reset.
+		g.logger.Error("egress authorization failed; flow reset",
+			"event", "egress_authorize_failed", "dest_ip", dst, "dest_port", port,
+			"error", err.Error())
+		r.Complete(true)
+		return
+	}
+	if !decision.Allow {
 		r.Complete(true) // RST: the handshake never completes
 		return
 	}
@@ -256,6 +296,12 @@ func (g *netGateway) handleForward(r *tcp.ForwarderRequest) {
 	defer cancel()
 	outbound, err := g.dial(dialCtx, decision.DestIP, port)
 	if err != nil {
+		// The flow was ALLOWED and the host side then failed, so the guest
+		// sees a reset whose cause is entirely host-side and otherwise
+		// invisible to it.
+		g.logger.Warn("allowed egress flow could not be dialed; flow reset",
+			"event", "egress_dial_failed", "dest_ip", decision.DestIP.String(),
+			"dest_port", port, "rule", decision.Rule, "error", err.Error())
 		r.Complete(true)
 		return
 	}

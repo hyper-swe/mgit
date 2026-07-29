@@ -33,7 +33,7 @@ func shortTempDir(t *testing.T) string {
 // mustBindDiscard binds a deny socket and closes it at test end.
 func mustBindDiscard(t *testing.T, path string) *discardSocket {
 	t.Helper()
-	d, err := bindDiscardSocket(path)
+	d, err := bindDiscardSocket(path, nil)
 	if err != nil {
 		t.Fatalf("bindDiscardSocket: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestDiscardSocket_KeepsDrainingSoTheGuestIsNeverWedged(t *testing.T) {
 
 func TestDiscardSocket_Close_RemovesTheSocketFile(t *testing.T) {
 	path := filepath.Join(shortTempDir(t), "net-deny.sock")
-	d, err := bindDiscardSocket(path)
+	d, err := bindDiscardSocket(path, nil)
 	if err != nil {
 		t.Fatalf("bindDiscardSocket: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestDiscardSocket_StaleSocketFile_IsReplaced(t *testing.T) {
 
 func TestDiscardSocket_UnbindablePath_Errors(t *testing.T) {
 	// A path under a nonexistent directory cannot be bound.
-	if _, err := bindDiscardSocket(filepath.Join(shortTempDir(t), "nope", "net-deny.sock")); err == nil {
+	if _, err := bindDiscardSocket(filepath.Join(shortTempDir(t), "nope", "net-deny.sock"), nil); err == nil {
 		t.Fatal("expected an error binding into a nonexistent directory")
 	}
 }
@@ -171,7 +171,7 @@ func TestBindDiscardSocket_StalePathIsANonEmptyDir_Errors(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(path, "child"), 0o700); err != nil {
 		t.Fatalf("seed dir: %v", err)
 	}
-	if _, err := bindDiscardSocket(path); err == nil {
+	if _, err := bindDiscardSocket(path, nil); err == nil {
 		t.Fatal("expected an error clearing an unremovable stale path")
 	}
 }
@@ -182,7 +182,7 @@ func TestDiscardSocket_Close_UnremovableSocket_ReportsError(t *testing.T) {
 	}
 	dir := shortTempDir(t)
 	path := filepath.Join(dir, denySocketName)
-	d, err := bindDiscardSocket(path)
+	d, err := bindDiscardSocket(path, nil)
 	if err != nil {
 		t.Fatalf("bindDiscardSocket: %v", err)
 	}
