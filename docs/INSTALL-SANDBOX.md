@@ -1,4 +1,4 @@
-# Installing the mgit sandbox (mgit-sandboxd + guest image)
+# Installing the mgit sandbox (mgit-sandboxd + the guest base)
 
 This is the distribution reference for mgit's containment pillar. Core mgit —
 commit, worktree, squash, land-by-patch — works from a single `mgit` binary
@@ -15,7 +15,7 @@ The sandbox has three distribution artifacts:
 |----------|-----------|----------------|
 | `mgit` | Core CLI (pure Go, no CGO). | Host `PATH`. |
 | `mgit-sandboxd` | Per-platform host daemon that owns the VMM (FR-17.16). | Host, **next to `mgit`** or on `PATH`. |
-| Guest image (kernel + rootfs) | The Linux microVM the daemon boots; runs `mgit-guest` as PID 1. | Inside the image, digest-pinned in `images.lock`. **Not** on host `PATH`. |
+| Guest base | The Linux userspace the microVM boots; runs `mgit-guest` as PID 1. Under libkrun it is a **directory** you compose from any OCI image; under firecracker/vzf a kernel + ext4 rootfs. | Per repo, digest-pinned in `.mgit/sandbox/images.lock`. **Not** on host `PATH`. |
 
 `mgit` locates `mgit-sandboxd` beside its own executable first, then on `PATH`
 (`cmd/mgit/sandbox_connect.go`). Installing both into the same directory — which
@@ -126,27 +126,111 @@ codesign --force --sign - \
 
 — or, more simply, use Homebrew or the release archive on macOS.
 
-## Provisioning the guest image
+## Provisioning the guest base
 
-The daemon boots a Linux microVM from a digest-pinned kernel + rootfs. The
-rootfs bakes in `mgit-guest` (the PID-1 supervisor) plus a busybox shell and
-toolchain; **`mgit-guest` is never a host binary** — it only has meaning inside
-the guest, so it is not shipped on `PATH` and not in the release archives.
+What the daemon boots depends on the backend, and the two are genuinely
+different shapes:
 
-### Install a shipped image (recommended)
+| Backend | What it boots | How you provision it |
+|---------|---------------|----------------------|
+| **libkrun** (macOS default, and Linux with `-tags libkrun`) | A **directory**: libkrunfw supplies the kernel, and the guest root is shared over virtio-fs. | `mgit sandbox base from <oci-image>` |
+| firecracker (Linux) / vzf (`-tags vzf`) | A kernel + ext4 **rootfs image**. | `mgit sandbox image install` |
 
-From within an mgit repo, one command fetches a pinned image **bundle** for
-your platform, verifies each artifact's sha256, sets up the local signing
-trust root if needed, and registers the digest-pinned, signed image:
+If you are on macOS, you want the first row.
+
+### Compose a base from any Linux image (libkrun)
+
+```bash
+mgit sandbox image init                 # once per repo: create the signing trust root
+mgit sandbox base from debian:12        # pull, compose, inject, pin, sign
+```
+
+That pulls a public OCI image straight from its registry — no Docker, no
+container runtime, no daemon — extracts it into `.mgit/sandbox/base`, injects
+`mgit` and `mgit-guest`, then pins the composed tree by content digest and
+signs it into `images.lock`. `mgit run` and `mgit work --sandbox` use it
+automatically from then on; you never retype the digest.
+
+**Pick the image your task's toolchain needs.** The base IS the environment
+your agent works in, so start from something that already carries it:
+
+```bash
+mgit sandbox base from node:22          # JS/TS
+mgit sandbox base from python:3.12      # Python
+mgit sandbox base from golang:1.23      # Go
+mgit sandbox base from debian:12        # general-purpose
+```
+
+Anything that is a Linux userspace works. Scratch and distroless images do
+not — they have no shell, so an agent could not run a command in one, and
+`base from` refuses them by name rather than letting you find out later.
+
+**mgit ships no default base, deliberately.** With none registered, launching
+fails closed and names the command above. That is not an oversight: mgit
+redistributes no kernel and no userspace, and silently booting some image we
+picked for you would put code you never chose inside your containment
+boundary.
+
+**Why this is safe even though you choose the contents.** The guest is the
+UNTRUSTED side — that is the entire point of the VM boundary, and a poisoned
+base burns a throwaway microVM. Everything that must stay protected is
+enforced host-side and is unaffected by what the base contains: the private
+store quarantine (SEC-03), the egress policy, the land airlock, and
+attestation signing. What mgit still owes you is integrity of what you asked
+for, so every blob is verified against its digest as it is pulled, and the
+composed tree is pinned and signed before anything boots it.
+
+Two things `base from` will warn or refuse about, because both fail
+confusingly later:
+
+- **Architecture.** libkrun uses hardware virtualization; there is no
+  emulation to cross architectures with. An image built for another
+  architecture is refused, naming both.
+- **C library.** A glibc-linked tool inside a musl (alpine) base dies with
+  "no such file or directory" naming its dynamic *loader*, not the binary you
+  ran. A musl base is a legitimate choice, so this is a warning, not a
+  refusal.
+
+### Where the guest binaries come from
+
+`mgit-guest` is PID 1 inside the guest and is meaningless on a host. Each
+release archive therefore ships linux builds of `mgit` and `mgit-guest` in a
+`guest/` directory beside the host binary, and `base from` injects them from
+there — which is what makes a plain `brew install` enough to compose a base
+with no Go toolchain and no source checkout.
+
+They are always injected by mgit, overwriting whatever the image had at those
+paths. An image that ships its own `/sbin/mgit-guest` must never end up
+mediating exec, land and the control plane.
+
+From a source checkout, `base from` cross-builds them instead. To use builds
+you made yourself, pass `--guest-bin-dir <dir>` containing `mgit` and
+`mgit-guest` built for `linux/<arch>`.
+
+### Bring your own directory
+
+If you already have a Linux userspace tree — debootstrap output, an unpacked
+container export, anything — register it directly:
+
+```bash
+mgit sandbox base set /path/to/rootfs-tree
+```
+
+Unlike `base from`, this does not write into the tree beyond injecting the two
+mgit binaries: it is yours, so a tree missing the mount points the supervisor
+needs (`/proc`, `/dev`, `/tmp`, `/mnt`) is reported rather than silently
+completed.
+
+### Install a kernel + rootfs image (firecracker / vzf)
+
+The older backends boot a digest-pinned kernel and ext4 rootfs instead:
 
 ```bash
 mgit sandbox image install                     # from the shipped release bundle
 mgit sandbox image install --from <dir-or-url> # or a local dir / your own build
 ```
 
-With no `--from`, install fetches from the latest mgit release's published
-bundle (the release attaches per-platform artifacts + `manifest.json`). A
-`--from` source is a directory or `https://` base holding a `manifest.json`
+A `--from` source is a directory or `https://` base holding a `manifest.json`
 plus the named `kernel` and `rootfs` artifacts. `manifest.json` maps
 `"os/arch"` to the platform's artifacts, their pinned `sha256`, and the guest
 `cmdline`:
@@ -161,45 +245,42 @@ plus the named `kernel` and `rootfs` artifacts. `manifest.json` maps
 }
 ```
 
-Install fails closed on any digest mismatch and is idempotent. `mgit run` and
-`mgit work --sandbox` then use the registered image automatically. **Trust
-model:** the image is digest-pinned and Ed25519-signed into your repo's own
-trust root (local-trust); the `sha256` pin plus HTTPS provide distribution
-integrity.
+Install fails closed on any digest mismatch and is idempotent. Build your own
+with `scripts/build-guest-image.sh out/rootfs.ext4`, or register one directly
+with `mgit sandbox image add --kernel … --rootfs … --cmdline …`. The
+reproducible, SOUP-pinned kernel + rootfs build is tracked by **MGIT-30**.
 
-**Publishing is currently on hold (MGIT-61.12, ⛔ see
+**Publishing is on hold (MGIT-61.12, ⛔ see
 [RELEASE-CHECKLIST.md](release/RELEASE-CHECKLIST.md)):** the owner deferred
-attaching bundles to releases until the libkrun consolidation lands, since
-publishing today would hand out an artifact this migration intends to
-retire. **`mgit sandbox image install` with no `--from` will not find
-anything to fetch yet** — use `--from <local bundle dir>` (built with
-`scripts/sandbox-image/build-bundle.sh`, below) until the hold lifts. The
-mechanism (digest-pinned bundle, sha256 verification, `manifest.json` schema)
-is unchanged and already live-validated end to end; only the "attach to a
-GitHub release" step is paused. A signed-by-the-project distribution key is a
-separate, later upgrade (MGIT-61.4).
+attaching bundles to releases, since publishing today would hand out an
+artifact the libkrun migration intends to retire — and `base from` removes the
+need for it. **`mgit sandbox image install` with no `--from` will not find
+anything to fetch** — use `--from <local bundle dir>` (built with
+`scripts/sandbox-image/build-bundle.sh`). The mechanism itself is unchanged
+and live-validated; only the "attach to a GitHub release" step is paused.
 
-### Build your own image
+## Trust model
 
-```bash
-scripts/build-guest-image.sh out/rootfs.ext4
-```
+Whichever shape you provision, it is pinned by content digest and Ed25519
+signed into **your repo's own** trust root (local-trust), and verified again
+at boot: a base that changed under a running task fails the launch rather than
+booting quietly. For `base from`, the resolved OCI reference — registry,
+repository, tag and the digest the registry actually served — is recorded
+alongside the tree digest and covered by the same signature, so provenance
+cannot be rewritten without detection. A signed-by-the-project distribution
+key is a separate, later upgrade (MGIT-61.4).
 
-then either point `mgit sandbox image install --from <dir>` at a directory
-containing a hand-written `manifest.json` + your kernel/rootfs, or register
-directly with `mgit sandbox image init` + `mgit sandbox image add --kernel …
---rootfs … --cmdline …`. The reproducible, SOUP-pinned kernel + rootfs build
-(both backends) is tracked by **MGIT-30**.
+## Distribution decision: why the guest binary is not on host PATH
 
-## Distribution decision: why the guest binary is not shipped on the host
+`mgit-guest` refuses to run off Linux and is PID 1 inside the microVM. On the
+host `PATH` it would be misleading — an agent could invoke it and get nothing
+useful. So the boundary is:
 
-`mgit-guest` is `//go:build linux`-only in effect (it refuses to run off
-Linux) and is PID 1 inside the microVM. Shipping it on the host `PATH` would be
-misleading — an agent could invoke it and get nothing useful. So the
-distribution boundary is:
+- **Host channels (brew / archive / go install)** put `mgit` + `mgit-sandboxd`
+  on `PATH`.
+- **The archive additionally carries** linux `mgit` + `mgit-guest` under
+  `guest/`, not on `PATH`, for injection into a base.
+- **A kernel+rootfs image** (firecracker / vzf) carries `mgit-guest` inside it,
+  pinned in `images.lock`.
 
-- **Host channels (brew / archive / go install)** ship `mgit` + `mgit-sandboxd`.
-- **The guest image** carries `mgit-guest`, built from this repo by
-  `scripts/build-guest-image.sh` and pinned in `images.lock`.
-
-Refs: MGIT-44, MGIT-30, ADR-005, FR-17.15, FR-17.16
+Refs: MGIT-44, MGIT-30, MGIT-61.15, ADR-005, ADR-010, FR-17.15, FR-17.16

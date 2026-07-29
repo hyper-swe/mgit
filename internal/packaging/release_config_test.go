@@ -207,21 +207,23 @@ func TestReleaseWorkflow_RunsGoreleaserOnMac(t *testing.T) {
 	}
 }
 
-// TestInstallDoc_CoversGoInstallAndGuestImage guards the distribution facts
-// this ticket owns: the documented go-install path for the daemon and the
-// guest-image distribution decision. The README narrative (MGIT-49) links
-// this reference; the facts live here so they cannot silently drift.
-// Refs: MGIT-44
-func TestInstallDoc_CoversGoInstallAndGuestImage(t *testing.T) {
+// TestInstallDoc_CoversGoInstallAndTheGuestBase guards the distribution facts
+// the install reference owns: how the daemon is installed, how the guest base
+// is provisioned, and where the guest binaries live. The README narrative
+// (MGIT-49) links this reference; the facts live here so they cannot silently
+// drift from what the commands actually do. Refs: MGIT-44, MGIT-61.15
+func TestInstallDoc_CoversGoInstallAndTheGuestBase(t *testing.T) {
 	doc := readRepoFile(t, "docs/INSTALL-SANDBOX.md")
 	tests := []struct {
 		name  string
 		token string
 	}{
 		{"go-install path for the daemon", "go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest"},
-		{"guest-image distribution decision", "guest image"},
+		{"the one command that provisions a base", "mgit sandbox base from"},
+		{"no default base ships, so launch fails closed", "ships no default base"},
+		{"the guest binaries travel in the archive", "guest/"},
 		{"guest binary is not on host PATH", "mgit-guest"},
-		{"ties to the guest-image build ticket", "MGIT-30"},
+		{"the kernel+rootfs path still has its build ticket", "MGIT-30"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
