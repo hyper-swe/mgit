@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -147,4 +148,30 @@ func BuildBaseEntry(baseDir string) (Entry, error) {
 		return Entry{}, err
 	}
 	return Entry{Digest: digest, RootfsPath: baseDir}, nil
+}
+
+// ErrNoSuchImage reports that no image is registered under a name.
+//
+// It is a distinct sentinel because callers must tell "you have not set up a
+// base yet" — which has a one-command remedy — apart from "your images.lock
+// is unreadable", which does not. Refs: MGIT-61.15
+var ErrNoSuchImage = errors.New("images: no image registered under that name")
+
+// PinnedRef returns the digest-pinned reference registered under name, in the
+// same `<name>@sha256:<hex>` form Register handed back.
+//
+// It exists so a launch can boot the base a user already registered without
+// making them retype a digest they never chose. The digest is read from the
+// lock rather than recomputed: verification of the tree against it happens at
+// resolve time, where a mismatch must fail the boot. Refs: MGIT-61.15, FR-17.17
+func PinnedRef(hostRoot, name string) (string, error) {
+	lock, err := readLockFile(hostRoot)
+	if err != nil {
+		return "", err
+	}
+	entry, ok := lock.Images[name]
+	if !ok {
+		return "", fmt.Errorf("%w: %q", ErrNoSuchImage, name)
+	}
+	return name + "@" + entry.Digest, nil
 }

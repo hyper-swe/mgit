@@ -53,14 +53,21 @@ type Ref struct {
 	Digest     string // sha256:<hex>, set on input or filled in by the pull
 }
 
-// String renders the fully-resolved reference — registry, repository and
-// tag-or-digest — never the user's shorthand. The audit trail must not
-// inherit the ambiguity of defaults.
+// String renders the fully-resolved reference — registry, repository, and both
+// the tag and the digest when both are known — never the user's shorthand. The
+// audit trail must not inherit the ambiguity of defaults.
+//
+// Once a pull has resolved a tag, BOTH parts are kept: the digest is what makes
+// the record repeatable, and the tag is the part a human recognizes.
 func (r Ref) String() string {
-	if r.Digest != "" && r.Tag == "" {
-		return r.Registry + "/" + r.Repository + "@" + r.Digest
+	name := r.Registry + "/" + r.Repository
+	if r.Tag != "" {
+		name += ":" + r.Tag
 	}
-	return r.Registry + "/" + r.Repository + ":" + r.Tag
+	if r.Digest != "" {
+		name += "@" + r.Digest
+	}
+	return name
 }
 
 // ParseRef parses an image reference, applying Docker Hub's defaults.

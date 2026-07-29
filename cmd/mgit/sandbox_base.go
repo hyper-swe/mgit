@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -389,4 +390,40 @@ func checkLibcCoherence(baseDir string) string {
 			"run in it; only static binaries will."
 	}
 	return ""
+}
+
+// defaultGuestBaseName is the name `mgit sandbox base` registers under, and
+// the one a launch boots when no --image was given.
+const defaultGuestBaseName = "base"
+
+// repoGuestBaseRef returns the digest-pinned reference of this repo's guest
+// base, or an error naming the one command that creates one.
+//
+// A digest is not something a person chooses — it is the output of composing
+// a base. Requiring --image on every launch would mean copying a 64-hex string
+// between commands, where a typo is indistinguishable from tampering. So a
+// registered base is used automatically, and its ABSENCE fails closed: mgit
+// ships no default base (we redistribute no kernel and no userspace), and
+// guessing one would silently boot something the user never chose.
+// Refs: MGIT-61.15, FR-17.17
+func repoGuestBaseRef() (string, error) {
+	hostRoot, err := sandboxHostRoot()
+	if err != nil {
+		return "", err
+	}
+	ref, err := images.PinnedRef(hostRoot, defaultGuestBaseName)
+	if errors.Is(err, images.ErrNoSuchImage) {
+		return "", fmt.Errorf(
+			"this repo has no guest base, so there is nothing to boot.\n\n" +
+				"Compose one from any Linux image — mgit pulls it, and ships no " +
+				"userspace of its own:\n" +
+				"  mgit sandbox base from debian:12\n\n" +
+				"Pick an image that already carries your task's toolchain " +
+				"(node:22, python:3.12, golang:1.23), or pass an explicitly " +
+				"pinned --image <name>@sha256:<hex>")
+	}
+	if err != nil {
+		return "", fmt.Errorf("guest base: %w", err)
+	}
+	return ref, nil
 }

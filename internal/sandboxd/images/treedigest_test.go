@@ -2,6 +2,7 @@ package images
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -434,5 +435,44 @@ func TestResolve_TamperedSource_IsRefused(t *testing.T) {
 	}
 	if _, err := store.Resolve(ref); err == nil {
 		t.Fatal("provenance was edited without breaking verification; Source is not signed")
+	}
+}
+
+// TestPinnedRef_ReturnsWhatLaunchShouldBoot covers launch-time base selection:
+// once a base is registered, booting it must not require the user to retype a
+// digest they never chose. Refs: MGIT-61.15
+func TestPinnedRef_ReturnsWhatLaunchShouldBoot(t *testing.T) {
+	hostRoot := t.TempDir()
+	priv, err := GenerateTrustRoot(context.Background(), hostRoot, noopAuditor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing registered yet: the caller must be able to tell "no base" from
+	// "broken lock", because only the first has a one-command remedy.
+	if _, err := PinnedRef(hostRoot, "base"); !errors.Is(err, ErrNoSuchImage) {
+		t.Fatalf("PinnedRef with no lock = %v, want ErrNoSuchImage", err)
+	}
+
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"sbin/mgit-guest": "init"})
+	entry, err := BuildBaseEntry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := Register(hostRoot, "base", Sign("base", entry, priv), priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := PinnedRef(hostRoot, "base")
+	if err != nil {
+		t.Fatalf("PinnedRef after registering: %v", err)
+	}
+	if got != want {
+		t.Errorf("PinnedRef = %q, want the reference Register handed back, %q", got, want)
+	}
+	if _, err := PinnedRef(hostRoot, "other"); !errors.Is(err, ErrNoSuchImage) {
+		t.Errorf("PinnedRef for an unregistered name = %v, want ErrNoSuchImage", err)
 	}
 }

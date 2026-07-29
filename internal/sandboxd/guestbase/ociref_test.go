@@ -80,3 +80,42 @@ func TestRef_StringRoundTripsWhatWasResolved(t *testing.T) {
 		}
 	}
 }
+
+// TestRef_String_KeepsBothTheTagAndTheResolvedDigest pins the provenance
+// record's honesty. A tag is a moving pointer: "debian:12" today and
+// "debian:12" next month are different bytes. Recording the tag WITHOUT the
+// digest the registry actually served would make the audit trail describe
+// something unrepeatable; recording the digest without the tag would lose the
+// only part a human recognizes. Refs: MGIT-61.15
+func TestRef_String_KeepsBothTheTagAndTheResolvedDigest(t *testing.T) {
+	const digest = "sha256:" +
+		"1111111111111111111111111111111111111111111111111111111111111111"
+	tests := []struct {
+		name string
+		ref  Ref
+		want string
+	}{
+		{
+			name: "resolved_tag_carries_its_digest",
+			ref:  Ref{Registry: "registry-1.docker.io", Repository: "library/debian", Tag: "12", Digest: digest},
+			want: "registry-1.docker.io/library/debian:12@" + digest,
+		},
+		{
+			name: "digest_only_stays_digest_only",
+			ref:  Ref{Registry: "ghcr.io", Repository: "acme/base", Digest: digest},
+			want: "ghcr.io/acme/base@" + digest,
+		},
+		{
+			name: "unresolved_tag_is_just_a_tag",
+			ref:  Ref{Registry: "ghcr.io", Repository: "acme/base", Tag: "v1"},
+			want: "ghcr.io/acme/base:v1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.ref.String(); got != tt.want {
+				t.Errorf("String() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
