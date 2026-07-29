@@ -18,17 +18,25 @@
 // with TCP policy enforcement and the SEC-07 pinning DNS resolver, the
 // virtiofs root and the SEC-03 staged worktree share, the control-plane vsock
 // ports, SEC-09 publishing over libkrun's listening vsock ports, the re-exec
-// lifecycle, and the guest dialers. Validated on real hardware (macOS/HVF):
-// boot, none-mode deny, allowlist default-deny, and virtio-fs perf on a real
-// dependency tree.
+// lifecycle, and the guest dialers. All three network modes are served:
+// none by the discard socket, allowlist by the standard egress assembly, and
+// open by an allow-all authorizer that still audits every flow.
 //
-// NOT YET, and each fails CLOSED rather than degrading quietly:
-//   - OPEN network mode. No allow-all authorizer exists (MGIT-61.9), and a
-//     gateway with no policy is an unaudited open network; vmSpec.Validate
-//     refuses the mode in both processes.
-//   - Linux/KVM validation. Everything above was proven on macOS/HVF only.
+// Validated on real hardware (macOS/HVF): boot, none-mode deny, allowlist
+// default-deny, host->guest SSH over a published port, an agent running the
+// mgit CLI against the SEC-03 private store, concurrent launches with no
+// cross-task contamination, and virtio-fs perf on a real dependency tree.
 //
-// Refs: FR-17.15, ADR-005, ADR-010
+// NOT YET:
+//   - Linux/KVM validation. Everything above was proven on macOS/HVF only;
+//     the tagged build and unit tests pass on KVM but the real-VM boot does
+//     not (MGIT-61.13 P4).
+//
+// PREREQUISITE: the linked libkrun must be built WITH networking (upstream
+// `make NET=1`). Every sandbox gets an explicit NIC in every mode, because a
+// VM without one gets TSI and full host egress — so a libkrun lacking the
+// net API cannot host a sandbox at all, and NewHypervisor refuses it.
+// Refs: FR-17.15, ADR-005, ADR-010, MGIT-61.14
 package libkrun
 
 import (
