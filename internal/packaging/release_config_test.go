@@ -135,13 +135,39 @@ func TestGoreleaser_ArchivesShipSandboxd(t *testing.T) {
 	}
 }
 
-// TestGoreleaser_GuestNotShippedOnHost enforces the distribution decision:
-// mgit-guest is PID 1 inside the guest rootfs image, NOT a host binary. It
-// must never be added to the host builds/archives. Refs: MGIT-44, ADR-005
-func TestGoreleaser_GuestNotShippedOnHost(t *testing.T) {
+// TestGoreleaser_GuestBinariesShipBesideMgitNotOnHostPath enforces the
+// distribution decision as ADR-010 leaves it.
+//
+// mgit-guest is PID 1 INSIDE the guest and is meaningless on a host. It used
+// to reach the guest inside the rootfs image we built and published; under
+// libkrun there is no rootfs to publish — the user brings an OCI image and we
+// compose a base from it — so the guest binaries have to travel in the mgit
+// archive instead. That makes two things load-bearing at once: they must BE
+// in the archive (or `brew install mgit` cannot compose a base at all, having
+// neither a Go toolchain nor the source), and they must NOT sit next to mgit
+// where a package manager would link them onto PATH. A guest/ subdirectory
+// satisfies both. Refs: MGIT-44, MGIT-61.15, ADR-005, ADR-010
+func TestGoreleaser_GuestBinariesShipBesideMgitNotOnHostPath(t *testing.T) {
 	cfg := readRepoFile(t, ".goreleaser.yaml")
-	if strings.Contains(cfg, "./cmd/mgit-guest/") {
-		t.Error("mgit-guest must not be a host build target — it ships inside the guest image (ADR-005), not on host PATH")
+	if !strings.Contains(cfg, "main: ./cmd/mgit-guest/") {
+		t.Error("mgit-guest must be built for the release: a host install carries no " +
+			"Go toolchain and no source, so without it `mgit sandbox base from` cannot compose a base")
+	}
+
+	_, archives, ok := strings.Cut(cfg, "\narchives:")
+	if !ok {
+		t.Fatal(".goreleaser.yaml has no archives section")
+	}
+	if strings.Contains(archives, "- mgit-guest\n") {
+		t.Error("mgit-guest must not be an archive build id — that lands it beside mgit, " +
+			"where a package manager links it onto host PATH")
+	}
+	// Exactly the string the host-side lookup joins onto its own directory.
+	// goreleaser templates `src` in this section but NOT `dst`, so this must
+	// stay a literal — a `{{ .Arch }}` here would ship as those characters.
+	if !strings.Contains(archives, `dst: "guest/"`) {
+		t.Error("the guest binaries must be archived under guest/, which is " +
+			"where `mgit sandbox base` looks for them")
 	}
 }
 

@@ -104,6 +104,33 @@ builds:
         # child inherits it by construction. Refs: MGIT-44, FR-17.15, MGIT-61.8
         - cmd: codesign --force --sign - --entitlements build/darwin/vz.entitlements "{{ .Path }}"
 
+  # mgit-guest: the in-guest supervisor that runs as PID 1 inside every
+  # sandbox. It is guest-only — never installed on a host PATH — and a host
+  # install carries no Go toolchain and no mgit source, so without shipping it
+  # here `mgit sandbox base from debian:12` could not compose a base at all.
+  #
+  # Built with the same reproducible flags the in-tree cross-build uses
+  # (-trimpath, no VCS stamp, no build ID), so a base composed from a release
+  # install and one composed from source pin to the same tree digest.
+  # Refs: MGIT-61.15, FR-17.11
+  - id: mgit-guest
+    main: ./cmd/mgit-guest/
+    binary: mgit-guest
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    ldflags:
+      - -s -w -buildid=
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    goamd64:
+      - v1
+
 archives:
   - id: mgit-archive
     # Each per-(os,arch) archive folds in every referenced build that
@@ -123,6 +150,22 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
+    # The guest pair, laid out where `mgit sandbox base` looks for it: a
+    # guest/ directory beside the host binary. Only the archive's OWN
+    # architecture is shipped — libkrun uses hardware virtualization, so the
+    # guest architecture always equals the host's and a second copy would be
+    # dead weight. That is also why the destination needs no architecture in
+    # its name (and could not carry one: goreleaser templates `src` here but
+    # NOT `dst` — a `{{ .Arch }}` in dst ships literally, verified against a
+    # snapshot build). The linux `mgit` comes from the existing linux build of
+    # the CLI; the guest runs the same CLI the host does. Refs: MGIT-61.15
+    files:
+      - src: "dist/mgit-guest_linux_{{ .Arch }}*/mgit-guest"
+        dst: "guest/"
+        strip_parent: true
+      - src: "dist/mgit_linux_{{ .Arch }}*/mgit"
+        dst: "guest/"
+        strip_parent: true
 
 checksum:
   name_template: "checksums.txt"

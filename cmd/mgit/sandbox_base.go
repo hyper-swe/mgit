@@ -76,7 +76,7 @@ func sandboxBaseSetCmd() *cobra.Command {
 			}
 			// Inject BEFORE pinning: the digest must cover the binaries we
 			// added, or the pin would describe a tree that never boots.
-			if err := injectGuestBinaries(baseDir, guestBinDir); err != nil {
+			if err := injectGuestBinaries(baseDir, guestBinDir, hostExecutablePath()); err != nil {
 				return err
 			}
 			entry, err := images.BuildBaseEntry(baseDir)
@@ -131,15 +131,24 @@ func validateBaseTree(baseDir string) error {
 	return nil
 }
 
-// injectGuestBinaries builds mgit-guest and the mgit CLI for the guest's
-// platform and installs them into the base tree.
+// injectGuestBinaries installs mgit-guest and the mgit CLI, built for the
+// guest's platform, into the base tree.
 //
-// They are injected by US rather than expected from the base, for two
-// reasons. mgit-guest MUST be PID 1 — whatever entrypoint a base image
-// declares is irrelevant to us and must never displace it — and the versions
-// must match the host's, or the exec/land wire protocol can disagree across
-// the boundary. Refs: MGIT-61.15, FR-17.11
-func injectGuestBinaries(baseDir, guestBinDir string) error {
+// They are injected by US rather than taken from the base, for two reasons.
+// mgit-guest MUST be PID 1 — whatever entrypoint a base image declares is
+// irrelevant to us, and an image shipping its own /sbin/mgit-guest must never
+// end up mediating exec, land and the control plane. And the versions must
+// match the host's, or the wire protocol can disagree across the boundary.
+// Injection therefore runs AFTER extraction, overwriting whatever was there.
+//
+// Three sources, in order: the directory the operator named, the linux builds
+// shipped beside this install, and finally a cross-build from source. The
+// middle one is what makes `brew install mgit` sufficient — mgit-guest is
+// guest-only and is never on a host PATH. Refs: MGIT-61.15, FR-17.11
+func injectGuestBinaries(baseDir, guestBinDir, exePath string) error {
+	if guestBinDir == "" {
+		guestBinDir = bundledGuestBinDir(exePath)
+	}
 	targets := []struct{ name, pkg, dest string }{
 		{name: "mgit-guest", pkg: "./cmd/mgit-guest", dest: filepath.Join("sbin", "mgit-guest")},
 		{name: "mgit", pkg: "./cmd/mgit", dest: filepath.Join("bin", "mgit")},
@@ -159,10 +168,11 @@ func injectGuestBinaries(baseDir, guestBinDir string) error {
 			return fmt.Errorf(
 				"guest base: %w\n\n"+
 					"The guest needs LINUX builds of mgit and mgit-guest, which a host "+
-					"install does not carry (mgit-guest is guest-only and is not shipped "+
-					"on PATH). Either run this from an mgit source checkout, or supply "+
-					"them with --guest-bin-dir <dir> containing `mgit` and `mgit-guest` "+
-					"built for linux/%s", err, guestArch())
+					"install does not carry on PATH (mgit-guest is guest-only), and "+
+					"which this install does not ship beside it either. Either run this "+
+					"from an mgit source checkout, or supply them with --guest-bin-dir "+
+					"<dir> containing `mgit` and `mgit-guest` built for linux/%s",
+				err, guestArch())
 		}
 	}
 	return nil
@@ -181,6 +191,40 @@ func copyGuestBinary(src, dst string) error {
 		return fmt.Errorf("base set: install %s: %w", dst, err)
 	}
 	return nil
+}
+
+// bundledGuestBinDir returns the directory of the guest binaries shipped with
+// this install, or "" when there are none.
+//
+// The release archive lays them out in a guest/ directory beside the host
+// binary. The name carries no architecture because it needs none: libkrun uses
+// hardware virtualization, so the guest architecture always equals the host's,
+// and each archive ships only its own. Refs: MGIT-61.15, MGIT-44
+func bundledGuestBinDir(exePath string) string {
+	if exePath == "" {
+		return ""
+	}
+	dir := filepath.Join(filepath.Dir(exePath), guestBinSubdir)
+	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+		return dir
+	}
+	return ""
+}
+
+// guestBinSubdir is where a release install keeps the linux guest binaries,
+// relative to the host binary. It is a name the archive layout and this
+// lookup must agree on; a packaging test pins both ends. Refs: MGIT-61.15
+const guestBinSubdir = "guest"
+
+// hostExecutablePath is os.Executable with the error folded into the empty
+// string: a host that cannot name its own binary simply has no bundled guest
+// binaries, which the caller already handles.
+func hostExecutablePath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return exe
 }
 
 // buildGuestBinary cross-compiles one guest binary from an mgit source
@@ -276,7 +320,7 @@ func sandboxBaseFromCmd() *cobra.Command {
 			if warning := checkLibcCoherence(baseDir); warning != "" {
 				_, _ = fmt.Fprintf(out, "  warning: %s\n", warning)
 			}
-			if err := injectGuestBinaries(baseDir, guestBinDir); err != nil {
+			if err := injectGuestBinaries(baseDir, guestBinDir, hostExecutablePath()); err != nil {
 				return err
 			}
 
