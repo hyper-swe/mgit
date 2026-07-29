@@ -127,6 +127,13 @@ test-cover:
 	@go tool cover -func=$(COVER_OUT) | tail -1
 
 ## lint: Run golangci-lint per .golangci.yml
+# Looks like a bare invocation with no PKG_CONFIG_PATH, but golangci-lint
+# typechecks the libkrun cgo binding (the macOS default, ADR-010) and needs
+# it -- the top-of-file `export PKG_CONFIG_PATH` block already covers every
+# recipe in this file, this one included. Verified 2026-07-30: `make lint`
+# passes with PKG_CONFIG_PATH unset beforehand, relying solely on that
+# export. Noted here so this isn't mistaken for the missing-pkg-config bug
+# it resembles at a glance.
 .PHONY: lint
 lint:
 	golangci-lint run ./...
