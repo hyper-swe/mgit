@@ -7,6 +7,22 @@ package libkrun
 
 /*
 #cgo pkg-config: libkrun
+// dlsym/dlopen live in a separate libdl on pre-2.34 glibc (glibc >= 2.34
+// merged them into libc, but the Linux runner's Ubuntu 20.04 predates that);
+// without this, ProbeNetworking's dlsym call compiles but fails to LINK
+// ("undefined reference to symbol 'dlsym@@GLIBC_2.2.5'"). Darwin has no
+// separate libdl -- dlsym lives in libSystem, linked implicitly -- but
+// tolerates -ldl as a compatibility no-op, so this stays unconditional
+// rather than a linux-only cgo directive.
+#cgo LDFLAGS: -ldl
+// glibc's <dlfcn.h> only declares RTLD_DEFAULT/RTLD_NEXT (GNU extensions)
+// when _GNU_SOURCE is defined; Darwin's libc declares them unconditionally,
+// which is why ProbeNetworking's dlsym(RTLD_DEFAULT, ...) built fine on
+// macOS but failed to even compile on Linux ("could not determine what
+// C.RTLD_DEFAULT refers to" -- cgo cannot resolve a macro glibc never
+// defined without this). Must precede the #include, not just appear
+// somewhere in the preamble.
+#define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
 #include <stdlib.h>

@@ -55,3 +55,23 @@ func TestBinding_RejectsAnUnparsableMACBeforeCallingC(t *testing.T) {
 		t.Fatal("expected a parse error for a malformed MAC")
 	}
 }
+
+// TestNetCapability_ProbeNetworking_AgreesWithTheLinkedLibrary exercises the
+// REAL dlsym(RTLD_DEFAULT, ...) call against whatever libkrun this build
+// actually linked, rather than the stubCapability used everywhere else in
+// this package (capability_test.go). Every CI/dev libkrun here is required
+// to be built with NET=1 (make check-libkrun-net, MGIT-61.14), so the real
+// probe must report present.
+//
+// This is also the regression guard for the build itself: RTLD_DEFAULT is a
+// GNU extension glibc's <dlfcn.h> only declares when _GNU_SOURCE is defined
+// (Darwin's libc declares it unconditionally), so a build missing that
+// #define fails to COMPILE this whole package on Linux with "could not
+// determine what C.RTLD_DEFAULT refers to" -- a failure this test's mere
+// presence surfaces immediately, on every platform, rather than only when
+// something happens to call ProbeNetworking in production. Refs: MGIT-61.13, MGIT-61.14
+func TestNetCapability_ProbeNetworking_AgreesWithTheLinkedLibrary(t *testing.T) {
+	if err := (netCapability{}).ProbeNetworking(); err != nil {
+		t.Fatalf("the linked libkrun must be built with networking (NET=1): %v", err)
+	}
+}
