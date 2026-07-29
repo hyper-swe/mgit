@@ -157,16 +157,9 @@ func bindNetGateway(path string, deps netDeps) (*netGateway, error) {
 			"%w: refusing to serve guest egress with no authorizer — that would be an open network",
 			model.ErrSandboxBackendUnavailable)
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("clear stale gateway socket %s: %w", path, err)
-	}
-	conn, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: path, Net: "unixgram"})
+	conn, err := bindUnixgram(path, "gateway socket")
 	if err != nil {
-		return nil, fmt.Errorf("bind gateway socket %s: %w", path, err)
-	}
-	if err := os.Chmod(path, denySocketMode); err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("restrict gateway socket %s: %w", path, err)
+		return nil, err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -315,9 +308,12 @@ func (g *netGateway) handleForward(r *tcp.ForwarderRequest) {
 	}
 	r.Complete(false)
 
+	// Splice in a goroutine: handleForward must return promptly to release
+	// the forwarder's in-flight slot (gwMaxInFlight), and egress.Splice
+	// blocks until the flow ends. Reusing it rather than a local io.Copy
+	// pair is what closes BOTH sides when either half-closes.
 	guestConn := gonet.NewTCPConn(&wq, ep)
-	go func() { _, _ = io.Copy(outbound, guestConn); _ = outbound.Close() }()
-	go func() { _, _ = io.Copy(guestConn, outbound); _ = guestConn.Close() }()
+	go egress.Splice(guestConn, outbound)
 }
 
 // DialGuestPort opens a host->guest connection to a port inside the guest.

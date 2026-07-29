@@ -102,20 +102,9 @@ func bindDiscardSocket(path string, logger *slog.Logger) (*discardSocket, error)
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	// A unix socket cannot be bound over an existing path; a leftover from a
-	// previous run must not make the next launch unbootable.
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("clear stale deny socket %s: %w", path, err)
-	}
-
-	conn, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: path, Net: "unixgram"})
+	conn, err := bindUnixgram(path, "deny socket")
 	if err != nil {
-		return nil, fmt.Errorf("bind deny socket %s: %w", path, err)
-	}
-
-	if err := os.Chmod(path, denySocketMode); err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("restrict deny socket %s: %w", path, err)
+		return nil, err
 	}
 
 	// Best-effort: the default buffer still works, it just drops sooner.
@@ -160,4 +149,28 @@ func (d *discardSocket) Close() error {
 		}
 	})
 	return d.err
+}
+
+// bindUnixgram binds a host-side unixgram socket for a VM's NIC backing.
+//
+// Both host peers — the deny socket and the netstack gateway — need the same
+// three steps in the same order, and got them by duplication: replace a stale
+// socket file (a leftover from a crashed daemon must not make the next launch
+// unbootable; the per-sandbox state dir means it is always this sandbox's
+// own), bind, then restrict to owner-only like every other socket mgit binds
+// (FR-17.34). kind names the socket in errors so a failure says WHICH one.
+// Refs: FR-17.7, SEC-10
+func bindUnixgram(path, kind string) (*net.UnixConn, error) {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("clear stale %s %s: %w", kind, path, err)
+	}
+	conn, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: path, Net: "unixgram"})
+	if err != nil {
+		return nil, fmt.Errorf("bind %s %s: %w", kind, path, err)
+	}
+	if err := os.Chmod(path, denySocketMode); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("restrict %s %s: %w", kind, path, err)
+	}
+	return conn, nil
 }
