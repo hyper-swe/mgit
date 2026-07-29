@@ -69,10 +69,11 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 		sandboxStatusCmd(connect),
 		sandboxPublishedCmd(connect), // list a task's one-way published ports (SEC-09)
 		sandboxRemoveCmd(connect),
-		sandboxGrantsCmd(connect),     // list pending capability requests (deny->prompt, MGIT-11.9.4)
-		sandboxGrantCmd(connect),      // approve one pending capability request
-		sandboxShellCmd(connect),      // T2 confined-agent interactive attach (MGIT-11.11.4)
-		sandboxImageCmd(),             // host-local image registry (no daemon)
+		sandboxGrantsCmd(connect), // list pending capability requests (deny->prompt, MGIT-11.9.4)
+		sandboxGrantCmd(connect),  // approve one pending capability request
+		sandboxShellCmd(connect),  // T2 confined-agent interactive attach (MGIT-11.11.4)
+		sandboxImageCmd(),
+		sandboxBaseCmd(),              // host-local image registry (no daemon)
 		sandboxClaudeHookCmd(connect), // hidden: Claude Code PreToolUse hook (MGIT-11.11.1)
 	)
 	return cmd
