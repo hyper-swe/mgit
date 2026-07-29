@@ -187,3 +187,46 @@ func TestGuest_CommitsAreIsolatedFromTheHostStore(t *testing.T) {
 	assert.NotContains(t, hostLog, "sandbox-only commit",
 		"a guest commit reached the host store without going through the verified land path (SEC-03)")
 }
+
+// TestFirstUse_CommitThenSandbox_NoSquashRequired is MGIT-62 end to end, at
+// the layer a user actually experiences it: init -> commit -> provision a
+// sandbox, with NO squash anywhere. Before the fix this failed with
+// "branch not found: task branch task/<ID> in shared store" — the first thing
+// a new user hits on the product's headline flow. Refs: MGIT-62
+func TestFirstUse_CommitThenSandbox_NoSquashRequired(t *testing.T) {
+	const taskID = "MGIT-62"
+	repo := t.TempDir()
+	t.Chdir(repo)
+
+	require.NoError(t, runCLI(t, "init"))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "feature.go"), []byte("package feature\n"), 0o600))
+	require.NoError(t, runCLI(t, "add", "feature.go"))
+	require.NoError(t, runCLI(t, "commit", "-m", "first slice of work", "--task", taskID))
+
+	// Deliberately NO squash here — that is the whole point of the ticket.
+	prov, err := provision.NewStoreProvisioner(repo)
+	require.NoError(t, err)
+	store, err := prov.Provision(taskID, filepath.Join(t.TempDir(), "private-store"))
+	require.NoError(t, err, "work -> commit -> sandbox must not require a squash first")
+
+	guestTree := filepath.Join(t.TempDir(), "staged")
+	require.NoError(t, staging.Build(repo, store.Dir, guestTree))
+
+	// The committed work is what the agent finds in the sandbox.
+	t.Setenv(guestModeEnv, "1")
+	t.Chdir(guestTree)
+	logOut, err := runCLIOut(t, "log")
+	require.NoError(t, err)
+	assert.Contains(t, logOut, "first slice of work",
+		"the sandbox must contain the work the user just committed")
+
+	// And the loop continues from there: the agent commits on top.
+	require.NoError(t, os.WriteFile(filepath.Join(guestTree, "more.go"), []byte("package more\n"), 0o600))
+	require.NoError(t, runCLI(t, "add", "more.go"))
+	require.NoError(t, runCLI(t, "commit", "-m", "agent work in sandbox", "--task", taskID))
+
+	statusOut, err := runCLIOut(t, "status")
+	require.NoError(t, err)
+	assert.Contains(t, statusOut, "task/"+taskID,
+		"the guest commits on the task branch, so land's contract is unchanged")
+}
