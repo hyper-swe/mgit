@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-29T07:33:41Z",
+  "exported_at": "2026-07-29T10:13:20Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6741,7 +6741,7 @@
       "priority": 2,
       "labels": "[]",
       "status": "open",
-      "progress": 0.35714285714285715,
+      "progress": 0.3333333333333333,
       "assignee": "",
       "creator": "mcp",
       "agent_state": "",
@@ -6895,6 +6895,30 @@
       "content_hash": "592c4ead0d0e02f0a3eabd36163fa682d2490b6be31521aa85d5477dfac685f1",
       "created_at": "2026-07-29T07:00:12Z",
       "updated_at": "2026-07-29T07:17:22Z"
+    },
+    {
+      "id": "MGIT-61.15",
+      "parent_id": "MGIT-61",
+      "depth": 1,
+      "seq": 15,
+      "project": "MGIT",
+      "title": "Sandbox starter: per-repo guest base an agent composes from OCI images",
+      "description": "Ship a usable default guest base, and let a user's agent extend it into a per-repo \"starter\" carrying the tools that project needs (node, python, a compiler). Every sandbox created from that repo boots from the starter, read-only, with per-VM writable overlays. Under libkrun this is cheap because the guest root is a host DIRECTORY shared over virtiofs — a starter is just a tree, with no image build step. Owner decision 2026-07-29 (see MGIT-61.13): the sandbox targets the AGENT'S WORKLOAD, so the base must be able to run real toolchains.",
+      "prompt": "Read MGIT-61.13's owner-decision annotation first, then ADR-010.\n\nGOAL: `.mgit/sandbox/base/` is a per-repo Linux userspace tree. All sandboxes for that repo mount it READ-ONLY; each VM gets its own overlay upper. mgit ships a usable default; the agent can compose a richer one.\n\nTWO FOUNDATIONS ALREADY EXIST — reuse, do not rebuild:\n- The guest already overlays a writable root over a read-only base, upper on a per-VM COW device (scripts/build-guest-image.sh:14-18). \"Shared base, private writes\" is already the model.\n- images.lock already does per-repo digest-pinned, Ed25519-signed registration (internal/sandboxd/images). A starter MUST be registered the same way, so a base cannot be swapped silently under a task.\n\nPOPULATING IT — OCI is the mechanism. On macOS the agent cannot copy its own tools in (they are Mach-O); it needs Linux binaries. OCI images ARE Linux userspace trees:\n    mgit sandbox base from node:22-slim\n    mgit sandbox base from golang:1.24\nExtract the layers into the base dir with go-containerregistry or oras-go — NO container runtime, no docker daemon. Benefits: the registry supplies digest pinning for free (feeds images.lock); the USER pulls the image, so mgit redistributes nothing and no GPL obligation arises; and every toolchain already exists as an image.\n\nREQUIREMENTS:\n1. Default base ships with mgit and works with no configuration (`mgit run` out of the box).\n2. `mgit sandbox base from \u003coci-ref\u003e` extracts to .mgit/sandbox/base/, records the resolved DIGEST, and signs the entry into images.lock. Re-running with the same ref is idempotent; a different digest is a visible change, never silent.\n3. Also support \"point it at a tree I built myself\" — the escape hatch, and the GA-scoped path.\n4. mgit + mgit-guest are INJECTED into the tree by us. mgit-guest MUST remain PID 1: a base image's own entrypoint/init is irrelevant and must never displace it. Assert this.\n5. ARCHITECTURE CHECK: reject a base whose arch does not match the host's guest arch (linux/arm64 on Apple Silicon) with a clear error naming both — not a mystery boot failure.\n6. libc COHERENCE: an alpine (musl) base with glibc toolchains breaks confusingly. Detect and warn, or refuse.\n7. PROVENANCE — do this, it is a genuine audit win: record the base digest in the launch attestation, so a commit can say \"produced in a sandbox built from base@sha256:...\". Today we attest the commit but NOT the environment that produced it; this closes that gap. Refs: FR-17.6, ADR-002.\n8. SEC-03 must be untouched: the base is read-only and is NOT the worktree; the staged worktree + private store delivery stays exactly as it is.\n\nSECURITY NOTE — state this in the docs, because it reads backwards at first: letting users load arbitrary tooling into the guest is safe BECAUSE the guest is the untrusted side. That is what the VM boundary is for; a poisoned base burns a throwaway microVM. Everything that must stay protected (host store, egress policy, land airlock, attestation signing) is enforced HOST-side and is unaffected by the guest tree's contents.\n\nTESTS: base registered + digest pinned + signed; re-pull idempotent, changed digest surfaces; arch mismatch refused with both arches named; mgit-guest is PID 1 even when the base image declares an entrypoint; base is read-only from the guest and per-VM writes do not leak between sandboxes; base digest appears in the attestation; existing SEC-03 hostile-guest tests still pass.\n\nGA SPLIT: GA ships the default base + the bring-your-own-tree path. `from \u003coci-ref\u003e` is a fast follow — do not put it on the GA critical path.\n\nConstraints: no AI-attribution trailers; never put the Linux runner's LAN IP in the repo; TDD per CLAUDE.md.",
+      "acceptance": "A usable default base ships and works with no configuration; `mgit sandbox base from \u003coci-ref\u003e` extracts layers without a container runtime, pins the resolved digest and signs it into images.lock, and is idempotent; a bring-your-own-tree path exists; arch mismatch and libc incoherence are refused or warned with clear messages; mgit-guest is PID 1 regardless of the base image's entrypoint; the base is read-only with per-VM overlay writes that do not leak across sandboxes; the base digest is recorded in the launch attestation; SEC-03 hostile-guest tests unchanged and passing.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "6a0bb85903c55834705742ee0b4ea0f4383cde6d83b95251069a71b354608d9a",
+      "created_at": "2026-07-29T08:16:31Z",
+      "updated_at": "2026-07-29T08:16:31Z"
     },
     {
       "id": "MGIT-61.2",
@@ -7114,6 +7138,30 @@
       "content_hash": "85f57de4507986c74118ced6e2819f89c19381ec80f5cf4d8721772c0a9fde82",
       "created_at": "2026-07-29T04:05:59Z",
       "updated_at": "2026-07-29T04:05:59Z"
+    },
+    {
+      "id": "MGIT-63",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 63,
+      "project": "MGIT",
+      "title": "ADR + PLAN: extract the sandbox runtime into its own codebase (post-GA)",
+      "description": "Owner proposal 2026-07-29: move the microVM sandbox into a separate codebase we also own, exposing one hardened entry point across Linux/macOS/Windows on amd64+arm64. mgit downloads it; responsibility for VMM, kernels, guest filesystem and their CVE/licensing burden lives there, leaving mgit a pure-Go VCS tool. Assessed as architecturally sound and cheaper than it looks — the seam already exists — but explicitly scheduled AFTER GA. Needs an ADR, not just a ticket, because it changes what mgit ships and introduces a cross-repo compatibility contract.",
+      "prompt": "Write ADR-011 and the extraction plan. DO NOT START THE EXTRACTION — this is post-GA by owner decision; splitting mid-refactor (re-exec lifecycle, netstack gateway, guest starter are all in flight) doubles coordination cost for zero user benefit.\n\n## The proposal\nA separate repo we own provides the microVM sandbox runtime as ONE hardened entry point across linux/macOS/Windows on amd64+arm64. mgit consumes it as an external dependency, the way it already consumes the `firecracker` binary today.\n\n## Why it is viable (record this — it is what makes the cost low)\nTHE SEAM ALREADY EXISTS. mgit ↔ mgit-sandboxd is already a separate process with a documented wire protocol (IDD-FR17-SANDBOX-PROTOCOL.md). Extraction is a PACKAGING and OWNERSHIP change, not a redesign. The hard part — designing the boundary — is done.\n\n## What it genuinely buys\n- mgit becomes PURE GO on every platform again. CGO, libkrun, virtiofs, kernels all confined to the runtime. mgit's release becomes cross-compile-and-ship. Today CGO-in-the-release-path is the single largest untouched GA item.\n- Two clocks, decoupled: kernel CVEs / VMM upgrades / guest refreshes run on a security cadence; mgit's VCS features run on a product cadence. Forcing them into one release is a large part of why this milestone dragged.\n- ONE place owns the licensing posture (GPL notices, corresponding source, guest provenance) instead of it contaminating a VCS tool's release checklist.\n- It matches the pattern already in use: `firecracker` is an external binary on PATH. This makes the external binary ours.\n- The guest-starter work (MGIT-61.15) lands naturally in the runtime — guest userspace, OCI base composition and kernel are one domain. That the starter fits cleanly on the runtime side is evidence the proposed boundary is the right one.\n\n## What it does NOT solve — state this plainly in the ADR\n- The kernel/GPL/distribution burden RELOCATES AND CONCENTRATES; it does not disappear. If the runtime ships libkrun+libkrunfw so users get a one-command install, WE become the GPL kernel distributor — the exact liability the libkrun move was partly meant to avoid. That is arguably the right trade (one codebase solving it properly, with its own compliance process) but it must not be sold as elimination.\n- Windows is unchanged. Hyper-V is still unwritten; it just gets written in the other repo.\n- Two repos means two CIs, two release pipelines, two doc sets, and a compatibility matrix. For a small team that overhead is real.\n\n## Two things that MUST be designed up front or the split goes wrong\n1. VERSION COMPATIBILITY CONTRACT. Protocol version negotiation, a minimum-supported-runtime version, and a clear actionable message on mismatch. mgit already fails closed when the daemon is ABSENT; extend that to \"present but incompatible\". Version skew becomes a USER-VISIBLE failure mode the moment there are two artifacts.\n2. THE POLICY BOUNDARY. The runtime owns VMM, kernel, guest filesystem, lifecycle. mgit owns worktrees, commits, land. But EGRESS POLICY IS SHARED — mgit decides the allowlist, the runtime enforces it. Draw that line explicitly, or the netstack gateway ends up half in each repo. Decide: does mgit pass a policy document the runtime enforces, or does the runtime call back to mgit per flow? (The former; the latter puts mgit on the hot path of every connection.)\n\n## Deliverables\n- docs/adr/011-sandbox-runtime-extraction.md with the above, an explicit \"post-GA\" status, and the boundary drawn as a diagram or table (which package/file goes where).\n- A sequenced extraction plan as child tickets, with the version contract and policy boundary as the FIRST items, not afterthoughts.\n- A statement of what mgit's release looks like after the split (pure Go, no CGO, runtime downloaded/installed how?) — including how a user without the runtime is told, and whether core mgit still works without it (it must: sandbox is FR-17, not the whole product).\n\nRefs: ADR-005, ADR-010, IDD-FR17-SANDBOX-PROTOCOL.md, MGIT-61.15, MGIT-61.13.\nConstraints: no AI-attribution trailers; ADR-010 stays untracked; do not begin extraction before GA ships.",
+      "acceptance": "ADR-011 exists with status post-GA, recording the rationale, what the split does NOT solve (relocated GPL burden, unchanged Windows, two-pipeline overhead), the version-compatibility contract, and the egress policy boundary decided explicitly; a sequenced extraction plan exists as child tickets with the contract and boundary first; the post-split release shape for mgit (pure Go, runtime as external dependency, behaviour when absent) is documented; no extraction work has begun.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "98d8fb16cb80d6b826d3ca61cd9c69d4758c688e2bb690f95d73e6362a34add6",
+      "created_at": "2026-07-29T08:59:41Z",
+      "updated_at": "2026-07-29T08:59:41Z"
     },
     {
       "id": "MGIT-7",
@@ -9428,6 +9476,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 323,
-  "checksum": "1f06802f56a3d28720be72e0907184ccf909001abcbb0828967f7234ffa97414"
+  "node_count": 325,
+  "checksum": "9f06303e46c418ae6bdeac4aa751e85c55ede26181f2ec5ac2056a24f3da4cbf"
 }
