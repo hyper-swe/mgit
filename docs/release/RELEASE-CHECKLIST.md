@@ -28,18 +28,38 @@ returns placeholder text" fails these gates before a user ever sees it.
 
 The per-task microVM sandbox is the headline differentiator and cannot be
 exercised on a GitHub-hosted runner. **Before publishing, run at least one live
-sandbox pass per supported platform** and record the result on the release:
+sandbox pass per supported platform** and record the result on the release.
+Since the GA backend split (ADR-010, MGIT-61.13/.14), the two platforms
+validate **different VMMs by default** — this is not a symmetric check:
 
-- [ ] **Linux (KVM)** — on a KVM-capable host (the Linux runner or a nested-virt
-      VM), with `mgit-sandboxd` from the release artifact set and a provisioned
-      guest image:
+- [ ] **Linux (KVM) — firecracker, the Linux GA default.** On a KVM-capable
+      host (the Linux runner or a nested-virt VM), with `mgit-sandboxd` from
+      the release artifact set (built without `-tags libkrun`, so it links
+      firecracker) and a provisioned guest image:
       ```
       MGIT_GUEST_IMAGE=<image> bash scripts/e2e/sandbox_posture.sh <bindir>
       ```
-      must print `SANDBOX POSTURE E2E: PASS (live)`.
-- [ ] **macOS (arm64)** — on an Apple Silicon host, with the entitlement-signed
-      `mgit-sandboxd` from the release archive and a guest image, the same
-      script must print `PASS (live)`.
+      must print `SANDBOX POSTURE E2E: PASS (live)`. Beyond the posture
+      script, the fuller firecracker suite (`internal/sandboxd/backend/
+      firecracker`'s `TestE2E_*`) is re-validated periodically on the Linux
+      runner with `MGIT_TEST_KERNEL`/`MGIT_E2E_GUEST_ROOTFS` set — exec/land
+      round-trip, hostile-guest (SEC-03), notify auto-land, overlay-root
+      writability, and (root-gated: `sudo -E`) the allowlist/open network
+      modes and port publishing. Confirm this full battery passed recently,
+      not just the posture script, before a release that touches
+      `internal/sandboxd/backend/firecracker` or `internal/sandboxd/backend/
+      microvm`.
+- [ ] **macOS (arm64) — libkrun, the macOS GA default.** On an Apple Silicon
+      host (macOS 14+), with the entitlement-signed `mgit-sandboxd` from the
+      release archive (this now links libkrun by default — no tag needed)
+      and a guest image, the same script must print `PASS (live)`. Also
+      confirm `make test-libkrun`'s full suite passes on this host, and that
+      libkrun's own real-VM e2e (`make e2e-libkrun`) is green.
+- [ ] **Linux libkrun (`-tags libkrun`) is NOT part of the release gate.**
+      It is not the Linux default and its real-VM boot is not yet fully
+      validated end to end on KVM (MGIT-61.13 P4, "Known limitations" in the
+      CHANGELOG). Do not treat a green firecracker pass as implying libkrun
+      also works on Linux — they are different code paths.
 
 > Never refer to the Linux KVM host by its LAN IP in the repo, CI logs, or the
 > release notes — call it "the Linux runner".
