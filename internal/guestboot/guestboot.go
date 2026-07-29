@@ -82,7 +82,16 @@ const EnvBootTokens = "MGIT_GUEST_BOOT"
 //
 // A backend that genuinely owns the cmdline (firecracker, vzf) is unaffected:
 // it sets no env channel, so there is nothing to override it.
-// Refs: FR-17.3, ADR-010, MGIT-61.15
+//
+// For the record: the strictly correct rule is "the channel THIS BACKEND
+// owns wins" -- per-backend, not a single global precedence. Env-over-cmdline
+// is only safe here because no shipped backend sets BOTH channels for the
+// same VM (libkrun: env only; firecracker/vzf: cmdline only), so the two
+// orderings coincide today. That coincidence is latent, not guaranteed: a
+// backend that composed both would need this function to know which one it
+// owns, which this signature cannot express. Re-verified empirically on
+// firecracker 2026-07-30 (the live e2e suite, unchanged pass count) rather
+// than by this reasoning alone. Refs: FR-17.3, ADR-010, MGIT-61.15
 func BootTokens(cmdline, env string) string {
 	switch {
 	case strings.TrimSpace(cmdline) == "":
