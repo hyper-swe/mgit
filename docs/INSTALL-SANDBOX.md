@@ -165,9 +165,19 @@ Install fails closed on any digest mismatch and is idempotent. `mgit run` and
 `mgit work --sandbox` then use the registered image automatically. **Trust
 model:** the image is digest-pinned and Ed25519-signed into your repo's own
 trust root (local-trust); the `sha256` pin plus HTTPS provide distribution
-integrity. Published, checksummed image bundles ship with the release
-(tracked by MGIT-61.2); a signed-by-the-project distribution key is a planned
-upgrade (MGIT-61.4).
+integrity.
+
+**Publishing is currently on hold (MGIT-61.12, ⛔ see
+[RELEASE-CHECKLIST.md](release/RELEASE-CHECKLIST.md)):** the owner deferred
+attaching bundles to releases until the libkrun consolidation lands, since
+publishing today would hand out an artifact this migration intends to
+retire. **`mgit sandbox image install` with no `--from` will not find
+anything to fetch yet** — use `--from <local bundle dir>` (built with
+`scripts/sandbox-image/build-bundle.sh`, below) until the hold lifts. The
+mechanism (digest-pinned bundle, sha256 verification, `manifest.json` schema)
+is unchanged and already live-validated end to end; only the "attach to a
+GitHub release" step is paused. A signed-by-the-project distribution key is a
+separate, later upgrade (MGIT-61.4).
 
 ### Build your own image
 
