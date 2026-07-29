@@ -441,11 +441,8 @@ func newChildCmd(exePath string, spec vmSpec, consolePath string) (*exec.Cmd, *o
 	cmd.ExtraFiles = []*os.File{handshakeW} // fd 3 in the child
 	// The child gets a MINIMAL environment: the daemon's env must not leak
 	// toward the guest, and the child needs nothing from it. (The guest's own
-	// env comes from the spec, independent of this.) On macOS the dynamic
-	// loader still needs any DYLD fallback the daemon itself was started
-	// with, so that one variable is forwarded when present (libkrunfw is
-	// dlopened by leaf name — ADR-010 packaging finding).
-	cmd.Env = childEnv(os.Getenv("DYLD_FALLBACK_LIBRARY_PATH"))
+	// env comes from the spec, independent of this.)
+	cmd.Env = childEnv(os.Getenv)
 
 	cleanup := func() {
 		_ = console.Close()
@@ -455,10 +452,29 @@ func newChildCmd(exePath string, spec vmSpec, consolePath string) (*exec.Cmd, *o
 }
 
 // childEnv builds the child's minimal environment.
-func childEnv(dyldFallback string) []string {
+// libLoaderPathVars are the dynamic-loader search paths forwarded from the
+// daemon to the VM child.
+//
+// libkrun dlopens libkrunfw BY LEAF NAME (ADR-010 packaging finding), so the
+// child must inherit whatever search path let the daemon itself link. Both
+// platforms' variables are listed rather than one per build tag, because the
+// forwarding rule is identical and a per-OS split is how one of them gets
+// forgotten — which is exactly what happened: only the macOS variable was
+// forwarded, and on Linux the child died with "Couldn't find or load
+// libkrunfw.so.5". Only variables actually set are passed on.
+var libLoaderPathVars = []string{
+	"DYLD_FALLBACK_LIBRARY_PATH", // macOS
+	"LD_LIBRARY_PATH",            // Linux
+}
+
+// childEnv builds the child's minimal environment. lookup is injected so the
+// forwarding rule is testable without mutating the process environment.
+func childEnv(lookup func(string) string) []string {
 	env := []string{"PATH=/usr/bin:/bin"}
-	if dyldFallback != "" {
-		env = append(env, "DYLD_FALLBACK_LIBRARY_PATH="+dyldFallback)
+	for _, key := range libLoaderPathVars {
+		if v := lookup(key); v != "" {
+			env = append(env, key+"="+v)
+		}
 	}
 	return env
 }

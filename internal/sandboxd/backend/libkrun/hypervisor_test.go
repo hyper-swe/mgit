@@ -810,3 +810,42 @@ func TestCreateVM_NoPrivateStore_SharesTheWorktreeDirectly(t *testing.T) {
 			spawner.specs[0].WorktreeHostDir)
 	}
 }
+
+// TestChildEnv_ForwardsTheLoaderSearchPath pins the rule that libkrun dlopens
+// libkrunfw by leaf name, so the VM child must inherit whatever search path
+// let the daemon link — on EVERY platform. Forwarding only the macOS variable
+// is what made the first Linux/KVM run die with "Couldn't find or load
+// libkrunfw.so.5". Refs: ADR-010, MGIT-61.13 P4
+func TestChildEnv_ForwardsTheLoaderSearchPath(t *testing.T) {
+	tests := []struct {
+		name string
+		set  map[string]string
+		want []string
+	}{
+		{name: "nothing_set", set: map[string]string{}, want: []string{"PATH=/usr/bin:/bin"}},
+		{
+			name: "macos_loader_path",
+			set:  map[string]string{"DYLD_FALLBACK_LIBRARY_PATH": "/opt/krunfw/lib"},
+			want: []string{"PATH=/usr/bin:/bin", "DYLD_FALLBACK_LIBRARY_PATH=/opt/krunfw/lib"},
+		},
+		{
+			name: "linux_loader_path",
+			set:  map[string]string{"LD_LIBRARY_PATH": "/home/u/lk-prefix/lib64"},
+			want: []string{"PATH=/usr/bin:/bin", "LD_LIBRARY_PATH=/home/u/lk-prefix/lib64"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := childEnv(func(k string) string { return tt.set[k] })
+			if strings.Join(got, " ") != strings.Join(tt.want, " ") {
+				t.Errorf("childEnv = %v, want %v", got, tt.want)
+			}
+			// The daemon's own environment must never ride along wholesale.
+			for _, kv := range got {
+				if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "USER=") {
+					t.Errorf("daemon environment leaked to the child: %q", kv)
+				}
+			}
+		})
+	}
+}

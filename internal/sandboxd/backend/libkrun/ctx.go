@@ -39,6 +39,11 @@ type krunAPI interface {
 	AddVirtiofs(ctx uint32, tag, hostDir string, readOnly bool) error
 	// SetWorkdir sets the workload's working directory, guest-root-relative.
 	SetWorkdir(ctx uint32, dir string) error
+	// EnsureVsock makes a vsock device exist on the context, with TSI socket
+	// hijacking OFF. It must be called before any vsock port is added:
+	// libkrun refuses those with ENODEV when the context has no vsock device.
+	// An already-present device is success, not an error. Refs: ADR-010
+	EnsureVsock(ctx uint32) error
 	// AddVsockPort maps a guest vsock port to a host unix socket path
 	// (krun_add_vsock_port2). hostInitiates=true means the host connects in
 	// (libkrun listens on the path); false means the guest dials out (libkrun
@@ -150,6 +155,17 @@ func (g *guestCtx) configureGuest(spec vmSpec) error {
 	}
 	if err := g.api.SetWorkdir(g.id, workdir); err != nil {
 		return fmt.Errorf("libkrun set workdir: %w", err)
+	}
+	// A vsock device must exist before any port can be mapped onto it, and
+	// libkrun does NOT always create one implicitly: on macOS it pre-creates a
+	// TSI vsock at context creation, but on Linux — where our explicit NIC has
+	// already turned TSI off — it creates none, and every port add then fails
+	// ENODEV. Asking for one explicitly is what makes the control plane
+	// portable. Refs: ADR-010, FR-17.11
+	if spec.VsockEnabled || len(spec.PublishPorts) > 0 {
+		if err := g.api.EnsureVsock(g.id); err != nil {
+			return fmt.Errorf("libkrun enable vsock: %w", err)
+		}
 	}
 	if spec.VsockEnabled {
 		for _, port := range controlVsockPorts() {

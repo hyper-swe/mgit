@@ -119,8 +119,15 @@ func bootVM(t *testing.T, cfg microvm.VMConfig) string {
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(consolePath) //nolint:gosec // test-owned state dir
-		if err == nil && strings.Contains(string(data), "GUEST: done") {
-			return string(data)
+		if err == nil {
+			if strings.Contains(string(data), "GUEST: done") {
+				return string(data)
+			}
+			// A boot that failed before the guest ran will never print
+			// anything more; waiting out the deadline only hides the reason.
+			if strings.Contains(string(data), "krun_vm_failed") {
+				t.Fatalf("the VM failed to boot; console:\n%s", data)
+			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}

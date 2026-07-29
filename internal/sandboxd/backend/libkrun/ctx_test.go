@@ -84,6 +84,8 @@ func (f *fakeKrun) SetWorkdir(_ uint32, dir string) error {
 	return f.record("set_workdir")
 }
 
+func (f *fakeKrun) EnsureVsock(uint32) error { return f.record("ensure_vsock") }
+
 func (f *fakeKrun) AddVsockPort(_ uint32, port uint32, socketPath string, hostInitiates bool) error {
 	if f.vsockPaths == nil {
 		f.vsockPaths = make(map[uint32]string)
@@ -275,10 +277,12 @@ func TestNewGuestCtx_AnyConfigureStepFails_FailsClosedWithoutLeakingContextOrPee
 			wantSeq: "create_ctx,add_net,set_vm_config,add_fs:/dev/root,free_ctx"},
 		{name: "workdir_fails", failOn: "set_workdir",
 			wantSeq: "create_ctx,add_net,set_vm_config,add_fs:/dev/root,set_workdir,free_ctx"},
+		{name: "ensure_vsock_fails", failOn: "ensure_vsock",
+			wantSeq: "create_ctx,add_net,set_vm_config,add_fs:/dev/root,set_workdir,ensure_vsock,free_ctx"},
 		{name: "vsock_fails", failOn: "add_vsock",
-			wantSeq: "create_ctx,add_net,set_vm_config,add_fs:/dev/root,set_workdir,add_vsock:1024,free_ctx"},
+			wantSeq: "create_ctx,add_net,set_vm_config,add_fs:/dev/root,set_workdir,ensure_vsock,add_vsock:1024,free_ctx"},
 		{name: "exec_fails", failOn: "set_exec",
-			wantSeq: "create_ctx,add_net,set_vm_config,add_fs:/dev/root,set_workdir,add_vsock:1024,add_vsock:1025,add_vsock:1026,set_exec,free_ctx"},
+			wantSeq: "create_ctx,add_net,set_vm_config,add_fs:/dev/root,set_workdir,ensure_vsock,add_vsock:1024,add_vsock:1025,add_vsock:1026,set_exec,free_ctx"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

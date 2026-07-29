@@ -7,6 +7,7 @@ package libkrun
 
 /*
 #cgo pkg-config: libkrun
+#include <errno.h>
 #include <stdlib.h>
 #include <libkrun.h>
 */
@@ -96,6 +97,22 @@ func (libkrunAPI) SetWorkdir(ctx uint32, dir string) error {
 	cDir := C.CString(dir)
 	defer C.free(unsafe.Pointer(cDir))
 	return krunErr("krun_set_workdir", C.krun_set_workdir(C.uint32_t(ctx), cDir))
+}
+
+// EnsureVsock makes a vsock device exist with TSI hijacking disabled
+// (tsi_features=0: a plain vsock, no socket impersonation).
+//
+// EEXIST is SUCCESS, not a failure: it means libkrun already created an
+// implicit vsock device, which is the state we are asking for. That is the
+// macOS case — libkrun pre-creates a TSI vsock at context creation — whereas
+// on Linux, once our explicit NIC has disabled TSI, no device is created at
+// all and vsock port adds fail ENODEV without this call. Refs: ADR-010
+func (libkrunAPI) EnsureVsock(ctx uint32) error {
+	rc := C.krun_add_vsock(C.uint32_t(ctx), 0)
+	if int32(rc) == -C.EEXIST {
+		return nil
+	}
+	return krunErr("krun_add_vsock", rc)
 }
 
 // AddVsockPort maps a guest vsock port to a host unix socket path
