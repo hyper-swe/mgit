@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-29T05:06:55Z",
+  "exported_at": "2026-07-29T07:33:41Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6741,7 +6741,7 @@
       "priority": 2,
       "labels": "[]",
       "status": "open",
-      "progress": 0.38461538461538464,
+      "progress": 0.35714285714285715,
       "assignee": "",
       "creator": "mcp",
       "agent_state": "",
@@ -6871,6 +6871,30 @@
       "content_hash": "9fb4d04073e8c21624b75ac340260adc375f22dd0aff8021867329ca4e550f1a",
       "created_at": "2026-07-28T20:19:32Z",
       "updated_at": "2026-07-28T20:19:32Z"
+    },
+    {
+      "id": "MGIT-61.14",
+      "parent_id": "MGIT-61",
+      "depth": 1,
+      "seq": 14,
+      "project": "MGIT",
+      "title": "GA-BLOCKING: libkrun networking is an opt-in build flag (NET=1) — detect it, document it, fail loudly",
+      "description": "libkrun's krun_add_net_* symbols are behind an opt-in cargo feature; a default `make` build exports none of them while the shared header still declares them, so it fails at LINK time with a bare missing-symbol error. Because mgit requires an explicit NIC in every network mode (no NIC ⇒ libkrun enables TSI ⇒ full host egress leak), a default-built libkrun CANNOT host mgit at all. Today the macOS default path works only because the slp/krun tap happens to build with networking enabled — verified 2026-07-29 that brew's libkrun.dylib exports krun_add_net_unixgram — but that is an undocumented dependency on a third party's build flags, and it is documented nowhere in this repo (grep: zero hits).",
+      "prompt": "Found during MGIT-61 Linux/KVM parity work. Treat as GA-blocking distribution risk, not a footnote.\n\nTHE FACTS:\n- libkrun gates krun_add_net_* behind an opt-in cargo feature. A default `make` produces a library WITHOUT those symbols, while include/libkrun.h still declares them — so the failure is at link time, naming a C symbol, which tells an operator nothing.\n- mgit attaches an explicit NIC in EVERY mode (none/allowlist/open). That is a security requirement, not a feature: with no net device libkrun enables TSI and the guest gets full host egress (ADR-010, measured). So there is no degraded mode we could fall back to.\n- Consequence: \"install libkrun\" is NOT a sufficient prerequisite. It must be a libkrun built with networking (upstream: `make NET=1`).\n- macOS today works only because the slp/krun tap builds with it enabled. VERIFIED 2026-07-29: `nm -gU $(brew --prefix libkrun)/lib/libkrun.dylib | grep krun_add_net_unixgram` returns a match. If that tap ever ships a default build, `brew install hyper-swe/tap/mgit` breaks on every Mac.\n\nWHAT TO BUILD (all three — each covers a different failure moment):\n1. BUILD-TIME ASSERTION. Under -tags libkrun, fail the build with a message naming the cause and the fix, rather than emitting a raw undefined-symbol error. A cgo preamble check or a small link-probe in the Makefile target is enough. The message must say: libkrun was built without networking support; rebuild with NET=1 (or install a libkrun package that enables it).\n2. RUNTIME CAPABILITY CHECK. mgit-sandboxd must verify at startup (or at first launch) that the linked libkrun can attach a net device, and refuse with an actionable error naming the remedy. Fail CLOSED — never fall back to a NIC-less VM, which is the TSI leak. Log which VMM and which capabilities were linked, alongside the existing startup log.\n3. DOCUMENT IT. docs/INSTALL-SANDBOX.md prerequisites, the brew caveat, and the ADR-010 prerequisites section must all state that libkrun requires networking support, with the exact check a user can run.\n\nALSO:\n- Inspect the slp/krun formula and record whether it passes NET=1 explicitly or relies on an upstream default. If it relies on a default, that is a supply-chain fragility for our macOS story — say so plainly in the ticket and consider whether the brew formula should assert the capability post-install.\n- Add the capability check to the release checklist's clean-machine smoke step, so a tap change is caught before users hit it.\n\nREQUIRED TESTS: the runtime check refuses fail-closed with the remedy in the message when the capability is absent (fake the probe — do not require an actually-broken libkrun); the startup log names the linked VMM and its capabilities; a doc test or grep asserting the prerequisite is present in INSTALL-SANDBOX.md.\n\nRefs: ADR-010, MGIT-61.6 (the always-explicit-NIC guardrail), MGIT-61.8, docs/INSTALL-SANDBOX.md, docs/release/RELEASE-CHECKLIST.md.\nConstraints: no AI-attribution trailers; never put the Linux runner's LAN IP in the repo.",
+      "acceptance": "A libkrun built without networking fails at BUILD time with a message naming the cause and the fix, not a raw undefined-symbol error; mgit-sandboxd refuses fail-closed at runtime with an actionable remedy when the capability is absent, and never falls back to a NIC-less VM; the linked VMM and its capabilities are logged at startup; the prerequisite is documented in INSTALL-SANDBOX.md, the brew caveat and ADR-010; the slp/krun formula's reliance on NET=1 (explicit or default) is recorded; the release checklist's clean-machine smoke includes the capability check; required tests pass.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "claude-fable-5",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "592c4ead0d0e02f0a3eabd36163fa682d2490b6be31521aa85d5477dfac685f1",
+      "created_at": "2026-07-29T07:00:12Z",
+      "updated_at": "2026-07-29T07:17:22Z"
     },
     {
       "id": "MGIT-61.2",
@@ -9330,7 +9354,7 @@
       "agent_id": "claude-fable-5",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-61.11",
+      "current_node_id": "MGIT-61.14",
       "last_heartbeat": "2026-07-28T19:19:31Z"
     },
     {
@@ -9404,6 +9428,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 322,
-  "checksum": "2760da0a91f78b0a0f04acd1e79319cfc9175357b96d51fc5979761e0b528d8e"
+  "node_count": 323,
+  "checksum": "1f06802f56a3d28720be72e0907184ccf909001abcbb0828967f7234ffa97414"
 }
