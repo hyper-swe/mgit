@@ -128,20 +128,35 @@ func writeHandshake(w io.Writer, logger *slog.Logger, h childHandshake) {
 //     compile, pinned resolver, authorizer, DNS server) — the SAME policy
 //     code every backend uses; only the data path (netstack vs CONNECT
 //     proxy) differs.
+//   - open gets an allow-all authorizer, so it is unrestricted but still
+//     AUDITED per flow — something the iptables NAT path could not do.
 //   - none runs no gateway at all (the NIC gets the discard socket), so it
 //     needs no policy.
-//
-// Nothing else reaches here: which modes the backend supports is decided once
-// in vmSpec.Validate (supportedNetworkMode), which the child ran on decode.
 //
 // The child audits egress decisions to its own structured log (the per-VM
 // console log). The daemon's durable sandbox_events store is NOT reachable
 // from the child process yet — a known gap, tracked in MGIT-61.9.
 // Refs: SEC-04, FR-17.8, ADR-010
 func childPolicy(spec vmSpec, logger *slog.Logger, clock func() time.Time) (flowAuthorizer, dnsResolver, error) {
-	if spec.NetworkMode != model.NetworkModeAllowlist {
+	switch spec.NetworkMode {
+	case model.NetworkModeNone:
 		return nil, nil, nil
+	case model.NetworkModeOpen:
+		// Open places no restriction on destinations, but it still gets an
+		// authorizer — the gateway refuses to run without one, and this is
+		// what makes open mode AUDITED per flow, which the iptables NAT path
+		// it replaces could not do. No DNS resolver: open mode connects by
+		// address and the guest's own resolution is unrestricted.
+		auth, err := egress.NewOpenAuthorizer(egress.OpenAuthorizerConfig{
+			SandboxID: spec.SandboxID, TaskID: spec.TaskID,
+			Audit: logAuditor{logger: logger}, Logger: logger,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("libkrun child open-mode egress: %w", err)
+		}
+		return auth, nil, nil
 	}
+	// Allowlist: the standard per-sandbox assembly.
 	sup, err := egress.NewSupervisor(egress.SupervisorConfig{
 		SandboxID: spec.SandboxID,
 		TaskID:    spec.TaskID,

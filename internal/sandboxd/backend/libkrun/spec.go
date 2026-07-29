@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 )
 
@@ -98,32 +97,12 @@ func (s vmSpec) Validate() error {
 	if _, err := netBackingFor(s.SandboxID, s.NetworkMode, s.StateDir); err != nil {
 		return err
 	}
-	if err := supportedNetworkMode(s.NetworkMode); err != nil {
-		return err
-	}
 	if s.VsockEnabled {
 		for _, port := range controlVsockPorts() {
 			if err := checkSocketPathLen("vsock socket", vsockSocketPath(s.StateDir, port)); err != nil {
 				return err
 			}
 		}
-	}
-	return nil
-}
-
-// supportedNetworkMode is the SINGLE source of which network modes the
-// libkrun backend can actually contain. It lives in Validate, which both
-// processes run by construction (the parent before spawning, the child after
-// decoding), so the capability cannot drift between them — and when open mode
-// gains an authorizer (MGIT-61.9) exactly one place changes.
-//
-// Unknown modes are already rejected by netBackingFor; this adds the modes
-// that resolve to a socket but have no policy to serve it. Refs: SEC-04, FR-17.8
-func supportedNetworkMode(mode string) error {
-	if mode == model.NetworkModeOpen {
-		return fmt.Errorf(
-			"%w: open mode has no egress authorizer assembly yet on the libkrun "+
-				"backend (MGIT-61.9); use allowlist or none", model.ErrSandboxBackendUnavailable)
 	}
 	return nil
 }

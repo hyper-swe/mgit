@@ -120,11 +120,13 @@ func TestChildPolicy_PerMode(t *testing.T) {
 		wantAuth bool
 		wantDNS  bool
 	}{
-		// Only allowlist runs a policy-bearing gateway; none runs the discard
-		// socket instead. Modes the backend cannot contain never reach here —
-		// vmSpec.Validate rejects them in BOTH processes (supportedNetworkMode).
+		// none runs the discard socket and needs no policy; allowlist and open
+		// both run the gateway, so both must carry an authorizer.
 		{name: "none_has_no_policy", mode: model.NetworkModeNone},
 		{name: "allowlist_gets_authorizer_and_dns", mode: model.NetworkModeAllowlist, wantAuth: true, wantDNS: true},
+		// Open is unrestricted but still AUDITED, so it gets an authorizer —
+		// and no DNS resolver, because it connects by address.
+		{name: "open_gets_an_allow_all_authorizer", mode: model.NetworkModeOpen, wantAuth: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -144,22 +146,15 @@ func TestChildPolicy_PerMode(t *testing.T) {
 }
 
 func TestChildMain_RejectsUnsupportedSpecsBeforeBooting(t *testing.T) {
-	unsupportedMode := validSpec(t)
-	unsupportedMode.NetworkMode = model.NetworkModeOpen
-	openJSON, err := json.Marshal(unsupportedMode)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	tests := []struct {
 		name  string
 		stdin string
 		want  string
 	}{
 		{name: "malformed_json", stdin: "not json", want: "decode"},
-		// The child RE-VALIDATES rather than trusting the parent, so a mode
-		// this backend cannot contain is refused on its own side too.
-		{name: "unsupported_open_mode", stdin: string(openJSON), want: "open mode"},
+		// The child RE-VALIDATES rather than trusting the parent: a spec the
+		// backend cannot act on is refused on its own side too.
+		{name: "empty_spec", stdin: `{"sandbox_id":""}`, want: "sandbox id"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

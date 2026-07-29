@@ -42,9 +42,6 @@ func TestVMSpec_Validate(t *testing.T) {
 		// DIRECTORY. Say so instead of failing inscrutably in the child.
 		{name: "root_is_a_disk_image", mutate: func(s *vmSpec) { s.RootDir = imageFile }, wantErr: "not a directory"},
 		{name: "unknown_network_mode", mutate: func(s *vmSpec) { s.NetworkMode = "bogus" }, wantErr: "unknown network mode"},
-		// The single capability gate: both processes run Validate, so parent
-		// and child can never disagree about which modes are supported.
-		{name: "open_mode_unsupported", mutate: func(s *vmSpec) { s.NetworkMode = model.NetworkModeOpen }, wantErr: "open mode"},
 		{name: "state_dir_overflows_sun_path", mutate: func(s *vmSpec) {
 			s.StateDir = "/" + strings.Repeat("d", maxUnixSocketPath)
 		}, wantErr: "unix socket"},

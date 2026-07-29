@@ -154,11 +154,6 @@ func TestCreateVM_RefusesWhatItCannotContain(t *testing.T) {
 		mutate  func(*microvm.VMConfig)
 		wantErr string
 	}{
-		// Refused host-side by the same Validate the child re-runs, so the
-		// diagnostic arrives before a process is spawned.
-		{name: "open_mode_has_no_authorizer", mutate: func(c *microvm.VMConfig) {
-			c.NetworkMode = model.NetworkModeOpen
-		}, wantErr: "open mode"},
 		// SEC-03 delivery is implemented (see TestCreateVM_SEC03_*), so a
 		// private store no longer refuses the launch — but a quarantine that
 		// cannot be BUILT still must, rather than booting a guest with an
@@ -847,5 +842,28 @@ func TestChildEnv_ForwardsTheLoaderSearchPath(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCreateVM_OpenMode_IsNowSupported pins the behavior change: open mode
+// used to be refused because nothing could construct an authorizer for it.
+// egress.OpenAuthorizer closes that, so a launch must now succeed — and open
+// mode gains per-flow audit records the iptables NAT path could never produce.
+// Refs: MGIT-61.9, SEC-04, FR-17.8
+func TestCreateVM_OpenMode_IsNowSupported(t *testing.T) {
+	spawner := &fakeSpawner{next: func() *fakeChild { return newFakeChild(`{"ok":true}` + "\n") }}
+	h := testHypervisor(t, spawner)
+
+	vm, err := h.CreateVM(vmCfg(t, model.NetworkModeOpen))
+	if err != nil {
+		t.Fatalf("open mode must launch now that it has an authorizer: %v", err)
+	}
+	if err := vm.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = vm.Stop(context.Background(), true) })
+
+	if spawner.specs[0].NetworkMode != model.NetworkModeOpen {
+		t.Errorf("spec network mode = %q, want open", spawner.specs[0].NetworkMode)
 	}
 }
