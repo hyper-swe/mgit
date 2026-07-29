@@ -306,3 +306,62 @@ func hostBaseline(t *testing.T, files int) (writeMS, readMS int) {
 	}
 	return writeMS, int(time.Since(start).Milliseconds())
 }
+
+// realNodeModules is the path to a REAL npm dependency tree staged for the
+// measurement. It is env-supplied because producing it needs npm and the
+// registry, which a test must not require. Refs: ADR-010 Gate 2
+const realTreeEnv = "MGIT_E2E_NPM_TREE"
+
+// TestE2E_Libkrun_RealVM_NpmTreePerf measures virtio-fs against the file
+// workload an `npm install` actually performs — unpack a real dependency tree,
+// then traverse and read it as a build would — using the REAL shape of a
+// node_modules tree (a heavy tail of tiny files, mean ~15 KB) rather than the
+// uniform 512-byte files of the microbenchmark, whose extrapolation overstated
+// the cost. Refs: ADR-010 Gate 2, NFR-17.2
+func TestE2E_Libkrun_RealVM_NpmTreePerf(t *testing.T) {
+	requireRealVM(t)
+	tree := os.Getenv(realTreeEnv)
+	if tree == "" {
+		t.Skipf("SKIP (npm-tree perf): set %s to a real node_modules tree "+
+			"(npm install into a scratch dir) to run this measurement", realTreeEnv)
+	}
+	if _, err := os.Stat(tree); err != nil {
+		t.Skipf("SKIP (npm-tree perf): %s=%s is not readable: %v", realTreeEnv, tree, err)
+	}
+
+	guestRoot := buildGuestWorkload(t, "npmtree")
+	// Stage the real tree into the share at the path the guest reads.
+	staged := filepath.Join(guestRoot, "tree")
+	if out, err := exec.Command("cp", "-R", tree, staged).CombinedOutput(); err != nil { //nolint:gosec // test-owned paths
+		t.Fatalf("stage tree: %v\n%s", err, out)
+	}
+
+	cfg := realVMConfig(t, guestRoot, model.NetworkModeNone, nil)
+	cfg.RootfsReadOnly = false
+	console := bootVM(t, cfg)
+
+	var line string
+	for _, l := range strings.Split(console, "\n") {
+		if strings.HasPrefix(l, "NPMTREE-RESULT") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("no npm-tree result in the guest console:\n%s", console)
+	}
+	var uFiles, rFiles int
+	var uBytes, rBytes int64
+	var uMS, rMS int
+	if _, err := fmt.Sscanf(line,
+		"NPMTREE-RESULT unpack_files=%d unpack_bytes=%d unpack_ms=%d traverse_files=%d traverse_bytes=%d traverse_ms=%d",
+		&uFiles, &uBytes, &uMS, &rFiles, &rBytes, &rMS); err != nil {
+		t.Fatalf("parse %q: %v", line, err)
+	}
+
+	t.Logf("VIRTIO-FS, REAL npm dependency tree (%d files, %.1f MB)", uFiles, float64(uBytes)/(1<<20))
+	t.Logf("  unpack   (write): %d ms  (%.3f ms/file, %.1f MB/s)",
+		uMS, float64(uMS)/float64(uFiles), float64(uBytes)/(1<<20)/(float64(uMS)/1000))
+	t.Logf("  traverse (read):  %d ms  (%.3f ms/file, %.1f MB/s)",
+		rMS, float64(rMS)/float64(rFiles), float64(rBytes)/(1<<20)/(float64(rMS)/1000))
+	t.Logf("  DAX window: %d bytes", virtiofsDAXWindow())
+}

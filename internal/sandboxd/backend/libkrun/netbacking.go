@@ -16,21 +16,16 @@
 // STATUS (MGIT-61.6/61.8): in place — the host-side network decision, the
 // CGO binding, the NIC + host-peer invariant, the netstack egress gateway
 // with TCP policy enforcement and the SEC-07 pinning DNS resolver, the
-// virtiofs root and worktree shares, the control-plane vsock ports, the
-// re-exec lifecycle, and the guest dialers. Validated on real hardware
-// (macOS/HVF): boot, none-mode deny, allowlist default-deny, virtio-fs perf.
+// virtiofs root and the SEC-03 staged worktree share, the control-plane vsock
+// ports, SEC-09 publishing over libkrun's listening vsock ports, the re-exec
+// lifecycle, and the guest dialers. Validated on real hardware (macOS/HVF):
+// boot, none-mode deny, allowlist default-deny, and virtio-fs perf on a real
+// dependency tree.
 //
 // NOT YET, and each fails CLOSED rather than degrading quietly:
-//   - SEC-03 quarantine DELIVERY. CreateVM refuses any launch carrying a
-//     private store: the staged-worktree layout firecracker/vzf build is not
-//     implemented here, and sharing the live worktree instead would be
-//     silently weaker.
 //   - OPEN network mode. No allow-all authorizer exists (MGIT-61.9), and a
 //     gateway with no policy is an unaudited open network; vmSpec.Validate
 //     refuses the mode in both processes.
-//   - SEC-09 host->guest port publishing. netGateway.DialGuestPort lives in
-//     the VM child, so the daemon cannot reach it; the right mechanism is
-//     libkrun's own listening vsock ports (MGIT-61.13 P6).
 //   - Linux/KVM validation. Everything above was proven on macOS/HVF only.
 //
 // Refs: FR-17.15, ADR-005, ADR-010
@@ -39,7 +34,9 @@ package libkrun
 import (
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
@@ -148,4 +145,34 @@ func checkSocketPathLen(kind, path string) error {
 		"%w: %s path is %d bytes, over the %d-byte unix socket limit: %s "+
 			"(use a shorter sandbox state directory)",
 		model.ErrSandboxBackendUnavailable, kind, len(path), maxUnixSocketPath, path)
+}
+
+// daxWindowEnv overrides the virtio-fs DAX window size in bytes, for
+// measuring its effect (ADR-010 Gate 2). It is an env override rather than a
+// config field because it is a MEASUREMENT knob: the shipped value is the
+// constant below, and a per-launch setting would invite tuning a containment
+// component per sandbox.
+const daxWindowEnv = "MGIT_LIBKRUN_DAX_BYTES"
+
+// defaultDAXWindow is the virtio-fs DAX window the backend ships with.
+//
+// DAX maps file pages into a shared memory region the guest reads directly,
+// instead of round-tripping every read through the virtio queue. Zero
+// disables it. The value here is the measured default — see ADR-010 Gate 2
+// for the numbers behind it. Refs: ADR-010, NFR-17.2
+const defaultDAXWindow = 0
+
+// virtiofsDAXWindow resolves the DAX window size for a share. An unparseable
+// or negative override is ignored rather than failing the launch: this is a
+// performance knob, and a bad value must not cost a user their sandbox.
+func virtiofsDAXWindow() uint64 {
+	raw := os.Getenv(daxWindowEnv)
+	if raw == "" {
+		return defaultDAXWindow
+	}
+	n, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return defaultDAXWindow
+	}
+	return n
 }

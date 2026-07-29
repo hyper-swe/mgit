@@ -74,14 +74,20 @@ func (libkrunAPI) SetVMConfig(ctx uint32, vcpus uint8, ramMiB uint32) error {
 	return krunErr("krun_set_vm_config", rc)
 }
 
-// AddVirtiofs shares a host directory into the guest under a tag
-// (krun_add_virtiofs3: no DAX window, read-only honored by the device).
+// AddVirtiofs shares a host directory into the guest under a tag.
+//
+// The 4th krun_add_virtiofs3 argument is shm_size, the DAX window: a shared
+// memory region the guest maps file pages through instead of round-tripping
+// every read over the virtio queue. virtiofsDAXWindow selects it; 0 disables
+// DAX, which is what this backend shipped with until it was measured.
+// Refs: ADR-010 Gate 2
 func (libkrunAPI) AddVirtiofs(ctx uint32, tag, hostDir string, readOnly bool) error {
 	cTag := C.CString(tag)
 	defer C.free(unsafe.Pointer(cTag))
 	cDir := C.CString(hostDir)
 	defer C.free(unsafe.Pointer(cDir))
-	rc := C.krun_add_virtiofs3(C.uint32_t(ctx), cTag, cDir, 0, C.bool(readOnly))
+	rc := C.krun_add_virtiofs3(C.uint32_t(ctx), cTag, cDir,
+		C.uint64_t(virtiofsDAXWindow()), C.bool(readOnly))
 	return krunErr("krun_add_virtiofs3", rc)
 }
 
