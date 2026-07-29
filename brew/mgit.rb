@@ -1,33 +1,40 @@
 class Mgit < Formula
-  desc "Safety-critical micro version control for LLM coding agents"
-  homepage "https://github.com/hyper-swe/mgit-dev"
+  desc "Sandboxed, checkpointed working substrate for LLM coding agents"
+  homepage "https://github.com/hyper-swe/mgit"
   license "Apache-2.0"
   version "0.1.0"
 
   on_macos do
     on_arm do
-      url "https://github.com/hyper-swe/mgit-dev/releases/download/v#{version}/mgit_#{version}_darwin_arm64.tar.gz"
+      url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_darwin_arm64.tar.gz"
       sha256 "PLACEHOLDER"
     end
     on_intel do
-      url "https://github.com/hyper-swe/mgit-dev/releases/download/v#{version}/mgit_#{version}_darwin_amd64.tar.gz"
+      url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_darwin_amd64.tar.gz"
       sha256 "PLACEHOLDER"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/hyper-swe/mgit-dev/releases/download/v#{version}/mgit_#{version}_linux_arm64.tar.gz"
+      url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_linux_arm64.tar.gz"
       sha256 "PLACEHOLDER"
     end
     on_intel do
-      url "https://github.com/hyper-swe/mgit-dev/releases/download/v#{version}/mgit_#{version}_linux_amd64.tar.gz"
+      url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_linux_amd64.tar.gz"
       sha256 "PLACEHOLDER"
     end
   end
 
   def install
     bin.install "mgit"
+    # mgit-sandboxd ships in the Linux and macOS-arm64 archives only (the
+    # sandbox has no macOS-Intel or Windows backend yet). File.exist? keeps
+    # one install block correct across every bottle rather than branching
+    # per-platform: it installs the daemon wherever the archive carries it
+    # and silently skips it where the archive is mgit-only.
+    # Refs: MGIT-44, docs/release/homebrew-tap-formula.md
+    bin.install "mgit-sandboxd" if File.exist?("mgit-sandboxd")
   end
 
   # The macOS daemon LINKS libkrun (the GA default backend, ADR-010), so it
