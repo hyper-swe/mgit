@@ -25,18 +25,23 @@ every channel below does — is what makes `mgit run` find the daemon.
 
 - **Linux:** KVM (`/dev/kvm` present and accessible) and the `firecracker`
   binary on `PATH`. The daemon is pure Go and needs no CGO.
-- **macOS:** Apple Silicon (arm64), macOS 13+. The daemon uses
-  Virtualization.framework via CGO and must be code-signed with the
-  `com.apple.security.virtualization` entitlement (the release archive and
-  Homebrew bottle are already signed; see the go-install caveat below). Intel
+- **macOS:** Apple Silicon (arm64), **macOS 14+**. The daemon links **libkrun**
+  — the default backend since GA (ADR-010) — via CGO, and must be code-signed
+  with the `com.apple.security.hypervisor` entitlement (the release archive and
+  Homebrew bottle are already signed; see the go-install caveat below). libkrun
+  is a hard dependency: `brew install hyper-swe/tap/mgit` pulls it in. Intel
   Macs are not supported for the sandbox — they run core mgit only.
+
+  The older Virtualization.framework backend (vzf, macOS 13+) remains in the
+  tree behind `-tags vzf` and is not shipped. It is not a supported
+  configuration; it exists so the seam stays exercised.
 - **Windows and everything else:** no sandbox backend yet (epic MGIT-12); core
   mgit runs without containment.
 
 ### libkrun builds must have networking enabled
 
-Builds that link the **libkrun** backend (`-tags libkrun`) need a libkrun
-**built with networking support**. This is not the default: upstream gates the
+Builds that link the **libkrun** backend — every macOS build, and Linux builds
+using `-tags libkrun` — need a libkrun **built with networking support**. This is not the default: upstream gates the
 `krun_add_net_*` API behind an opt-in build flag, and a libkrun built without
 it exports none of those symbols while still declaring them in its header — so
 the failure is a bare missing-symbol error at link time.
@@ -62,6 +67,23 @@ A match means networking is enabled. If there is none, rebuild libkrun with
 it. The Homebrew `libkrun/krun` tap passes `NET=1` explicitly, so the brew path
 is covered.
 
+### Building mgit-sandboxd from source on macOS
+
+Because libkrun is linked rather than tag-gated, cgo must find its
+pkg-config. `make` derives this automatically from Homebrew; a raw `go build`
+needs it exported:
+
+```bash
+export PKG_CONFIG_PATH="$(brew --prefix libkrun)/lib/pkgconfig"
+go build ./cmd/mgit-sandboxd/
+```
+
+Core `mgit` is unaffected — it is CGO-free and never links libkrun:
+
+```bash
+CGO_ENABLED=0 go build ./cmd/mgit/
+```
+
 ## Installing the host binaries
 
 ### Homebrew (recommended)
@@ -70,8 +92,9 @@ is covered.
 brew install hyper-swe/tap/mgit
 ```
 
-Installs `mgit` and, on Linux and macOS arm64, `mgit-sandboxd` alongside it.
-The macOS bottle carries the virtualization entitlement.
+Installs `mgit` and, on Linux and macOS arm64, `mgit-sandboxd` alongside it,
+pulling in libkrun on macOS. The macOS bottle is signed with both the
+hypervisor (libkrun) and virtualization (vzf) entitlements.
 
 ### Release archive
 
@@ -91,8 +114,9 @@ go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest
 ```
 
 `go install` of the daemon works fully **on Linux**. **On macOS** it produces
-an *unsigned* binary that lacks the virtualization entitlement, so
-Virtualization.framework will refuse to start a VM. Either sign it yourself —
+an *unsigned* binary that lacks the hypervisor entitlement, so libkrun will
+refuse to start a VM (and it needs `PKG_CONFIG_PATH` set at build time, above).
+Either sign it yourself —
 
 ```bash
 codesign --force --sign - \

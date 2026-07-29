@@ -13,6 +13,16 @@ COMMIT   := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE     := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS  := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)"
 
+# libkrun is the DEFAULT sandbox backend on macOS (ADR-010), so mgit-sandboxd
+# links it and cgo needs its pkg-config. Homebrew does not put that on the
+# default search path, so derive it here rather than making every target
+# depend on the developer having exported it. Core mgit is unaffected: it is
+# CGO-free and never links libkrun. Refs: MGIT-61.14, ADR-010
+BREW_LIBKRUN := $(shell brew --prefix libkrun 2>/dev/null)
+ifneq ($(BREW_LIBKRUN),)
+export PKG_CONFIG_PATH := $(BREW_LIBKRUN)/lib/pkgconfig:$(PKG_CONFIG_PATH)
+endif
+
 ## build: Compile the mgit binary with version info
 .PHONY: build
 build:
@@ -39,10 +49,11 @@ e2e:
 test:
 	go test ./... -count=1
 
-## test-libkrun: Build+vet+test the opt-in libkrun backend (-tags libkrun).
-# Needs libkrun installed (macOS: brew tap libkrun/krun && brew install libkrun;
-# Linux: from source) — nothing else in CI compiles the tagged CGO binding,
-# so this target is the only check that it still builds. Refs: ADR-010
+## test-libkrun: Build+vet+test the libkrun backend.
+# On macOS libkrun is the DEFAULT backend and needs no tag; the -tags libkrun
+# here is what pulls it in on LINUX, where firecracker is still the default.
+# Needs libkrun installed (macOS: brew tap libkrun/krun && brew install
+# libkrun; Linux: from source). Refs: ADR-010, MGIT-61.14
 .PHONY: test-libkrun
 test-libkrun: check-libkrun-net
 	go build -tags libkrun ./...
@@ -93,7 +104,7 @@ e2e-libkrun:
 	@set -e; bin="$$(mktemp -d)/libkrun.test"; \
 	export PKG_CONFIG_PATH="$$(brew --prefix libkrun)/lib/pkgconfig"; \
 	export DYLD_FALLBACK_LIBRARY_PATH="$$(brew --prefix libkrunfw)/lib:$$(brew --prefix libkrun)/lib"; \
-	go test -c -tags libkrun -o "$$bin" ./internal/sandboxd/backend/libkrun/; \
+	go test -c -o "$$bin" ./internal/sandboxd/backend/libkrun/; \
 	codesign --force --sign - --entitlements build/darwin/vz.entitlements "$$bin"; \
 	MGIT_E2E_LIBKRUN=1 "$$bin" -test.run TestE2E_Libkrun_RealVM -test.v -test.timeout 300s
 

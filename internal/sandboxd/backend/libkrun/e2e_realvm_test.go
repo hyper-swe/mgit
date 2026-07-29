@@ -1,4 +1,4 @@
-//go:build libkrun && cgo
+//go:build cgo && !vzf && (darwin || (linux && libkrun))
 
 package libkrun
 
@@ -72,7 +72,7 @@ func buildGuest(t *testing.T) string {
 func buildGuestWorkload(t *testing.T, name string) string {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "sbin"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "sbin"), 0o750); err != nil {
 		t.Fatalf("guest root: %v", err)
 	}
 	out := filepath.Join(root, guestInitPath)
@@ -295,10 +295,10 @@ func hostBaseline(t *testing.T, files int) (writeMS, readMS int) {
 	start := time.Now()
 	for i := 0; i < files; i++ {
 		dir := filepath.Join(root, fmt.Sprintf("pkg%03d", i%64))
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			t.Fatalf("baseline mkdir: %v", err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%05d.js", i)), payload, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%05d.js", i)), payload, 0o600); err != nil {
 			t.Fatalf("baseline write: %v", err)
 		}
 	}
@@ -336,7 +336,7 @@ func TestE2E_Libkrun_RealVM_NpmTreePerf(t *testing.T) {
 		t.Skipf("SKIP (npm-tree perf): set %s to a real node_modules tree "+
 			"(npm install into a scratch dir) to run this measurement", realTreeEnv)
 	}
-	if _, err := os.Stat(tree); err != nil {
+	if _, err := os.Stat(tree); err != nil { //nolint:gosec // G703: path is an operator-supplied env var for a local benchmark, not request input
 		t.Skipf("SKIP (npm-tree perf): %s=%s is not readable: %v", realTreeEnv, tree, err)
 	}
 
@@ -392,11 +392,12 @@ func TestE2E_Libkrun_RealVM_AgentCommitsInTheSandbox(t *testing.T) {
 	guestRoot := buildGuestWorkload(t, "mgitrunner")
 	// The mgit CLI itself, exactly as the guest image ships it.
 	mgitBin := filepath.Join(guestRoot, "bin", "mgit")
-	if err := os.MkdirAll(filepath.Dir(mgitBin), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(mgitBin), 0o750); err != nil {
 		t.Fatal(err)
 	}
+	//nolint:gosec // G204: fixed argv; mgitBin is a t.TempDir path
 	build := exec.Command("go", "build", "-trimpath", "-buildvcs=false",
-		"-ldflags=-buildid=", "-o", mgitBin, "./cmd/mgit") //nolint:gosec // fixed argv
+		"-ldflags=-buildid=", "-o", mgitBin, "./cmd/mgit")
 	build.Dir = repoRoot(t)
 	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {

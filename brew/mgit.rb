@@ -30,6 +30,13 @@ class Mgit < Formula
     bin.install "mgit"
   end
 
+  # The macOS daemon LINKS libkrun (the GA default backend, ADR-010), so it
+  # is a hard runtime dependency there — not an optional extra. The tap was
+  # renamed from slp/krun; `brew tap slp/krun` no longer resolves.
+  on_macos do
+    depends_on "libkrun/krun/libkrun"
+  end
+
   # The sandbox's libkrun backend needs a libkrun BUILT WITH NETWORKING.
   # mgit attaches an explicit network device to every sandbox in every mode;
   # without one libkrun falls back to TSI and the guest gets full host egress,
@@ -39,10 +46,9 @@ class Mgit < Formula
   # Refs: MGIT-61.14, ADR-010
   def caveats
     <<~EOS
-      Sandbox (optional): the libkrun backend requires macOS 14+ on Apple
-      Silicon and a libkrun built WITH networking support:
-
-        brew tap libkrun/krun && brew install libkrun
+      Sandbox: mgit-sandboxd uses the libkrun backend on macOS, which needs
+      macOS 14+ on Apple Silicon. libkrun is installed as a dependency; it
+      must be built WITH networking support, which the libkrun/krun tap does.
 
       If you build libkrun yourself, build it with `make NET=1`. Verify:
 

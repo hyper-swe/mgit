@@ -1,4 +1,4 @@
-//go:build darwin && !(libkrun && cgo)
+//go:build darwin && (vzf || !cgo)
 
 package main
 
@@ -33,6 +33,14 @@ func newHypervisorBackend(deps hypervisorDeps) (model.SandboxManager, microvm.Gu
 	if err != nil {
 		return nil, nil, err
 	}
+	// GA position (2026-07-29, ADR-010): libkrun is the macOS default (see
+	// the release build tags); this vzf path is reachable only from a build
+	// that deliberately omits -tags libkrun (e.g. a local `go build`). Log
+	// it the same way regardless, so an operator can always tell which VMM
+	// a given daemon build actually linked.
+	deps.logger.Info("sandbox VMM linked at build time",
+		"event", "vmm_linked", "vmm", model.BackendVZF,
+		"detail", "Virtualization.framework; built without -tags libkrun")
 	mgr, landDialer, err := vzf.NewManagerWithLand(vzf.Config{
 		WorkDir:          deps.workDir,
 		Resolve:          newImageResolver(deps.hostRoot, deps.clock),

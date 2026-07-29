@@ -1,4 +1,4 @@
-//go:build libkrun && cgo
+//go:build cgo && !vzf && (darwin || (linux && libkrun))
 
 // The real libkrun binding. Built only under the "libkrun" tag so the default
 // pure-Go build of mgit and mgit-sandboxd keeps working on hosts that do not
@@ -41,7 +41,8 @@ func krunErr(op string, rc C.int32_t) error {
 // CreateCtx allocates a libkrun configuration context.
 func (libkrunAPI) CreateCtx() (uint32, error) {
 	rc := C.krun_create_ctx()
-	if err := krunErr("krun_create_ctx", rc); err != nil {
+	err := krunErr("krun_create_ctx", rc)
+	if err != nil {
 		return 0, err
 	}
 	return uint32(rc), nil

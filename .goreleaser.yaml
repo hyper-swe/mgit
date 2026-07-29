@@ -7,6 +7,11 @@ project_name: mgit
 before:
   hooks:
     - go mod tidy
+    # The darwin daemon links libkrun (the GA default backend), and libkrun
+    # gates its net API behind an opt-in build flag. A library without it
+    # cannot host a sandbox at all, so fail the RELEASE rather than ship a
+    # daemon that refuses to start on every user's Mac. Refs: MGIT-61.14
+    - make check-libkrun-net
     - go test ./... -count=1
 
 builds:
@@ -60,14 +65,24 @@ builds:
   # CGO-enabled and native-only — the whole release therefore runs on a macos
   # (Apple Silicon) runner, from which the CGO-free mgit and linux daemon
   # cross-compile fine. A per-build post hook ad-hoc entitlement-signs the
-  # binary in place before it is archived. arm64 only: vzf is validated on
-  # Apple Silicon; Intel macs run core mgit without the sandbox (like
-  # Windows). Refs: MGIT-44, FR-17.15
+  # binary in place before it is archived. arm64 only: the backend is
+  # validated on Apple Silicon; Intel macs run core mgit without the sandbox
+  # (like Windows).
+  #
+  # BACKEND: libkrun, the GA default on macOS (ADR-010). It is no longer
+  # behind a build tag, so this build LINKS libkrun and the release runner
+  # must have it installed (`brew tap libkrun/krun && brew install libkrun`)
+  # with networking enabled — the before-hook checks that. macOS 14+ floor.
+  # vzf remains in the tree behind `-tags vzf` and is not shipped.
+  # Refs: MGIT-44, FR-17.15, ADR-010, MGIT-61.14
   - id: mgit-sandboxd-darwin
     main: ./cmd/mgit-sandboxd/
     binary: mgit-sandboxd
     env:
       - CGO_ENABLED=1
+      # libkrun ships its own pkg-config; Homebrew does not put it on the
+      # default search path.
+      - 'PKG_CONFIG_PATH={{ if index .Env "PKG_CONFIG_PATH" }}{{ .Env.PKG_CONFIG_PATH }}{{ else }}/opt/homebrew/opt/libkrun/lib/pkgconfig{{ end }}'
     flags:
       - -trimpath
     ldflags:
@@ -78,9 +93,15 @@ builds:
       - arm64
     hooks:
       post:
-        # Ad-hoc sign (identity "-") with the virtualization entitlement.
-        # Not a restricted entitlement, so no notarization is needed for it
-        # to be honored on Apple Silicon. Refs: MGIT-44, FR-17.15
+        # Ad-hoc sign (identity "-") with the hypervisor entitlements. The
+        # plist carries BOTH com.apple.security.hypervisor (libkrun/HVF) and
+        # com.apple.security.virtualization (vzf) — one binary, either
+        # backend. Neither is restricted, so no notarization is needed for
+        # them to be honored on Apple Silicon.
+        #
+        # This also covers the re-exec VM child, which IS this binary
+        # (ADR-010): the entitlement attaches to the signed path, so the
+        # child inherits it by construction. Refs: MGIT-44, FR-17.15, MGIT-61.8
         - cmd: codesign --force --sign - --entitlements build/darwin/vz.entitlements "{{ .Path }}"
 
 archives:

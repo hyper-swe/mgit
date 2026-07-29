@@ -1,4 +1,4 @@
-//go:build libkrun && cgo
+//go:build cgo && !vzf && (darwin || (linux && libkrun))
 
 package libkrun
 
