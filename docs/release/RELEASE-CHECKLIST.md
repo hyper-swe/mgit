@@ -73,6 +73,20 @@ sandbox pass per supported platform** and record the result on the release:
    (The vz kernel build needs docker; run `publish.sh` on a machine with it.)
 6. Post-publish smoke: `brew install hyper-swe/tap/mgit` on a clean machine and
    confirm `command -v mgit && command -v mgit-sandboxd`.
+7. **libkrun networking capability check** (clean machine, sandbox builds only).
+   libkrun gates its net-device API behind an opt-in build flag, and mgit
+   requires an explicit NIC in every mode — without one libkrun falls back to
+   TSI and the guest gets full host egress, so a libkrun built without
+   networking cannot host a sandbox at all. The `libkrun/krun` tap passes
+   `NET=1` explicitly today, but that is a THIRD-PARTY build flag: if the
+   formula ever drops it, every Mac install breaks. Verify per release:
+   ```
+   brew tap libkrun/krun && brew install libkrun
+   nm -gU "$(brew --prefix libkrun)/lib/libkrun.dylib" | grep krun_add_net_unixgram
+   ```
+   A match is required. `make check-libkrun-net` performs the same check at
+   build time, and mgit-sandboxd re-verifies it at startup and refuses closed.
+   Refs: MGIT-61.14
 
 ## Dependency step — re-pin gvisor to the version Tailscale ships (every release)
 

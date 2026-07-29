@@ -77,14 +77,33 @@ type Hypervisor struct {
 // executable once: if the binary cannot re-exec itself, no VM can ever start,
 // so fail at construction rather than at the first launch.
 func NewHypervisor(logger *slog.Logger) (*Hypervisor, error) {
+	return newHypervisor(logger, newCapabilityProbe())
+}
+
+// newHypervisor is NewHypervisor with the capability probe injected, so the
+// fail-closed path can be tested without a deliberately-broken libkrun.
+func newHypervisor(logger *slog.Logger, probe netCapabilityProbe) (*Hypervisor, error) {
 	if logger == nil {
 		return nil, fmt.Errorf("libkrun hypervisor: logger must not be nil")
+	}
+	// Verify the linked libkrun can attach a NIC BEFORE anything else: every
+	// sandbox needs one in every mode, so a libkrun without networking can
+	// serve no launch at all, and refusing here reports it once at startup
+	// rather than once per doomed launch. Refs: MGIT-61.14, ADR-010
+	if err := requireNetworking(probe); err != nil {
+		return nil, err
 	}
 	exePath, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("%w: libkrun re-exec: resolve own executable: %w",
 			model.ErrSandboxBackendUnavailable, err)
 	}
+	// Name the VMM and the capabilities actually verified, so an operator can
+	// tell from the log that networking was checked — a package that silently
+	// drops NET=1 is otherwise invisible until a guest leaks (MGIT-61.14).
+	logger.Info("sandbox VMM capabilities verified",
+		"event", "vmm_capabilities", "vmm", model.BackendLibkrun,
+		"networking", "available", "vm_model", "re-exec child per VM")
 	return &Hypervisor{exePath: exePath, spawn: spawnChild, logger: logger}, nil
 }
 

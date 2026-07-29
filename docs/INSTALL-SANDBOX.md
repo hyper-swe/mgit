@@ -33,6 +33,35 @@ every channel below does — is what makes `mgit run` find the daemon.
 - **Windows and everything else:** no sandbox backend yet (epic MGIT-12); core
   mgit runs without containment.
 
+### libkrun builds must have networking enabled
+
+Builds that link the **libkrun** backend (`-tags libkrun`) need a libkrun
+**built with networking support**. This is not the default: upstream gates the
+`krun_add_net_*` API behind an opt-in build flag, and a libkrun built without
+it exports none of those symbols while still declaring them in its header — so
+the failure is a bare missing-symbol error at link time.
+
+It is a hard prerequisite rather than a nice-to-have: mgit attaches an explicit
+network device to **every** sandbox in **every** mode, including `none`. With
+no net device libkrun falls back to TSI (Transparent Socket Impersonation),
+which proxies the guest's sockets through the host and hands it full egress. So
+there is no NIC-less mode to degrade to — a libkrun without networking cannot
+host a sandbox at all, and mgit-sandboxd refuses to start against one.
+
+Check the library you have:
+
+```bash
+# macOS
+nm -gU "$(brew --prefix libkrun)/lib/libkrun.dylib" | grep krun_add_net_unixgram
+# Linux
+nm -D /usr/lib/libkrun.so | grep krun_add_net_unixgram
+```
+
+A match means networking is enabled. If there is none, rebuild libkrun with
+`make NET=1` (upstream `containers/libkrun`), or install a package that enables
+it. The Homebrew `libkrun/krun` tap passes `NET=1` explicitly, so the brew path
+is covered.
+
 ## Installing the host binaries
 
 ### Homebrew (recommended)

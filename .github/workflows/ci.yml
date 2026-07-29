@@ -45,7 +45,7 @@ jobs:
   # The libkrun backend is opt-in at build time (-tags libkrun, CGO + the
   # libkrun library); the default jobs never compile its binding. This job is
   # the only CI check that the tagged path still builds and passes. macOS 14
-  # runner: libkrun needs macOS 14+ and the slp/krun tap ships bottles for it
+  # runner: libkrun needs macOS 14+ and the libkrun/krun tap ships bottles for it
   # (no kernel compile). Refs: ADR-010, MGIT-61.8
   libkrun:
     name: libkrun backend (tagged build)
@@ -59,7 +59,7 @@ jobs:
 
       - name: Install libkrun (bottled)
         run: |
-          brew tap slp/krun
+          brew tap libkrun/krun
           brew install libkrun
 
       - name: Build, vet and test the tagged path
@@ -68,4 +68,4 @@ jobs:
         run: |
           export PKG_CONFIG_PATH="$(brew --prefix libkrun)/lib/pkgconfig"
           export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix libkrunfw)/lib:$(brew --prefix libkrun)/lib"
-          make test-libkrun
+          make test-libkrun   # includes check-libkrun-net (MGIT-61.14)

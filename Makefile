@@ -40,14 +40,48 @@ test:
 	go test ./... -count=1
 
 ## test-libkrun: Build+vet+test the opt-in libkrun backend (-tags libkrun).
-# Needs libkrun installed (macOS: brew tap slp/krun && brew install libkrun;
+# Needs libkrun installed (macOS: brew tap libkrun/krun && brew install libkrun;
 # Linux: from source) — nothing else in CI compiles the tagged CGO binding,
 # so this target is the only check that it still builds. Refs: ADR-010
 .PHONY: test-libkrun
-test-libkrun:
+test-libkrun: check-libkrun-net
 	go build -tags libkrun ./...
 	go vet -tags libkrun ./internal/sandboxd/backend/libkrun/ ./cmd/mgit-sandboxd/
 	go test -tags libkrun ./internal/sandboxd/backend/libkrun/ -count=1
+
+## check-libkrun-net: Assert the linked libkrun was built with networking.
+# libkrun gates krun_add_net_* behind an opt-in build flag, and its header
+# declares them regardless — so a libkrun built without networking fails at
+# LINK time with a bare undefined-symbol error that tells an operator nothing.
+# mgit attaches an explicit NIC to every sandbox in every mode (no NIC means
+# TSI means full guest egress), so such a build cannot host a sandbox at all.
+# This turns that into an actionable message BEFORE the build. Refs: MGIT-61.14
+.PHONY: check-libkrun-net
+check-libkrun-net:
+	@set -e; \
+	lib="$$(pkg-config --variable=libdir libkrun 2>/dev/null)"; \
+	if [ -z "$$lib" ]; then \
+		echo "libkrun not found via pkg-config; set PKG_CONFIG_PATH to its lib/pkgconfig" >&2; exit 1; \
+	fi; \
+	found=""; \
+	for f in "$$lib"/libkrun.dylib "$$lib"/libkrun.so; do \
+		[ -e "$$f" ] || continue; \
+		if nm -g "$$f" 2>/dev/null | grep -q krun_add_net_unixgram; then found=yes; fi; \
+	done; \
+	if [ -z "$$found" ]; then \
+		echo "" >&2; \
+		echo "FATAL: the libkrun in $$lib was built WITHOUT networking support." >&2; \
+		echo "" >&2; \
+		echo "  mgit attaches an explicit network device to every sandbox in every" >&2; \
+		echo "  mode. Without one libkrun falls back to TSI and the guest gets full" >&2; \
+		echo "  host egress, so there is no safe way to build against this library." >&2; \
+		echo "" >&2; \
+		echo "  Fix: rebuild libkrun with 'make NET=1' (containers/libkrun), or" >&2; \
+		echo "  install a package that enables it (the libkrun/krun brew tap does)." >&2; \
+		echo "" >&2; \
+		exit 1; \
+	fi; \
+	echo "libkrun networking: OK ($$lib)"
 
 ## e2e-libkrun: Boot REAL libkrun microVMs and assert the egress contract.
 # Separate from test-libkrun because it needs more than the library: the

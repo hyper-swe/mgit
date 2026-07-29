@@ -23,3 +23,8 @@ func newPlatformAPI() (krunAPI, error) {
 			"or use the firecracker/vzf backend",
 		model.ErrSandboxBackendUnavailable)
 }
+
+// newCapabilityProbe returns no probe in a build without the libkrun binding.
+// There is nothing linked to interrogate, and newPlatformAPI already refuses
+// such a build with its own actionable message. Refs: MGIT-61.14
+func newCapabilityProbe() netCapabilityProbe { return nil }

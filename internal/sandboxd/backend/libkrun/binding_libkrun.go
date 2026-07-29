@@ -7,6 +7,7 @@ package libkrun
 
 /*
 #cgo pkg-config: libkrun
+#include <dlfcn.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <libkrun.h>
@@ -171,4 +172,30 @@ func cStringArray(ss []string) ([]*C.char, func()) {
 // FreeCtx releases a context that will not be started.
 func (libkrunAPI) FreeCtx(ctx uint32) error {
 	return krunErr("krun_free_ctx", C.krun_free_ctx(C.uint32_t(ctx)))
+}
+
+// netCapability asks the DYNAMIC LOADER whether the linked libkrun exposes
+// the net-device API.
+//
+// It uses dlsym rather than creating a libkrun context on purpose, for two
+// reasons: a context created here would sit outside the single-call-site
+// funnel that guarantees every context gets a NIC (enforcement_test.go), and
+// a symbol lookup is the direct question — "was this libkrun built with
+// networking?" — rather than an inference from a side effect.
+// Refs: MGIT-61.14, ADR-010
+type netCapability struct{}
+
+// newCapabilityProbe returns the real loader-backed probe.
+func newCapabilityProbe() netCapabilityProbe { return netCapability{} }
+
+// ProbeNetworking reports whether krun_add_net_unixgram is resolvable. That
+// is the exact symbol the backend calls to attach every guest's NIC, so its
+// absence means no sandbox can launch. Refs: MGIT-61.14
+func (netCapability) ProbeNetworking() error {
+	sym := C.CString("krun_add_net_unixgram")
+	defer C.free(unsafe.Pointer(sym))
+	if C.dlsym(C.RTLD_DEFAULT, sym) == nil {
+		return fmt.Errorf("krun_add_net_unixgram is not resolvable in the linked libkrun")
+	}
+	return nil
 }
