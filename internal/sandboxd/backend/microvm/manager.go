@@ -485,6 +485,12 @@ func (m *Manager) newSandboxInfo(id string, opts model.SandboxLaunchOptions) mod
 		State:            model.StateRunning,
 		MemoryMB:         opts.MemoryMB,
 		CreatedAt:        now,
+		// The launch options' port mappings, so Status/published (SEC-09)
+		// can report what was actually configured — guestPublishPorts above
+		// only projects the guest-side port numbers into the VM config;
+		// nothing previously carried the full HostPort/GuestPort pairs into
+		// the record Resolve/List return. Refs: SEC-09, MGIT-61.13
+		PublishPorts: opts.PublishPorts,
 	}
 	if opts.TTL > 0 {
 		info.ExpiresAt = now.Add(opts.TTL)
