@@ -270,6 +270,57 @@ func TestSandboxBaseFrom_WarnsWhenTheBaseLibcWillNotMatchTheToolchain(t *testing
 	}
 }
 
+// TestSandboxBaseFrom_RerunningTheSameRefPinsTheSameTree covers the
+// requirement that makes a pin worth having: re-composing from the same image
+// must produce the same digest, and a DIFFERENT image must produce a
+// different one. A pin that drifts on an honest re-pull teaches people to
+// ignore it; one that does not move when the contents change protects
+// nothing. Refs: MGIT-61.15 req 2
+func TestSandboxBaseFrom_RerunningTheSameRefPinsTheSameTree(t *testing.T) {
+	files := map[string]string{"bin/sh": "#!/bin/sh", "etc/os-release": "ID=debian"}
+	srv, ref := fakeImageServer(t, files)
+	defer srv.Close()
+
+	repo := newRepo(t)
+	_, err := initTrustRoot(t, repo)
+	require.NoError(t, err)
+	bins := fakeGuestBins(t)
+
+	compose := func(ref string) string {
+		t.Helper()
+		out, err := runBase(t, repo, "from", ref, "--guest-bin-dir", bins, "--plain-http", "--json")
+		return pinnedRefFrom(t, out, err)
+	}
+	first := compose(ref)
+	second := compose(ref)
+
+	assert.Equal(t, first, second, "re-composing the same image must pin identically")
+
+	// A different image must be a visible change, never a silent one. The
+	// comparison is on the TREE digest alone: the source reference differs
+	// too, and a test that watched the whole output would pass even if the
+	// digest had not moved.
+	other, otherRef := fakeImageServer(t, map[string]string{"bin/sh": "#!/bin/sh", "etc/os-release": "ID=alpine"})
+	defer other.Close()
+	changed := compose(otherRef)
+	assert.NotEqual(t, first, changed, "different contents must pin differently")
+}
+
+// pinnedRefFrom extracts the digest-pinned reference from a --json run.
+func pinnedRefFrom(t *testing.T, out string, err error) string {
+	t.Helper()
+	require.NoError(t, err, "base from: %s", out)
+	var got struct {
+		ImageRef string `json:"image_ref"`
+	}
+	// The JSON line is preceded by the pull's progress lines.
+	start := strings.Index(out, "{")
+	require.GreaterOrEqual(t, start, 0, "no JSON object in the output: %q", out)
+	require.NoError(t, json.Unmarshal([]byte(out[start:]), &got), "output was %q", out)
+	require.Contains(t, got.ImageRef, "sha256:")
+	return got.ImageRef
+}
+
 // TestSandboxBaseFrom_RefusesAnImageBuiltForAnotherArchitecture pins the
 // refusal a user hits when they copy an image reference from a colleague on a
 // different machine.
