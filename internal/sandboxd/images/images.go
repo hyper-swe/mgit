@@ -112,13 +112,28 @@ func (s *Store) Resolve(imageRef string) (ResolvedImage, error) {
 		return ResolvedImage{}, fmt.Errorf("%w: image %q signature does not verify against the trust root",
 			model.ErrVerificationFailed, name)
 	}
-	// Both the rootfs and the kernel content must hash to their pinned
-	// digests (FR-17.17): a repointed path is caught here.
+	// The root content must hash to its pinned digest (FR-17.17): a repointed
+	// path is caught here. It may be a rootfs FILE or a guest base DIRECTORY.
 	if err := verifyContentDigest(entry.RootfsPath, entry.Digest); err != nil {
 		return ResolvedImage{}, err
 	}
-	if err := verifyContentDigest(entry.KernelPath, entry.KernelDigest); err != nil {
-		return ResolvedImage{}, err
+	// A libkrun guest base carries NO kernel — libkrunfw supplies one — so an
+	// entry with neither a kernel path nor a kernel digest skips that check.
+	// This cannot be used to skip verification of a real kernel: the signing
+	// payload covers BOTH digests, so blanking them invalidates the signature
+	// checked above. A HALF-specified kernel is refused rather than guessed
+	// at. Refs: FR-17.17, FR-17.29, MGIT-61.15, ADR-010
+	switch {
+	case entry.KernelPath == "" && entry.KernelDigest == "":
+		// kernel-less base; nothing to verify
+	case entry.KernelPath == "" || entry.KernelDigest == "":
+		return ResolvedImage{}, fmt.Errorf(
+			"%w: image %q has a half-specified kernel (path=%q digest=%q)",
+			model.ErrVerificationFailed, name, entry.KernelPath, entry.KernelDigest)
+	default:
+		if err := verifyContentDigest(entry.KernelPath, entry.KernelDigest); err != nil {
+			return ResolvedImage{}, err
+		}
 	}
 
 	return ResolvedImage{
@@ -158,11 +173,28 @@ func (s *Store) readLock() (Lock, error) {
 	return lock, nil
 }
 
+// contentDigest hashes whatever the pinned artifact is: a rootfs FILE for the
+// firecracker/vzf image path, or a guest base DIRECTORY for libkrun, where
+// libkrunfw supplies the kernel and the root is a shared tree. Dispatching
+// here rather than at each call site means a tree gets verified on every
+// resolve exactly as a file does — a digest recorded once and never
+// re-checked would protect nothing. Refs: FR-17.17, MGIT-61.15
+func contentDigest(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("images: stat %s: %w", path, err)
+	}
+	if info.IsDir() {
+		return TreeDigest(path)
+	}
+	return ComputeDigest(path)
+}
+
 // verifyContentDigest recomputes a file's SHA-256 (streamed, never
 // buffered: images are multi-GB and this runs at every boot) and compares
 // it to the pinned digest. Refs: FR-17.17, NFR-17.1
 func verifyContentDigest(path, pinnedDigest string) error {
-	got, err := ComputeDigest(path)
+	got, err := contentDigest(path)
 	if err != nil {
 		return fmt.Errorf("%w: %w", model.ErrVerificationFailed, err)
 	}

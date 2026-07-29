@@ -130,3 +130,21 @@ func writeLockFile(hostRoot string, lock Lock) error {
 	}
 	return nil
 }
+
+// BuildBaseEntry computes the content digest of a libkrun GUEST BASE — a
+// directory tree — and returns an UNSIGNED entry for it, exactly as
+// BuildEntry does for a kernel+rootfs pair. The caller signs and registers it.
+//
+// There is no kernel: libkrunfw supplies one, so KernelPath and KernelDigest
+// are empty and the guest command line is unused (libkrun boots its own
+// kernel and the boot descriptors ride the guest environment instead — see
+// guestboot.EnvBootTokens). Everything else — signing payload, registration,
+// and re-verification on every Resolve — is the path already used for files.
+// Refs: FR-17.17, FR-17.29, MGIT-61.15, ADR-010
+func BuildBaseEntry(baseDir string) (Entry, error) {
+	digest, err := TreeDigest(baseDir)
+	if err != nil {
+		return Entry{}, err
+	}
+	return Entry{Digest: digest, RootfsPath: baseDir}, nil
+}
