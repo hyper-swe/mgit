@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 )
 
 // LAUNCH MUST USE THE BASE THE USER ALREADY REGISTERED.
@@ -29,8 +31,14 @@ func TestSandboxLaunch_WithNoImageFlag_UsesTheRegisteredBase(t *testing.T) {
 
 	require.NoError(t, err, "a registered base must be enough to launch")
 	require.NotNil(t, fc.launched)
-	assert.True(t, strings.HasPrefix(fc.launched.ImageRef, "base@sha256:"),
-		"launch must boot the pinned base, got %q", fc.launched.ImageRef)
+
+	// Exactly the pinned reference, not merely something base-shaped: the
+	// digest launch boots is the one images.lock signed, and it travels into
+	// the append-only launch record as the attestation of what ran.
+	want, err := images.PinnedRef(filepath.Join(repo, ".mgit", "sandbox"), "base")
+	require.NoError(t, err)
+	assert.Equal(t, want, fc.launched.ImageRef)
+	assert.Contains(t, want, "sha256:")
 }
 
 func TestSandboxLaunch_WithNoBaseRegistered_FailsClosedNamingTheRemedy(t *testing.T) {

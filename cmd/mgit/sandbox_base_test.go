@@ -270,9 +270,73 @@ func TestSandboxBaseFrom_WarnsWhenTheBaseLibcWillNotMatchTheToolchain(t *testing
 	}
 }
 
+// TestSandboxBaseFrom_RefusesAnImageBuiltForAnotherArchitecture pins the
+// refusal a user hits when they copy an image reference from a colleague on a
+// different machine.
+//
+// libkrun uses hardware virtualization: there is no emulation to cross
+// architectures with, so an amd64 image on an arm64 Mac cannot run at all. The
+// refusal names BOTH architectures — the one the image has and the one this
+// host needs — because "no matching manifest" sends people looking for a
+// network problem. Refs: MGIT-61.15 req 5
+func TestSandboxBaseFrom_RefusesAnImageBuiltForAnotherArchitecture(t *testing.T) {
+	other := "amd64"
+	if runtime.GOARCH == "amd64" {
+		other = "arm64"
+	}
+	srv, ref := fakeMultiArchImageServer(t, map[string]string{"bin/sh": "#!/bin/sh"}, other)
+	defer srv.Close()
+
+	repo := newRepo(t)
+	_, err := initTrustRoot(t, repo)
+	require.NoError(t, err)
+
+	out, err := runBase(t, repo, "from", ref,
+		"--guest-bin-dir", fakeGuestBins(t), "--plain-http")
+	require.Error(t, err, "a wrong-architecture image must be refused: %s", out)
+	assert.Contains(t, err.Error(), other, "the refusal must name what the image offers")
+	assert.Contains(t, err.Error(), runtime.GOARCH, "the refusal must name what this host needs")
+}
+
+// TestSandboxBaseFrom_PicksThisHostsArchitectureFromAMultiArchImage is the
+// positive control for the same code path: real distro images are index
+// (multi-arch) images, so this is the ordinary case, not an edge one.
+func TestSandboxBaseFrom_PicksThisHostsArchitectureFromAMultiArchImage(t *testing.T) {
+	srv, ref := fakeMultiArchImageServer(t,
+		map[string]string{"bin/sh": "#!/bin/sh"}, "amd64", "arm64")
+	defer srv.Close()
+
+	repo := newRepo(t)
+	_, err := initTrustRoot(t, repo)
+	require.NoError(t, err)
+
+	out, err := runBase(t, repo, "from", ref,
+		"--guest-bin-dir", fakeGuestBins(t), "--plain-http")
+	require.NoError(t, err, "base from: %s", out)
+	assert.Contains(t, out, "sha256:")
+}
+
 // fakeImageServer serves a one-layer OCI image over plain HTTP and returns
 // the reference naming it. It keeps these tests offline.
 func fakeImageServer(t *testing.T, files map[string]string) (*httptest.Server, string) {
+	t.Helper()
+	arch := "amd64"
+	if runtime.GOARCH == "arm64" {
+		arch = "arm64"
+	}
+	return serveImage(t, files, "", arch)
+}
+
+// fakeMultiArchImageServer serves an OCI INDEX listing one manifest per
+// architecture — the shape every real distro image has.
+func fakeMultiArchImageServer(t *testing.T, files map[string]string, arches ...string) (*httptest.Server, string) {
+	t.Helper()
+	return serveImage(t, files, "index", arches...)
+}
+
+// serveImage builds a registry serving one layer as either a plain manifest
+// (kind "") or an index over per-architecture manifests (kind "index").
+func serveImage(t *testing.T, files map[string]string, kind string, arches ...string) (*httptest.Server, string) {
 	t.Helper()
 	blobs := map[string][]byte{}
 	manifests := map[string][]byte{}
@@ -298,35 +362,62 @@ func fakeImageServer(t *testing.T, files map[string]string) (*httptest.Server, s
 	require.NoError(t, zw.Close())
 
 	layerDigest := add(buf.Bytes())
-	arch := "amd64"
-	if runtime.GOARCH == "arm64" {
-		arch = "arm64"
-	}
-	configDigest := add([]byte(`{"architecture":"` + arch + `","os":"linux"}`))
 
-	manifest, err := json.Marshal(map[string]any{
-		"schemaVersion": 2,
-		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
-		"config":        map[string]any{"digest": configDigest, "size": 40},
-		"layers": []map[string]any{
-			{"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
-				"digest": layerDigest, "size": buf.Len()},
-		},
-	})
-	require.NoError(t, err)
-	manifests["v1"] = manifest
+	manifestFor := func(arch string) []byte {
+		configDigest := add([]byte(`{"architecture":"` + arch + `","os":"linux"}`))
+		doc, err := json.Marshal(map[string]any{
+			"schemaVersion": 2,
+			"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+			"config":        map[string]any{"digest": configDigest, "size": 40},
+			"layers": []map[string]any{
+				{"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+					"digest": layerDigest, "size": buf.Len()},
+			},
+		})
+		require.NoError(t, err)
+		return doc
+	}
+
+	if kind == "index" {
+		entries := make([]map[string]any, 0, len(arches))
+		for _, a := range arches {
+			doc := manifestFor(a)
+			d := add(doc)
+			manifests[strings.TrimPrefix(d, "sha256:")] = doc
+			entries = append(entries, map[string]any{
+				"mediaType": "application/vnd.oci.image.manifest.v1+json",
+				"digest":    d, "size": len(doc),
+				"platform": map[string]any{"architecture": a, "os": "linux"},
+			})
+		}
+		index, err := json.Marshal(map[string]any{
+			"schemaVersion": 2,
+			"mediaType":     "application/vnd.oci.image.index.v1+json",
+			"manifests":     entries,
+		})
+		require.NoError(t, err)
+		manifests["v1"] = index
+	} else {
+		manifests["v1"] = manifestFor(arches[0])
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/v2/")
 		key := path[strings.LastIndex(path, "/")+1:]
 		if strings.Contains(path, "/manifests/") {
-			doc, ok := manifests[key]
+			doc, ok := manifests[strings.TrimPrefix(key, "sha256:")]
+			if !ok {
+				doc, ok = manifests[key]
+			}
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
 			w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+			if bytes.Contains(doc, []byte("image.index")) {
+				w.Header().Set("Content-Type", "application/vnd.oci.image.index.v1+json")
+			}
 			_, _ = w.Write(doc)
 			return
 		}
