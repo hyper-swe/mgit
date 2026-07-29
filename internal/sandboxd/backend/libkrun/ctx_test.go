@@ -456,3 +456,39 @@ func TestNewGuestCtx_PublishedPorts_AreListeningVsockPorts(t *testing.T) {
 		}
 	}
 }
+
+func TestNewGuestCtx_InvalidPublishedPort_FailsClosed(t *testing.T) {
+	// A published port outside the vsock range would otherwise be handed to
+	// libkrun as a truncated uint32 — silently publishing the WRONG port.
+	dir := shortTempDir(t)
+	api := &fakeKrun{}
+	spec := baseSpec(model.NetworkModeNone, dir)
+	spec.PublishPorts = []int{70000}
+
+	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
+	if err == nil {
+		_ = gc.Close()
+		t.Fatal("an out-of-range published port must fail the launch")
+	}
+	if !strings.Contains(err.Error(), "out of range") {
+		t.Errorf("error %q does not name the cause", err)
+	}
+	if denySocketExists(dir) {
+		t.Error("host peer left bound after a failed launch (SEC-10)")
+	}
+}
+
+func TestNewGuestCtx_UnbindableHostPeer_FailsBeforeTouchingLibkrun(t *testing.T) {
+	// The host peer is acquired BEFORE the libkrun context exists, so a peer
+	// that cannot bind must abort before anything is allocated — a context
+	// with a NIC whose peer is missing boots into a hang (ADR-010).
+	api := &fakeKrun{}
+	spec := baseSpec(model.NetworkModeNone, filepath.Join(shortTempDir(t), "no-such-dir"))
+
+	if _, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil); err == nil {
+		t.Fatal("an unbindable host peer must fail the launch")
+	}
+	if len(api.calls) != 0 {
+		t.Errorf("libkrun was touched despite the peer failing: %q", api.seq())
+	}
+}

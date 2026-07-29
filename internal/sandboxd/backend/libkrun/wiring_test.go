@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -293,5 +295,213 @@ func TestPortDialer_FailsClosed(t *testing.T) {
 				t.Errorf("error %q does not mention %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// Fail-closed paths that only fire on real filesystem or resource errors.
+// They matter because each one guards a launch: a silent failure here is a
+// sandbox that boots without the property it was supposed to have.
+// Refs: MGIT-61.9, SEC-03, SEC-10
+
+func TestBindNetGateway_FailsClosedOnUnusablePaths(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    func(t *testing.T) string
+		wantErr string
+	}{
+		{
+			name: "unbindable_directory",
+			path: func(t *testing.T) string {
+				// A path whose parent does not exist cannot be bound.
+				return filepath.Join(shortTempDir(t), "no-such-dir", proxySocketName)
+			},
+			wantErr: "bind gateway socket",
+		},
+		{
+			name: "stale_path_is_a_nonempty_dir",
+			path: func(t *testing.T) string {
+				// A directory in the socket's place cannot be removed, so the
+				// stale-socket replacement must fail rather than proceed.
+				dir := shortTempDir(t)
+				p := filepath.Join(dir, proxySocketName)
+				if err := os.MkdirAll(filepath.Join(p, "child"), 0o750); err != nil {
+					t.Fatal(err)
+				}
+				return p
+			},
+			wantErr: "clear stale gateway socket",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gw, err := bindNetGateway(tt.path(t), &stubAuthorizer{}, nil, nil)
+			if err == nil {
+				_ = gw.Close()
+				t.Fatal("an unusable gateway socket path must fail the launch")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error %q does not mention %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestDeliverWorktree_ReturnsTheWorktreeWhenNothingToStage(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  microvm.VMConfig
+		want string
+	}{
+		{name: "no_worktree_at_all", cfg: microvm.VMConfig{}, want: ""},
+		{
+			// No private store means no quarantine to build; the pre-SEC-03
+			// direct path shares the worktree itself.
+			name: "worktree_without_private_store",
+			cfg:  microvm.VMConfig{WorktreePath: "/work/wt"},
+			want: "/work/wt",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := deliverWorktree(tt.cfg)
+			if err != nil {
+				t.Fatalf("deliverWorktree: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("host dir = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDeliverWorktree_PrivateStoreWithoutStateDir_FailsClosed(t *testing.T) {
+	// The staged tree carries the private store, so writing it to a
+	// process-relative path would put quarantined content outside the
+	// sandbox's own dir and leave it behind at teardown.
+	_, err := deliverWorktree(microvm.VMConfig{
+		WorktreePath: "/work/wt", PrivateStorePath: "/priv",
+	})
+	if err == nil {
+		t.Fatal("staging without a state dir must fail closed")
+	}
+	if !errors.Is(err, model.ErrSandboxBackendUnavailable) {
+		t.Errorf("error %v does not wrap ErrSandboxBackendUnavailable", err)
+	}
+}
+
+func TestVMSpec_Encode_SurfacesAWriteFailure(t *testing.T) {
+	// The spec crosses a process boundary; a partial write would hand the
+	// child a truncated document rather than failing the launch.
+	err := validSpec(t).encode(errWriter{})
+	if err == nil {
+		t.Fatal("a failed spec write must surface")
+	}
+	if !strings.Contains(err.Error(), "encode libkrun vm spec") {
+		t.Errorf("error %q does not name the operation", err)
+	}
+}
+
+func TestChildPolicy_UnknownMode_RefusesRatherThanGuessing(t *testing.T) {
+	// netBackingFor rejects unknown modes before a spec can reach here, so
+	// this pins the remaining branch rather than a reachable state. What
+	// matters is the direction of the failure: an unrecognized mode produces
+	// an ERROR, never a permissive authorizer and never a nil one (which
+	// would mean "no gateway" — the discard socket — and quietly change the
+	// sandbox's network posture).
+	spec := baseSpec("bogus-mode", shortTempDir(t))
+	auth, dns, err := childPolicy(spec, testChildLogger(), testClock())
+	if err == nil {
+		t.Fatal("an unrecognized network mode must be refused, not guessed at")
+	}
+	if auth != nil || dns != nil {
+		t.Error("a refused mode must yield no policy objects")
+	}
+}
+
+// TestExecChild_SignalKillAndWait covers the real process-control adapter
+// against a REAL child (the test binary re-execed as a sleeper), rather than
+// the fake used by the lifecycle tests. Signal/Kill/Wait are the whole of how
+// a VM is stopped, so a break here strands VMs rather than failing a test.
+// Refs: MGIT-61.8, MGIT-61.9
+func TestExecChild_SignalKillAndWait(t *testing.T) {
+	tests := []struct {
+		name string
+		stop func(t *testing.T, c *execChild)
+	}{
+		{
+			name: "graceful_signal",
+			stop: func(t *testing.T, c *execChild) {
+				if err := c.Signal(syscall.SIGTERM); err != nil {
+					t.Fatalf("Signal: %v", err)
+				}
+			},
+		},
+		{
+			name: "force_kill",
+			stop: func(t *testing.T, c *execChild) {
+				if err := c.Kill(); err != nil {
+					t.Fatalf("Kill: %v", err)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// A trivial long-lived process stands in for a running VM child.
+			cmd := exec.Command("/bin/sh", "-c", "sleep 30") //nolint:gosec // fixed argv
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = w.Close() }()
+			if err := cmd.Start(); err != nil {
+				t.Fatalf("start: %v", err)
+			}
+			child := &execChild{cmd: cmd, handshake: r}
+
+			tt.stop(t, child)
+			code, _ := child.Wait()
+			// Killed by signal reports -1 via os.ProcessState; either way the
+			// process must be reaped rather than left behind.
+			if code > 0 {
+				t.Errorf("exit code = %d, want <= 0 for a signaled child", code)
+			}
+		})
+	}
+}
+
+func TestWaitErrString_DistinguishesExitStatusFromRealFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		// A non-zero exit is NOT an error here: the code carries it, and
+		// reporting it as a failure would make every workload exit look like
+		// a VM fault.
+		{name: "nil", err: nil, want: ""},
+		{name: "exit_status", err: &exec.ExitError{}, want: ""},
+		{name: "real_failure", err: errors.New("waitid: no child processes"), want: "waitid: no child processes"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := waitErrString(tt.err); got != tt.want {
+				t.Errorf("waitErrString(%v) = %q, want %q", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSpawnChild_UnwritableConsole_FailsBeforeSpawning(t *testing.T) {
+	// The console is the ONLY record of what a guest did, so a launch that
+	// cannot open it must fail rather than run blind.
+	dir := shortTempDir(t)
+	consolePath := filepath.Join(dir, "no-such-dir", consoleLogName)
+	_, err := spawnChild("/nonexistent/binary", baseSpec(model.NetworkModeNone, dir), consolePath)
+	if err == nil {
+		t.Fatal("an unopenable console must fail the spawn")
+	}
+	if !strings.Contains(err.Error(), "console") {
+		t.Errorf("error %q does not name the console", err)
 	}
 }

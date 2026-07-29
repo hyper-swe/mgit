@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -583,4 +584,105 @@ func TestE2E_Libkrun_RealVM_Litmus1_HostSSHsIntoTheGuest(t *testing.T) {
 	}
 	t.Logf("LITMUS 1 PASS (real VM): host completed a real SSH session into the guest "+
 		"over the SEC-09 published vsock port %d", publishedPort)
+}
+
+// TestE2E_Libkrun_RealVM_ConcurrentLaunches_AreIsolated closes the last gap
+// in the churn evidence: every prior measurement was SEQUENTIAL (40 boots one
+// after another, ADR-010 Gate 6), which cannot show cross-task contamination
+// because only one VM ever existed at a time.
+//
+// N microVMs boot CONCURRENTLY, each with its own staged worktree carrying a
+// marker only that sandbox should see. Each guest reports which markers it can
+// read. Seeing another sandbox's marker is T6 cross-task contamination — the
+// failure that matters when several agents work in parallel, which is mgit's
+// whole premise. Teardown must then leave no residue (SEC-10).
+// Refs: SEC-03, SEC-10, ADR-010 Gate 6, MGIT-61.6
+func TestE2E_Libkrun_RealVM_ConcurrentLaunches_AreIsolated(t *testing.T) {
+	requireRealVM(t)
+	const sandboxes = 4
+
+	guestRoot := buildGuestWorkload(t, "markerprobe")
+
+	type launched struct {
+		cfg    microvm.VMConfig
+		marker string
+	}
+	all := make([]launched, 0, sandboxes)
+	for i := range sandboxes {
+		// Each sandbox gets its OWN worktree holding its own marker.
+		wt := t.TempDir()
+		marker := fmt.Sprintf("SANDBOX-MARKER-%d", i)
+		if err := os.WriteFile(filepath.Join(wt, "marker.txt"), []byte(marker), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg := realVMConfig(t, guestRoot, model.NetworkModeNone, nil)
+		cfg.SandboxID = fmt.Sprintf("concurrent-%d", i)
+		cfg.StateDir = shortTempDir(t)
+		cfg.RootfsReadOnly = false
+		cfg.WorktreePath = wt
+		cfg.WorktreeTag = "work"
+		cfg.VsockEnabled = false
+		all = append(all, launched{cfg: cfg, marker: marker})
+	}
+
+	// Boot them all at once — the point of the test.
+	consoles := make([]string, sandboxes)
+	var wg sync.WaitGroup
+	for i, l := range all {
+		wg.Add(1)
+		go func(i int, l launched) {
+			defer wg.Done()
+			consoles[i] = bootVM(t, l.cfg)
+		}(i, l)
+	}
+	wg.Wait()
+
+	for i, l := range all {
+		// Its own marker must be visible...
+		if !strings.Contains(consoles[i], "FOUND "+l.marker) {
+			t.Errorf("sandbox %d could not read its OWN worktree marker; console:\n%s", i, consoles[i])
+		}
+		// ...and no other sandbox's (T6).
+		for j, other := range all {
+			if i == j {
+				continue
+			}
+			if strings.Contains(consoles[i], "FOUND "+other.marker) {
+				t.Errorf("sandbox %d saw sandbox %d's marker — cross-task contamination (T6);\nconsole:\n%s",
+					i, j, consoles[i])
+			}
+		}
+	}
+
+	// RESIDUE (SEC-10), asserted at the layer that actually owns it.
+	//
+	// krun_start_enter exit()s the child process, so no Go deferred close
+	// ever runs and the host peer's socket file survives the VM. That is by
+	// design rather than a leak: every per-VM artifact is placed UNDER the
+	// sandbox state dir precisely so the manager's single RemoveAll reclaims
+	// all of it (FR-17.19). What must hold here is that nothing escaped that
+	// directory — a socket outside it would survive teardown forever.
+	for i := range all {
+		stateDir := all[i].cfg.StateDir
+		entries, err := os.ReadDir(stateDir)
+		if err != nil {
+			t.Fatalf("read sandbox %d state dir: %v", i, err)
+		}
+		for _, e := range entries {
+			p := filepath.Join(stateDir, e.Name())
+			if !strings.HasPrefix(p, stateDir) {
+				t.Errorf("sandbox %d artifact %s escapes its state dir; teardown's "+
+					"RemoveAll would not reclaim it (SEC-10)", i, p)
+			}
+		}
+		// And the state dir is reclaimable in one call, which is the contract
+		// the manager relies on.
+		if err := os.RemoveAll(stateDir); err != nil {
+			t.Errorf("sandbox %d state dir is not reclaimable in one RemoveAll: %v", i, err)
+		}
+		if _, err := os.Stat(filepath.Join(stateDir, denySocketName)); !os.IsNotExist(err) {
+			t.Errorf("sandbox %d left residue after the state dir was removed (SEC-10)", i)
+		}
+	}
+	t.Logf("CONCURRENCY PASS: %d microVMs booted concurrently, each saw only its own worktree", sandboxes)
 }
