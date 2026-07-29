@@ -353,6 +353,57 @@ func TestSandboxCmd_JSONOutput(t *testing.T) {
 	})
 }
 
+// TestSandboxList_HumanOutput_ListsEachSandbox covers the populated-list
+// human-readable path: TestSandboxCmd_JSONOutput's "list_empty_human" case
+// already proved the empty message, and its "list" case only asserted the
+// --json form, leaving the tab-separated human line for a populated list
+// unverified. Refs: MGIT-61.13
+func TestSandboxList_HumanOutput_ListsEachSandbox(t *testing.T) {
+	fc := &fakeSandboxClient{listResult: []model.SandboxInfo{
+		{ID: "01JSB", TaskID: "MGIT-1", State: model.StateRunning},
+		{ID: "01JSC", TaskID: "MGIT-2", State: model.StateCreated},
+	}}
+	out, err := runSandbox(okConnect(fc), "list")
+	require.NoError(t, err)
+	assert.Contains(t, out, "MGIT-1\trunning\t01JSB")
+	assert.Contains(t, out, "MGIT-2\tcreated\t01JSC")
+}
+
+// TestSandboxStatus_HumanOutput_ReportsTheSandbox covers status's
+// non-JSON path: TestSandboxCmd_JSONOutput only exercised --json.
+// Refs: MGIT-61.13
+func TestSandboxStatus_HumanOutput_ReportsTheSandbox(t *testing.T) {
+	fc := &fakeSandboxClient{statusInfo: &model.SandboxInfo{
+		ID: "01JSB", TaskID: "MGIT-1", State: model.StateRunning,
+	}}
+	out, err := runSandbox(okConnect(fc), "status", "MGIT-1")
+	require.NoError(t, err)
+	assert.Contains(t, out, "MGIT-1\trunning\t01JSB")
+}
+
+// TestSandboxRemove_TearsDownAndReportsSuccess covers remove's success path
+// end to end at the cmd layer (only the op-error case was previously
+// tested, via TestSandboxCmd_OpError_Surfaces): the task id and --force
+// both reach the client, and the confirmation line names the task.
+// Refs: MGIT-61.13
+func TestSandboxRemove_TearsDownAndReportsSuccess(t *testing.T) {
+	t.Run("default_no_force", func(t *testing.T) {
+		fc := &fakeSandboxClient{}
+		out, err := runSandbox(okConnect(fc), "remove", "MGIT-1")
+		require.NoError(t, err)
+		assert.Equal(t, "MGIT-1", fc.removedTID)
+		assert.False(t, fc.removeForce, "--force defaults to false")
+		assert.Contains(t, out, "Removed sandbox for task MGIT-1")
+	})
+	t.Run("force", func(t *testing.T) {
+		fc := &fakeSandboxClient{}
+		_, err := runSandbox(okConnect(fc), "remove", "MGIT-2", "--force")
+		require.NoError(t, err)
+		assert.Equal(t, "MGIT-2", fc.removedTID)
+		assert.True(t, fc.removeForce, "--force reaches the client")
+	})
+}
+
 // TestSandboxCmd_OpError_Surfaces verifies a daemon-side error surfaces on
 // the non-streaming verbs.
 func TestSandboxCmd_OpError_Surfaces(t *testing.T) {
