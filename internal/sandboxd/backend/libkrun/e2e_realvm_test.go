@@ -16,6 +16,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
+	"github.com/hyper-swe/mgit/internal/sandboxd/provision"
 )
 
 // REAL-VM e2e (MGIT-61.10): boots an actual libkrun microVM through the
@@ -364,4 +365,106 @@ func TestE2E_Libkrun_RealVM_NpmTreePerf(t *testing.T) {
 	t.Logf("  traverse (read):  %d ms  (%.3f ms/file, %.1f MB/s)",
 		rMS, float64(rMS)/float64(rFiles), float64(rBytes)/(1<<20)/(float64(rMS)/1000))
 	t.Logf("  DAX window: %d bytes", virtiofsDAXWindow())
+}
+
+// TestE2E_Libkrun_RealVM_AgentCommitsInTheSandbox is MGIT-61.7 BY EXECUTION.
+//
+// Until now the claim "an agent can run mgit commit inside the sandbox" was
+// proven only by construction — the delivered layout was assembled host-side
+// and the CLI driven over it. This boots a REAL microVM, has the guest mount
+// the SEC-03 staged worktree at its identical path, and runs the REAL mgit
+// binary in there: log, add, commit, and a host-only verb that must refuse.
+// Refs: MGIT-61.7, SEC-03, FR-17.3, FR-17.11
+func TestE2E_Libkrun_RealVM_AgentCommitsInTheSandbox(t *testing.T) {
+	requireRealVM(t)
+	const taskID = "MGIT-61.7"
+
+	guestRoot := buildGuestWorkload(t, "mgitrunner")
+	// The mgit CLI itself, exactly as the guest image ships it.
+	mgitBin := filepath.Join(guestRoot, "bin", "mgit")
+	if err := os.MkdirAll(filepath.Dir(mgitBin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	build := exec.Command("go", "build", "-trimpath", "-buildvcs=false",
+		"-ldflags=-buildid=", "-o", mgitBin, "./cmd/mgit") //nolint:gosec // fixed argv
+	build.Dir = repoRoot(t)
+	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build the guest mgit CLI: %v\n%s", err, out)
+	}
+
+	// The REAL delivery path: hand CreateVM a worktree and a private store and
+	// let it build the SEC-03 staged tree itself.
+	hostRepo, privateStore := seedHostRepo(t, taskID)
+
+	cfg := realVMConfig(t, guestRoot, model.NetworkModeNone, nil)
+	cfg.RootfsReadOnly = false
+	cfg.WorktreePath = hostRepo
+	cfg.PrivateStorePath = privateStore
+	cfg.WorktreeTag = "work"
+	console := bootVM(t, cfg)
+
+	for _, want := range []string{
+		"GUEST-RESULT MOUNT = OK",
+		"GUEST-RESULT STORE = PRESENT",
+		"GUEST-RESULT LOG = OK",
+		"GUEST-RESULT COMMIT = OK",
+		"GUEST-RESULT HOSTONLY = REFUSED-WITH-REASON",
+	} {
+		if !strings.Contains(console, want) {
+			t.Errorf("console missing %q; got:\n%s", want, console)
+		}
+	}
+	t.Logf("REAL VM PASS: an agent ran mgit against the SEC-03 private store inside the sandbox\n%s", console)
+}
+
+// repoRoot locates the module root from this test file's own path, so the
+// signed standalone binary can build guest binaries from any cwd.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate the test source")
+	}
+	// internal/sandboxd/backend/libkrun/<file> -> module root
+	return filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", ".."))
+}
+
+// seedHostRepo builds a real mgit project with one commit for taskID and
+// provisions the SEC-03 private store for it, returning both. It uses the
+// production provisioner, so the store the guest sees is the one a real
+// launch would deliver. Refs: SEC-03, MGIT-62
+func seedHostRepo(t *testing.T, taskID string) (repoRootDir, privateStoreDir string) {
+	t.Helper()
+	repo := t.TempDir()
+	mgit := filepath.Join(t.TempDir(), "mgit-host")
+	build := exec.Command("go", "build", "-o", mgit, "./cmd/mgit") //nolint:gosec // fixed argv
+	build.Dir = repoRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build host mgit: %v\n%s", err, out)
+	}
+	run := func(args ...string) {
+		cmd := exec.Command(mgit, args...) //nolint:gosec // test-built binary
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("mgit %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init")
+	if err := os.WriteFile(filepath.Join(repo, "seed.txt"), []byte("host work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "seed.txt")
+	run("commit", "-m", "host work before the sandbox", "--task", taskID)
+	// NOTE: no squash — MGIT-62 means provisioning seeds from HEAD instead.
+
+	prov, err := provision.NewStoreProvisioner(repo)
+	if err != nil {
+		t.Fatalf("provisioner: %v", err)
+	}
+	store, err := prov.Provision(taskID, filepath.Join(t.TempDir(), "private-store"))
+	if err != nil {
+		t.Fatalf("provision private store: %v", err)
+	}
+	return repo, store.Dir
 }
