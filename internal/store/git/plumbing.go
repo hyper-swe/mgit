@@ -2,6 +2,7 @@ package git
 
 import (
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -188,6 +189,21 @@ func emptyTree(st storer.EncodedObjectStorer) (plumbing.Hash, error) {
 // slash-separated paths → blobEntry (hash + mode) for every file (blob and
 // symlink) it contains. The mode is preserved so checkout can restore the
 // executable bit and recreate symlinks. Refs: MGIT-14.7 (#2, #3)
+//
+// Only io.EOF ends the walk successfully; any other error from the walker
+// — including go-git's own tree-entry validation (a "." /".." component, a
+// disguised .git entry, a control character) — MUST abort with that error,
+// not be treated as "the tree is empty". Silently swallowing it here would
+// make materializeCommit's caller see zero target paths for a tree that
+// actually failed to parse, which is worse than a blocked checkout: the
+// deletion pass in materializeCommit removes tracked files ABSENT from an
+// (apparently, wrongly) empty target, i.e. a walker error could silently
+// delete the whole working tree instead of refusing the checkout. Found via
+// the go-git v5.19.1 upgrade (GO-2026-5074): upstream's walker now rejects
+// a forged ".." tree entry that earlier go-git versions passed through for
+// mgit's own validateRelPath to catch downstream — the escape is still
+// stopped, but by go-git first, so the error path must survive intact.
+// Refs: MGIT-14.7 (#7), GO-2026-5074
 func flattenTree(tree *object.Tree) (map[string]blobEntry, error) {
 	out := make(map[string]blobEntry)
 	walker := object.NewTreeWalker(tree, true, nil)
@@ -195,7 +211,10 @@ func flattenTree(tree *object.Tree) (map[string]blobEntry, error) {
 	for {
 		name, entry, err := walker.Next()
 		if err != nil {
-			break
+			if err == io.EOF { //nolint:errorlint // go-git returns the bare sentinel, never wrapped
+				break
+			}
+			return nil, fmt.Errorf("walk tree: %w", err)
 		}
 		if entry.Mode == filemode.Dir {
 			continue
