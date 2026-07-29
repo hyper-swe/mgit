@@ -138,7 +138,7 @@ func vmCfg(t *testing.T, mode string) microvm.VMConfig {
 		StateDir:       shortTempDir(t),
 		CPUs:           2,
 		MemoryMB:       1024,
-		RootfsPath:     t.TempDir(),
+		RootfsPath:     testGuestBase(t),
 		RootfsReadOnly: true,
 		WorktreePath:   "/work/wt",
 		WorktreeTag:    "work",
@@ -547,7 +547,7 @@ func TestSpawnChild_RealProcess_HandshakeStdinAndReap(t *testing.T) {
 	}
 	dir := shortTempDir(t)
 	spec := baseSpec(model.NetworkModeNone, dir)
-	spec.RootDir = t.TempDir()
+	spec.RootDir = testGuestBase(t)
 	consolePath := filepath.Join(dir, consoleLogName)
 
 	child, err := spawnChild(exe, spec, consolePath)

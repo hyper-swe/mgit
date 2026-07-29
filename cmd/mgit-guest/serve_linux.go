@@ -233,6 +233,15 @@ func makeRootWritableWith(m scratchMounter, o guestboot.OverlayUpper) error {
 	if err := unix.Mount("overlay", newRoot, "overlay", 0, opts); err != nil {
 		return fmt.Errorf("mgit-guest: mount overlay root: %w", err)
 	}
+	// Make the mount tree private BEFORE any MS_MOVE. MS_MOVE returns EINVAL
+	// on a shared mount, and whether the initial namespace is shared is up to
+	// the VMM's own init: firecracker and vzf leave it private, libkrun does
+	// not, so moving /proc there failed with a bare "invalid argument". Doing
+	// it first is what util-linux's switch_root does and is correct on every
+	// backend. Refs: FR-17.17, MGIT-11.6.6, ADR-010
+	if err := unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, ""); err != nil {
+		return fmt.Errorf("mgit-guest: make mount tree private: %w", err)
+	}
 	// Carry the already-mounted pseudo-filesystems into the new root so they
 	// survive switch_root (their mount points exist in the lower image).
 	for _, m := range []string{"/proc", "/dev"} {
@@ -240,12 +249,9 @@ func makeRootWritableWith(m scratchMounter, o guestboot.OverlayUpper) error {
 			return fmt.Errorf("mgit-guest: move %s into new root: %w", m, err)
 		}
 	}
-	// switch_root into the writable overlay (util-linux style): make the
-	// mount tree private (so MS_MOVE onto / is allowed), move newroot onto
-	// /, chroot in. The read-only image remains the overlay's lower.
-	if err := unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, ""); err != nil {
-		return fmt.Errorf("mgit-guest: make mount tree private: %w", err)
-	}
+	// switch_root into the writable overlay (util-linux style): move newroot
+	// onto /, chroot in. The tree was made private above, which is what
+	// allows MS_MOVE onto /. The read-only image remains the overlay's lower.
 	if err := unix.Chdir(newRoot); err != nil {
 		return fmt.Errorf("mgit-guest: chdir new root: %w", err)
 	}

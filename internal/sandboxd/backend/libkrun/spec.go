@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 )
 
@@ -94,6 +96,9 @@ func (s vmSpec) Validate() error {
 			"libkrun spec: guest root %s is a file, not a directory: libkrun shares "+
 				"the guest root over virtiofs and cannot boot a disk image", s.RootDir)
 	}
+	if err := validateGuestBase(s.RootDir, s.ExecPath); err != nil {
+		return err
+	}
 	if _, err := netBackingFor(s.SandboxID, s.NetworkMode, s.StateDir); err != nil {
 		return err
 	}
@@ -143,4 +148,54 @@ func controlVsockPorts() []uint32 {
 // the host-observed peer identity (SEC-10, same convention as firecracker).
 func vsockSocketPath(stateDir string, port uint32) string {
 	return filepath.Join(stateDir, fmt.Sprintf("vsock_%d.sock", port))
+}
+
+// guestBaseDirs are the mount points mgit-guest requires as PID 1.
+//
+// It mounts /proc and /dev (pseudo-filesystems), /tmp (tmpfs), and overlays a
+// writable root using /mnt as the scratch for the upper/work/newroot layers
+// before switch_root. A tree missing any of them fails at boot with a bare
+// "no such file or directory" naming the mount, which says nothing about the
+// tree being wrong.
+//
+// Under the old ext4 path the image builder created these, so nothing needed
+// to check. libkrun shares a host DIRECTORY as the guest root, so any tree —
+// ours, or one a user brings — can omit them. Hence validation rather than
+// convention. Refs: FR-17.3, FR-17.17, MGIT-61.15
+var guestBaseDirs = []string{"proc", "dev", "tmp", "mnt"}
+
+// validateGuestBase reports whether a guest root tree can actually boot: the
+// PID-1 supervisor must exist and be executable, and its mount points must be
+// present. It is checked HOST-side, before a VM is spawned, so a malformed
+// base is a launch error naming what is missing rather than a guest that dies
+// mid-boot. Refs: FR-17.3, MGIT-61.15
+func validateGuestBase(rootDir, execPath string) error {
+	init := filepath.Join(rootDir, execPath)
+	info, err := os.Stat(init)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: guest base %s has no %s: the base tree must contain the mgit-guest "+
+				"supervisor, which runs as PID 1",
+			model.ErrSandboxBackendUnavailable, rootDir, execPath)
+	}
+	if info.IsDir() || info.Mode()&0o111 == 0 {
+		return fmt.Errorf(
+			"%w: guest base %s: %s is not an executable file",
+			model.ErrSandboxBackendUnavailable, rootDir, execPath)
+	}
+	var missing []string
+	for _, d := range guestBaseDirs {
+		if fi, err := os.Stat(filepath.Join(rootDir, d)); err != nil || !fi.IsDir() {
+			missing = append(missing, "/"+d)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf(
+			"%w: guest base %s is missing the mount points mgit-guest needs at boot: %s. "+
+				"Create them in the base tree (mkdir -p %s); without them the guest fails "+
+				"with a bare \"no such file or directory\" during mount",
+			model.ErrSandboxBackendUnavailable, rootDir,
+			strings.Join(missing, ", "), strings.Join(missing, " "))
+	}
+	return nil
 }

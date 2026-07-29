@@ -3,6 +3,7 @@
 package libkrun
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
+	"github.com/hyper-swe/mgit/internal/sandboxd/guestexec"
 	"github.com/hyper-swe/mgit/internal/sandboxd/provision"
 )
 
@@ -72,8 +74,12 @@ func buildGuest(t *testing.T) string {
 func buildGuestWorkload(t *testing.T, name string) string {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "sbin"), 0o750); err != nil {
-		t.Fatalf("guest root: %v", err)
+	// A workload tree is still a guest base: give it the mount points the
+	// contract requires, so these tests exercise a realistic root.
+	for _, d := range append([]string{"sbin"}, guestBaseDirs...) {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatalf("guest root: %v", err)
+		}
 	}
 	out := filepath.Join(root, guestInitPath)
 
@@ -686,4 +692,86 @@ func TestE2E_Libkrun_RealVM_ConcurrentLaunches_AreIsolated(t *testing.T) {
 		}
 	}
 	t.Logf("CONCURRENCY PASS: %d microVMs booted concurrently, each saw only its own worktree", sandboxes)
+}
+
+// TestE2E_Libkrun_RealVM_MgitGuestControlPlane boots the REAL mgit-guest as
+// PID 1 under libkrun and drives its vsock control plane from the host.
+//
+// This is the piece every other real-VM test stopped short of. Litmus leg 1
+// used a purpose-built SSH guest, and the agent-commit test ran a workload
+// that mounted the worktree itself — so mgit-guest's own PID-1 duties
+// (pseudo-filesystems, the writable-root overlay and switch_root, the
+// worktree mount) and the exec/land/notify vsock ports have never actually
+// run under this VMM. Those are the daemon's only channel into a guest, so
+// "configured" is not the same as "works". Refs: MGIT-61.13 P2, FR-17.11, SEC-09
+func TestE2E_Libkrun_RealVM_MgitGuestControlPlane(t *testing.T) {
+	requireRealVM(t)
+
+	// The REAL guest supervisor, built exactly as the guest tree ships it.
+	guestRoot := t.TempDir()
+	// mgit-guest is PID 1 and mounts into these, so the base tree must
+	// provide them — see guestBaseDirs for why this is a real requirement
+	// and not test setup.
+	for _, d := range append([]string{"sbin"}, guestBaseDirs...) {
+		if err := os.MkdirAll(filepath.Join(guestRoot, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	//nolint:gosec // G204: fixed argv; output path is a t.TempDir
+	build := exec.Command("go", "build", "-trimpath", "-buildvcs=false",
+		"-ldflags=-buildid=", "-o", filepath.Join(guestRoot, guestInitPath), "./cmd/mgit-guest")
+	build.Dir = repoRoot(t)
+	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build mgit-guest: %v\n%s", err, out)
+	}
+
+	workDir := shortTempDir(t)
+	const sandboxID = "guestctl"
+	cfg := realVMConfig(t, guestRoot, model.NetworkModeNone, nil)
+	cfg.SandboxID = sandboxID
+	cfg.StateDir = microvm.SandboxStateDir(workDir, sandboxID)
+	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg.RootfsReadOnly = false
+	cfg.VsockEnabled = true // the whole point: wire exec/land/notify
+
+	vm, console := bootVMUntil(t, cfg, "mgit-guest")
+	t.Logf("guest console:\n%s", console)
+	t.Cleanup(func() { _ = vm.Stop(context.Background(), true) })
+
+	// Drive the guest through the PRODUCTION exec path: the same dialer the
+	// daemon uses, and the same wire protocol.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, err := newGuestDialer(workDir).DialGuest(ctx, sandboxID)
+	if err != nil {
+		t.Fatalf("host could not reach mgit-guest's exec channel: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	var stdout, stderr bytes.Buffer
+	res, err := guestexec.Run(conn, model.ExecRequest{
+		Command: []string{"/sbin/mgit-guest", "--help"},
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("exec round trip failed: %v (stderr=%q)", err, stderr.String())
+	}
+	// Assert on CONTENT, not byte counts: the point is that the guest's own
+	// output traveled back over the vsock exec protocol.
+	out := stdout.String() + stderr.String()
+	if !strings.Contains(out, "vsock-port") {
+		t.Errorf("exec produced no recognizable guest output; got %q", out)
+	}
+	// The console proves PID-1 got far enough to serve both control ports,
+	// which means the overlay + switch_root completed under a virtiofs root.
+	for _, want := range []string{`"vsock_port":1024`, `"vsock_port":1025`} {
+		if !strings.Contains(console, want) {
+			t.Errorf("mgit-guest did not report serving %s; console:\n%s", want, console)
+		}
+	}
+	t.Logf("MGIT-GUEST CONTROL PLANE PASS: real mgit-guest booted as PID 1 under libkrun, "+
+		"served exec+land vsock ports, and an exec round-tripped (code=%d, %dB out)",
+		res.ExitCode, len(out))
 }

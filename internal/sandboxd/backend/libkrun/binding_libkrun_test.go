@@ -25,7 +25,7 @@ func TestBinding_ConfiguresARealContextThroughNewGuestCtx(t *testing.T) {
 	// vsock control ports, guest exec — against the REAL C calls. The host
 	// peer is bound by newGuestCtx itself (it owns the NIC's host end).
 	spec := baseSpec(model.NetworkModeNone, dir)
-	spec.RootDir = t.TempDir()
+	spec.RootDir = testGuestBase(t)
 	spec.WorktreePath = t.TempDir()
 	spec.WorktreeTag = "work"
 	spec.VsockEnabled = true
