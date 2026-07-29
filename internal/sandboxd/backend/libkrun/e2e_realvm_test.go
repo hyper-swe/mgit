@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 	"github.com/hyper-swe/mgit/internal/sandboxd/provision"
@@ -474,4 +476,111 @@ func seedHostRepo(t *testing.T, taskID string) (repoRootDir, privateStoreDir str
 		t.Fatalf("provision private store: %v", err)
 	}
 	return repo, store.Dir
+}
+
+// bootVMUntil boots a real microVM and returns once its console contains
+// ready, leaving the VM RUNNING for the caller to drive. It returns the VM so
+// the caller can stop it, and the console text so far.
+//
+// Distinct from bootVM, which waits for the guest to FINISH: a guest serving
+// a published port must stay up while the host connects to it.
+func bootVMUntil(t *testing.T, cfg microvm.VMConfig, ready string) (microvm.VM, string) {
+	t.Helper()
+	hv, err := NewHypervisor(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	if err != nil {
+		t.Fatalf("NewHypervisor: %v", err)
+	}
+	vm, err := hv.CreateVM(cfg)
+	if err != nil {
+		t.Fatalf("CreateVM: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := vm.Start(ctx); err != nil {
+		t.Fatalf("Start (real VM): %v", err)
+	}
+	t.Cleanup(func() { _ = vm.Stop(context.Background(), true) })
+
+	consolePath := filepath.Join(cfg.StateDir, consoleLogName)
+	deadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(consolePath) //nolint:gosec // test-owned state dir
+		if err == nil {
+			if strings.Contains(string(data), ready) {
+				return vm, string(data)
+			}
+			if strings.Contains(string(data), "krun_vm_failed") {
+				t.Fatalf("the VM failed to boot; console:\n%s", data)
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	data, _ := os.ReadFile(consolePath) //nolint:gosec // test-owned state dir
+	t.Fatalf("guest never reported %q; console:\n%s", ready, data)
+	return nil, ""
+}
+
+// TestE2E_Libkrun_RealVM_Litmus1_HostSSHsIntoTheGuest is LITMUS LEG 1 against
+// a real microVM — the last unproven containment claim.
+//
+// The guest runs a real SSH server on a published vsock port and the HOST
+// completes a real SSH session into it: handshake, session channel, exec, and
+// the guest's own banner back. That proves the SEC-09 inbound direction works
+// end to end over libkrun's LISTENING vsock port — the mechanism chosen
+// because the netstack gateway lives in the VM child where the daemon cannot
+// reach it.
+//
+// Legs 2 and 3 (no exfiltration by default; the same tunnel permitted once
+// policy allows it) are already green against the real authorizer.
+// Refs: SEC-09, FR-17.8, MGIT-61.10
+func TestE2E_Libkrun_RealVM_Litmus1_HostSSHsIntoTheGuest(t *testing.T) {
+	requireRealVM(t)
+	const publishedPort = 8022
+
+	guestRoot := buildGuestWorkload(t, "sshguest")
+	cfg := realVMConfig(t, guestRoot, model.NetworkModeNone, nil)
+	cfg.VsockEnabled = false // this guest serves only the published port
+	cfg.PublishPorts = []int{publishedPort}
+
+	_, console := bootVMUntil(t, cfg, "GUEST-RESULT SSHD = LISTENING")
+	t.Logf("guest console:\n%s", console)
+
+	// The HOST initiates — the only direction SEC-09 opens. This is the same
+	// dialer the production port publisher uses.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	raw, err := NewPortDialer(filepath.Dir(cfg.StateDir)).
+		DialGuestPort(ctx, filepath.Base(cfg.StateDir), publishedPort)
+	if err != nil {
+		t.Fatalf("host could not reach the published guest port: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+
+	_ = raw.SetDeadline(time.Now().Add(20 * time.Second))
+	cc, chans, reqs, err := ssh.NewClientConn(raw, "guest:8022", &ssh.ClientConfig{
+		User:            "agent",
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // OK: throwaway key in-test
+		Timeout:         20 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("SSH handshake into the microVM failed: %v", err)
+	}
+	client := ssh.NewClient(cc, chans, reqs)
+	defer func() { _ = client.Close() }()
+
+	sess, err := client.NewSession()
+	if err != nil {
+		t.Fatalf("ssh session: %v", err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	out, err := sess.Output("whoami")
+	if err != nil {
+		t.Fatalf("ssh exec: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "hello-from-guest-sshd" {
+		t.Errorf("ssh output = %q, want the guest's banner", got)
+	}
+	t.Logf("LITMUS 1 PASS (real VM): host completed a real SSH session into the guest "+
+		"over the SEC-09 published vsock port %d", publishedPort)
 }
