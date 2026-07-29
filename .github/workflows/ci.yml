@@ -42,13 +42,15 @@ jobs:
       - name: Test coverage
         run: make test-cover
 
-  # The libkrun backend is opt-in at build time (-tags libkrun, CGO + the
-  # libkrun library); the default jobs never compile its binding. This job is
-  # the only CI check that the tagged path still builds and passes. macOS 14
-  # runner: libkrun needs macOS 14+ and the libkrun/krun tap ships bottles for it
-  # (no kernel compile). Refs: ADR-010, MGIT-61.8
+  # The libkrun backend is opt-in at build time on Linux (-tags libkrun) and
+  # the default on macOS (ADR-010's GA backend split); the pure-Go `test` job
+  # above never compiles its cgo binding on either platform. macOS 14 runner:
+  # libkrun needs macOS 14+ and the libkrun/krun tap ships bottles for it (no
+  # kernel compile). This is also where the tagged path is unit-tested with
+  # a real linked libkrun; the Linux job below is build+vet only (see its own
+  # comment for why). Refs: ADR-010, MGIT-61.8
   libkrun:
-    name: libkrun backend (tagged build)
+    name: libkrun backend (tagged build, macOS)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -69,3 +71,87 @@ jobs:
           export PKG_CONFIG_PATH="$(brew --prefix libkrun)/lib/pkgconfig"
           export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix libkrunfw)/lib:$(brew --prefix libkrun)/lib"
           make test-libkrun   # includes check-libkrun-net (MGIT-61.14)
+
+  # The macOS job above is the ONLY thing that compiled the libkrun cgo
+  # binding until 2026-07-29, when a Linux-only build+link failure
+  # (RTLD_DEFAULT needing _GNU_SOURCE on glibc; dlsym needing -ldl on
+  # pre-2.34 glibc) went undetected because nothing in CI ever built the
+  # Linux tagged path. This job closes that gap.
+  #
+  # Scope is deliberately build+vet ONLY, not `make test-libkrun`'s test run:
+  # several of that package's tests construct a real libkrun context and
+  # need /dev/kvm, which hosted GitHub runners do not expose (the same
+  # reason sandbox-posture e2e skips there). Catching a compile/link
+  # regression does not need a VM to boot.
+  #
+  # Pinned to a `ubuntu:20.04` container image (not the job's own
+  # `ubuntu-latest` host OS) because that is the exact toolchain this build
+  # recipe was validated against: Ubuntu 20.04's own clang (10) lacks the
+  # libclang API bindgen needs, so libclang-18 from `focal-updates` is
+  # installed explicitly; a from-source libkrunfw build on Ubuntu 24.04 was
+  # separately found to fail reproducibly (unrelated toolchain issue, not
+  # this job's concern). Building from source costs ~4-5 minutes; there is
+  # no Ubuntu package for libkrun or libkrunfw on any release yet (see
+  # docs/adr/010, kept local/untracked).
+  libkrun-linux:
+    name: libkrun backend (tagged build+vet, Linux)
+    runs-on: ubuntu-latest
+    container: ubuntu:20.04
+    steps:
+      - name: Install build prerequisites
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential flex bison libelf-dev python3-pyelftools bc \
+            pkg-config curl git ca-certificates patchelf \
+            libclang1-18 libclang-18-dev libclang-common-18-dev libllvm18
+
+      - uses: actions/checkout@v4
+
+      - name: Install Go
+        run: |
+          curl -fsSL https://go.dev/dl/go1.26.5.linux-amd64.tar.gz -o /tmp/go.tgz
+          tar -C /usr/local -xzf /tmp/go.tgz
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+
+      - name: Install Rust (distro rustc is far too old for libkrun)
+        run: |
+          curl -sSf https://sh.rustup.rs -o /tmp/rustup.sh
+          sh /tmp/rustup.sh -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build libkrunfw (compiles a kernel; the slow step, ~3-4 min)
+        # `cd dir && make`, NOT `make -C dir`: libkrunfw's own Makefile
+        # recurses into the kernel build with `$(MAKE) $(MAKEFLAGS) ...`,
+        # and with -C, GNU make's propagated MAKEFLAGS made that recursive
+        # call literally invoke `make w -j... ` ("No rule to make target
+        # 'w'") -- confirmed by reproducing both invocation styles in a
+        # real ubuntu:20.04 container. cd-first avoids it.
+        run: |
+          git clone --depth 1 https://github.com/containers/libkrunfw.git /tmp/libkrunfw
+          (cd /tmp/libkrunfw && make -j"$(nproc)")
+          (cd /tmp/libkrunfw && make PREFIX=/usr/local install)
+          ldconfig
+
+      - name: Build libkrun with networking (make NET=1, ~1 min)
+        env:
+          LIBCLANG_PATH: /usr/lib/llvm-18/lib
+          BINDGEN_EXTRA_CLANG_ARGS: -resource-dir=/usr/lib/llvm-18/lib/clang/18
+        run: |
+          git clone --depth 1 https://github.com/containers/libkrun.git /tmp/libkrun
+          (cd /tmp/libkrun && make NET=1 -j"$(nproc)")
+          (cd /tmp/libkrun && make PREFIX=/usr/local install)
+          ldconfig
+
+      - name: Build and vet the tagged path
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib64/pkgconfig
+          LIBRARY_PATH: /usr/local/lib64
+          LD_LIBRARY_PATH: /usr/local/lib64
+        # -buildvcs=false: this job never ships an artifact, so the VCS
+        # stamping `go build` does by default (embedding commit info) buys
+        # nothing here and is one more way for the step to fail for reasons
+        # unrelated to the tagged libkrun path itself.
+        run: |
+          go build -buildvcs=false -tags libkrun ./...
+          go vet -tags libkrun ./internal/sandboxd/backend/libkrun/ ./cmd/mgit-sandboxd/
