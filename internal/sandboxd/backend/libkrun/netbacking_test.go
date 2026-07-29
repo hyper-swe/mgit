@@ -162,3 +162,39 @@ func TestNetBackingFor_OverlongSocketPath_ReportsTheRealReason(t *testing.T) {
 		}
 	}
 }
+
+// TestVirtiofsDAXWindow covers the DAX window override. The window itself is
+// only applied by the CGO binding (build-tagged), but the resolution is pure
+// Go and testable everywhere — and it must never fail a launch: a bad
+// performance knob costing a user their sandbox would be a poor trade.
+// Refs: ADR-010 Gate 2
+func TestVirtiofsDAXWindow(t *testing.T) {
+	tests := []struct {
+		name  string
+		env   string
+		unset bool
+		want  uint64
+	}{
+		// Measured default: DAX gave no benefit on either the microbenchmark
+		// or a real dependency tree, so the shipped window is 0 (ADR-010).
+		{name: "unset_uses_the_measured_default", unset: true, want: defaultDAXWindow},
+		{name: "empty_uses_the_default", env: "", want: defaultDAXWindow},
+		{name: "explicit_window", env: "268435456", want: 268435456},
+		{name: "zero_disables", env: "0", want: 0},
+		// A malformed or negative value is IGNORED rather than fatal.
+		{name: "garbage_falls_back", env: "not-a-number", want: defaultDAXWindow},
+		{name: "negative_falls_back", env: "-1", want: defaultDAXWindow},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.unset {
+				t.Setenv(daxWindowEnv, "")
+			} else {
+				t.Setenv(daxWindowEnv, tt.env)
+			}
+			if got := virtiofsDAXWindow(); got != tt.want {
+				t.Errorf("virtiofsDAXWindow() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
