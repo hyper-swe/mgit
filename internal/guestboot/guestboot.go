@@ -11,7 +11,14 @@
 // device), and the guest mounts whichever it is told (ADR-005 per-backend
 // worktree delivery). The cmdline carries no secrets — only the worktree
 // path and how to mount it — so it does not weaken the no-host-passthrough
-// posture (SEC-01). Refs: FR-17.3, MGIT-11.6.5
+// posture (SEC-01).
+//
+// TWO TRANSPORTS, ONE FORMAT. libkrun boots libkrunfw's OWN kernel, so that
+// backend never composes a command line and has nowhere to append these
+// tokens. It supplies the identical tokens through the guest ENVIRONMENT
+// instead (EnvBootTokens), and the guest merges both sources with BootTokens
+// before parsing — so every descriptor parser here is reused verbatim rather
+// than growing a second format per backend. Refs: FR-17.3, MGIT-11.6.5, ADR-010
 package guestboot
 
 import (
@@ -45,6 +52,37 @@ const (
 	// it cannot give the guest a path to the host (SEC-09 stays one-way).
 	KeyPublishPorts = "mgit.publish_ports"
 )
+
+// EnvBootTokens is the guest environment variable carrying the same
+// space-separated boot tokens the kernel command line carries, for backends
+// that cannot compose a cmdline (libkrun boots libkrunfw's own kernel). It is
+// host-supplied — the backend sets it when configuring the VM — and reaches
+// the guest exactly like the cmdline does.
+//
+// It carries boot descriptors — a mount path, a tag, port numbers — and never
+// a secret; SEC-01 keeps those off both transports. Refs: FR-17.3, ADR-010
+//
+//nolint:gosec // G101 false positive: this is an env-var NAME, not a credential.
+const EnvBootTokens = "MGIT_GUEST_BOOT"
+
+// BootTokens merges the two host->guest token transports into the single
+// string the parsers below consume.
+//
+// The ENV channel goes first and the cmdline LAST, which is the whole of the
+// precedence rule: the parsers below overwrite as they scan, so the last
+// occurrence of a key wins (matching Linux cmdline convention). A backend
+// that has a real command line therefore cannot be overridden by the env
+// channel — only backends with no cmdline of their own are affected by it.
+// Refs: FR-17.3, ADR-010
+func BootTokens(cmdline, env string) string {
+	switch {
+	case strings.TrimSpace(cmdline) == "":
+		return env
+	case strings.TrimSpace(env) == "":
+		return cmdline
+	}
+	return env + " " + cmdline
+}
 
 // WorktreeMount is the host-supplied worktree delivery descriptor.
 type WorktreeMount struct {

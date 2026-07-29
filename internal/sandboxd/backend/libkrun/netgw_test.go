@@ -153,7 +153,7 @@ func TestNetGateway_EnforcesTheAuthorizerPerConnection(t *testing.T) {
 
 	gw, err := bindNetGateway(gwPath, &stubAuthorizer{
 		allowed: map[string]string{"93.184.216.34": "127.0.0.1"},
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("bindNetGateway: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestNetGateway_Close_RemovesTheSocketAndIsIdempotent(t *testing.T) {
 	dir := shortTempDir(t)
 	path := filepath.Join(dir, proxySocketName)
 
-	gw, err := bindNetGateway(path, &stubAuthorizer{}, nil)
+	gw, err := bindNetGateway(path, &stubAuthorizer{}, nil, nil)
 	if err != nil {
 		t.Fatalf("bindNetGateway: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestBindHostPeer_AllowlistAndOpen_NowGetAGateway(t *testing.T) {
 			if err != nil {
 				t.Fatalf("netBackingFor: %v", err)
 			}
-			peer, err := bindHostPeer(backing, &stubAuthorizer{}, nil)
+			peer, err := bindHostPeer(backing, &stubAuthorizer{}, nil, nil)
 			if err != nil {
 				t.Fatalf("mode %q must now be servable, got %v", mode, err)
 			}
@@ -271,7 +271,7 @@ func TestBindNetGateway_FailsClosed(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gw, err := bindNetGateway(tt.path(t), tt.auth, nil)
+			gw, err := bindNetGateway(tt.path(t), tt.auth, nil, nil)
 			if err == nil {
 				_ = gw.Close()
 				t.Fatal("expected an error")
@@ -289,7 +289,7 @@ func TestNetGateway_AuthorizerError_IsTreatedAsDenial(t *testing.T) {
 	dir := shortTempDir(t)
 	gwPath := filepath.Join(dir, proxySocketName)
 
-	gw, err := bindNetGateway(gwPath, errAuthorizer{}, nil)
+	gw, err := bindNetGateway(gwPath, errAuthorizer{}, nil, nil)
 	if err != nil {
 		t.Fatalf("bindNetGateway: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestNetGateway_HostDialFails_ResetsTheGuest(t *testing.T) {
 	gwPath := filepath.Join(dir, proxySocketName)
 
 	// Pin to a port nothing listens on.
-	gw, err := bindNetGateway(gwPath, &stubAuthorizer{allowed: map[string]string{"93.184.216.34": "127.0.0.1"}}, nil)
+	gw, err := bindNetGateway(gwPath, &stubAuthorizer{allowed: map[string]string{"93.184.216.34": "127.0.0.1"}}, nil, nil)
 	if err != nil {
 		t.Fatalf("bindNetGateway: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestNetGateway_GuestDNS_ReachesTheHostResolver(t *testing.T) {
 	dir := shortTempDir(t)
 	gwPath := filepath.Join(dir, proxySocketName)
 
-	gw, err := bindNetGateway(gwPath, &stubAuthorizer{}, stubDNS{reply: []byte("dns-answer")})
+	gw, err := bindNetGateway(gwPath, &stubAuthorizer{}, stubDNS{reply: []byte("dns-answer")}, nil)
 	if err != nil {
 		t.Fatalf("bindNetGateway: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestNetGateway_GuestUDP_ToAnythingElse_IsDropped(t *testing.T) {
 	dir := shortTempDir(t)
 	gwPath := filepath.Join(dir, proxySocketName)
 
-	gw, err := bindNetGateway(gwPath, &stubAuthorizer{}, stubDNS{reply: []byte("x")})
+	gw, err := bindNetGateway(gwPath, &stubAuthorizer{}, stubDNS{reply: []byte("x")}, nil)
 	if err != nil {
 		t.Fatalf("bindNetGateway: %v", err)
 	}

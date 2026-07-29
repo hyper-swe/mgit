@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 )
 
 const (
@@ -56,11 +57,11 @@ type hostNetPeer interface{ Close() error }
 // Either way the peer is BOUND before the NIC is attached, because libkrun
 // hangs at boot on a socket nothing is listening to.
 // Refs: FR-17.7, FR-17.8, SEC-04, ADR-010
-func bindHostPeer(backing netBacking, auth flowAuthorizer, dns dnsResolver) (hostNetPeer, error) {
+func bindHostPeer(backing netBacking, auth flowAuthorizer, dns dnsResolver, dial egress.DialFunc) (hostNetPeer, error) {
 	if backing.Deny() {
 		return bindDiscardSocket(backing.SocketPath)
 	}
-	gw, err := bindNetGateway(backing.SocketPath, auth, dns)
+	gw, err := bindNetGateway(backing.SocketPath, auth, dns, dial)
 	if err != nil {
 		return nil, fmt.Errorf("%w: libkrun %s-mode host network: %w",
 			model.ErrSandboxBackendUnavailable, backing.Mode, err)

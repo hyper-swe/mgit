@@ -16,8 +16,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hyper-swe/mgit/internal/guestboot"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
+	"github.com/hyper-swe/mgit/internal/sandboxd/staging"
 )
 
 const (
@@ -91,32 +93,31 @@ func NewHypervisor(logger *slog.Logger) (*Hypervisor, error) {
 // a refusal with a reason always beats a child that dies opaquely.
 // Refs: FR-17.7, SEC-03, SEC-04, ADR-010
 func (h *Hypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
-	// SEC-03 fail-closed: the quarantined (staged worktree + private store)
-	// delivery is not implemented on libkrun yet. Launching anyway would
-	// share the LIVE worktree with no store quarantine — silently weaker than
-	// every other backend. Better no sandbox than an unquarantined one.
-	if cfg.PrivateStorePath != "" {
-		return nil, fmt.Errorf(
-			"%w: the libkrun backend does not deliver the SEC-03 private-store "+
-				"quarantine yet (MGIT-61.13 P7); refusing to launch without it",
-			model.ErrSandboxBackendUnavailable)
+	// SEC-03: deliver the QUARANTINED tree, not the live worktree. This runs
+	// host-side and BEFORE the VM exists, so an escaping symlink or a leaky
+	// layout fails the launch rather than reaching a booted guest.
+	hostDir, err := deliverWorktree(cfg)
+	if err != nil {
+		return nil, err
 	}
 	spec := vmSpec{
-		SandboxID:    cfg.SandboxID,
-		TaskID:       cfg.TaskID,
-		CPUs:         cfg.CPUs,
-		MemoryMB:     cfg.MemoryMB,
-		StateDir:     cfg.StateDir,
-		RootDir:      cfg.RootfsPath,
-		RootReadOnly: cfg.RootfsReadOnly,
-		WorktreePath: cfg.WorktreePath,
-		WorktreeTag:  cfg.WorktreeTag,
-		VsockEnabled: cfg.VsockEnabled,
-		ExecPath:     guestInitPath,
-		ExecArgs:     guestInitArgs(cfg.VsockEnabled),
-		ExecEnv:      guestEnv(),
-		NetworkMode:  cfg.NetworkMode,
-		Allowlist:    cfg.NetworkAllowlist,
+		SandboxID:       cfg.SandboxID,
+		TaskID:          cfg.TaskID,
+		CPUs:            cfg.CPUs,
+		MemoryMB:        cfg.MemoryMB,
+		StateDir:        cfg.StateDir,
+		RootDir:         cfg.RootfsPath,
+		RootReadOnly:    cfg.RootfsReadOnly,
+		WorktreeHostDir: hostDir,
+		WorktreePath:    cfg.WorktreePath,
+		WorktreeTag:     cfg.WorktreeTag,
+		VsockEnabled:    cfg.VsockEnabled,
+		PublishPorts:    cfg.PublishPorts,
+		ExecPath:        guestInitPath,
+		ExecArgs:        guestInitArgs(cfg.VsockEnabled),
+		ExecEnv:         guestEnv(cfg),
+		NetworkMode:     cfg.NetworkMode,
+		Allowlist:       cfg.NetworkAllowlist,
 	}
 	if err := spec.Validate(); err != nil {
 		return nil, err
@@ -147,12 +148,62 @@ func guestInitArgs(vsockEnabled bool) []string {
 	}
 }
 
+// stagingDirName is the per-VM SEC-03 staging tree, under the sandbox state
+// dir so teardown's single RemoveAll reclaims it (FR-17.19). Same name and
+// role as vzf's. Refs: SEC-03
+const stagingDirName = "worktree-staging"
+
+// deliverWorktree resolves the HOST directory shared into the guest.
+//
+// With a private store wired (SEC-03) it builds the quarantined staging tree
+// — worktree files plus the private .mgit, with any in-worktree git/mgit
+// store excluded and escaping symlinks REJECTED — and shares that. Without
+// one (the documented pre-SEC-03 direct path, and tests) the worktree itself
+// is shared unchanged.
+//
+// Why a staged copy rather than a live share, restating the ADR-005 reasoning
+// so the next reader does not "optimize" it away: virtiofs has no per-entry
+// deny and no symlink-resolution boundary, so a live share cannot exclude an
+// in-worktree store, rebind .mgit to the sandbox-local one, or reject an
+// escaping symlink before the guest follows it. A staged copy enforces every
+// invariant host-side, before the guest boots. Refs: SEC-03, FR-17.3, ADR-005
+func deliverWorktree(cfg microvm.VMConfig) (string, error) {
+	if cfg.WorktreePath == "" || cfg.PrivateStorePath == "" {
+		return cfg.WorktreePath, nil
+	}
+	if cfg.StateDir == "" {
+		return "", fmt.Errorf(
+			"%w: libkrun needs a sandbox state dir to stage the quarantined worktree into",
+			model.ErrSandboxBackendUnavailable)
+	}
+	stagingDir := filepath.Join(cfg.StateDir, stagingDirName)
+	if err := staging.Build(cfg.WorktreePath, cfg.PrivateStorePath, stagingDir); err != nil {
+		return "", fmt.Errorf("libkrun worktree quarantine: %w", err)
+	}
+	return stagingDir, nil
+}
+
 // guestEnv is the guest workload's environment. It is set explicitly — and
 // deliberately minimal — because libkrun's convenience of accepting a NULL
 // envp collects the CALLING process's environment, which would carry daemon
-// state into the guest (SEC-05). Refs: SEC-05
-func guestEnv() []string {
-	return []string{"PATH=/bin:/sbin:/usr/bin:/usr/sbin"}
+// state into the guest (SEC-05).
+//
+// It also carries the host->guest BOOT TOKENS. libkrun boots libkrunfw's own
+// kernel, so unlike firecracker and vzf there is no command line to append
+// the FR-17.3 worktree descriptor to; the guest reads the identical tokens
+// from this variable instead (guestboot.BootTokens). Without it the share is
+// attached but never mounted, and the guest sees an empty worktree path.
+// Refs: SEC-05, FR-17.3, ADR-010
+func guestEnv(cfg microvm.VMConfig) []string {
+	env := []string{"PATH=/bin:/sbin:/usr/bin:/usr/sbin"}
+	tokens := guestboot.AppendCmdline("", guestboot.WorktreeMount{
+		Path: cfg.WorktreePath, FSType: "virtiofs", Source: cfg.WorktreeTag,
+	})
+	tokens = guestboot.AppendPublishPortsCmdline(tokens, cfg.PublishPorts)
+	if tokens != "" {
+		env = append(env, guestboot.EnvBootTokens+"="+tokens)
+	}
+	return env
 }
 
 // krunVM adapts one re-exec child process to the manager's lifecycle seam.

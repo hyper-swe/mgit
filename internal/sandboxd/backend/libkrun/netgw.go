@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -93,6 +92,7 @@ type netGateway struct {
 	stack *stack.Stack
 	auth  flowAuthorizer
 	dns   dnsResolver
+	dial  egress.DialFunc
 
 	// cancel stops the DNS server (and anything else scoped to the
 	// gateway's lifetime) at teardown.
@@ -113,8 +113,14 @@ type netGateway struct {
 
 // bindNetGateway binds the backing socket and brings up the virtual network.
 // The caller owns the gateway for the VM's lifetime and must Close it.
-// Refs: FR-17.7, SEC-10
-func bindNetGateway(path string, auth flowAuthorizer, dns dnsResolver) (*netGateway, error) {
+//
+// dial is the host-side transport to an AUTHORIZED destination. It is the
+// same egress.DialFunc seam the CONNECT proxy takes, and for the same two
+// reasons: the bound external interface stays host-controlled, and dial
+// faults become injectable. nil selects egress.HostDial. Substituting it
+// changes only the transport — every allow/deny decision still comes from
+// the authorizer. Refs: FR-17.7, SEC-04, SEC-10
+func bindNetGateway(path string, auth flowAuthorizer, dns dnsResolver, dial egress.DialFunc) (*netGateway, error) {
 	if auth == nil {
 		return nil, fmt.Errorf(
 			"%w: refusing to serve guest egress with no authorizer — that would be an open network",
@@ -132,6 +138,9 @@ func bindNetGateway(path string, auth flowAuthorizer, dns dnsResolver) (*netGate
 		return nil, fmt.Errorf("restrict gateway socket %s: %w", path, err)
 	}
 
+	if dial == nil {
+		dial = egress.HostDial
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	g := &netGateway{
 		conn:      conn,
@@ -139,6 +148,7 @@ func bindNetGateway(path string, auth flowAuthorizer, dns dnsResolver) (*netGate
 		ch:        channel.New(256, guestMTU, gatewayMAC),
 		auth:      auth,
 		dns:       dns,
+		dial:      dial,
 		cancel:    cancel,
 		peerReady: make(chan struct{}),
 	}
@@ -244,8 +254,7 @@ func (g *netGateway) handleForward(r *tcp.ForwarderRequest) {
 	// re-resolution (DNS-rebind defense). Refs: SEC-04
 	dialCtx, cancel := context.WithTimeout(context.Background(), gwDialTimeout)
 	defer cancel()
-	outbound, err := (&net.Dialer{}).DialContext(dialCtx, "tcp",
-		net.JoinHostPort(decision.DestIP.String(), strconv.Itoa(port)))
+	outbound, err := g.dial(dialCtx, decision.DestIP, port)
 	if err != nil {
 		r.Complete(true)
 		return

@@ -203,3 +203,55 @@ func TestParsePublishPorts_Empty(t *testing.T) {
 func TestParsePublishPorts_SkipsMalformed(t *testing.T) {
 	assert.Equal(t, []int{3000, 8080}, ParsePublishPorts("mgit.publish_ports=3000,abc,70000,0,8080"))
 }
+
+// TestBootTokens_MergesTheEnvChannelWithTheCmdline covers the libkrun case:
+// that backend boots libkrunfw's own kernel and never composes a command
+// line, so the host has no cmdline to append the FR-17.3 worktree descriptor
+// to. It supplies the SAME tokens through the guest environment instead, and
+// the guest parses one merged string — so every existing descriptor parser is
+// reused verbatim rather than gaining a second format. Refs: FR-17.3, ADR-010
+func TestBootTokens_MergesTheEnvChannelWithTheCmdline(t *testing.T) {
+	tests := []struct {
+		name         string
+		cmdline, env string
+		wantPath     string
+		wantSource   string
+	}{
+		{
+			name:     "cmdline_only_firecracker_and_vzf",
+			cmdline:  "console=ttyS0 mgit.worktree=/w mgit.worktree_fs=ext4 mgit.worktree_src=/dev/vdc",
+			wantPath: "/w", wantSource: "/dev/vdc",
+		},
+		{
+			// libkrun: nothing of ours on the cmdline, everything in the env.
+			name:     "env_only_libkrun",
+			cmdline:  "console=hvc0 root=/dev/root",
+			env:      "mgit.worktree=/work/wt mgit.worktree_fs=virtiofs mgit.worktree_src=work",
+			wantPath: "/work/wt", wantSource: "work",
+		},
+		{
+			name: "neither_yields_no_descriptor",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseWorktreeMount(BootTokens(tt.cmdline, tt.env))
+			if got.Path != tt.wantPath || got.Source != tt.wantSource {
+				t.Errorf("descriptor = %+v, want path %q source %q", got, tt.wantPath, tt.wantSource)
+			}
+		})
+	}
+}
+
+func TestBootTokens_CmdlineWins_SoAGuestEnvCannotRedirectTheMount(t *testing.T) {
+	// The env channel is host-supplied like the cmdline, but the cmdline is
+	// the harder-to-reach one; if both carry a descriptor the cmdline must
+	// win, so a backend that has a real cmdline is never overridden.
+	merged := BootTokens(
+		"mgit.worktree=/real mgit.worktree_fs=ext4 mgit.worktree_src=/dev/vdc",
+		"mgit.worktree=/evil mgit.worktree_fs=virtiofs mgit.worktree_src=evil",
+	)
+	if got := ParseWorktreeMount(merged); got.Path != "/real" || got.Source != "/dev/vdc" {
+		t.Errorf("descriptor = %+v, want the cmdline's", got)
+	}
+}

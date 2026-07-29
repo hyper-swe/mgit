@@ -7,6 +7,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
+	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 )
 
 // rootFSTag is libkrun's well-known virtiofs tag for the guest root
@@ -91,7 +92,7 @@ type guestCtx struct {
 // attached IMMEDIATELY after the context exists, so no window exists in which
 // a context is live without one. Every failure after creation frees the
 // context rather than leaking it. Refs: FR-17.7, SEC-04, ADR-010
-func newGuestCtx(api krunAPI, spec vmSpec, auth flowAuthorizer, dns dnsResolver) (*guestCtx, error) {
+func newGuestCtx(api krunAPI, spec vmSpec, auth flowAuthorizer, dns dnsResolver, dial egress.DialFunc) (*guestCtx, error) {
 	// Resolve first: fail closed without allocating anything.
 	backing, err := netBackingFor(spec.SandboxID, spec.NetworkMode, spec.StateDir)
 	if err != nil {
@@ -101,7 +102,7 @@ func newGuestCtx(api krunAPI, spec vmSpec, auth flowAuthorizer, dns dnsResolver)
 	// Bind the host end BEFORE the context exists, so a context can never
 	// carry a NIC whose peer is missing — that combination boots into a hang
 	// rather than failing, which is worse than not launching (ADR-010).
-	peer, err := bindHostPeer(backing, auth, dns)
+	peer, err := bindHostPeer(backing, auth, dns, dial)
 	if err != nil {
 		return nil, err
 	}
@@ -139,9 +140,11 @@ func (g *guestCtx) configureGuest(spec vmSpec) error {
 		return fmt.Errorf("libkrun share guest root %s: %w", spec.RootDir, err)
 	}
 	workdir := "/"
-	if spec.WorktreePath != "" {
-		if err := g.api.AddVirtiofs(g.id, spec.WorktreeTag, spec.WorktreePath, false); err != nil {
-			return fmt.Errorf("libkrun share worktree %s: %w", spec.WorktreePath, err)
+	if spec.WorktreeHostDir != "" {
+		// The SOURCE is the staged tree (SEC-03); the guest mounts it at the
+		// identical path and works there.
+		if err := g.api.AddVirtiofs(g.id, spec.WorktreeTag, spec.WorktreeHostDir, false); err != nil {
+			return fmt.Errorf("libkrun share worktree %s: %w", spec.WorktreeHostDir, err)
 		}
 		workdir = spec.WorktreePath
 	}
@@ -156,6 +159,18 @@ func (g *guestCtx) configureGuest(spec vmSpec) error {
 			if err := g.api.AddVsockPort(g.id, port, vsockSocketPath(spec.StateDir, port), hostInitiates); err != nil {
 				return fmt.Errorf("libkrun add vsock port %d: %w", port, err)
 			}
+		}
+	}
+	// SEC-09: each published guest port becomes a LISTENING vsock port, so
+	// libkrun accepts host-initiated connections and forwards them IN. The
+	// direction is the control: nothing here opens a guest->host path.
+	for _, port := range spec.PublishPorts {
+		p, err := publishVsockPort(port)
+		if err != nil {
+			return err
+		}
+		if err := g.api.AddVsockPort(g.id, p, vsockSocketPath(spec.StateDir, p), true); err != nil {
+			return fmt.Errorf("libkrun publish guest port %d: %w", port, err)
 		}
 	}
 	if err := g.api.SetExec(g.id, spec.ExecPath, spec.ExecArgs, spec.ExecEnv); err != nil {

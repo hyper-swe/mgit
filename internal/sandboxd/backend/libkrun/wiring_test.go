@@ -201,7 +201,7 @@ func TestNetGateway_DialGuestPort_FailsClosed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := shortTempDir(t)
-			gw, err := bindNetGateway(filepath.Join(dir, proxySocketName), &stubAuthorizer{}, nil)
+			gw, err := bindNetGateway(filepath.Join(dir, proxySocketName), &stubAuthorizer{}, nil, nil)
 			if err != nil {
 				t.Fatalf("bindNetGateway: %v", err)
 			}
@@ -238,5 +238,60 @@ func TestCheckSocketPathLen_NamesTheSocketAndTheRemedy(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
+	}
+}
+
+// SEC-09 ONE-WAY PORT PUBLISHING. netGateway.DialGuestPort cannot serve this
+// on libkrun: the gateway lives in the VM CHILD process, so the daemon holds
+// no reference to it. libkrun's own inbound primitive is used instead —
+// krun_add_vsock_port2(..., listen=true) makes libkrun LISTEN on a host unix
+// socket and forward into a guest vsock port, which is exactly firecracker's
+// shape, so the existing publisher and the guest's AF_VSOCK->TCP bridge are
+// reused unchanged. Refs: SEC-09, FR-17.8, MGIT-61.13 P6
+
+func TestPortDialer_ReachesAPublishedGuestPort(t *testing.T) {
+	workDir := shortTempDir(t)
+	const sandboxID, guestPort = "sbx-pub", 8080
+	listenGuestPort(t, workDir, sandboxID, uint32(guestPort))
+
+	conn, err := NewPortDialer(workDir).DialGuestPort(context.Background(), sandboxID, guestPort)
+	if err != nil {
+		t.Fatalf("DialGuestPort: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	buf := make([]byte, 5)
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Read(buf); err != nil {
+		t.Fatalf("read from published port: %v", err)
+	}
+	if string(buf) != "guest" {
+		t.Errorf("read %q, want %q", buf, "guest")
+	}
+}
+
+func TestPortDialer_FailsClosed(t *testing.T) {
+	tests := []struct {
+		name    string
+		port    int
+		wantErr string
+	}{
+		{name: "port_below_range", port: 0, wantErr: "out of range"},
+		{name: "port_above_range", port: 70000, wantErr: "out of range"},
+		// A port the VM never published has no libkrun listener behind it;
+		// the host must not silently reach anything else.
+		{name: "unpublished_port", port: 9999, wantErr: "sbx-none"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewPortDialer(shortTempDir(t)).
+				DialGuestPort(context.Background(), "sbx-none", tt.port)
+			if err == nil {
+				t.Fatal("expected a failure")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error %q does not mention %q", err, tt.wantErr)
+			}
+		})
 	}
 }

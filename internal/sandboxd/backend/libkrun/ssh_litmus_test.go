@@ -5,12 +5,19 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"io"
+	"log/slog"
 	"net"
+	"net/netip"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
@@ -108,7 +115,7 @@ func serveSSHConn(c net.Conn, cfg *ssh.ServerConfig) {
 func TestLitmus_HostCanSSHIntoTheGuest(t *testing.T) {
 	dir := shortTempDir(t)
 	gwPath := filepath.Join(dir, proxySocketName)
-	gw, err := bindNetGateway(gwPath, &stubAuthorizer{}, nil)
+	gw, err := bindNetGateway(gwPath, &stubAuthorizer{}, nil, nil)
 	if err != nil {
 		t.Fatalf("bindNetGateway: %v", err)
 	}
@@ -193,7 +200,7 @@ func TestLitmus_GuestReverseTunnel_IsGovernedByPolicy(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := shortTempDir(t)
 			gwPath := filepath.Join(dir, proxySocketName)
-			gw, err := bindNetGateway(gwPath, &stubAuthorizer{allowed: tt.allowed}, nil)
+			gw, err := bindNetGateway(gwPath, &stubAuthorizer{allowed: tt.allowed}, nil, nil)
 			if err != nil {
 				t.Fatalf("bindNetGateway: %v", err)
 			}
@@ -230,6 +237,139 @@ func TestLitmus_GuestReverseTunnel_IsGovernedByPolicy(t *testing.T) {
 				t.Errorf("tunnel payload = %q, want %q", buf, "tunneled")
 			}
 			t.Logf("LITMUS 3 PASS: the same tunnel works once policy allows the relay")
+		})
+	}
+}
+
+// LITMUS LEG 3, against the REAL egress.Authorizer rather than a stub.
+//
+// The difficulty this solves: for an ALLOW to be observable the host must
+// actually dial the pinned destination, and it cannot be pointed at a local
+// service by policy — SEC-04 unconditionally denies loopback and private
+// ranges (T9), so an allowlist entry naming 127.0.0.1 is refused before the
+// allowlist is even consulted. Relaxing that to make a test pass would be
+// deleting the control being tested.
+//
+// So policy stays completely unmodified — a PUBLIC address is allowlisted and
+// the authorizer pins it — and only the TRANSPORT is redirected, through the
+// egress.DialFunc seam the CONNECT proxy already uses. The authorizer still
+// decides; the dialer only decides where the approved bytes physically go.
+// Refs: SEC-04, FR-17.8, MGIT-61.10
+
+// redirectDial returns an egress.DialFunc that sends every AUTHORIZED
+// connection to a local listener, recording the destination the authorizer
+// pinned so the test can assert policy saw the real address.
+func redirectDial(t *testing.T, toPort int) (egress.DialFunc, func() []netip.Addr) {
+	t.Helper()
+	var mu sync.Mutex
+	var pinned []netip.Addr
+	return func(ctx context.Context, ip netip.Addr, _ int) (net.Conn, error) {
+			mu.Lock()
+			pinned = append(pinned, ip)
+			mu.Unlock()
+			var d net.Dialer
+			return d.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(toPort)))
+		}, func() []netip.Addr {
+			mu.Lock()
+			defer mu.Unlock()
+			return append([]netip.Addr(nil), pinned...)
+		}
+}
+
+// realAuthorizer builds the production egress stack for one allowlist policy.
+func realAuthorizer(t *testing.T, allowlist []string) *egress.Authorizer {
+	t.Helper()
+	sup, err := egress.NewSupervisor(egress.SupervisorConfig{
+		SandboxID: "sbx-litmus3", TaskID: "MGIT-61.10",
+		Policy: model.NetworkPolicy{Mode: model.NetworkModeAllowlist, Allowlist: allowlist},
+		Audit:  logAuditor{logger: slog.New(slog.NewTextHandler(io.Discard, nil))},
+		Lookup: egress.SystemLookup(nil),
+		Dial:   egress.HostDial,
+		Clock:  func() time.Time { return time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC) },
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("egress supervisor: %v", err)
+	}
+	return sup.Authorizer()
+}
+
+func TestLitmus3_RealAuthorizer_PermitsTheTunnelOnlyWhenPolicyDoes(t *testing.T) {
+	relayPort := echoServer(t)
+	// A PUBLIC address: a reserved/documentation range would be refused by
+	// the unconditional IP denials before the allowlist is consulted, and the
+	// test would pass without exercising policy at all.
+	const relayIP = "93.184.216.34"
+
+	tests := []struct {
+		name      string
+		allowlist []string
+		wantOpen  bool
+	}{
+		{
+			// The containment claim, now through the production authorizer.
+			name:      "default_deny_blocks_the_tunnel",
+			allowlist: []string{"proxy.golang.org:443"},
+		},
+		{
+			// The same tunnel must work once policy names the relay, or the
+			// deny above would only mean "networking is broken".
+			name:      "allowlisting_the_relay_permits_it",
+			allowlist: []string{relayIP + ":" + strconv.Itoa(relayPort)},
+			wantOpen:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := shortTempDir(t)
+			gwPath := filepath.Join(dir, proxySocketName)
+			dial, pinnedAddrs := redirectDial(t, relayPort)
+
+			gw, err := bindNetGateway(gwPath, realAuthorizer(t, tt.allowlist), nil, dial)
+			if err != nil {
+				t.Fatalf("bindNetGateway: %v", err)
+			}
+			t.Cleanup(func() { _ = gw.Close() })
+
+			guest := fakeGuest(t, dir, gwPath)
+			conn, err := guestDial(t, guest, relayIP, relayPort)
+
+			if !tt.wantOpen {
+				if err == nil {
+					_ = conn.Close()
+					t.Fatal("the guest tunneled to a relay policy does not name (T3 exfiltration)")
+				}
+				if len(pinnedAddrs()) != 0 {
+					t.Error("a denied flow reached the dialer; the authorizer must stop it first")
+				}
+				t.Logf("LITMUS 3a PASS (real authorizer): tunnel denied by policy (%v)", err)
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("allowlisted relay unreachable: %v", err)
+			}
+			defer func() { _ = conn.Close() }()
+
+			if _, err := conn.Write([]byte("tunneled")); err != nil {
+				t.Fatalf("tunnel write: %v", err)
+			}
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			buf := make([]byte, 8)
+			if _, err := io.ReadFull(conn, buf); err != nil {
+				t.Fatalf("tunnel read: %v", err)
+			}
+			if string(buf) != "tunneled" {
+				t.Errorf("tunnel payload = %q, want %q", buf, "tunneled")
+			}
+			// Policy must have seen and pinned the PUBLIC address; only the
+			// transport was redirected.
+			got := pinnedAddrs()
+			if len(got) == 0 || got[0].String() != relayIP {
+				t.Errorf("authorizer pinned %v, want the public address %s — if this is "+
+					"127.0.0.1 the test redirected POLICY, not just transport", got, relayIP)
+			}
+			t.Logf("LITMUS 3b PASS (real authorizer): policy pinned %s and the tunnel carried payload", relayIP)
 		})
 	}
 }

@@ -3,6 +3,7 @@ package libkrun
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -13,8 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hyper-swe/mgit/internal/guestboot"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
+	"github.com/hyper-swe/mgit/internal/sandboxd/staging"
 )
 
 // TestMain doubles as the re-exec child entry point: when the test binary is
@@ -156,9 +159,14 @@ func TestCreateVM_RefusesWhatItCannotContain(t *testing.T) {
 		{name: "open_mode_has_no_authorizer", mutate: func(c *microvm.VMConfig) {
 			c.NetworkMode = model.NetworkModeOpen
 		}, wantErr: "open mode"},
-		{name: "sec03_private_store_not_deliverable_yet", mutate: func(c *microvm.VMConfig) {
+		// SEC-03 delivery is implemented (see TestCreateVM_SEC03_*), so a
+		// private store no longer refuses the launch — but a quarantine that
+		// cannot be BUILT still must, rather than booting a guest with an
+		// unstaged worktree.
+		{name: "sec03_unstageable_worktree_fails_closed", mutate: func(c *microvm.VMConfig) {
 			c.PrivateStorePath = "/some/private-store"
-		}, wantErr: "SEC-03"},
+			c.WorktreePath = "/definitely/not/a/worktree"
+		}, wantErr: "worktree quarantine"},
 		{name: "no_state_dir", mutate: func(c *microvm.VMConfig) {
 			c.StateDir = ""
 		}, wantErr: "state dir"},
@@ -647,3 +655,158 @@ func TestWriteHandshake_BrokenPipe_IsLoggedNotFatal(t *testing.T) {
 type errWriter struct{}
 
 func (errWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+// SEC-03 DELIVERY. Until now CreateVM refused any launch carrying a private
+// store, so no real sandbox could start on libkrun. These pin the delivery:
+// the guest gets a STAGED tree (worktree files + the private .mgit, with the
+// host's own store excluded and escaping symlinks rejected), shared at the
+// identical guest path — the same contract firecracker and vzf deliver.
+// Refs: SEC-03, FR-17.3, MGIT-61.13 P7
+
+// worktreeWithStore builds a host worktree containing a file, an in-worktree
+// store directory that must NOT reach the guest, and returns its path.
+func worktreeWithStore(t *testing.T) string {
+	t.Helper()
+	wt := t.TempDir()
+	if err := os.WriteFile(filepath.Join(wt, "app.go"), []byte("package app\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A store dir inside the worktree: staging must drop it, or the guest
+	// would get history the quarantine is supposed to withhold.
+	if err := os.MkdirAll(filepath.Join(wt, ".mgit", "objects"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".mgit", "HOST-ONLY"), []byte("host"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return wt
+}
+
+// privateStore builds a stand-in per-sandbox private store.
+func privateStore(t *testing.T) string {
+	t.Helper()
+	priv := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(priv, "objects"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(priv, "HEAD"), []byte("ref: refs/heads/task/x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return priv
+}
+
+func TestCreateVM_SEC03_SharesTheStagedTreeNotTheLiveWorktree(t *testing.T) {
+	spawner := &fakeSpawner{next: func() *fakeChild { return newFakeChild(`{"ok":true}` + "\n") }}
+	h := testHypervisor(t, spawner)
+
+	cfg := vmCfg(t, model.NetworkModeNone)
+	cfg.WorktreePath = worktreeWithStore(t)
+	cfg.PrivateStorePath = privateStore(t)
+
+	vm, err := h.CreateVM(cfg)
+	if err != nil {
+		t.Fatalf("CreateVM with a private store must now succeed: %v", err)
+	}
+	if err := vm.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = vm.Stop(context.Background(), true) })
+
+	spec := spawner.specs[0]
+	// What is SHARED is the staged copy under the sandbox state dir, never
+	// the live worktree — a live share cannot exclude or rebind host-side.
+	if spec.WorktreeHostDir == cfg.WorktreePath {
+		t.Fatal("the LIVE worktree was shared; SEC-03 requires the staged tree")
+	}
+	if !strings.HasPrefix(spec.WorktreeHostDir, cfg.StateDir) {
+		t.Errorf("staged tree %q is not under the sandbox state dir %q (teardown must reclaim it)",
+			spec.WorktreeHostDir, cfg.StateDir)
+	}
+	// The guest still sees it at the IDENTICAL path (FR-17.3).
+	if spec.WorktreePath != cfg.WorktreePath {
+		t.Errorf("guest path = %q, want the identical host path %q", spec.WorktreePath, cfg.WorktreePath)
+	}
+
+	t.Run("worktree_files_present", func(t *testing.T) {
+		if _, err := os.Stat(filepath.Join(spec.WorktreeHostDir, "app.go")); err != nil {
+			t.Errorf("worktree file missing from the staged tree: %v", err)
+		}
+	})
+	t.Run("private_store_laid_in_at_dot_mgit", func(t *testing.T) {
+		if _, err := os.Stat(filepath.Join(spec.WorktreeHostDir, ".mgit", "HEAD")); err != nil {
+			t.Errorf("private store not delivered at <worktree>/.mgit: %v", err)
+		}
+	})
+	t.Run("host_in_worktree_store_excluded", func(t *testing.T) {
+		if _, err := os.Stat(filepath.Join(spec.WorktreeHostDir, ".mgit", "HOST-ONLY")); !os.IsNotExist(err) {
+			t.Error("the worktree's own .mgit reached the guest (SEC-03)")
+		}
+	})
+	t.Run("guest_told_how_to_mount_it", func(t *testing.T) {
+		// libkrun has no cmdline of ours, so the descriptor rides the env.
+		var tokens string
+		for _, kv := range spec.ExecEnv {
+			if v, ok := strings.CutPrefix(kv, guestboot.EnvBootTokens+"="); ok {
+				tokens = v
+			}
+		}
+		got := guestboot.ParseWorktreeMount(tokens)
+		if got.Path != cfg.WorktreePath || got.FSType != "virtiofs" || got.Source != cfg.WorktreeTag {
+			t.Errorf("boot descriptor = %+v, want path=%q virtiofs tag=%q — without it the guest "+
+				"boots with the share attached but never mounted", got, cfg.WorktreePath, cfg.WorktreeTag)
+		}
+	})
+}
+
+func TestCreateVM_SEC03_EscapingSymlink_FailsClosed(t *testing.T) {
+	wt := worktreeWithStore(t)
+	// A symlink pointing outside the worktree: the host must reject the
+	// launch rather than let the guest follow it.
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("host secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(wt, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	spawner := &fakeSpawner{next: func() *fakeChild { return newFakeChild(`{"ok":true}` + "\n") }}
+	h := testHypervisor(t, spawner)
+	cfg := vmCfg(t, model.NetworkModeNone)
+	cfg.WorktreePath = wt
+	cfg.PrivateStorePath = privateStore(t)
+
+	_, err := h.CreateVM(cfg)
+	if err == nil {
+		t.Fatal("a worktree symlink escaping the worktree must fail the launch (SEC-03)")
+	}
+	if !errors.Is(err, staging.ErrSymlinkEscape) {
+		t.Errorf("error %v does not wrap ErrSymlinkEscape", err)
+	}
+	if len(spawner.specs) != 0 {
+		t.Error("a quarantine failure must never spawn a VM")
+	}
+}
+
+func TestCreateVM_NoPrivateStore_SharesTheWorktreeDirectly(t *testing.T) {
+	// The pre-SEC-03 direct path (no provisioner wired) must keep working:
+	// nothing to stage, so the worktree itself is shared.
+	spawner := &fakeSpawner{next: func() *fakeChild { return newFakeChild(`{"ok":true}` + "\n") }}
+	h := testHypervisor(t, spawner)
+	cfg := vmCfg(t, model.NetworkModeNone)
+	cfg.WorktreePath = worktreeWithStore(t)
+
+	vm, err := h.CreateVM(cfg)
+	if err != nil {
+		t.Fatalf("CreateVM: %v", err)
+	}
+	if err := vm.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = vm.Stop(context.Background(), true) })
+
+	if spawner.specs[0].WorktreeHostDir != cfg.WorktreePath {
+		t.Errorf("host dir = %q, want the worktree itself when no private store is wired",
+			spawner.specs[0].WorktreeHostDir)
+	}
+}

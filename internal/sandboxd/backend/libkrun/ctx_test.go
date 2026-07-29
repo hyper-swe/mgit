@@ -31,6 +31,7 @@ type fakeKrun struct {
 	lastRAM    uint32
 	rootDir    string
 	rootRO     bool
+	sharedDirs map[string]string
 	workdir    string
 	vsockPaths map[uint32]string
 	vsockHost  map[uint32]bool
@@ -71,6 +72,10 @@ func (f *fakeKrun) AddVirtiofs(_ uint32, tag, hostDir string, readOnly bool) err
 	if tag == rootFSTag {
 		f.rootDir, f.rootRO = hostDir, readOnly
 	}
+	if f.sharedDirs == nil {
+		f.sharedDirs = make(map[string]string)
+	}
+	f.sharedDirs[tag] = hostDir
 	return f.record("add_fs:" + tag)
 }
 
@@ -132,7 +137,7 @@ func TestNewGuestCtx_AttachesTheNICBeforeAnythingElse(t *testing.T) {
 	dir := shortTempDir(t)
 	api := &fakeKrun{}
 
-	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil)
+	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +169,7 @@ func TestNewGuestCtx_ConfiguresGuestRootWorkdirAndExec(t *testing.T) {
 	spec.ExecArgs = []string{"--vsock-port", "1024"}
 	spec.ExecEnv = []string{"PATH=/bin:/usr/bin"}
 
-	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil)
+	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -194,10 +199,13 @@ func TestNewGuestCtx_ConfiguresGuestRootWorkdirAndExec(t *testing.T) {
 func TestNewGuestCtx_SharesWorktreeAndSetsWorkdirToIt(t *testing.T) {
 	api := &fakeKrun{}
 	spec := baseSpec(model.NetworkModeNone, shortTempDir(t))
+	// The SOURCE is the staged tree (SEC-03); the guest path is where it is
+	// mounted. They are deliberately different values.
+	spec.WorktreeHostDir = "/state/sbx/worktree-staging"
 	spec.WorktreePath = "/work/repos/mgit/worktrees/MGIT-61.8"
 	spec.WorktreeTag = "work"
 
-	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil)
+	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -209,6 +217,10 @@ func TestNewGuestCtx_SharesWorktreeAndSetsWorkdirToIt(t *testing.T) {
 	if api.workdir != spec.WorktreePath {
 		t.Errorf("workdir = %q, want the worktree path (FR-17.3)", api.workdir)
 	}
+	if api.sharedDirs["work"] != spec.WorktreeHostDir {
+		t.Errorf("shared dir for tag work = %q, want the STAGED tree %q — sharing the live "+
+			"worktree would defeat the SEC-03 quarantine", api.sharedDirs["work"], spec.WorktreeHostDir)
+	}
 }
 
 func TestNewGuestCtx_WiresControlVsockPortsWithCorrectDirections(t *testing.T) {
@@ -217,7 +229,7 @@ func TestNewGuestCtx_WiresControlVsockPortsWithCorrectDirections(t *testing.T) {
 	spec := baseSpec(model.NetworkModeNone, dir)
 	spec.VsockEnabled = true
 
-	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil)
+	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -275,7 +287,7 @@ func TestNewGuestCtx_AnyConfigureStepFails_FailsClosedWithoutLeakingContextOrPee
 			spec := baseSpec(model.NetworkModeNone, dir)
 			spec.VsockEnabled = true
 
-			gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil)
+			gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
 			if err == nil {
 				t.Fatal("expected an error: a half-configured context could boot on TSI")
 			}
@@ -298,7 +310,7 @@ func TestGuestCtx_Enter_PreBootFailure_ReleasesContextAndPeer(t *testing.T) {
 	dir := shortTempDir(t)
 	api := &fakeKrun{}
 
-	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil)
+	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -320,7 +332,7 @@ func TestNewGuestCtx_Close_ReleasesBothContextAndHostPeer(t *testing.T) {
 	dir := shortTempDir(t)
 	api := &fakeKrun{}
 
-	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil)
+	gc, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -339,7 +351,7 @@ func TestNewGuestCtx_FreeAlsoFails_ReportsBothErrors(t *testing.T) {
 	dir := shortTempDir(t)
 	api := &fakeKrun{failOn: "add_net", freeErr: errors.New("krun_free_ctx: -1")}
 
-	_, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil)
+	_, err := newGuestCtx(api, baseSpec(model.NetworkModeNone, dir), &stubAuthorizer{}, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -354,7 +366,7 @@ func TestNewGuestCtx_FreeAlsoFails_ReportsBothErrors(t *testing.T) {
 
 func TestNewGuestCtx_InvalidNetworkMode_NeverTouchesLibkrun(t *testing.T) {
 	api := &fakeKrun{}
-	if _, err := newGuestCtx(api, baseSpec("bogus-mode", shortTempDir(t)), &stubAuthorizer{}, nil); err == nil {
+	if _, err := newGuestCtx(api, baseSpec("bogus-mode", shortTempDir(t)), &stubAuthorizer{}, nil, nil); err == nil {
 		t.Fatal("expected an error for an unknown network mode")
 	}
 	if len(api.calls) != 0 {
@@ -382,7 +394,7 @@ func TestNewGuestCtx_ResourceCaps(t *testing.T) {
 			spec := baseSpec(model.NetworkModeNone, shortTempDir(t))
 			spec.CPUs, spec.MemoryMB = tt.cpus, tt.mb
 
-			gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil)
+			gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -408,5 +420,35 @@ func TestVcpuCountAndMemoryMiB_ClampToTheCArgumentWidth(t *testing.T) {
 	}
 	if got := memoryMiB(1 << 40); got != 4294967295 {
 		t.Errorf("memoryMiB(1<<40) = %d, want the uint32 ceiling", got)
+	}
+}
+
+func TestNewGuestCtx_PublishedPorts_AreListeningVsockPorts(t *testing.T) {
+	dir := shortTempDir(t)
+	api := &fakeKrun{}
+	spec := baseSpec(model.NetworkModeNone, dir)
+	spec.VsockEnabled = true
+	spec.PublishPorts = []int{8080, 5173}
+
+	gc, err := newGuestCtx(api, spec, &stubAuthorizer{}, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = gc.Close() })
+
+	for _, port := range spec.PublishPorts {
+		p := uint32(port) //nolint:gosec // OK: test constants
+		path, ok := api.vsockPaths[p]
+		if !ok {
+			t.Fatalf("published port %d was not wired as a vsock port", port)
+		}
+		if want := vsockSocketPath(dir, p); path != want {
+			t.Errorf("port %d socket = %q, want %q", port, path, want)
+		}
+		// listen=true is the whole of the SEC-09 direction: libkrun listens
+		// host-side and forwards IN. The guest gets no path back out.
+		if !api.vsockHost[p] {
+			t.Errorf("published port %d is not host-initiated; SEC-09 must be one-way inbound", port)
+		}
 	}
 }

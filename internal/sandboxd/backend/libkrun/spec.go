@@ -33,15 +33,28 @@ type vmSpec struct {
 	RootDir string `json:"root_dir"`
 	// RootReadOnly exposes the root share read-only (FR-17.17 immutable image).
 	RootReadOnly bool `json:"root_read_only"`
-	// WorktreePath, when set, is shared into the guest as a second virtiofs
-	// device tagged WorktreeTag. The GUEST must mount the tag at the identical
-	// path (FR-17.3); until the guest side does, the share is delivered but
-	// unmounted.
+	// WorktreeHostDir is the HOST directory shared into the guest as a second
+	// virtiofs device tagged WorktreeTag. It is deliberately distinct from
+	// WorktreePath: under SEC-03 the shared source is a STAGED copy under the
+	// sandbox state dir (worktree files + the private .mgit, host store
+	// excluded), not the live worktree — a live share cannot exclude or rebind
+	// host-side. Empty when no worktree is delivered. Refs: SEC-03, FR-17.3
+	WorktreeHostDir string `json:"worktree_host_dir,omitempty"`
+	// WorktreePath is the IDENTICAL absolute path the guest mounts the share
+	// at, and the workload's working directory (FR-17.3). The guest learns to
+	// mount it from the boot tokens carried in ExecEnv.
 	WorktreePath string `json:"worktree_path,omitempty"`
 	WorktreeTag  string `json:"worktree_tag,omitempty"`
 	// VsockEnabled wires the control-plane vsock ports (exec/land/notify)
 	// to per-VM unix socket paths under StateDir.
 	VsockEnabled bool `json:"vsock_enabled"`
+	// PublishPorts are the GUEST TCP ports exposed for one-way host->guest
+	// publishing (SEC-09). Each becomes a LISTENING libkrun vsock port: the
+	// VMM listens on a host unix socket under StateDir and forwards inbound
+	// connections to that guest vsock port, where mgit-guest bridges them to
+	// the guest's own loopback. Host-initiated only — no path back out.
+	// Refs: SEC-09, FR-17.8
+	PublishPorts []int `json:"publish_ports,omitempty"`
 	// ExecPath is the guest PID-1 workload, guest-root-relative. ExecArgs are
 	// its ARGUMENTS ONLY: libkrun prepends the executable to argv itself, so
 	// including it here would shift every guest arg by one (ADR-010).
