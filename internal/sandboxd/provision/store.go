@@ -90,10 +90,11 @@ func (p *StoreProvisioner) Provision(taskID, privateDir string) (PrivateStore, e
 	shared := openBareStore(sharedDir)
 
 	branch := plumbing.NewBranchReferenceName(model.TaskBranchName(taskID))
-	ref, err := shared.Reference(branch)
+	base, err := resolveBase(shared, branch)
 	if err != nil {
-		return PrivateStore{}, fmt.Errorf("%w: task branch %s in shared store", model.ErrBranchNotFound, branch.Short())
+		return PrivateStore{}, err
 	}
+	ref := plumbing.NewHashReference(branch, base)
 
 	if err := os.MkdirAll(privateDir, 0o700); err != nil {
 		return PrivateStore{}, fmt.Errorf("provision: create private store dir: %w", err)
@@ -119,6 +120,39 @@ func (p *StoreProvisioner) Provision(taskID, privateDir string) (PrivateStore, e
 		return PrivateStore{}, fmt.Errorf("provision: set private HEAD: %w", err)
 	}
 	return PrivateStore{Dir: privateDir, SharedDir: sharedDir}, nil
+}
+
+// resolveBase picks the commit the guest's private store is seeded from.
+//
+// The task branch WHEN IT EXISTS — that is the squash-first path, unchanged.
+// Otherwise the shared store's HEAD, because task branches are produced by
+// SQUASH and not by commit (the squash semantics decision), so a task that has
+// been committed and never squashed has no task/<ID> ref at all. Requiring one
+// inverted the product's own order: `mgit work` -> commit -> `mgit run
+// --sandbox`, with squash as a later integration step. Seeding from HEAD is
+// "sandbox the work I have now", which is what the user means. Refs: MGIT-62
+//
+// Deliberately NOT done: creating the missing task branch in the SHARED store.
+// Launching a sandbox is a read of the project, and quietly minting refs in
+// the user's store as a side effect of running one would be a surprising
+// mutation — the private store below names the branch instead, so land's
+// contract is identical either way.
+//
+// With neither a task branch nor a resolvable HEAD there is nothing to seed
+// from, and that stays an error: an empty private store would let the guest
+// commit onto nothing, detached from the project. Refs: MGIT-62, SEC-03
+func resolveBase(shared storer.Storer, branch plumbing.ReferenceName) (plumbing.Hash, error) {
+	if ref, err := shared.Reference(branch); err == nil {
+		return ref.Hash(), nil
+	}
+	// ResolveReference follows HEAD's symbolic target to the commit.
+	head, err := storer.ResolveReference(shared, plumbing.HEAD)
+	if err != nil || head == nil || head.Hash().IsZero() {
+		return plumbing.ZeroHash, fmt.Errorf(
+			"%w: no task branch %s and no resolvable HEAD in the shared store to seed the sandbox from",
+			model.ErrBranchNotFound, branch.Short())
+	}
+	return head.Hash(), nil
 }
 
 // openBareStore opens a worktree-less go-git filesystem store at dir, the same
