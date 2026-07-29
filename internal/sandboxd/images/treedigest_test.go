@@ -386,3 +386,53 @@ func TestResolve_HalfSpecifiedKernel_IsRefused(t *testing.T) {
 		t.Fatal("a half-specified kernel must be refused, not guessed at")
 	}
 }
+
+// TestResolve_TamperedSource_IsRefused pins provenance to the signature.
+//
+// A Source that is recorded but NOT signed is worse than no Source at all: an
+// entry could be edited to claim a base came from debian:12 when it came from
+// somewhere else entirely, and every verification would still pass. An audit
+// record that can be rewritten without detection is decoration.
+// Refs: MGIT-61.15, FR-17.17
+func TestResolve_TamperedSource_IsRefused(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"sbin/mgit-guest": "init"})
+	entry, err := BuildBaseEntry(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry.Source = "registry-1.docker.io/library/debian:12"
+
+	hostRoot := t.TempDir()
+	priv, err := GenerateTrustRoot(context.Background(), hostRoot, noopAuditor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := Register(hostRoot, "base", Sign("base", entry, priv), priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rewrite only the provenance, leaving digest and signature untouched.
+	lockPath := filepath.Join(hostRoot, "images.lock")
+	raw, err := os.ReadFile(lockPath) //nolint:gosec // test-owned path
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered := strings.Replace(string(raw),
+		"library/debian:12", "library/totally-fine:12", 1)
+	if tampered == string(raw) {
+		t.Fatal("the source was never written to images.lock, so nothing was tested")
+	}
+	if err := os.WriteFile(lockPath, []byte(tampered), 0o600); err != nil { //nolint:gosec // lockPath is this test's own t.TempDir
+		t.Fatal(err)
+	}
+
+	store, err := NewStore(hostRoot, func() time.Time { return time.Unix(0, 0).UTC() })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Resolve(ref); err == nil {
+		t.Fatal("provenance was edited without breaking verification; Source is not signed")
+	}
+}

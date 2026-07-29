@@ -53,7 +53,7 @@ func BuildEntry(kernelPath, rootfsPath, cmdline string) (Entry, error) {
 
 // Sign returns a copy of e with its detached Ed25519 Signature set for
 // the given image name, over the canonical SigningPayload (name + both
-// digests + cmdline). The host signer and the boot-time verifier
+// digests + cmdline + source). The host signer and the boot-time verifier
 // (Store.Resolve) produce identical payload bytes. Refs: FR-17.29
 func Sign(name string, e Entry, priv ed25519.PrivateKey) Entry {
 	e.Signature = ed25519.Sign(priv, SigningPayload(name, e))

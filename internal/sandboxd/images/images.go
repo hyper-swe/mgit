@@ -39,6 +39,11 @@ type Entry struct {
 	RootfsPath   string `json:"rootfs_path"`   // host path to the read-only rootfs
 	Cmdline      string `json:"cmdline"`       // guest kernel command line
 	Signature    []byte `json:"signature"`     // Ed25519(trust_root, SigningPayload(name, entry))
+	// Source records WHERE a composed base came from — the resolved OCI
+	// reference, registry and digest included. It is provenance for a human
+	// tracing a base back to its image; the Digest above is what boot
+	// actually verifies. Empty for images built locally. Refs: MGIT-61.15
+	Source string `json:"source,omitempty"`
 }
 
 // Lock is the images.lock document: image name -> pinned entry.
@@ -144,14 +149,16 @@ func (s *Store) Resolve(imageRef string) (ResolvedImage, error) {
 }
 
 // SigningPayload is the canonical, unambiguous byte sequence the trust
-// root signs for one lock entry: the image name, the rootfs digest,
-// the kernel digest, and the cmdline, each length-prefixed so no two
-// distinct field sets collide. The host signing tool and the verifier
+// root signs for one lock entry: the image name, the rootfs digest, the
+// kernel digest, the cmdline, and the source provenance, each length-prefixed
+// so no two distinct field sets collide. The host signing tool and the verifier
 // MUST produce identical bytes. Signature itself is excluded.
 // Refs: FR-17.29, FR-17.38
 func SigningPayload(name string, e Entry) []byte {
 	var buf bytes.Buffer
-	for _, field := range []string{name, e.Digest, e.KernelDigest, e.Cmdline} {
+	// Source is signed alongside the digests: provenance an attacker can
+	// rewrite without breaking verification would be decoration, not audit.
+	for _, field := range []string{name, e.Digest, e.KernelDigest, e.Cmdline, e.Source} {
 		var length [8]byte
 		binary.BigEndian.PutUint64(length[:], uint64(len(field)))
 		buf.Write(length[:])

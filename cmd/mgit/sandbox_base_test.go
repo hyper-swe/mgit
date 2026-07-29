@@ -1,8 +1,17 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -150,4 +159,184 @@ func runBase(t *testing.T, repo string, args ...string) (string, error) {
 	t.Helper()
 	t.Chdir(repo)
 	return runCLIOut(t, append([]string{"sandbox", "base"}, args...)...)
+}
+
+// TestSandboxBaseFrom_ComposesFromAnOCIImage covers the GA-critical path:
+// the user pulls a public image, we compose it into a guest base, inject our
+// binaries, pin the composed tree and sign it. mgit redistributes nothing.
+// Refs: MGIT-61.15
+func TestSandboxBaseFrom_ComposesFromAnOCIImage(t *testing.T) {
+	srv, ref := fakeImageServer(t, map[string]string{
+		"bin/sh":                         "#!/bin/sh",
+		"etc/os-release":                 "ID=debian\nNAME=Debian",
+		"lib/x86_64-linux-gnu/libc.so.6": "glibc",
+	})
+	defer srv.Close()
+
+	repo := newRepo(t)
+	_, err := initTrustRoot(t, repo)
+	require.NoError(t, err)
+
+	out, err := runBase(t, repo, "from", ref,
+		"--guest-bin-dir", fakeGuestBins(t), "--plain-http")
+	require.NoError(t, err, "base from: %s", out)
+
+	// The composed tree is pinned by its own digest, not the image's: what
+	// boots is the tree AFTER our binaries were injected.
+	assert.Contains(t, out, "sha256:", "the composed base must be pinned, got %q", out)
+	// Provenance: the OCI reference must be recorded too, so a base can be
+	// traced back to the image it came from.
+	assert.Contains(t, out, "acme/base", "the OCI source must be recorded, got %q", out)
+
+	// Real images vary in which empty mount points they ship, and this
+	// directory is one WE composed — so creating them is our job, not a
+	// reason to reject a perfectly good image.
+	for _, dir := range guestBaseMountDirs {
+		assert.DirExists(t, filepath.Join(repo, ".mgit", "sandbox", "base", dir),
+			"base from must create the guest mount point /%s", dir)
+	}
+}
+
+func TestSandboxBaseFrom_RefusesAnImageThatIsNotALinuxUserspace(t *testing.T) {
+	// A scratch/distroless image is one binary, not a userspace. An agent in
+	// it cannot run a shell command — which is the entire point of a sandbox —
+	// so refusing at compose time beats an inscrutable exec failure at task
+	// time, hours later.
+	srv, ref := fakeImageServer(t, map[string]string{"opt/app/server": "ELF"})
+	defer srv.Close()
+
+	repo := newRepo(t)
+	_, err := initTrustRoot(t, repo)
+	require.NoError(t, err)
+
+	out, err := runBase(t, repo, "from", ref,
+		"--guest-bin-dir", fakeGuestBins(t), "--plain-http")
+	require.Error(t, err, "an image with no shell must be refused: %s", out)
+	assert.Contains(t, err.Error(), "shell",
+		"the refusal must say what is missing, got %q", err)
+}
+
+// TestSandboxBaseFrom_WarnsWhenTheBaseLibcWillNotMatchTheToolchain covers the
+// single most confusing failure in a musl guest: a glibc-linked tool exits
+// with "no such file or directory" naming its DYNAMIC LOADER, not the binary
+// the user ran. Saying so up front costs one line; not saying it costs an hour.
+// Refs: MGIT-61.15 req 6
+func TestSandboxBaseFrom_WarnsWhenTheBaseLibcWillNotMatchTheToolchain(t *testing.T) {
+	tests := []struct {
+		name     string
+		files    map[string]string
+		wantWarn string
+	}{
+		{
+			name: "musl_base_warns",
+			files: map[string]string{
+				"bin/sh": "#!/bin/sh", "lib/ld-musl-aarch64.so.1": "musl",
+			},
+			wantWarn: "musl",
+		},
+		{
+			name: "glibc_base_is_quiet",
+			files: map[string]string{
+				"bin/sh": "#!/bin/sh", "lib/x86_64-linux-gnu/libc.so.6": "glibc",
+			},
+			wantWarn: "",
+		},
+		{
+			name:     "no_libc_at_all_warns",
+			files:    map[string]string{"bin/sh": "#!/bin/sh"},
+			wantWarn: "no C library",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, ref := fakeImageServer(t, tt.files)
+			defer srv.Close()
+
+			repo := newRepo(t)
+			_, err := initTrustRoot(t, repo)
+			require.NoError(t, err)
+
+			out, err := runBase(t, repo, "from", ref,
+				"--guest-bin-dir", fakeGuestBins(t), "--plain-http")
+			require.NoError(t, err, "base from: %s", out)
+
+			if tt.wantWarn == "" {
+				assert.NotContains(t, out, "warning:",
+					"a coherent base must not be warned about, got %q", out)
+				return
+			}
+			assert.Contains(t, out, tt.wantWarn, "expected a libc warning, got %q", out)
+		})
+	}
+}
+
+// fakeImageServer serves a one-layer OCI image over plain HTTP and returns
+// the reference naming it. It keeps these tests offline.
+func fakeImageServer(t *testing.T, files map[string]string) (*httptest.Server, string) {
+	t.Helper()
+	blobs := map[string][]byte{}
+	manifests := map[string][]byte{}
+
+	add := func(b []byte) string {
+		sum := sha256.Sum256(b)
+		d := "sha256:" + hex.EncodeToString(sum[:])
+		blobs[d] = b
+		return d
+	}
+
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(zw)
+	for name, content := range files {
+		require.NoError(t, tw.WriteHeader(&tar.Header{
+			Name: name, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg,
+		}))
+		_, err := tw.Write([]byte(content))
+		require.NoError(t, err)
+	}
+	require.NoError(t, tw.Close())
+	require.NoError(t, zw.Close())
+
+	layerDigest := add(buf.Bytes())
+	arch := "amd64"
+	if runtime.GOARCH == "arm64" {
+		arch = "arm64"
+	}
+	configDigest := add([]byte(`{"architecture":"` + arch + `","os":"linux"}`))
+
+	manifest, err := json.Marshal(map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+		"config":        map[string]any{"digest": configDigest, "size": 40},
+		"layers": []map[string]any{
+			{"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+				"digest": layerDigest, "size": buf.Len()},
+		},
+	})
+	require.NoError(t, err)
+	manifests["v1"] = manifest
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/v2/")
+		key := path[strings.LastIndex(path, "/")+1:]
+		if strings.Contains(path, "/manifests/") {
+			doc, ok := manifests[key]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+			_, _ = w.Write(doc)
+			return
+		}
+		blob, ok := blobs[key]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write(blob)
+	})
+	srv := httptest.NewServer(mux)
+	return srv, strings.TrimPrefix(srv.URL, "http://") + "/acme/base:v1"
 }

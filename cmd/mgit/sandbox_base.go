@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mgit/internal/sandboxd/guestbase"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 )
 
@@ -42,7 +43,7 @@ func sandboxBaseCmd() *cobra.Command {
 			"and it is pinned by content digest and signed into images.lock so it\n" +
 			"cannot change under a running task without being noticed.",
 	}
-	cmd.AddCommand(sandboxBaseSetCmd())
+	cmd.AddCommand(sandboxBaseSetCmd(), sandboxBaseFromCmd())
 	return cmd
 }
 
@@ -107,11 +108,11 @@ func sandboxBaseSetCmd() *cobra.Command {
 func validateBaseTree(baseDir string) error {
 	info, err := os.Stat(baseDir)
 	if err != nil {
-		return fmt.Errorf("base set: guest base %s: %w", baseDir, err)
+		return fmt.Errorf("guest base %s: %w", baseDir, err)
 	}
 	if !info.IsDir() {
 		return fmt.Errorf(
-			"base set: guest base %s is not a directory — libkrun shares the guest "+
+			"guest base %s is not a directory — libkrun shares the guest "+
 				"root over virtio-fs, so a base is a directory tree, not an image", baseDir)
 	}
 	var missing []string
@@ -122,7 +123,7 @@ func validateBaseTree(baseDir string) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf(
-			"base set: guest base %s is missing the mount points the guest supervisor "+
+			"guest base %s is missing the mount points the guest supervisor "+
 				"needs at boot: %v. Create them first:\n  mkdir -p %s%v",
 			baseDir, missing, baseDir, missing)
 	}
@@ -145,7 +146,7 @@ func injectGuestBinaries(baseDir, guestBinDir string) error {
 	for _, tgt := range targets {
 		out := filepath.Join(baseDir, tgt.dest)
 		if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
-			return fmt.Errorf("base set: %w", err)
+			return fmt.Errorf("guest base: %w", err)
 		}
 		if guestBinDir != "" {
 			if err := copyGuestBinary(filepath.Join(guestBinDir, tgt.name), out); err != nil {
@@ -155,7 +156,7 @@ func injectGuestBinaries(baseDir, guestBinDir string) error {
 		}
 		if err := buildGuestBinary(tgt.pkg, out); err != nil {
 			return fmt.Errorf(
-				"base set: %w\n\n"+
+				"guest base: %w\n\n"+
 					"The guest needs LINUX builds of mgit and mgit-guest, which a host "+
 					"install does not carry (mgit-guest is guest-only and is not shipped "+
 					"on PATH). Either run this from an mgit source checkout, or supply "+
@@ -202,3 +203,190 @@ func buildGuestBinary(pkg, out string) error {
 // host's: libkrun uses hardware virtualization, so there is no emulation to
 // cross architectures with. Refs: MGIT-61.15
 func guestArch() string { return runtime.GOARCH }
+
+// sandboxBaseFromCmd composes this repo's guest base from an OCI image.
+//
+// The user pulls the image, so mgit redistributes nothing — no kernel, no
+// busybox, no GPL corresponding-source obligation. What we contribute is our
+// own Apache-2.0 binaries, injected on top. Refs: MGIT-61.15, ADR-010
+func sandboxBaseFromCmd() *cobra.Command {
+	var name, guestBinDir string
+	var plainHTTP, asJSON bool
+	cmd := &cobra.Command{
+		Use:   "from <oci-ref>",
+		Short: "Compose this repo's guest base from an OCI image (e.g. debian:12, node:22-slim)",
+		Long: "Pulls a public OCI image, extracts its layers into this repo's guest base,\n" +
+			"injects mgit and mgit-guest, then pins the composed tree by content digest\n" +
+			"and signs it into images.lock.\n\n" +
+			"The image supplies the Linux userspace your agent's toolchain needs; mgit\n" +
+			"supplies the supervisor and the CLI. Because YOU pull the image, mgit\n" +
+			"redistributes nothing.\n\n" +
+			"Loading arbitrary tooling into the guest is safe because the guest is the\n" +
+			"UNTRUSTED side — that is what the VM boundary is for, and a poisoned base\n" +
+			"burns a throwaway microVM. The host store, egress policy, land airlock and\n" +
+			"attestation signing are all enforced host-side and are unaffected by what\n" +
+			"the base contains.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ref, err := guestbase.ParseRef(args[0])
+			if err != nil {
+				return err
+			}
+			hostRoot, err := sandboxHostRoot()
+			if err != nil {
+				return err
+			}
+			priv, err := images.LoadSigningKey(hostRoot)
+			if err != nil {
+				return fmt.Errorf("base from: %w (run `mgit sandbox image init` first)", err)
+			}
+
+			baseDir := filepath.Join(hostRoot, "base")
+			// Start from an empty tree: re-composing must not silently
+			// inherit files from whatever was there before, or the pinned
+			// digest would describe a mixture nobody can reproduce.
+			if err := os.RemoveAll(baseDir); err != nil {
+				return fmt.Errorf("base from: clear %s: %w", baseDir, err)
+			}
+
+			out := cmd.OutOrStdout()
+			resolved, err := guestbase.Pull(cmd.Context(), ref, baseDir, guestbase.PullOptions{
+				PlainHTTP: plainHTTP,
+				Progress:  func(msg string) { _, _ = fmt.Fprintf(out, "  %s\n", msg) },
+			})
+			if err != nil {
+				return err
+			}
+
+			// Images vary in which empty mount points they ship, and this
+			// directory is one WE composed — so creating them is part of
+			// composing, not a reason to reject an otherwise good image.
+			// `base set` refuses instead, because there the tree is the
+			// user's and mgit has no business writing into it.
+			if err := ensureGuestMountDirs(baseDir); err != nil {
+				return err
+			}
+			if err := assertLinuxUserspace(baseDir, resolved); err != nil {
+				return err
+			}
+			if err := validateBaseTree(baseDir); err != nil {
+				return err
+			}
+			if warning := checkLibcCoherence(baseDir); warning != "" {
+				_, _ = fmt.Fprintf(out, "  warning: %s\n", warning)
+			}
+			if err := injectGuestBinaries(baseDir, guestBinDir); err != nil {
+				return err
+			}
+
+			entry, err := images.BuildBaseEntry(baseDir)
+			if err != nil {
+				return fmt.Errorf("base from: %w", err)
+			}
+			// Provenance: record WHERE it came from alongside WHAT is pinned.
+			// The tree digest is what boot verifies; the OCI reference is how
+			// a human traces it back.
+			entry.Source = resolved.String()
+			pinnedRef, err := images.Register(hostRoot, name, images.Sign(name, entry, priv), priv)
+			if err != nil {
+				return fmt.Errorf("base from: %w", err)
+			}
+			if asJSON {
+				return json.NewEncoder(out).Encode(map[string]string{
+					"image_ref": pinnedRef, "source": resolved.String(),
+				})
+			}
+			_, _ = fmt.Fprintf(out, "Registered guest base %s\n  from %s\n", pinnedRef, resolved)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "base", "name to register the base under in images.lock")
+	cmd.Flags().StringVar(&guestBinDir, "guest-bin-dir", "",
+		"directory holding linux guest builds of mgit and mgit-guest; "+
+			"defaults to building them from an mgit source checkout")
+	cmd.Flags().BoolVar(&plainHTTP, "plain-http", false,
+		"talk to the registry over http (local mirrors and tests only)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "output the digest-pinned reference as JSON")
+	return cmd
+}
+
+// ensureGuestMountDirs creates the empty mount points the in-guest supervisor
+// needs. Refs: FR-17.3, MGIT-61.15
+func ensureGuestMountDirs(baseDir string) error {
+	for _, d := range guestBaseMountDirs {
+		if err := os.MkdirAll(filepath.Join(baseDir, d), 0o755); err != nil { //nolint:gosec // guest mount points must be world-traversable, as in any rootfs
+			return fmt.Errorf("guest base: create mount point /%s: %w", d, err)
+		}
+	}
+	return nil
+}
+
+// guestShells are the places a usable base keeps its shell. Any one of them is
+// enough; which one it is does not matter to us.
+var guestShells = []string{"bin/sh", "usr/bin/sh", "bin/bash", "bin/busybox"}
+
+// assertLinuxUserspace refuses a scratch or distroless image.
+//
+// Such an image is a single binary, not a userspace: mgit-guest would boot in
+// it, and then every agent command would fail because there is no shell to run
+// it with. Catching that here — while the user is still looking at the pull
+// they just typed — is far kinder than an exec failure inside a task hours
+// later. Refs: MGIT-61.15, FR-17.11
+func assertLinuxUserspace(baseDir string, source fmt.Stringer) error {
+	for _, sh := range guestShells {
+		// Lstat, not Stat: bin/sh is usually a symlink, and on a tree we have
+		// not chrooted into, its target does not resolve from here.
+		if _, err := os.Lstat(filepath.Join(baseDir, sh)); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"the image %s has no shell (looked for %s), so it is not a Linux userspace "+
+			"a sandbox can run commands in.\n\n"+
+			"Scratch and distroless images cannot be guest bases; distro images "+
+			"(debian:12, ubuntu:24.04, alpine:3.20) and language images "+
+			"(node:22, python:3.12, golang:1.23) all work",
+		source, strings.Join(guestShells, ", "))
+}
+
+// globAny reports whether name matches anything in the tree's library
+// directories, at either the top level or under a multiarch tuple.
+func globAny(baseDir, name string) bool {
+	for _, pattern := range []string{
+		filepath.Join(baseDir, "lib*", name),
+		filepath.Join(baseDir, "lib*", "*", name),
+		filepath.Join(baseDir, "usr", "lib*", name),
+		filepath.Join(baseDir, "usr", "lib*", "*", name),
+	} {
+		if hits, _ := filepath.Glob(pattern); len(hits) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// checkLibcCoherence warns when a base's C library will not match the
+// toolchains a user is likely to add to it.
+//
+// It WARNS rather than refuses: a musl base is perfectly valid, and plenty of
+// workloads are static or musl-native. What is not valid is silence — an
+// alpine base with a glibc-linked toolchain fails at runtime with "no such
+// file or directory" naming the INTERPRETER, which is one of the most
+// confusing errors in Linux. Refs: MGIT-61.15 req 6
+func checkLibcCoherence(baseDir string) string {
+	// Both libraries live one or two levels under a lib directory, the second
+	// level being the multiarch tuple (lib/x86_64-linux-gnu/libc.so.6).
+	musl := globAny(baseDir, "ld-musl-*")
+	glibc := globAny(baseDir, "libc.so.6")
+	switch {
+	case musl && !glibc:
+		return "this base uses musl (alpine-style). Toolchains built against " +
+			"glibc will fail inside it with a confusing \"no such file or directory\" " +
+			"naming the dynamic loader. Prefer musl-native or statically linked tools, " +
+			"or use a glibc base such as debian-slim."
+	case !musl && !glibc:
+		return "no C library found in this base. Dynamically linked tools will not " +
+			"run in it; only static binaries will."
+	}
+	return ""
+}
