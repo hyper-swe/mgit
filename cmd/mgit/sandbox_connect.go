@@ -41,7 +41,10 @@ func resolveSandboxPaths(repoRoot string) (sandboxPaths, error) {
 	return sandboxPaths{
 		socket:   filepath.Join(runtimeDir, "d.sock"),
 		hostRoot: filepath.Join(repoRoot, ".mgit", "sandbox"),
-		workDir:  filepath.Join(runtimeDir, "work"),
+		// "w", not "work": the per-sandbox socket paths under this directory
+		// share a 104-byte sun_path budget with a 48-byte macOS TMPDIR.
+		// Refs: MGIT-61.15
+		workDir: filepath.Join(runtimeDir, "w"),
 	}, nil
 }
 

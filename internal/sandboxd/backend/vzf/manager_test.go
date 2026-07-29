@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -163,7 +162,10 @@ func TestVZF_Launch_BootsGuest(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.BackendVZF, info.Backend)
 	assert.Equal(t, model.StateRunning, info.State)
-	assert.DirExists(t, filepath.Join(workDir, info.ID), "sandbox state dir exists while running")
+	// microvm.SandboxStateDir, not workDir/ID: the directory name is a
+	// truncation of the sandbox ID, because the sockets bound under it share
+	// sun_path's 104-byte budget (MGIT-61.15).
+	assert.DirExists(t, microvm.SandboxStateDir(workDir, info.ID), "sandbox state dir exists while running")
 
 	got, err := mgr.Resolve(context.Background(), info.ID)
 	require.NoError(t, err)
@@ -178,7 +180,7 @@ func TestVZF_Teardown_NoResidue(t *testing.T) {
 
 	info, err := mgr.Launch(context.Background(), vzfLaunchOpts())
 	require.NoError(t, err)
-	dir := filepath.Join(workDir, info.ID)
+	dir := microvm.SandboxStateDir(workDir, info.ID)
 	require.DirExists(t, dir)
 
 	require.NoError(t, mgr.Remove(context.Background(), info.ID, true))

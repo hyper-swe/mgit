@@ -185,13 +185,13 @@ func TestTreeDigest_RefusesWhatItCannotPin(t *testing.T) {
 		{
 			// A symlink out of the tree makes the digest a claim about files
 			// the base does not contain — it would pin a moving target.
+			//
+			// The target is RELATIVE: an absolute one resolves against the
+			// guest's root, not the host's, and is not an escape at all —
+			// see TestTreeDigest_AbsoluteSymlinksAreGuestRelative.
 			name: "symlink_escaping_the_tree",
 			build: func(t *testing.T, root string) {
-				outside := filepath.Join(t.TempDir(), "secret")
-				if err := os.WriteFile(outside, []byte("host"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+				if err := os.Symlink("../../../../etc/passwd", filepath.Join(root, "escape")); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -474,5 +474,70 @@ func TestPinnedRef_ReturnsWhatLaunchShouldBoot(t *testing.T) {
 	}
 	if _, err := PinnedRef(hostRoot, "other"); !errors.Is(err, ErrNoSuchImage) {
 		t.Errorf("PinnedRef for an unregistered name = %v, want ErrNoSuchImage", err)
+	}
+}
+
+// TestTreeDigest_AbsoluteSymlinksAreGuestRelative fixes a rule that was wrong
+// about the thing it was protecting.
+//
+// An absolute symlink inside a guest root — /etc/alternatives/awk ->
+// /usr/bin/mawk — is not a host path. It resolves against the GUEST's root
+// once the guest has pivoted into this tree, so it names a file in the base.
+// Treating it as an escape refused nearly every real distro image: debian:12
+// alone ships dozens. What genuinely escapes is a RELATIVE target that climbs
+// out with .., because that resolves the same way on both sides of the
+// boundary. Refs: MGIT-61.15, SEC-03, FR-17.17
+func TestTreeDigest_AbsoluteSymlinksAreGuestRelative(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics differ on windows")
+	}
+	tests := []struct {
+		name    string
+		target  string
+		wantErr bool
+	}{
+		{
+			// The shape debian:12 actually ships.
+			name:   "absolute_target_inside_the_guest",
+			target: "/usr/bin/mawk",
+		},
+		{
+			// Still absolute, still guest-relative: it names a file the base
+			// does not have, which is a broken link, not an escape. The guest
+			// gets ENOENT — a dangling link is not a containment failure.
+			name:   "absolute_target_the_base_lacks",
+			target: "/no/such/file",
+		},
+		{
+			name:   "relative_target_inside_the_tree",
+			target: "../usr/bin/mawk",
+		},
+		{
+			// The real escape: resolves outside the shared directory on the
+			// host exactly as it reads.
+			name:    "relative_target_climbing_out",
+			target:  "../../../../etc/passwd",
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTree(t, root, map[string]string{"usr/bin/mawk": "awk", "etc/keep": "x"})
+			if err := os.Symlink(tt.target, filepath.Join(root, "etc", "link")); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := TreeDigest(root)
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "escapes") {
+					t.Fatalf("TreeDigest = %v, want an escape refusal", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a guest-relative symlink must be pinnable, not refused: %v", err)
+			}
+		})
 	}
 }

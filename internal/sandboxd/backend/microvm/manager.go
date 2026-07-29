@@ -12,7 +12,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -23,6 +25,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/hyper-swe/mgit/internal/execwire"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/guestexec"
 	"github.com/hyper-swe/mgit/internal/sandboxd/provision"
@@ -235,6 +238,10 @@ type sandbox struct {
 	info model.SandboxInfo
 	vm   VM
 	dir  string // per-sandbox state dir under WorkDir
+	// guestReady records that the guest has answered on the control vsock at
+	// least once. Until it has, a command that gets nothing back is retried;
+	// after it has, the same failure is real and is reported. Refs: MGIT-61.15
+	guestReady bool
 }
 
 // Manager implements model.SandboxManager over a platform Hypervisor.
@@ -522,21 +529,91 @@ func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*
 			model.ErrSandboxBackendUnavailable)
 	}
 
+	return m.execUntilTheGuestAnswers(ctx, id, req)
+}
+
+// execUntilTheGuestAnswers runs one command, retrying the whole exchange
+// while the guest has never yet answered on this sandbox.
+//
+// A dial that succeeds is not proof the guest is up. libkrun's host-side
+// vsock endpoint exists from the moment the VM starts, so during the ~1s the
+// guest takes to boot, the connection is accepted, the request is written,
+// and the connection is then closed with nothing forwarded — which reached
+// the user as a bare "read frame: EOF" on the FIRST command after
+// `mgit work --sandbox`, with the second command working. That is the worst
+// possible shape for trust in the tool.
+//
+// The retry is narrow on purpose. It applies only while this sandbox's guest
+// has never once answered, and only when the failure was an EOF with nothing
+// received — no output, no result frame. Under those two conditions the
+// command provably never reached a listener, so re-sending it cannot run
+// anything twice. Once the guest has answered, an EOF means something went
+// wrong mid-command and is reported as it happens.
+// Refs: MGIT-61.15, MGIT-58, FR-17.11
+func (m *Manager) execUntilTheGuestAnswers(
+	ctx context.Context, id string, req model.ExecRequest,
+) (*model.ExecResult, error) {
+	deadline := time.Now().Add(m.cfg.GuestReadyTimeout)
+	for attempt := 0; ; attempt++ {
+		result, stdout, stderr, err := m.execOnce(ctx, id, req)
+		if err == nil {
+			m.markGuestAnswered(id)
+			return &model.ExecResult{Stdout: stdout, Stderr: stderr, ExitCode: result.ExitCode}, nil
+		}
+		if !m.guestNeverAnswered(id) || !isSilentEOF(err, stdout, stderr) ||
+			!time.Now().Add(guestReadyPollInterval).Before(deadline) {
+			return nil, fmt.Errorf("%s exec: %w", m.cfg.Backend, err)
+		}
+		m.cfg.Logger.Debug("guest not serving yet; retrying the first command",
+			"event", "guest_not_serving", "sandbox_id", id, "attempts", attempt+1)
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%s exec: %w", m.cfg.Backend, err)
+		case <-time.After(guestReadyPollInterval):
+		}
+	}
+}
+
+// execOnce performs a single dial-and-run exchange.
+func (m *Manager) execOnce(
+	ctx context.Context, id string, req model.ExecRequest,
+) (execwire.Result, []byte, []byte, error) {
 	conn, err := m.dialGuestReady(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("%s exec: dial guest: %w", m.cfg.Backend, err)
+		return execwire.Result{}, nil, nil, fmt.Errorf("dial guest: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
-
 	var stdout, stderr bytes.Buffer
 	result, err := guestexec.Run(conn, req, &stdout, &stderr)
-	if err != nil {
-		return nil, fmt.Errorf("%s exec: %w", m.cfg.Backend, err)
+	return result, stdout.Bytes(), stderr.Bytes(), err
+}
+
+// isSilentEOF reports whether the guest closed the connection having sent
+// NOTHING at all — the signature of a command that never reached a listener.
+func isSilentEOF(err error, stdout, stderr []byte) bool {
+	return errors.Is(err, io.EOF) && len(stdout) == 0 && len(stderr) == 0
+}
+
+// guestNeverAnswered reports whether this sandbox's guest has yet to answer
+// on the control channel.
+func (m *Manager) guestNeverAnswered(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sb, ok := m.sandboxes[id]
+	return ok && !sb.guestReady
+}
+
+// markGuestAnswered records that the guest served a command, which ends the
+// first-command retry window for this sandbox.
+func (m *Manager) markGuestAnswered(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if sb, ok := m.sandboxes[id]; ok {
+		sb.guestReady = true
 	}
-	return &model.ExecResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ExitCode: result.ExitCode}, nil
 }
 
 // dialGuestReady dials the guest control vsock, retrying on failure until
@@ -673,14 +750,32 @@ func (m *Manager) newID() (string, error) {
 	return id.String(), nil
 }
 
-// SandboxStateDir returns the per-sandbox state directory: a subdirectory
-// of the manager's work dir named for the sandbox ID. It holds every
-// per-sandbox host artifact (the COW overlay and the backend's sockets),
-// so teardown is one RemoveAll. It is exported as the single source of
-// this convention: a backend's guest dialer reconstructs a sandbox's
-// socket path from the same dir, so both must agree. Refs: FR-17.19
+// stateDirSegmentLen is how much of the sandbox ID names its state
+// directory. Refs: MGIT-61.15
+const stateDirSegmentLen = 8
+
+// SandboxStateDir returns the per-sandbox state directory: a subdirectory of
+// the manager's work dir named from the sandbox ID. It holds every
+// per-sandbox host artifact (the COW overlay and the backend's sockets), so
+// teardown is one RemoveAll. It is exported as the single source of this
+// convention: a backend's guest dialer reconstructs a sandbox's socket path
+// from the same dir, so both must agree. Refs: FR-17.19
+//
+// It uses the TAIL of the ID rather than the whole thing because unix sockets
+// are bound under this directory and sun_path caps the entire path at 104
+// bytes. macOS hands every process a 48-byte private TMPDIR, which is where
+// the daemon's runtime dir lands; a full 26-character ULID on top of that put
+// every socket path over the limit, so no VM could boot on a stock Mac at
+// all. The tail is used, not the head: a ULID's leading characters are its
+// timestamp and are identical for sandboxes created in the same millisecond,
+// while the tail is the random part. It remains a suffix of the ID, so a
+// directory found on disk still greps back to its sandbox.
 func SandboxStateDir(workDir, sandboxID string) string {
-	return filepath.Join(workDir, sandboxID)
+	seg := sandboxID
+	if len(seg) > stateDirSegmentLen {
+		seg = seg[len(seg)-stateDirSegmentLen:]
+	}
+	return filepath.Join(workDir, seg)
 }
 
 // createOverlay creates the per-sandbox writable disk as a SPARSE file

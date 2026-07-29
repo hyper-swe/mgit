@@ -243,15 +243,72 @@ func TestBootTokens_MergesTheEnvChannelWithTheCmdline(t *testing.T) {
 	}
 }
 
-func TestBootTokens_CmdlineWins_SoAGuestEnvCannotRedirectTheMount(t *testing.T) {
-	// The env channel is host-supplied like the cmdline, but the cmdline is
-	// the harder-to-reach one; if both carry a descriptor the cmdline must
-	// win, so a backend that has a real cmdline is never overridden.
+func TestBootTokens_WhenBothChannelsSpeak_TheEnvIsAuthoritative(t *testing.T) {
+	// This test previously asserted the OPPOSITE, on the reasoning that the
+	// cmdline is the harder channel to reach and should therefore win. That
+	// reasoning does not survive contact with libkrun: there the cmdline is
+	// not mgit's at all — libkrun composes it, and renders the workload
+	// environment into it in quoted form — so "cmdline wins" meant "the
+	// hypervisor's mangled echo of our own descriptor wins", which broke
+	// every boot (see TestBootTokens_LibkrunEchoOfTheEnvDoesNotWin).
+	//
+	// Nothing is weakened by the flip. Both channels are written by the host
+	// process that starts the VM, before PID 1 exists; neither is reachable
+	// by the guest, so there is no attacker for "cmdline wins" to defend
+	// against. What the ordering decides is which of two HOST-authored values
+	// applies, and mgit authors only the env one under libkrun.
 	merged := BootTokens(
-		"mgit.worktree=/real mgit.worktree_fs=ext4 mgit.worktree_src=/dev/vdc",
-		"mgit.worktree=/evil mgit.worktree_fs=virtiofs mgit.worktree_src=evil",
+		"mgit.worktree=/from-cmdline mgit.worktree_fs=ext4 mgit.worktree_src=/dev/vdc",
+		"mgit.worktree=/from-env mgit.worktree_fs=virtiofs mgit.worktree_src=work",
 	)
-	if got := ParseWorktreeMount(merged); got.Path != "/real" || got.Source != "/dev/vdc" {
-		t.Errorf("descriptor = %+v, want the cmdline's", got)
+	if got := ParseWorktreeMount(merged); got.Path != "/from-env" || got.Source != "work" {
+		t.Errorf("descriptor = %+v, want the env channel's", got)
+	}
+}
+
+// TestBootTokens_LibkrunEchoOfTheEnvDoesNotWin fixes a precedence rule that
+// was right in principle and wrong against the hypervisor we actually ship.
+//
+// Under libkrun there is no command line of ours — libkrunfw brings its own
+// kernel — so the descriptor travels in the guest ENVIRONMENT. libkrun then
+// renders that same environment onto /proc/cmdline in ITS syntax, wrapping
+// each variable in double quotes. Whitespace-splitting that rendering yields
+// a final token of mgit.worktree_src=work" — the tag with a quote welded on.
+// With the cmdline winning, the guest asked to mount a virtiofs tag that does
+// not exist and died at boot with a bare EINVAL.
+//
+// The cmdline below is verbatim from a real libkrun VM (MGIT-61.15).
+// Refs: FR-17.3, ADR-010
+func TestBootTokens_LibkrunEchoOfTheEnvDoesNotWin(t *testing.T) {
+	const env = "mgit.worktree=/w mgit.worktree_fs=virtiofs mgit.worktree_src=work"
+	const libkrunCmdline = `reboot=k panic=-1 panic_print=0 nomodule console=hvc0 ` +
+		`rootfstype=virtiofs rw quiet no-kvmapf init=/init.krun  KRUN_INIT=/sbin/mgit-guest ` +
+		`KRUN_WORKDIR=/w   "PATH=/bin:/sbin:/usr/bin:/usr/sbin" ` +
+		`"MGIT_GUEST_BOOT=mgit.worktree=/w mgit.worktree_fs=virtiofs mgit.worktree_src=work"  ` +
+		`-- "--notify-host-port" "0"`
+
+	got := ParseWorktreeMount(BootTokens(libkrunCmdline, env))
+
+	if got.Source != "work" {
+		t.Errorf("mount source = %q, want %q: the hypervisor's quoted echo of our own "+
+			"environment must not beat the environment itself", got.Source, "work")
+	}
+	if got.FSType != "virtiofs" || got.Path != "/w" {
+		t.Errorf("descriptor = %+v, want path /w on virtiofs", got)
+	}
+	if !got.Valid() {
+		t.Error("the descriptor must stay valid; an invalid one fails the boot closed")
+	}
+}
+
+// TestBootTokens_ARealCmdlineStillWins keeps the other backends honest: where
+// the host DOES own the command line (firecracker, vzf), that is the
+// authoritative channel and an env value must not shadow it.
+func TestBootTokens_ARealCmdlineStillWins(t *testing.T) {
+	got := ParseWorktreeMount(BootTokens(
+		"console=ttyS0 mgit.worktree=/w mgit.worktree_fs=ext4 mgit.worktree_src=/dev/vdc", ""))
+
+	if got.FSType != "ext4" || got.Source != "/dev/vdc" {
+		t.Errorf("descriptor = %+v, want the cmdline's ext4 /dev/vdc", got)
 	}
 }

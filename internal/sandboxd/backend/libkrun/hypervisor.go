@@ -11,7 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -461,7 +463,7 @@ func newChildCmd(exePath string, spec vmSpec, consolePath string) (*exec.Cmd, *o
 	// The child gets a MINIMAL environment: the daemon's env must not leak
 	// toward the guest, and the child needs nothing from it. (The guest's own
 	// env comes from the spec, independent of this.)
-	cmd.Env = childEnv(os.Getenv)
+	cmd.Env = childEnv(os.Getenv, libkrunfwDirs)
 
 	cleanup := func() {
 		_ = console.Close()
@@ -486,16 +488,79 @@ var libLoaderPathVars = []string{
 	"LD_LIBRARY_PATH",            // Linux
 }
 
-// childEnv builds the child's minimal environment. lookup is injected so the
-// forwarding rule is testable without mutating the process environment.
-func childEnv(lookup func(string) string) []string {
+// childEnv builds the child's minimal environment. lookup and findLibDirs are
+// injected so the rule is testable without mutating the process environment or
+// depending on what this machine happens to have installed.
+//
+// Forwarding alone was not enough. Nobody exports a loader path on a normal
+// install, and Homebrew's /opt/homebrew/lib is not on macOS's default fallback
+// search path — so every VM child on a stock Mac died with "Couldn't find or
+// load libkrunfw.5.dylib". Where the variable is unset, the directories that
+// actually hold libkrunfw are appended; where it is set, the operator's value
+// comes first, so a locally built libkrunfw is never silently overridden by a
+// system copy. Refs: MGIT-61.15, ADR-010
+func childEnv(lookup func(string) string, findLibDirs func() []string) []string {
 	env := []string{"PATH=/usr/bin:/bin"}
 	for _, key := range libLoaderPathVars {
-		if v := lookup(key); v != "" {
-			env = append(env, key+"="+v)
+		value := lookup(key)
+		if key == loaderPathVar() {
+			value = strings.Join(append(splitNonEmpty(value), findLibDirs()...), ":")
+		}
+		if value != "" {
+			env = append(env, key+"="+value)
 		}
 	}
 	return env
+}
+
+// splitNonEmpty splits a colon-separated search path, dropping empty entries.
+func splitNonEmpty(v string) []string {
+	if v == "" {
+		return nil
+	}
+	return strings.Split(v, ":")
+}
+
+// loaderPathVar is the dynamic loader's search-path variable for this
+// platform.
+func loaderPathVar() string {
+	if runtime.GOOS == "darwin" {
+		return "DYLD_FALLBACK_LIBRARY_PATH"
+	}
+	return "LD_LIBRARY_PATH"
+}
+
+// libkrunfwSearchDirs are the install prefixes checked for libkrunfw, in
+// preference order. They are the package managers' defaults: Homebrew on both
+// architectures, and the usual system prefixes on Linux where libkrun is
+// almost always built from source (no current Ubuntu release packages it).
+var libkrunfwSearchDirs = []string{
+	"/opt/homebrew/lib",
+	"/usr/local/lib",
+	"/usr/lib",
+	"/usr/lib64",
+	"/usr/lib/" + runtime.GOARCH + "-linux-gnu",
+}
+
+// libkrunfwDirs returns the standard install directories that actually
+// contain libkrunfw on this machine.
+func libkrunfwDirs() []string { return libkrunfwDirsIn(libkrunfwSearchDirs) }
+
+// libkrunfwDirsIn returns those of dirs holding a libkrunfw shared library.
+// Directories that do not have it are dropped rather than padding the
+// loader's search path with places it would only waste time in.
+func libkrunfwDirsIn(dirs []string) []string {
+	pattern := "libkrunfw.so*"
+	if runtime.GOOS == "darwin" {
+		pattern = "libkrunfw*.dylib"
+	}
+	var found []string
+	for _, dir := range dirs {
+		if hits, err := filepath.Glob(filepath.Join(dir, pattern)); err == nil && len(hits) > 0 {
+			found = append(found, dir)
+		}
+	}
+	return found
 }
 
 // execChild adapts a real *exec.Cmd to childProcess.

@@ -68,12 +68,21 @@ const EnvBootTokens = "MGIT_GUEST_BOOT"
 // BootTokens merges the two host->guest token transports into the single
 // string the parsers below consume.
 //
-// The ENV channel goes first and the cmdline LAST, which is the whole of the
-// precedence rule: the parsers below overwrite as they scan, so the last
-// occurrence of a key wins (matching Linux cmdline convention). A backend
-// that has a real command line therefore cannot be overridden by the env
-// channel — only backends with no cmdline of their own are affected by it.
-// Refs: FR-17.3, ADR-010
+// The cmdline goes FIRST and the env LAST: the parsers overwrite as they
+// scan, so the last occurrence of a key wins, which makes the env channel
+// authoritative wherever both carry the same key.
+//
+// That ordering is the opposite of what cmdline convention suggests, and it
+// is deliberate. libkrun renders the workload's whole ENVIRONMENT onto
+// /proc/cmdline in its own syntax, wrapping each variable in double quotes —
+// so a guest reading the cmdline sees a quote-mangled copy of the very
+// descriptor mgit put in the environment, ending in mgit.worktree_src=work"
+// rather than work. Letting the cmdline win meant the guest tried to mount a
+// virtiofs tag that did not exist and died at boot with a bare EINVAL.
+//
+// A backend that genuinely owns the cmdline (firecracker, vzf) is unaffected:
+// it sets no env channel, so there is nothing to override it.
+// Refs: FR-17.3, ADR-010, MGIT-61.15
 func BootTokens(cmdline, env string) string {
 	switch {
 	case strings.TrimSpace(cmdline) == "":
@@ -81,7 +90,7 @@ func BootTokens(cmdline, env string) string {
 	case strings.TrimSpace(env) == "":
 		return cmdline
 	}
-	return env + " " + cmdline
+	return cmdline + " " + env
 }
 
 // WorktreeMount is the host-supplied worktree delivery descriptor.

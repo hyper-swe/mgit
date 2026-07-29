@@ -127,17 +127,27 @@ func hashEntry(hasher io.Writer, root, path, rel string, d os.DirEntry) error {
 // assertSymlinkWithinTree rejects a symlink whose target resolves outside the
 // tree. Such a link would make the digest a claim about files the base does
 // not contain — pinning a moving target the host can change afterwards.
-// Refs: SEC-03, FR-17.17
+//
+// An ABSOLUTE target is guest-relative, not a host path: once the guest has
+// pivoted into this tree, /usr/bin/mawk names a file in the base. Every real
+// distro image relies on that (debian:12 ships dozens under
+// /etc/alternatives), so treating absolute targets as escapes would refuse
+// almost every usable base. If such a target names something the base lacks,
+// the guest gets ENOENT — a dangling link, not a containment failure.
+//
+// What genuinely escapes is a RELATIVE target that climbs out with .., because
+// that resolves the same way on both sides of the boundary — including on the
+// host, which is the side that must not be reachable.
+// Refs: SEC-03, FR-17.17, MGIT-61.15
 func assertSymlinkWithinTree(root, path, rel string) error {
 	target, err := os.Readlink(path)
 	if err != nil {
 		return fmt.Errorf("images: read symlink %s: %w", rel, err)
 	}
-	resolved := target
-	if !filepath.IsAbs(resolved) {
-		resolved = filepath.Join(filepath.Dir(path), target)
+	if filepath.IsAbs(target) {
+		return nil
 	}
-	resolved = filepath.Clean(resolved)
+	resolved := filepath.Clean(filepath.Join(filepath.Dir(path), target))
 	if resolved != root && !strings.HasPrefix(resolved, root+string(os.PathSeparator)) {
 		return fmt.Errorf(
 			"images: symlink %s -> %s escapes the guest base tree; a base cannot be "+

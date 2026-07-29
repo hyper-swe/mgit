@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -831,7 +832,7 @@ func TestChildEnv_ForwardsTheLoaderSearchPath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := childEnv(func(k string) string { return tt.set[k] })
+			got := childEnv(func(k string) string { return tt.set[k] }, func() []string { return nil })
 			if strings.Join(got, " ") != strings.Join(tt.want, " ") {
 				t.Errorf("childEnv = %v, want %v", got, tt.want)
 			}
@@ -865,5 +866,65 @@ func TestCreateVM_OpenMode_IsNowSupported(t *testing.T) {
 
 	if spawner.specs[0].NetworkMode != model.NetworkModeOpen {
 		t.Errorf("spec network mode = %q, want open", spawner.specs[0].NetworkMode)
+	}
+}
+
+// TestChildEnv_FindsLibkrunfwWhenNobodySetTheLoaderPath covers the case a
+// plain install is actually in: nobody exported anything.
+//
+// libkrun dlopens libkrunfw BY LEAF NAME, and Homebrew's /opt/homebrew/lib is
+// not on macOS's default fallback search path — so on a stock Mac the VM
+// child died with "Couldn't find or load libkrunfw.5.dylib" and no VM could
+// boot at all. Forwarding the variable was never enough; something has to
+// SET it. Refs: MGIT-61.15, ADR-010
+func TestChildEnv_FindsLibkrunfwWhenNobodySetTheLoaderPath(t *testing.T) {
+	unset := func(string) string { return "" }
+	found := func() []string { return []string{"/opt/homebrew/lib"} }
+
+	got := strings.Join(childEnv(unset, found), " ")
+
+	if !strings.Contains(got, loaderPathVar()+"=/opt/homebrew/lib") {
+		t.Errorf("childEnv = %q; with nothing exported it must still point the child "+
+			"at the directory holding libkrunfw", got)
+	}
+}
+
+// TestChildEnv_OperatorsPathComesFirst keeps an explicitly exported search
+// path authoritative: someone running a locally built libkrunfw must not have
+// a system copy silently preferred over it.
+func TestChildEnv_OperatorsPathComesFirst(t *testing.T) {
+	set := func(k string) string {
+		if k == loaderPathVar() {
+			return "/home/u/my-krunfw/lib"
+		}
+		return ""
+	}
+	found := func() []string { return []string{"/opt/homebrew/lib"} }
+
+	got := strings.Join(childEnv(set, found), " ")
+
+	want := loaderPathVar() + "=/home/u/my-krunfw/lib:/opt/homebrew/lib"
+	if !strings.Contains(got, want) {
+		t.Errorf("childEnv = %q, want it to contain %q", got, want)
+	}
+}
+
+// TestLibkrunfwDirs_OnlyReturnsDirectoriesThatHaveIt guards against padding
+// the loader path with directories that do not contain the library.
+func TestLibkrunfwDirs_OnlyReturnsDirectoriesThatHaveIt(t *testing.T) {
+	real := t.TempDir()
+	empty := t.TempDir()
+	name := "libkrunfw.so.5"
+	if runtime.GOOS == "darwin" {
+		name = "libkrunfw.5.dylib"
+	}
+	if err := os.WriteFile(filepath.Join(real, name), []byte("lib"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := libkrunfwDirsIn([]string{empty, real, "/no/such/dir"})
+
+	if len(got) != 1 || got[0] != real {
+		t.Errorf("libkrunfwDirsIn = %v, want only %q", got, real)
 	}
 }

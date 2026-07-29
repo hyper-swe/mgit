@@ -147,7 +147,9 @@ func controlVsockPorts() []uint32 {
 // the daemon listens. Per-VM and under the state dir, so the path itself is
 // the host-observed peer identity (SEC-10, same convention as firecracker).
 func vsockSocketPath(stateDir string, port uint32) string {
-	return filepath.Join(stateDir, fmt.Sprintf("vsock_%d.sock", port))
+	// Short by necessity, not by taste: every byte here comes out of the
+	// 104-byte sun_path budget the whole path shares. Refs: MGIT-61.15
+	return filepath.Join(stateDir, fmt.Sprintf("v%d.sock", port))
 }
 
 // guestBaseDirs are the mount points mgit-guest requires as PID 1.

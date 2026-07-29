@@ -550,6 +550,18 @@ func TestE2E_Libkrun_RealVM_Litmus1_HostSSHsIntoTheGuest(t *testing.T) {
 	cfg.VsockEnabled = false // this guest serves only the published port
 	cfg.PublishPorts = []int{publishedPort}
 
+	// The state dir must be derived the way production derives it, because
+	// the dialer below derives it again from the same (workDir, sandboxID).
+	// The directory name is a truncation of the ID — sockets bound under it
+	// share sun_path's 104-byte budget — so it cannot be inverted, and a test
+	// that reconstructed the ID from the directory would be testing a
+	// property production does not have.
+	workDir := shortTempDir(t)
+	cfg.StateDir = microvm.SandboxStateDir(workDir, cfg.SandboxID)
+	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+
 	_, console := bootVMUntil(t, cfg, "GUEST-RESULT SSHD = LISTENING")
 	t.Logf("guest console:\n%s", console)
 
@@ -557,8 +569,7 @@ func TestE2E_Libkrun_RealVM_Litmus1_HostSSHsIntoTheGuest(t *testing.T) {
 	// dialer the production port publisher uses.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	raw, err := NewPortDialer(filepath.Dir(cfg.StateDir)).
-		DialGuestPort(ctx, filepath.Base(cfg.StateDir), publishedPort)
+	raw, err := NewPortDialer(workDir).DialGuestPort(ctx, cfg.SandboxID, publishedPort)
 	if err != nil {
 		t.Fatalf("host could not reach the published guest port: %v", err)
 	}

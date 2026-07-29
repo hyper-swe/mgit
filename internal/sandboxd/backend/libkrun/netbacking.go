@@ -57,11 +57,11 @@ const (
 	// denySocketName backs "none" mode. Its host end is a bound, draining
 	// discard socket (discardSocket): the guest's NIC has a willing peer but
 	// no route anywhere. An unserved path would hang the VM, not close it.
-	denySocketName = "net-deny.sock"
+	denySocketName = "deny.sock"
 	// proxySocketName backs allowlist/open mode. Its host end is netGateway:
 	// a userspace TCP/IP stack that terminates the guest's connections and
 	// admits only what the egress authorizer allows.
-	proxySocketName = "net-proxy.sock"
+	proxySocketName = "prox.sock"
 )
 
 // netBacking is how one sandbox's virtio-net device is wired on the host.
