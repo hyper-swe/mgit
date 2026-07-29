@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-28T20:30:45Z",
+  "exported_at": "2026-07-29T05:06:55Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7068,6 +7068,30 @@
       "updated_at": "2026-07-28T19:03:53Z"
     },
     {
+      "id": "MGIT-62",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 62,
+      "project": "MGIT",
+      "title": "BUG: launching a sandbox for a never-squashed task fails \"task branch not found\" (first-use)",
+      "description": "Found during the libkrun lifecycle work (MGIT-61.8). provision.Provision seeds the sandbox from the task branch tip, but task branches are created by `squash`, not by `commit`. So launching a sandbox for a task that has never been squashed fails with \"branch not found: task branch task/\u003cID\u003e in shared store\". This is a FIRST-USE failure on the product's headline path — the natural order is work -\u003e commit -\u003e run in sandbox, and squash comes later. It was recorded only inside an MGIT-61.8 annotation; promoted to its own ticket because it is a user-facing defect independent of the libkrun work.",
+      "prompt": "REPRODUCE: create a worktree for a task, commit into it, then launch a sandbox for that task WITHOUT having run `mgit squash`. Expect: \"branch not found: task branch task/\u003cID\u003e in shared store\".\n\nROOT CAUSE (directional — confirm it yourself before fixing, per the standing RCA rule): provision.Provision seeds the sandbox's private store from the task branch tip, but task branches are created by the squash path (see the squash semantics decision: squash produces a task-isolated artifact on task/\u003cID\u003e), not by commit. A task that has been committed but never squashed therefore has no task/\u003cID\u003e ref to seed from.\n\nWHY IT MATTERS: this is the first thing a new user hits on the flagship flow. The documented order is `mgit work` -\u003e commit -\u003e `mgit run --sandbox`; squash is an integration step that comes later. Requiring a squash before a sandbox can launch inverts that. Per the owner's standing position, first-hour-user gaps are release-gating, not roadmap.\n\nDECIDE THE CORRECT SEMANTICS (do not just make the error go away):\n- Should provision seed from the task branch tip at all, or from the worktree's current HEAD / bound branch? Seeding from HEAD would match \"sandbox the work I have now\".\n- If the task branch genuinely is the right source, should launch CREATE it (at the current tip) when absent, or should commit maintain it?\n- Whatever is chosen must preserve SEC-03: the guest gets a PRIVATE store, never the host shared one, and the existing hostile-guest tests must still pass.\n\nTESTS: an e2e that does work -\u003e commit -\u003e launch sandbox with NO squash and succeeds; a regression test for the exact error string so it cannot silently return; confirm the squash-first path still works.\n\nRefs: MGIT-61.8 (where it was found), provision.Provision, the squash semantics decision, SEC-03.\nConstraints: no AI-attribution trailers; never put the Linux runner's LAN IP in the repo.",
+      "acceptance": "A sandbox launches for a task that has been committed but never squashed; the chosen seeding semantics are documented with their rationale; SEC-03 quarantine and the hostile-guest tests still pass; an e2e covers work -\u003e commit -\u003e sandbox with no squash; the squash-first path is unregressed.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "85f57de4507986c74118ced6e2819f89c19381ec80f5cf4d8721772c0a9fde82",
+      "created_at": "2026-07-29T04:05:59Z",
+      "updated_at": "2026-07-29T04:05:59Z"
+    },
+    {
       "id": "MGIT-7",
       "parent_id": "",
       "depth": 0,
@@ -9380,6 +9404,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 321,
-  "checksum": "431ae0d4c6a4a8d4d7f922382ae8dd8c761b72a2610db81d220c902a88174066"
+  "node_count": 322,
+  "checksum": "2760da0a91f78b0a0f04acd1e79319cfc9175357b96d51fc5979761e0b528d8e"
 }
