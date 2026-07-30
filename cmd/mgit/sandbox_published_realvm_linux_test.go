@@ -139,8 +139,8 @@ func TestSandboxPublished_RealVM_ReportsActualPublishedPort(t *testing.T) {
 	const taskID = "MGIT-PUB-1"
 	info, err := adapter.Launch(context.Background(), model.SandboxLaunchOptions{
 		TaskID: taskID, WorktreePath: wtPath, ImageRef: ref,
-		Network:      model.NetworkPolicy{Mode: model.NetworkModeNone},
-		CPUs:         1, MemoryMB: 256,
+		Network: model.NetworkPolicy{Mode: model.NetworkModeNone},
+		CPUs:    1, MemoryMB: 256,
 		PublishPorts: []model.PortPublish{{HostPort: 18080, GuestPort: 3000}},
 	})
 	require.NoError(t, err, "launch a real microVM with a published port")
