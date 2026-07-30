@@ -179,6 +179,8 @@ git clone https://github.com/hyper-swe/mgit.git && cd mgit && make build
 
 **Binary releases**: pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are on [GitHub Releases](https://github.com/hyper-swe/mgit/releases).
 
+> **macOS: a downloaded archive is quarantined and will not run until you clear it.** Any transfer that sets the `com.apple.quarantine` attribute (a browser download, AirDrop — not `scp` or a local build) causes Gatekeeper to kill the ad-hoc-signed binaries outright on Apple Silicon (`zsh: killed`, no dialog). Both `mgit` and `mgit-sandboxd` are affected. Fix: `xattr -d com.apple.quarantine mgit mgit-sandboxd`, verified to fully resolve it. Whether a Homebrew install has the same problem is not yet verified — see [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#release-archive).
+
 Everything above installs the `mgit` binary, which is all you need for the version-control workflow: init, worktrees, commit, log, squash, and landing by patch. The microVM sandbox (`mgit run`, `mgit work --sandbox`) is a separate, optional layer with its own prerequisites.
 
 ### Enable the sandbox

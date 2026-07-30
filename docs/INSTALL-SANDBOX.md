@@ -94,7 +94,9 @@ brew install hyper-swe/tap/mgit
 
 Installs `mgit` and, on Linux and macOS arm64, `mgit-sandboxd` alongside it,
 pulling in libkrun on macOS. The macOS bottle is signed with both the
-hypervisor (libkrun) and virtualization (vzf) entitlements.
+hypervisor (libkrun) and virtualization (vzf) entitlements. Whether a brew
+install is affected by the Gatekeeper quarantine issue below is not yet
+verified — see the note in "Release archive".
 
 ### Release archive
 
@@ -102,6 +104,29 @@ Download `mgit_<version>_<os>_<arch>.tar.gz` from the
 [releases](https://github.com/hyper-swe/mgit/releases) page. Linux and
 macOS-arm64 archives contain **both** binaries; extract them into one directory
 on your `PATH`. (Windows and Intel-macOS archives contain `mgit` only.)
+
+**macOS: a downloaded archive will not run until you clear quarantine.**
+Any transfer that sets the `com.apple.quarantine` extended attribute — a
+browser download, AirDrop, anything other than `scp` or a local build —
+triggers this. The binaries are signed ad-hoc (`codesign --sign -`, no
+notarization yet), and on Apple Silicon Gatekeeper kills a quarantined
+ad-hoc-signed binary outright: `spctl -a -vv ./mgit-sandboxd` reports
+`rejected`, and running either binary gets you `zsh: killed` with no dialog
+and no explanation. **Both `mgit` and `mgit-sandboxd` are affected.** The
+remedy is complete and verified — confirmed on a second Mac:
+
+```bash
+xattr -d com.apple.quarantine mgit mgit-sandboxd
+```
+
+After that, both binaries run normally; the binaries themselves are fine,
+this is purely a distribution/signing gap.
+
+> Whether a Homebrew install carries the same problem is **not yet
+> verified** — brew's own install step may or may not clear the quarantine
+> attribute it inherits from whatever fetched the bottle. Treat this as an
+> open question until confirmed one way or the other; update this note with
+> the answer rather than assuming either direction. Refs: MGIT-64
 
 ### go install
 

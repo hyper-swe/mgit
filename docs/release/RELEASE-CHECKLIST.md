@@ -74,6 +74,10 @@ validate **different VMMs by default** — this is not a symmetric check:
 ## Publish steps (owner)
 
 1. Ensure `main` is green and the CHANGELOG `[Unreleased]` section is ready.
+   Carry the macOS quarantine remedy (MGIT-64, docs/INSTALL-SANDBOX.md) into
+   `.goreleaser.yaml`'s `release.header` (the actual release-notes text) if
+   it isn't there yet — that file is out of scope for this checklist edit,
+   but the notes it produces are user-facing and easy to forget.
 2. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. This triggers
    `release.yml` (preflight → e2e gate → macOS release build+sign → GoReleaser).
 3. Reconcile the Homebrew tap so the formula installs **both** binaries — apply
@@ -100,7 +104,28 @@ validate **different VMMs by default** — this is not a symmetric check:
    (The vz kernel build needs docker; run `publish.sh` on a machine with it.)
 6. Post-publish smoke: `brew install hyper-swe/tap/mgit` on a clean machine and
    confirm `command -v mgit && command -v mgit-sandboxd`.
-7. **libkrun networking capability check** (clean machine, sandbox builds only).
+7. **Downloaded-archive smoke (macOS Gatekeeper quarantine, MGIT-64).** A
+   locally built or `scp`'d artifact does **not** reproduce this — a build
+   directory and an `scp` transfer never carry the `com.apple.quarantine`
+   extended attribute, so testing either one is "verified" wrongly, which is
+   exactly how this shipped broken once already. Only a real download
+   (browser, `gh release download`, AirDrop) or an explicitly set quarantine
+   attribute reproduces it. On a Mac that did **not** build this release:
+   ```
+   gh release download <tag> -p 'mgit_*_darwin_arm64.tar.gz' -D /tmp/mgit-smoke
+   cd /tmp/mgit-smoke && tar -xzf mgit_*_darwin_arm64.tar.gz
+   xattr -l mgit mgit-sandboxd        # must show com.apple.quarantine
+   ./mgit --version && ./mgit-sandboxd --version
+   ```
+   Both must run without the `xattr -d com.apple.quarantine mgit
+   mgit-sandboxd` remedy (docs/INSTALL-SANDBOX.md) — if either is killed, the
+   archive shipped broken again. While a machine without a source checkout is
+   already set up for this, also run the full sandbox first-run funnel from
+   the extracted archive (`mgit sandbox base from <image>` → `mgit work
+   --sandbox` → `mgit run`) — this is the same "installed archive, no Go
+   toolchain" precondition MGIT-65 requires, and it is cheap to cover both in
+   one pass rather than two.
+8. **libkrun networking capability check** (clean machine, sandbox builds only).
    libkrun gates its net-device API behind an opt-in build flag, and mgit
    requires an explicit NIC in every mode — without one libkrun falls back to
    TSI and the guest gets full host egress, so a libkrun built without
