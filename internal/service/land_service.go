@@ -253,7 +253,6 @@ func (s *LandService) Land(ctx context.Context, taskID string) (*LandSummary, er
 	// state, so nothing downstream can be told a different origin by the guest.
 	// Refs: SEC-01, SEC-05, MGIT-61.15
 	origin := sandboxOrigin{id: info.ID, baseDigest: info.ImageDigest}
-	sandboxID := origin.id
 
 	// Per-sandbox single-flight (F7): coalesce concurrent triggers for ONE
 	// sandbox into a single in-flight land. A hostile guest spamming its notify
@@ -263,7 +262,7 @@ func (s *LandService) Land(ctx context.Context, taskID string) (*LandSummary, er
 	// runs the land and any concurrent caller for the same sandbox shares its
 	// result instead of launching a second pull. Keyed by sandbox ID so it also
 	// covers the control-plane verb. Refs: MGIT-11.10.11, MGIT-11.13.5
-	v, err, _ := s.flight.Do(sandboxID, func() (interface{}, error) {
+	v, err, _ := s.flight.Do(origin.id, func() (interface{}, error) {
 		return s.landGuarded(ctx, tid, origin)
 	})
 	if err != nil {
@@ -279,13 +278,12 @@ func (s *LandService) Land(ctx context.Context, taskID string) (*LandSummary, er
 // followers do not, so concurrent triggers for one sandbox consume one slot.
 // Refs: MGIT-11.13.5
 func (s *LandService) landGuarded(ctx context.Context, tid model.TaskID, origin sandboxOrigin) (*LandSummary, error) {
-	sandboxID := origin.id
 	select {
 	case s.sem <- struct{}{}:
 		defer func() { <-s.sem }()
 	case <-ctx.Done():
 		s.logger.Warn("land rejected: concurrency cap reached",
-			"event", "land_rejected", "sandbox_id", sandboxID,
+			"event", "land_rejected", "sandbox_id", origin.id,
 			"max_concurrent_lands", s.limits.MaxConcurrentLands, "error", ctx.Err().Error())
 		return nil, fmt.Errorf("sandbox land: concurrency cap of %d reached: %w",
 			s.limits.MaxConcurrentLands, ctx.Err())
@@ -392,7 +390,7 @@ func (s *LandService) buildRequest(ctx context.Context, tid model.TaskID, origin
 
 // claimCommit derives one commit from its bytes and issues its host
 // attestation when require_sandbox is on.
-func (s *LandService) claimCommit(ctx context.Context, tid model.TaskID, sb sandboxOrigin,
+func (s *LandService) claimCommit(ctx context.Context, tid model.TaskID, origin sandboxOrigin,
 	pool []land.Object, pc land.PoolCommit, requireSandbox bool) (ClaimedCommit, error) {
 	parentFiles, err := s.parents.ParentFileSet(ctx, pc.ParentID)
 	if err != nil {
@@ -404,14 +402,23 @@ func (s *LandService) claimCommit(ctx context.Context, tid model.TaskID, sb sand
 	}
 	var att *model.Attestation
 	if requireSandbox {
+		if origin.baseDigest == "" {
+			// SandboxInfo.Validate rejects an empty ImageDigest, so this is a
+			// state the model says cannot happen. Log it rather than attest
+			// an empty environment claim in silence: if a resolver ever stops
+			// populating it, the suite stays green and every attestation
+			// quietly says nothing about where it came from. Refs: MGIT-61.15
+			s.logger.Warn("attesting a commit with no recorded guest base",
+				"event", "attest_no_base", "sandbox_id", origin.id, "task_id", tid.String())
+		}
 		// Sign only what the HOST established, never guest-asserted values
 		// (SEC-01): the hashes it computed from the bytes it read, plus the
 		// sandbox identity and base digest it recorded at launch.
 		att, err = s.attestor.Attest(ctx, model.AttestationSubject{
-			SandboxID:   sb.id,
+			SandboxID:   origin.id,
 			CommitHash:  c.CommitID,
 			ContentHash: c.ContentHash,
-			BaseDigest:  sb.baseDigest,
+			BaseDigest:  origin.baseDigest,
 		})
 		if err != nil {
 			return ClaimedCommit{}, fmt.Errorf("sandbox land: attest commit: %w", err)

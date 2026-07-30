@@ -328,3 +328,41 @@ func TestAttest_WithNoBaseDigest_StillVerifies(t *testing.T) {
 	assert.Empty(t, att.BaseDigest)
 	require.NoError(t, svc.Verify(context.Background(), att))
 }
+
+// TestVerify_ABaseDigestOutsideItsLayout_IsRefused closes the inject
+// direction of the downgrade, which is the dangerous one.
+//
+// Strip-the-field is caught by the bytes differing. Its mirror is not: take an
+// attestation signed under the ORIGINAL layout, where the payload ends before
+// any base digest, then set a base digest and leave the version alone. The
+// signed bytes never change, so the signature still verifies — and the record
+// now carries an environment claim no signature covers. A field that is
+// "signed" only when a version number says so must refuse to be present when
+// that version says it is not. Refs: MGIT-61.15, SEC-01, FR-17.38
+func TestVerify_ABaseDigestOutsideItsLayout_IsRefused(t *testing.T) {
+	svc, _, _ := newService(t)
+	legacy := &model.Attestation{
+		SandboxID: testSandbox, CommitHash: testCommit, ContentHash: testContent,
+		Alg: model.AlgEd25519, KeyID: svc.activeKey, IssuedAt: fixedClock()().UTC(),
+	}
+	legacy.HostSignature = ed25519.Sign(svc.priv, signingPayload(legacy))
+	require.NoError(t, svc.Verify(context.Background(), legacy), "precondition")
+
+	legacy.BaseDigest = testBaseDigest // signed by nothing
+
+	require.Error(t, svc.Verify(context.Background(), legacy),
+		"a base digest outside the layout that covers it must never be accepted")
+}
+
+// TestVerify_AnUnknownPayloadLayout_IsRefused keeps the vocabulary closed. An
+// unrecognized version means the verifier cannot know which bytes were signed,
+// and guessing is how a signature ends up covering less than it appears to.
+func TestVerify_AnUnknownPayloadLayout_IsRefused(t *testing.T) {
+	svc, _, _ := newService(t)
+	att, err := svc.Attest(context.Background(), testSubject())
+	require.NoError(t, err)
+
+	att.PayloadVersion = 99
+
+	require.Error(t, svc.Verify(context.Background(), att))
+}

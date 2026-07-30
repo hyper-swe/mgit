@@ -5,8 +5,16 @@
 // and cannot forge one. Verification binds every field via a
 // byte-stable, length-prefixed signing payload (IDD §3.3) and selects
 // the public key by key_id so attestations survive key rotation
-// (FR-17.38). Host-side only; pure Go (stdlib crypto). Refs: FR-17.6,
-// FR-17.38, SEC-01, MGIT-11.8.1
+// (FR-17.38).
+//
+// The payload is VERSIONED, and each attestation records which layout it was
+// signed over, because the set of facts a host attests grows: the guest base
+// digest (MGIT-61.15) was added after the original five fields. New fields are
+// appended to exactly the earlier bytes, so an attestation issued before a
+// field existed still hashes to what it was signed over and keeps verifying.
+//
+// Host-side only; pure Go (stdlib crypto). Refs: FR-17.6, FR-17.38, SEC-01,
+// MGIT-11.8.1, MGIT-61.15
 package attest
 
 import (
@@ -148,7 +156,7 @@ func (s *Service) Attest(_ context.Context, subj model.AttestationSubject) (*mod
 		// includes the base digest, whether or not one was available: the
 		// version describes the LAYOUT, not the contents, so a reader never
 		// has to guess which shape produced the signature.
-		PayloadVersion: attestPayloadWithBase,
+		PayloadVersion: model.AttestPayloadWithBase,
 	}
 	att.HostSignature = ed25519.Sign(s.priv, signingPayload(att))
 	// Validate the fully-formed attestation; a malformed (sandboxID,
@@ -185,15 +193,6 @@ func (s *Service) Verify(_ context.Context, att *model.Attestation) error {
 	return nil
 }
 
-// attestPayloadWithBase is the payload layout that binds the guest base
-// digest. Layout 0 (absent) is the original: sandbox_id, commit_hash,
-// content_hash, key_id, issued_at — and nothing else, forever.
-//
-// The version is APPENDED to the original bytes rather than prefixed to them,
-// so an attestation issued before this existed still hashes to exactly what
-// it was signed over. Refs: MGIT-61.15, FR-17.38
-const attestPayloadWithBase = 2
-
 // signingPayload builds the byte-stable, length-prefixed canonical
 // signing input (IDD §3.3): sandbox_id, commit_hash, content_hash,
 // key_id (UTF-8), then issued_at as the raw 8 big-endian bytes of
@@ -201,11 +200,10 @@ const attestPayloadWithBase = 2
 // out field-boundary collisions; binding key_id rules out key/alg
 // confusion.
 //
-// From attestPayloadWithBase on, the version number and the base digest
-// follow. The version is inside the signed bytes, so an attestation cannot be
-// downgraded by stripping the digest and the marker together: the signature
-// verifies against exactly one byte string, and the older layout is a
-// different one. Refs: FR-17.38, MGIT-61.15
+// From AttestPayloadWithBase on, the version number and the base digest
+// follow. An attestation cannot be downgraded by stripping the digest and the
+// marker together: the signature verifies against exactly one byte string,
+// and the older layout is a different (shorter) one. Refs: FR-17.38, MGIT-61.15
 func signingPayload(a *model.Attestation) []byte {
 	var buf bytes.Buffer
 	for _, field := range []string{a.SandboxID, a.CommitHash, a.ContentHash, a.KeyID} {
@@ -215,7 +213,14 @@ func signingPayload(a *model.Attestation) []byte {
 	binary.BigEndian.PutUint64(nano[:], uint64(a.IssuedAt.UTC().UnixNano())) //nolint:gosec // signed/unsigned bit pattern is stable and only used as signed input
 	buf.Write(nano[:])
 
-	if a.PayloadVersion >= attestPayloadWithBase {
+	// Exact layout, never "at least": a future layout that reorders or drops a
+	// field would otherwise be mis-verified as this one. The vocabulary is
+	// closed by Attestation.Validate, which runs before this.
+	if a.PayloadVersion == model.AttestPayloadWithBase {
+		// The version number goes INTO the signed bytes so the payload is
+		// self-describing — not because downgrade needs it: appending any
+		// field already makes the byte string differ from the older layout's,
+		// which is what a stripped-field forgery runs into.
 		var version [8]byte
 		binary.BigEndian.PutUint64(version[:], uint64(a.PayloadVersion)) //nolint:gosec // a small non-negative constant
 		buf.Write(version[:])

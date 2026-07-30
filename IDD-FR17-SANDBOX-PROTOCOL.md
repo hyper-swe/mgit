@@ -102,18 +102,27 @@ contentHash)` triples it observed crossing that sandbox's channel.
 
 ```json
 {
-  "sandbox_id":    "<ULID>",
-  "commit_hash":   "<40 lowercase hex, git SHA-1>",
-  "content_hash":  "<64 lowercase hex, mgit SHA-256 (ADR-002)>",
-  "alg":           "ed25519",
-  "key_id":        "<64 hex: SHA-256 fingerprint of the host public key>",
-  "host_signature":"<base64 std (RFC 4648 §4, padded) of the 64-byte Ed25519 signature>",
-  "issued_at":     "<RFC3339Nano UTC; host receive-time, advisory display only>"
+  "sandbox_id":     "<ULID>",
+  "commit_hash":    "<40 lowercase hex, git SHA-1>",
+  "content_hash":   "<64 lowercase hex, mgit SHA-256 (ADR-002)>",
+  "base_digest":    "<sha256:<64 hex> — the guest base the sandbox booted; omitted when the host recorded none>",
+  "payload_version":"<integer signing-payload layout; omitted means 1>",
+  "alg":            "ed25519",
+  "key_id":         "<64 hex: SHA-256 fingerprint of the host public key>",
+  "host_signature": "<base64 std (RFC 4648 §4, padded) of the 64-byte Ed25519 signature>",
+  "issued_at":      "<RFC3339Nano UTC; host receive-time, advisory display only>"
 }
 ```
 
 `issued_at` carries the host receive-time (SEC-11/FR-17.28). The JSON
 string form is for transport/display; it is **not** the bytes signed.
+
+`base_digest` names the environment that produced the commit (MGIT-61.15).
+It is host-established — read from the launch record, never guest-asserted —
+and it is signed, as `payload_version` 2 below. `payload_version` selects
+which byte layout §3.3 produced, because the set of facts a host attests
+grows over time and records signed under an earlier layout must keep
+verifying.
 
 ### 3.3 Canonical signing payload (byte-stable)
 
@@ -124,11 +133,25 @@ byte-stable, per the MGIT-11.2 security pass). Each field is encoded as
 an 8-byte big-endian length followed by the field bytes, in this exact
 order:
 
+**Layout 1** (`payload_version` absent or `1`) — the original, and what every
+attestation issued before MGIT-61.15 was signed over:
+
 1. `sandbox_id`            (UTF-8)
 2. `commit_hash`           (UTF-8, the 40-hex string)
 3. `content_hash`          (UTF-8, the 64-hex string)
 4. `key_id`                (UTF-8, the 64-hex fingerprint)
 5. `issued_at_unix_nano`   (the 8 raw big-endian bytes of `IssuedAt.UTC().UnixNano()`, an int64 — **not** a decimal string, **not** the RFC3339 form)
+
+**Layout 2** (`payload_version` = `2`) — layout 1's bytes **exactly**, then:
+
+6. `payload_version`       (the 8 raw big-endian bytes of the version, an int64 — so the payload is self-describing)
+7. `base_digest`           (UTF-8, length-prefixed; a zero length when the host recorded no base)
+
+A later layout MUST likewise append to the previous layout's bytes and MUST
+NOT reorder or remove a field, so that a record signed under any earlier
+layout still hashes to precisely what was signed. A verifier MUST select the
+layout by EXACT version match, never "at least": treating a future layout as
+this one would verify a signature over bytes it does not describe.
 
 The host signs this payload with Ed25519. Binding `key_id` into the
 payload rules out algorithm/key confusion across rotations. Length
@@ -137,7 +160,11 @@ prefixing rules out field-boundary collisions.
 ### 3.4 Verification
 
 `Verify` MUST, in order:
-1. `Attestation.Validate()` (structural shape).
+1. `Attestation.Validate()` (structural shape). This MUST reject an
+   unrecognized `payload_version`, and MUST reject a `base_digest` present
+   under a layout that does not sign it — otherwise a record signed under
+   layout 1 can be given an environment claim that no signature covers, the
+   mirror image of stripping a signed field.
 2. Reject any `alg` other than `ed25519` (no algorithm agility in v1).
 3. Resolve the public key for `key_id`. The independent verifier
    (FR-17.32) obtains it from the SANDBOX-IMAGES.md register, **not** from

@@ -400,8 +400,12 @@ type Attestation struct {
 	BaseDigest string `json:"base_digest,omitempty"`
 	// PayloadVersion selects which canonical signing payload this
 	// attestation was signed over. Absent/0 means the original layout, which
-	// had no base digest; those records must keep verifying forever, so the
-	// payload cannot simply grow a field. Refs: MGIT-61.15, FR-17.38
+	// had no base digest.
+	//
+	// It is recorded rather than inferred from which fields are populated, so
+	// verification is a single deterministic computation instead of trying
+	// each layout in turn — and so the next field to be attested has an
+	// unambiguous place to announce itself. Refs: MGIT-61.15, FR-17.38
 	PayloadVersion int       `json:"payload_version,omitempty"`
 	CommitHash     string    `json:"commit_hash"`    // git SHA-1 object ID (40 hex)
 	ContentHash    string    `json:"content_hash"`   // mgit SHA-256, 64 hex (ADR-002)
@@ -445,8 +449,46 @@ func (a Attestation) Validate() error {
 	if len(a.HostSignature) == 0 {
 		return &ValidationError{Field: "host_signature", Message: "must not be empty"}
 	}
+	if err := a.validatePayloadLayout(); err != nil {
+		return err
+	}
 	if a.IssuedAt.IsZero() {
 		return &ValidationError{Field: "issued_at", Message: "must carry the host receive-time"}
+	}
+	return nil
+}
+
+// AttestPayloadOriginal and AttestPayloadWithBase are the canonical signing
+// payload layouts. The vocabulary is CLOSED: an unrecognized version means a
+// verifier cannot know which bytes were signed, and guessing is how a
+// signature ends up covering less than it appears to. Refs: FR-17.38, MGIT-61.15
+const (
+	// AttestPayloadOriginal is sandbox_id, commit_hash, content_hash, key_id,
+	// issued_at. It is what an absent PayloadVersion means, because records
+	// using it predate the field.
+	AttestPayloadOriginal = 1
+	// AttestPayloadWithBase appends the layout version and the guest base
+	// digest to those bytes.
+	AttestPayloadWithBase = 2
+)
+
+// validatePayloadLayout rejects a layout this build cannot verify, and — the
+// part that matters — a base digest carried OUTSIDE the layout that signs it.
+//
+// Without the second check the strip-the-field forgery has a mirror that the
+// first does not catch: take an attestation signed under the original layout,
+// whose payload ends before any base digest, and simply ADD one. The signed
+// bytes are unchanged, so the signature still verifies, and the record now
+// makes an environment claim nothing covers. Refs: SEC-01, MGIT-61.15
+func (a Attestation) validatePayloadLayout() error {
+	switch a.PayloadVersion {
+	case 0, AttestPayloadOriginal:
+		if a.BaseDigest != "" {
+			return &ValidationError{Field: "base_digest", Message: "present under a payload layout that does not sign it"}
+		}
+	case AttestPayloadWithBase:
+	default:
+		return &ValidationError{Field: "payload_version", Message: "unknown signing payload layout"}
 	}
 	return nil
 }
