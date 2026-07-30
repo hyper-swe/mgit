@@ -278,11 +278,19 @@ func TestKVM_NewPlatformHypervisor_NoKVMDevice(t *testing.T) {
 
 // TestKVM_CreateVM_InvalidConfigSurfaces covers the validation branch:
 // a config the VMM would reject fails at Validate, before any process is
-// spawned. Constructs the hypervisor directly so it needs no /dev/kvm.
+// spawned. Constructs the hypervisor directly so it needs no /dev/kvm --
+// but it does need a StateDir: CreateVM's own state-dir guard clause
+// (FR-17.19, "firecracker needs a sandbox state dir for its per-VM
+// sockets") runs BEFORE Validate, so an empty StateDir short-circuits
+// there instead of reaching the branch this test targets. That guard
+// fired on every platform (proven without /dev/kvm or the firecracker
+// binary present at all), not just a KVM-less CI runner -- the fixture
+// was missing a required field, this was never an environment gap.
 func TestKVM_CreateVM_InvalidConfigSurfaces(t *testing.T) {
 	hv := &fcHypervisor{bin: "firecracker"}
 	_, err := hv.CreateVM(microvm.VMConfig{
 		CPUs: 1, MemoryMB: 256,
+		StateDir:    t.TempDir(),
 		KernelPath:  filepath.Join(t.TempDir(), "absent-kernel"),
 		RootfsPath:  filepath.Join(t.TempDir(), "absent-rootfs"),
 		OverlayPath: filepath.Join(t.TempDir(), "overlay.img"),
