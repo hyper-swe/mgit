@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -31,6 +32,15 @@ const sandboxIndexDB = "sandbox-index.db"
 // store. Handlers go through this service, never the manager directly
 // (architecture rule). Refs: FR-17.13, FR-17.18, MGIT-11.10.8
 func buildSandboxService(manager model.SandboxManager, hostRoot string, clock func() time.Time, logger *slog.Logger) (*service.SandboxService, *index.Store, *policy.Store, func() error, error) {
+	// The daemon owns this directory — its audit index, policy and trust root
+	// all live in it — so it creates it rather than requiring some earlier
+	// command to have done so. Before this, the first `mgit sandbox …` in a
+	// fresh repo died with a SQLite "unable to open database file", which the
+	// CLI reported as an unexplained activation failure. 0700: it holds the
+	// audit trail and signing keys. Refs: FR-17.13, MGIT-61.15
+	if err := os.MkdirAll(hostRoot, 0o700); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("create sandbox host root %s: %w", hostRoot, err)
+	}
 	events, err := index.New(filepath.Join(hostRoot, sandboxIndexDB), clock)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("open sandbox audit index: %w", err)

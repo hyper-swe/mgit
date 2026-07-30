@@ -1,0 +1,112 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// A DAEMON THAT DIES MUST SAY WHY.
+//
+// Activation failure reached the user as
+//
+//	sandbox daemon unavailable …: /var/folders/…/d.sock not dialable after spawn
+//
+// for EVERY cause: a missing libkrun, a directory that did not exist, a
+// corrupt database. The daemon printed a perfectly good explanation, but it
+// went to a detached session nobody was reading. On a Mac without libkrun —
+// the single most likely first-run failure — the real cause is a dyld error
+// the process emits before main() even runs, so no amount of in-daemon
+// capability checking can surface it. It has to be captured and read back
+// here. Refs: MGIT-61.14, MGIT-61.15, NFR-17.6
+
+func TestDaemonFailureDetail_NamesTheMissingLibraryAndHowToGetIt(t *testing.T) {
+	tests := []struct {
+		name string
+		log  string
+		want []string
+	}{
+		{
+			// Verbatim from a real archive on a Mac with libkrun absent.
+			name: "macos_dyld",
+			log: "dyld[95534]: Library not loaded: /opt/homebrew/opt/libkrun/lib/libkrun.1.dylib\n" +
+				"  Referenced from: <1D9BC4F8> /usr/local/bin/mgit-sandboxd\n" +
+				"  Reason: tried: '/opt/homebrew/opt/libkrun/lib/libkrun.1.dylib' (no such file)\n",
+			want: []string{"libkrun", "brew install", "INSTALL-SANDBOX"},
+		},
+		{
+			name: "linux_ld_so",
+			log: "mgit-sandboxd: error while loading shared libraries: libkrun.so.1: " +
+				"cannot open shared object file: No such file or directory\n",
+			want: []string{"libkrun", "INSTALL-SANDBOX"},
+		},
+		{
+			// Some other library entirely: still worth naming, but we must
+			// not claim brew installs it — we do not know that it does.
+			name: "an_unrelated_library",
+			log: "dyld[1]: Library not loaded: /usr/local/lib/libsomething.3.dylib\n" +
+				"  Reason: tried: '/usr/local/lib/libsomething.3.dylib' (no such file)\n",
+			want: []string{"libsomething.3.dylib", "INSTALL-SANDBOX"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := daemonFailureDetail(writeDaemonLog(t, tt.log))
+			for _, want := range tt.want {
+				assert.Contains(t, got, want, "the remedy must be actionable, got %q", got)
+			}
+			if tt.name == "an_unrelated_library" {
+				assert.NotContains(t, got, "brew",
+					"we do not know brew installs this one, so we must not say it does")
+			}
+		})
+	}
+}
+
+func TestDaemonFailureDetail_ReportsAnyOtherCauseVerbatim(t *testing.T) {
+	// Not every failure has a remedy we can name. What every failure has is
+	// the daemon's own message, which beats "not dialable" every time.
+	got := daemonFailureDetail(writeDaemonLog(t,
+		`{"level":"ERROR","msg":"sandbox service wiring failed",`+
+			`"error":"open sandbox audit index: unable to open database file"}`+"\n"))
+
+	assert.Contains(t, got, "sandbox service wiring failed")
+	assert.NotContains(t, got, "brew install",
+		"a remedy must not be invented for a cause it does not fit")
+}
+
+func TestDaemonFailureDetail_SaysNothingWhenItKnowsNothing(t *testing.T) {
+	// A daemon that failed before writing anything, or a log we cannot read,
+	// must add no noise to the error the user already has.
+	assert.Empty(t, daemonFailureDetail(filepath.Join(t.TempDir(), "absent.log")))
+	assert.Empty(t, daemonFailureDetail(writeDaemonLog(t, "   \n\n")))
+}
+
+func TestDaemonFailureDetail_KeepsTheTailOfANoisyLog(t *testing.T) {
+	// The daemon logs its startup progress before failing. The failure is at
+	// the END, and an error message is not the place for the whole file.
+	var b strings.Builder
+	for i := range 200 {
+		b.WriteString("noise line ")
+		b.WriteString(string(rune('a' + i%26)))
+		b.WriteString("\n")
+	}
+	b.WriteString("the actual cause\n")
+
+	got := daemonFailureDetail(writeDaemonLog(t, b.String()))
+
+	assert.Contains(t, got, "the actual cause")
+	assert.Less(t, len(got), 2000, "the detail must stay readable, got %d bytes", len(got))
+}
+
+// writeDaemonLog writes a daemon log fixture and returns its path.
+func writeDaemonLog(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
+}

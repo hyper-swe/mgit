@@ -17,9 +17,10 @@ import (
 // sandboxPaths locates the daemon socket plus the host config root and
 // sandbox-local work dir for one repository.
 type sandboxPaths struct {
-	socket   string // unix socket the daemon serves (kept short for sun_path)
-	hostRoot string // durable host config: images.lock, trust root, policy, audit
-	workDir  string // ephemeral sandbox-local state; never a worktree
+	socket    string // unix socket the daemon serves (kept short for sun_path)
+	daemonLog string // capture of the spawned daemon's output, for diagnosing a failed activation
+	hostRoot  string // durable host config: images.lock, trust root, policy, audit
+	workDir   string // ephemeral sandbox-local state; never a worktree
 }
 
 // resolveSandboxPaths derives the per-repo sandbox paths. Durable host
@@ -39,8 +40,9 @@ func resolveSandboxPaths(repoRoot string) (sandboxPaths, error) {
 		return sandboxPaths{}, fmt.Errorf("create sandbox runtime dir: %w", err)
 	}
 	return sandboxPaths{
-		socket:   filepath.Join(runtimeDir, "d.sock"),
-		hostRoot: filepath.Join(repoRoot, ".mgit", "sandbox"),
+		socket:    filepath.Join(runtimeDir, "d.sock"),
+		daemonLog: filepath.Join(runtimeDir, daemonLogName),
+		hostRoot:  filepath.Join(repoRoot, ".mgit", "sandbox"),
 		// "w", not "work": the per-sandbox socket paths under this directory
 		// share a 104-byte sun_path budget with a 48-byte macOS TMPDIR.
 		// Refs: MGIT-61.15
@@ -129,11 +131,23 @@ func productionSandboxConnect(ctx context.Context) (sandboxClient, error) {
 		//nolint:gosec,noctx // fixed binary + derived owner-only paths, no shell; long-lived daemon must not die with the request ctx
 		c := exec.Command(bin, "--socket", p.socket, "--host-root", p.hostRoot,
 			"--repo-root", repoRoot, "--work-dir", p.workDir)
+		// Capture what the daemon says. It is detached into its own session,
+		// so without this its explanation for dying — including the dynamic
+		// loader's, which is emitted before the daemon's own code runs — goes
+		// nowhere and every failure looks identical. Truncated per attempt so
+		// the tail always describes THIS spawn. Refs: MGIT-61.14, MGIT-61.15
+		if logFile, lerr := os.OpenFile(p.daemonLog, //nolint:gosec // a path this process derived, owner-only dir
+			os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600); lerr == nil {
+			defer func() { _ = logFile.Close() }()
+			c.Stdout, c.Stderr = logFile, logFile
+		}
 		configureDaemonCmd(c) // detach into its own session (platform-guarded)
 		return c.Start()
 	}
 	if err := sandboxd.EnsureRunning(ctx, p.socket, spawn); err != nil {
-		return nil, fmt.Errorf("sandbox daemon unavailable (no fallback — task work runs only inside the sandbox): %w", err)
+		return nil, fmt.Errorf(
+			"sandbox daemon unavailable (no fallback — task work runs only inside the sandbox): %w%s",
+			err, daemonFailureDetail(p.daemonLog))
 	}
 	return sandboxd.NewClient(p.socket, func() time.Time { return time.Now().UTC() }), nil
 }
