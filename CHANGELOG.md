@@ -26,6 +26,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Provenance is signed, not just recorded.** The resolved OCI reference — registry, repository, tag, and the digest the registry actually served — is stored on the lock entry *and* covered by its Ed25519 signature, so an entry cannot be edited to claim it came from `debian:12` while booting something else. The tree digest remains what boot verifies, and it is re-verified on every resolve.
 - **Refusals and warnings that fire at compose time rather than hours later**: an image built for another architecture is refused naming both (libkrun is hardware virtualization — there is no emulation to cross architectures with); a scratch/distroless image is refused by name (no shell means no agent command can run); a musl base warns, because a glibc-linked tool inside one dies with "no such file or directory" naming its dynamic *loader*.
 
+### Added — the guest base is now part of what a commit's attestation says
+
+- **A commit's host attestation now names the guest base the sandbox booted**, signed alongside the commit and content hashes it already covered. The host previously attested *what* was produced and *where*, but said nothing about the userspace it was produced in — which matters now that a base is whatever the user pulled from a registry. The digest comes from the launch record the host itself wrote, never from anything the guest can influence (SEC-01). (MGIT-61.15)
+- **Attestations signed before this field existed still verify.** The signing payload records which layout it was signed over, and the new fields are appended to exactly the original bytes, so an older record hashes to precisely what was signed. Stripping the digest and the version marker together yields the older layout — a different byte string from the one signed — so a downgrade fails the signature rather than passing silently.
+
+### Fixed — first-run failures on a clean macOS install
+
+Found by installing a real release archive into a pristine directory with a scrubbed environment: no Homebrew on `PATH`, no `DYLD_*`, no `PKG_CONFIG_PATH`. (MGIT-61.14, MGIT-61.15)
+
+- **The daemon could not start in a fresh repo.** `.mgit/sandbox` is where its audit index, policy and trust root live, but nothing created it, so any `mgit sandbox …` command before `mgit sandbox image init` died with SQLite's `unable to open database file: out of memory (14)`. The index store now creates the directory it lives in, as every other store in the repo already did.
+- **Every activation failure looked the same** — `d.sock not dialable after spawn` — whether the cause was a missing libkrun, a missing directory or a corrupt database. The daemon's output is now captured beside its socket and reported with the error, structured records rendered as plain sentences rather than raw JSON.
+- **A Mac without libkrun now gets an actionable message.** That failure is invisible from inside the daemon — the dynamic loader rejects the binary before `main()` runs, so no in-process capability check can fire — and it is the most likely first-run failure there is. The user now sees the loader's error *and* `brew tap libkrun/krun && brew install libkrun`.
+
 ### Fixed — five defects that stopped any real base from booting on macOS
 
 Found by composing a base from `debian:12` and running a command in it; none were visible to a green test suite. (MGIT-61.15)
