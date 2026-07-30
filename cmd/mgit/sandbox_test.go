@@ -330,6 +330,16 @@ func TestSandboxPublished_ListsPorts(t *testing.T) {
 // TestSandboxCmd_JSONOutput verifies --json structured output for list and
 // status.
 func TestSandboxCmd_JSONOutput(t *testing.T) {
+	t.Run("launch", func(t *testing.T) {
+		fc := &fakeSandboxClient{}
+		out, err := runSandbox(okConnect(fc), "launch",
+			"--task", "MGIT-4", "--worktree", "/w", "--image", "img@sha256:"+strings.Repeat("a", 64),
+			"--json")
+		require.NoError(t, err)
+		var got model.SandboxInfo
+		require.NoError(t, json.Unmarshal([]byte(out), &got))
+		assert.Equal(t, "MGIT-4", got.TaskID, "launch --json was previously untested; status/list --json covered the same writeSandbox path but not this call site")
+	})
 	t.Run("list", func(t *testing.T) {
 		fc := &fakeSandboxClient{listResult: []model.SandboxInfo{{ID: "01JSB", TaskID: "MGIT-1", State: model.StateRunning}}}
 		out, err := runSandbox(okConnect(fc), "list", "--json")
