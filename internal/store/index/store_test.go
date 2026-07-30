@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -191,4 +192,36 @@ func TestStore_NilClock(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "index.db")
 	_, err := New(dbPath, nil)
 	assert.Error(t, err, "New with nil clock should fail")
+}
+
+// TestNew_CreatesTheDatabasesParentDirectory makes this store behave like
+// every other store in the repo.
+//
+// policy.Store, the trust root, the attestation key and the provision store
+// all create the directory they live in; this one did not, so a caller
+// opening it under a fresh root got SQLite's "unable to open database file:
+// out of memory (14)" — a message that names neither the path nor the
+// problem. The daemon hit exactly that on the first `mgit sandbox …` in a new
+// repo. Fixing it here fixes the class, not the one caller.
+// Refs: MGIT-61.15, FR-17.13
+func TestNew_CreatesTheDatabasesParentDirectory(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "fresh", "nested", "index.db")
+
+	store, err := New(dbPath, func() time.Time { return time.Unix(0, 0).UTC() })
+
+	require.NoError(t, err, "the store must stand up the directory it lives in")
+	t.Cleanup(func() { _ = store.Close() })
+	require.FileExists(t, dbPath)
+}
+
+// TestNew_ParentThatCannotBeCreated_Fails keeps the failure honest: a path
+// blocked by a regular file is still an error, not a silently different
+// database.
+func TestNew_ParentThatCannotBeCreated_Fails(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
+
+	_, err := New(filepath.Join(blocker, "index.db"), func() time.Time { return time.Unix(0, 0).UTC() })
+
+	require.Error(t, err)
 }

@@ -26,9 +26,10 @@ import (
 
 func TestDaemonFailureDetail_NamesTheMissingLibraryAndHowToGetIt(t *testing.T) {
 	tests := []struct {
-		name string
-		log  string
-		want []string
+		name    string
+		log     string
+		want    []string
+		notWant []string
 	}{
 		{
 			// Verbatim from a real archive on a Mac with libkrun absent.
@@ -50,7 +51,8 @@ func TestDaemonFailureDetail_NamesTheMissingLibraryAndHowToGetIt(t *testing.T) {
 			name: "an_unrelated_library",
 			log: "dyld[1]: Library not loaded: /usr/local/lib/libsomething.3.dylib\n" +
 				"  Reason: tried: '/usr/local/lib/libsomething.3.dylib' (no such file)\n",
-			want: []string{"libsomething.3.dylib", "INSTALL-SANDBOX"},
+			want:    []string{"libsomething.3.dylib", "INSTALL-SANDBOX"},
+			notWant: []string{"brew"},
 		},
 	}
 	for _, tt := range tests {
@@ -59,24 +61,38 @@ func TestDaemonFailureDetail_NamesTheMissingLibraryAndHowToGetIt(t *testing.T) {
 			for _, want := range tt.want {
 				assert.Contains(t, got, want, "the remedy must be actionable, got %q", got)
 			}
-			if tt.name == "an_unrelated_library" {
-				assert.NotContains(t, got, "brew",
-					"we do not know brew installs this one, so we must not say it does")
+			for _, notWant := range tt.notWant {
+				assert.NotContains(t, got, notWant,
+					"a remedy must not be invented for a cause it does not fit")
 			}
 		})
 	}
 }
 
-func TestDaemonFailureDetail_ReportsAnyOtherCauseVerbatim(t *testing.T) {
+func TestDaemonFailureDetail_ReadsTheDaemonsOwnLogFormat(t *testing.T) {
 	// Not every failure has a remedy we can name. What every failure has is
-	// the daemon's own message, which beats "not dialable" every time.
+	// the daemon's own message — but the daemon logs JSON, and handing a user
+	// a raw slog record to read is barely better than not telling them.
 	got := daemonFailureDetail(writeDaemonLog(t,
-		`{"level":"ERROR","msg":"sandbox service wiring failed",`+
+		`{"time":"2026-07-30T16:28:58Z","level":"INFO","msg":"sandbox VMM linked at build time"}`+"\n"+
+			`{"time":"2026-07-30T16:28:58Z","level":"ERROR","msg":"sandbox service wiring failed",`+
 			`"error":"open sandbox audit index: unable to open database file"}`+"\n"))
 
 	assert.Contains(t, got, "sandbox service wiring failed")
+	assert.Contains(t, got, "open sandbox audit index",
+		"the error field carries the actual cause and must survive")
+	assert.NotContains(t, got, `"level"`, "the user should not have to read JSON")
 	assert.NotContains(t, got, "brew install",
 		"a remedy must not be invented for a cause it does not fit")
+}
+
+func TestDaemonFailureDetail_UnparseableOutputSurvivesVerbatim(t *testing.T) {
+	// The case that matters most is not JSON at all: the dynamic loader
+	// writes plain text, and losing it to a failed decode would lose the one
+	// failure we most need to explain.
+	got := daemonFailureDetail(writeDaemonLog(t, "panic: something went very wrong\n\tmain.go:1\n"))
+
+	assert.Contains(t, got, "panic: something went very wrong")
 }
 
 func TestDaemonFailureDetail_SaysNothingWhenItKnowsNothing(t *testing.T) {
