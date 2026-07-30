@@ -482,3 +482,54 @@ func serveImage(t *testing.T, files map[string]string, kind string, arches ...st
 	srv := httptest.NewServer(mux)
 	return srv, strings.TrimPrefix(srv.URL, "http://") + "/acme/base:v1"
 }
+
+// TestSandboxBase_WithNoTrustRoot_CreatesOneRatherThanSendingTheUserAway
+// covers the first-run funnel a real user walks.
+//
+// `mgit work --sandbox` tells them to run `mgit sandbox base from debian:12`.
+// That command then failed with "run `mgit sandbox image init` first" — so
+// mgit's own guidance led into a second wall. `image install` had always
+// generated a missing trust root; the base commands now do the same, because
+// sibling commands differing on this is the whole defect.
+// Refs: MGIT-65, FR-17.38
+func TestSandboxBase_WithNoTrustRoot_CreatesOneRatherThanSendingTheUserAway(t *testing.T) {
+	srv, ref := fakeImageServer(t, map[string]string{"bin/sh": "#!/bin/sh"})
+	defer srv.Close()
+
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "from", args: []string{"from", ref, "--plain-http"}},
+		{name: "set", args: []string{"set", userspaceTree(t)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newRepo(t) // deliberately NO `sandbox image init`
+			out, err := runBase(t, repo, append(tt.args, "--guest-bin-dir", fakeGuestBins(t))...)
+
+			require.NoError(t, err, "a first-run user has no trust root yet: %s", out)
+			assert.Contains(t, out, "sha256:", "the base must still be pinned and signed, got %q", out)
+			assert.FileExists(t, filepath.Join(repo, ".mgit", "sandbox", "images.lock"))
+		})
+	}
+}
+
+// TestSandboxBase_WithAnExistingTrustRoot_DoesNotRotateIt is the other half:
+// composing a base must never invalidate images already registered under the
+// key. Rotation stays an explicit `mgit sandbox image init`.
+func TestSandboxBase_WithAnExistingTrustRoot_DoesNotRotateIt(t *testing.T) {
+	repo := newRepo(t)
+	_, err := initTrustRoot(t, repo)
+	require.NoError(t, err)
+	keyPath := filepath.Join(repo, ".mgit", "sandbox", "trust", "image-signing.key")
+	before, err := os.ReadFile(keyPath) //nolint:gosec // test temp path
+	require.NoError(t, err)
+
+	out, err := runBase(t, repo, "set", userspaceTree(t), "--guest-bin-dir", fakeGuestBins(t))
+	require.NoError(t, err, "base set: %s", out)
+
+	after, err := os.ReadFile(keyPath) //nolint:gosec // test temp path
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "composing a base must not rotate the signing key")
+}

@@ -67,9 +67,14 @@ func sandboxBaseSetCmd() *cobra.Command {
 				return err
 			}
 			// The signing key stays host-side and never enters a guest (SEC-01).
-			priv, err := images.LoadSigningKey(hostRoot)
+			// First run has no trust root, and telling a user to go and make
+			// one — after mgit told them to run THIS command — is guidance
+			// that leads into a second wall. An existing key is reused, never
+			// rotated. Refs: MGIT-65, FR-17.38
+			priv, err := images.EnsureSigningKey(cmd.Context(), hostRoot,
+				printTrustRootAuditor{w: cmd.OutOrStdout()})
 			if err != nil {
-				return fmt.Errorf("base set: %w (run `mgit sandbox image init` first)", err)
+				return fmt.Errorf("base %s: %w", "set", err)
 			}
 			if err := validateBaseTree(baseDir); err != nil {
 				return err
@@ -96,8 +101,8 @@ func sandboxBaseSetCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&name, "name", "base", "name to register the base under in images.lock")
 	cmd.Flags().StringVar(&guestBinDir, "guest-bin-dir", "",
-		"directory holding linux guest builds of mgit and mgit-guest; "+
-			"defaults to building them from an mgit source checkout")
+		"directory holding linux builds of mgit and mgit-guest to inject; "+
+			"defaults to the ones shipped with this install")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output the digest-pinned reference as JSON")
 	return cmd
 }
@@ -146,9 +151,41 @@ func validateBaseTree(baseDir string) error {
 // middle one is what makes `brew install mgit` sufficient — mgit-guest is
 // guest-only and is never on a host PATH. Refs: MGIT-61.15, FR-17.11
 func injectGuestBinaries(baseDir, guestBinDir, exePath string) error {
-	if guestBinDir == "" {
-		guestBinDir = bundledGuestBinDir(exePath)
+	return injectGuestBinariesWith(baseDir, resolveGuestBinaries(guestBinDir, exePath), buildGuestBinary)
+}
+
+// guestBinarySource is where the linux guest binaries are coming from: a
+// directory to copy them out of, or — when dir is empty — a cross-build from
+// an mgit source checkout. `from` describes it in the terms a user would.
+type guestBinarySource struct {
+	dir  string
+	from string
+}
+
+// resolveGuestBinaries applies the lookup order, which is fixed and is the
+// whole point: what the operator named, then what this install shipped, then
+// a source checkout.
+//
+// The source build is LAST because it is the only one that cannot work on a
+// user's machine — it needs a Go toolchain and the mgit source, and a `brew
+// install` has neither. It is also the fallback that hid two release blockers:
+// tests run from inside the checkout cross-built the binaries on the spot, so
+// nobody noticed the archive-relative lookup finding nothing.
+// Refs: MGIT-65, MGIT-61.15, FR-17.11
+func resolveGuestBinaries(explicitDir, exePath string) guestBinarySource {
+	if explicitDir != "" {
+		return guestBinarySource{dir: explicitDir, from: "--guest-bin-dir " + explicitDir}
 	}
+	if dir := bundledGuestBinDir(exePath); dir != "" {
+		return guestBinarySource{dir: dir, from: "the binaries shipped with this install (" + dir + ")"}
+	}
+	return guestBinarySource{from: "a source checkout (nothing else was available)"}
+}
+
+// injectGuestBinariesWith installs the guest pair from a resolved source,
+// cross-building only when the source names no directory. build is injected so
+// a test can prove the fallback did NOT fire.
+func injectGuestBinariesWith(baseDir string, src guestBinarySource, build func(pkg, out string) error) error {
 	targets := []struct{ name, pkg, dest string }{
 		{name: "mgit-guest", pkg: "./cmd/mgit-guest", dest: filepath.Join("sbin", "mgit-guest")},
 		{name: "mgit", pkg: "./cmd/mgit", dest: filepath.Join("bin", "mgit")},
@@ -158,21 +195,21 @@ func injectGuestBinaries(baseDir, guestBinDir, exePath string) error {
 		if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
 			return fmt.Errorf("guest base: %w", err)
 		}
-		if guestBinDir != "" {
-			if err := copyGuestBinary(filepath.Join(guestBinDir, tgt.name), out); err != nil {
+		if src.dir != "" {
+			if err := copyGuestBinary(filepath.Join(src.dir, tgt.name), out); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := buildGuestBinary(tgt.pkg, out); err != nil {
+		if err := build(tgt.pkg, out); err != nil {
 			return fmt.Errorf(
 				"guest base: %w\n\n"+
-					"The guest needs LINUX builds of mgit and mgit-guest, which a host "+
-					"install does not carry on PATH (mgit-guest is guest-only), and "+
-					"which this install does not ship beside it either. Either run this "+
-					"from an mgit source checkout, or supply them with --guest-bin-dir "+
-					"<dir> containing `mgit` and `mgit-guest` built for linux/%s",
-				err, guestArch())
+					"The guest needs LINUX builds of mgit and mgit-guest. This install "+
+					"ships none beside it (expected a `guest` directory next to the mgit "+
+					"binary), and building them here needs an mgit source checkout and a "+
+					"Go toolchain. Either reinstall from a release archive, or supply "+
+					"them with --guest-bin-dir <dir> containing `mgit` and `mgit-guest` "+
+					"built for linux/%s", err, guestArch())
 		}
 	}
 	return nil
@@ -204,9 +241,29 @@ func bundledGuestBinDir(exePath string) string {
 	if exePath == "" {
 		return ""
 	}
-	dir := filepath.Join(filepath.Dir(exePath), guestBinSubdir)
-	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
-		return dir
+	// Resolve symlinks first. The ordinary way to put mgit on PATH is to
+	// extract the archive and symlink the binary into /usr/local/bin, and
+	// macOS reports the SYMLINK's path as the executable — so looking beside
+	// it lands in /usr/local/bin, which ships no guest binaries, and the
+	// source fallback then fails on a machine with no Go. Refs: MGIT-65
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+		exePath = resolved
+	}
+	binDir := filepath.Dir(exePath)
+	// Two layouts, in preference order. The archive puts guest/ beside the
+	// binary. Homebrew links binaries into <prefix>/bin and keeps non-PATH
+	// helpers in <prefix>/libexec — a guest/ inside bin/ would be linked onto
+	// PATH, which is precisely where mgit-guest must never be.
+	for _, dir := range []string{
+		filepath.Join(binDir, guestBinSubdir),
+		filepath.Join(binDir, "..", "libexec", guestBinSubdir),
+	} {
+		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
+			if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+				return resolved
+			}
+			return filepath.Clean(dir)
+		}
 	}
 	return ""
 }
@@ -281,9 +338,14 @@ func sandboxBaseFromCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			priv, err := images.LoadSigningKey(hostRoot)
+			// First run has no trust root, and telling a user to go and make
+			// one — after mgit told them to run THIS command — is guidance
+			// that leads into a second wall. An existing key is reused, never
+			// rotated. Refs: MGIT-65, FR-17.38
+			priv, err := images.EnsureSigningKey(cmd.Context(), hostRoot,
+				printTrustRootAuditor{w: cmd.OutOrStdout()})
 			if err != nil {
-				return fmt.Errorf("base from: %w (run `mgit sandbox image init` first)", err)
+				return fmt.Errorf("base %s: %w", "from", err)
 			}
 
 			baseDir := filepath.Join(hostRoot, "base")
@@ -347,8 +409,8 @@ func sandboxBaseFromCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&name, "name", "base", "name to register the base under in images.lock")
 	cmd.Flags().StringVar(&guestBinDir, "guest-bin-dir", "",
-		"directory holding linux guest builds of mgit and mgit-guest; "+
-			"defaults to building them from an mgit source checkout")
+		"directory holding linux builds of mgit and mgit-guest to inject; "+
+			"defaults to the ones shipped with this install")
 	cmd.Flags().BoolVar(&plainHTTP, "plain-http", false,
 		"talk to the registry over http (local mirrors and tests only)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output the digest-pinned reference as JSON")
