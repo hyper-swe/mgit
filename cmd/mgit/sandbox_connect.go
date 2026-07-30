@@ -84,8 +84,28 @@ func sandboxRepoRoot(cwd string) (string, error) {
 // locateSandboxd finds the mgit-sandboxd binary: first alongside this
 // executable (the normal install layout), then on PATH.
 func locateSandboxd() (string, error) {
-	if exe, err := os.Executable(); err == nil {
-		cand := filepath.Join(filepath.Dir(exe), "mgit-sandboxd")
+	exe, err := os.Executable()
+	if err != nil {
+		exe = ""
+	}
+	return locateSandboxdFor(exe)
+}
+
+// locateSandboxdFor finds the daemon relative to a given mgit binary, then on
+// PATH. exePath is taken as a parameter so the lookup is testable without
+// being the test binary's own path.
+//
+// Symlinks are resolved first: the ordinary way to install from an archive is
+// to extract it and symlink mgit into a PATH directory, and macOS reports the
+// SYMLINK as the executable — so "beside my own binary" would resolve to a
+// directory holding no daemon. The two binaries ship together so they can find
+// each other; that has to survive being put on PATH. Refs: MGIT-65, MGIT-44
+func locateSandboxdFor(exePath string) (string, error) {
+	if exePath != "" {
+		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+			exePath = resolved
+		}
+		cand := filepath.Join(filepath.Dir(exePath), "mgit-sandboxd")
 		if _, err := os.Stat(cand); err == nil {
 			return cand, nil
 		}

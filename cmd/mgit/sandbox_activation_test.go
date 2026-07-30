@@ -126,3 +126,27 @@ func writeDaemonLog(t *testing.T, content string) string {
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	return path
 }
+
+// TestLocateSandboxd_FollowsASymlinkedInstall is the daemon-side twin of the
+// guest-binary lookup.
+//
+// Extract the archive, symlink mgit onto PATH, and macOS reports the SYMLINK
+// as the executable — so "beside my own binary" resolves to the symlink's
+// directory, which holds no daemon. The two binaries ship together precisely
+// so they can find each other; that must survive the ordinary way people put
+// a binary on PATH. Refs: MGIT-65, MGIT-44
+func TestLocateSandboxd_FollowsASymlinkedInstall(t *testing.T) {
+	install := t.TempDir()
+	for _, n := range []string{"mgit", "mgit-sandboxd"} {
+		require.NoError(t, os.WriteFile(filepath.Join(install, n), []byte("x"), 0o600))
+	}
+	onPath := filepath.Join(t.TempDir(), "mgit")
+	require.NoError(t, os.Symlink(filepath.Join(install, "mgit"), onPath))
+
+	got, err := locateSandboxdFor(onPath)
+
+	require.NoError(t, err, "the daemon sits beside the real binary and must be found")
+	resolved, err := filepath.EvalSymlinks(filepath.Join(install, "mgit-sandboxd"))
+	require.NoError(t, err)
+	assert.Equal(t, resolved, got)
+}
