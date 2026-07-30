@@ -123,12 +123,17 @@ func (f *fakeLedger) GetTaskCommits(context.Context, string) ([]index.CommitReco
 	return f.commits, f.err
 }
 
-type fakeAttestor struct{ calls int }
+type fakeAttestor struct {
+	calls    int
+	subjects []model.AttestationSubject
+}
 
-func (f *fakeAttestor) Attest(_ context.Context, sandboxID, commitHash, contentHash string) (*model.Attestation, error) {
+func (f *fakeAttestor) Attest(_ context.Context, subj model.AttestationSubject) (*model.Attestation, error) {
 	f.calls++
+	f.subjects = append(f.subjects, subj)
 	return &model.Attestation{
-		SandboxID: sandboxID, CommitHash: commitHash, ContentHash: contentHash,
+		SandboxID: subj.SandboxID, CommitHash: subj.CommitHash,
+		ContentHash: subj.ContentHash, BaseDigest: subj.BaseDigest,
 		Alg: model.AlgEd25519, KeyID: "host-key", HostSignature: []byte("sig"),
 		IssuedAt: time.Unix(0, 0).UTC(),
 	}, nil
@@ -381,4 +386,44 @@ func TestLandService_BadTaskID_NoPull(t *testing.T) {
 	_, err := svc.Land(context.Background(), "not a task id!!")
 	assert.Error(t, err)
 	assert.Zero(t, f.puller.pulls, "an invalid task id is rejected before any pull")
+}
+
+// TestLandService_AttestsTheBaseTheSandboxActuallyBooted closes requirement
+// 7's loop: the environment a commit was produced in must come from the
+// HOST's launch record, not from anything the guest can influence, and it
+// must reach the signer. Refs: MGIT-61.15 req 7, FR-17.6, SEC-01
+func TestLandService_AttestsTheBaseTheSandboxActuallyBooted(t *testing.T) {
+	const baseDigest = "sha256:30bc69fafb7c86266348d4755bc509b3ece26213db28c03a9a6e4db333c1f05a"
+	b := newPoolBuilder(t)
+	pool, _ := singleCommitPool(b, "feat: land", "a.txt", "hello")
+	f := defaultFakes(pool, fakePolicy{p: policyOn()})
+	// What the host recorded when it launched this sandbox.
+	f.resolver.info.ImageDigest = baseDigest
+	svc := newLandSvc(t, f)
+
+	_, err := svc.Land(context.Background(), "MGIT-11.10.10")
+
+	require.NoError(t, err)
+	require.Len(t, f.attestor.subjects, 1, "one commit, one attestation")
+	assert.Equal(t, baseDigest, f.attestor.subjects[0].BaseDigest,
+		"the signer must be given the base the launch record names")
+	assert.Equal(t, "sbx-1", f.attestor.subjects[0].SandboxID)
+}
+
+// TestLandService_ASandboxWithNoRecordedBase_StillLands keeps the claim
+// additive: a sandbox whose base the host cannot name (an older launch
+// record) must still land and still be attested, because losing attestation
+// entirely would be a far worse trade than an absent environment claim.
+func TestLandService_ASandboxWithNoRecordedBase_StillLands(t *testing.T) {
+	b := newPoolBuilder(t)
+	pool, _ := singleCommitPool(b, "feat: land", "a.txt", "hello")
+	f := defaultFakes(pool, fakePolicy{p: policyOn()}) // no ImageDigest set
+	svc := newLandSvc(t, f)
+
+	sum, err := svc.Land(context.Background(), "MGIT-11.10.10")
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, sum.Commits)
+	require.Len(t, f.attestor.subjects, 1)
+	assert.Empty(t, f.attestor.subjects[0].BaseDigest)
 }

@@ -65,8 +65,8 @@ func (e2eLandOffPolicy) Load(context.Context) (model.SandboxPolicy, error) {
 // both the orchestrator's verifier and the land service's attestor.
 type e2eLandAttestor struct{}
 
-func (e2eLandAttestor) Attest(_ context.Context, sandboxID, commitHash, contentHash string) (*model.Attestation, error) {
-	return &model.Attestation{SandboxID: sandboxID, CommitHash: commitHash, ContentHash: contentHash}, nil
+func (e2eLandAttestor) Attest(_ context.Context, subj model.AttestationSubject) (*model.Attestation, error) {
+	return &model.Attestation{SandboxID: subj.SandboxID, CommitHash: subj.CommitHash, ContentHash: subj.ContentHash}, nil
 }
 func (e2eLandAttestor) Verify(context.Context, *model.Attestation) error { return nil }
 

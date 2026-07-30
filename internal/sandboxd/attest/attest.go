@@ -135,14 +135,20 @@ func NewService(hostRoot string, clock func() time.Time) (*Service, error) {
 // (the land flow) MUST pass hashes it computed from bytes it itself read
 // hash-on-write — Attest signs what it is given, so it must never be fed
 // guest-asserted hashes (SEC-01, IDD §3.1). Refs: FR-17.6
-func (s *Service) Attest(_ context.Context, sandboxID, commitHash, contentHash string) (*model.Attestation, error) {
+func (s *Service) Attest(_ context.Context, subj model.AttestationSubject) (*model.Attestation, error) {
 	att := &model.Attestation{
-		SandboxID:   sandboxID,
-		CommitHash:  commitHash,
-		ContentHash: contentHash,
+		SandboxID:   subj.SandboxID,
+		CommitHash:  subj.CommitHash,
+		ContentHash: subj.ContentHash,
+		BaseDigest:  subj.BaseDigest,
 		Alg:         model.AlgEd25519,
 		KeyID:       s.activeKey,
 		IssuedAt:    s.clock().UTC(),
+		// Everything issued from here on is signed over the payload that
+		// includes the base digest, whether or not one was available: the
+		// version describes the LAYOUT, not the contents, so a reader never
+		// has to guess which shape produced the signature.
+		PayloadVersion: attestPayloadWithBase,
 	}
 	att.HostSignature = ed25519.Sign(s.priv, signingPayload(att))
 	// Validate the fully-formed attestation; a malformed (sandboxID,
@@ -179,22 +185,50 @@ func (s *Service) Verify(_ context.Context, att *model.Attestation) error {
 	return nil
 }
 
+// attestPayloadWithBase is the payload layout that binds the guest base
+// digest. Layout 0 (absent) is the original: sandbox_id, commit_hash,
+// content_hash, key_id, issued_at — and nothing else, forever.
+//
+// The version is APPENDED to the original bytes rather than prefixed to them,
+// so an attestation issued before this existed still hashes to exactly what
+// it was signed over. Refs: MGIT-61.15, FR-17.38
+const attestPayloadWithBase = 2
+
 // signingPayload builds the byte-stable, length-prefixed canonical
 // signing input (IDD §3.3): sandbox_id, commit_hash, content_hash,
 // key_id (UTF-8), then issued_at as the raw 8 big-endian bytes of
 // UnixNano — never re-serialized JSON or RFC3339. Length prefixing rules
 // out field-boundary collisions; binding key_id rules out key/alg
-// confusion. Refs: FR-17.38
+// confusion.
+//
+// From attestPayloadWithBase on, the version number and the base digest
+// follow. The version is inside the signed bytes, so an attestation cannot be
+// downgraded by stripping the digest and the marker together: the signature
+// verifies against exactly one byte string, and the older layout is a
+// different one. Refs: FR-17.38, MGIT-61.15
 func signingPayload(a *model.Attestation) []byte {
 	var buf bytes.Buffer
 	for _, field := range []string{a.SandboxID, a.CommitHash, a.ContentHash, a.KeyID} {
-		var length [8]byte
-		binary.BigEndian.PutUint64(length[:], uint64(len(field)))
-		buf.Write(length[:])
-		buf.WriteString(field)
+		writeLengthPrefixed(&buf, field)
 	}
 	var nano [8]byte
 	binary.BigEndian.PutUint64(nano[:], uint64(a.IssuedAt.UTC().UnixNano())) //nolint:gosec // signed/unsigned bit pattern is stable and only used as signed input
 	buf.Write(nano[:])
+
+	if a.PayloadVersion >= attestPayloadWithBase {
+		var version [8]byte
+		binary.BigEndian.PutUint64(version[:], uint64(a.PayloadVersion)) //nolint:gosec // a small non-negative constant
+		buf.Write(version[:])
+		writeLengthPrefixed(&buf, a.BaseDigest)
+	}
 	return buf.Bytes()
+}
+
+// writeLengthPrefixed appends one 8-byte big-endian length followed by the
+// field's UTF-8 bytes, which is what rules out field-boundary collisions.
+func writeLengthPrefixed(buf *bytes.Buffer, field string) {
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(len(field)))
+	buf.Write(length[:])
+	buf.WriteString(field)
 }

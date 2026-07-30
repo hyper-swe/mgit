@@ -391,13 +391,39 @@ const AlgEd25519 = "ed25519"
 // verifiable across key rotations (FR-17.38) and rule out
 // algorithm-confusion. Refs: FR-17.6, FR-17.38
 type Attestation struct {
-	SandboxID     string    `json:"sandbox_id"`
-	CommitHash    string    `json:"commit_hash"`    // git SHA-1 object ID (40 hex)
-	ContentHash   string    `json:"content_hash"`   // mgit SHA-256, 64 hex (ADR-002)
-	Alg           string    `json:"alg"`            // signature algorithm (AlgEd25519)
-	KeyID         string    `json:"key_id"`         // host trust-anchor fingerprint (FR-17.38)
-	HostSignature []byte    `json:"host_signature"` // issued by mgit-sandboxd
-	IssuedAt      time.Time `json:"issued_at"`      // host receive-time, UTC (SEC-11, FR-17.28)
+	SandboxID string `json:"sandbox_id"`
+	// BaseDigest is the content digest of the guest base the sandbox booted
+	// (empty when the host had none to name, or on records issued before
+	// this field existed). It answers "what environment produced this
+	// commit", and it is covered by the signature — see PayloadVersion.
+	// Refs: MGIT-61.15, FR-17.6
+	BaseDigest string `json:"base_digest,omitempty"`
+	// PayloadVersion selects which canonical signing payload this
+	// attestation was signed over. Absent/0 means the original layout, which
+	// had no base digest; those records must keep verifying forever, so the
+	// payload cannot simply grow a field. Refs: MGIT-61.15, FR-17.38
+	PayloadVersion int       `json:"payload_version,omitempty"`
+	CommitHash     string    `json:"commit_hash"`    // git SHA-1 object ID (40 hex)
+	ContentHash    string    `json:"content_hash"`   // mgit SHA-256, 64 hex (ADR-002)
+	Alg            string    `json:"alg"`            // signature algorithm (AlgEd25519)
+	KeyID          string    `json:"key_id"`         // host trust-anchor fingerprint (FR-17.38)
+	HostSignature  []byte    `json:"host_signature"` // issued by mgit-sandboxd
+	IssuedAt       time.Time `json:"issued_at"`      // host receive-time, UTC (SEC-11, FR-17.28)
+}
+
+// AttestationSubject is what the host observed and is about to sign: the
+// identity of the sandbox, the hashes the host itself computed from the bytes
+// it read, and the base that sandbox booted.
+//
+// It is a struct rather than a parameter list because every field is a string
+// and three of them are hashes — a transposed pair of arguments would be
+// invisible at the call site and would produce a valid signature over the
+// wrong claim. Refs: FR-17.6, SEC-01, MGIT-61.15
+type AttestationSubject struct {
+	SandboxID   string
+	CommitHash  string
+	ContentHash string
+	BaseDigest  string
 }
 
 // Validate checks the attestation shape. Signature *verification* is
@@ -433,10 +459,10 @@ func (a Attestation) Validate() error {
 // attested would be forgeable and worthless. Refs: FR-17.6, FR-17.38
 type Attestor interface {
 	// Attest issues an attestation for one commit. Implementations MUST
-	// refuse any (sandboxID, hash) pair the daemon did not itself
-	// observe crossing that sandbox's vsock channel — Attest is not an
-	// attest-anything signing oracle (SEC-01).
-	Attest(ctx context.Context, sandboxID, commitHash, contentHash string) (*Attestation, error)
+	// refuse any subject the daemon did not itself observe crossing that
+	// sandbox's vsock channel — Attest is not an attest-anything signing
+	// oracle (SEC-01).
+	Attest(ctx context.Context, subj AttestationSubject) (*Attestation, error)
 	Verify(ctx context.Context, att *Attestation) error
 }
 
