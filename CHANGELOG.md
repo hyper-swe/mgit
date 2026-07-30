@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Platform scope, precisely:** the microVM sandbox links **libkrun by default
+on macOS 14+** and **firecracker on Linux** (KVM-only, root not required for
+launch) — different VMMs by default, not a symmetric feature. **Windows has
+no sandbox in this release**; core mgit (worktrees, commit, squash, rollback)
+runs there without containment (WCOW backend planned, MGIT-12). The guest
+**base userspace is fetched via OCI** (`mgit sandbox base from <image>`) — mgit
+redistributes no kernel or userspace image. The **guest-image bundle publish
+remains on HOLD** (MGIT-61.12, owner decision 2026-07-29): the reproducible
+build and local install path (`mgit sandbox image install --from <bundle>`)
+are done and live-validated, but `gh release upload`-ing the bundle itself is
+a deliberate one-way door the libkrun consolidation isn't ready to commit to
+yet — see the Release checklist for what stays undone until that gate lifts.
+
 ### Security
 
 - **Storage-engine dependencies upgraded to clear 7 disclosed vulnerabilities in called code.** `go-git/v5` 5.17.2 → 5.19.1 (GO-2026-5693 malformed-object panic/resource-exhaustion, GO-2026-5496 SSH transport escaping, GO-2026-5074 improper tree-entry parsing) and `go-billy/v5` 5.8.0 → 5.9.0 (GO-2026-5597 path traversal, GO-2026-5490 symlink-cycle DoS), plus the Go toolchain 1.26.4 → 1.26.5 (GO-2026-5856, `crypto/tls`). `govulncheck ./...` now reports 0 vulnerabilities in called code. Both dependencies stay within their already-approved v5 line (APPROVED-PACKAGES.md floors unchanged; v6 remains unapproved). Re-verified with the full test suite, `-race`, and a live firecracker e2e run on real KVM hardware — no regressions.

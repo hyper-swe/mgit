@@ -59,7 +59,14 @@ validate **different VMMs by default** — this is not a symmetric check:
       It is not the Linux default and its real-VM boot is not yet fully
       validated end to end on KVM (MGIT-61.13 P4, "Known limitations" in the
       CHANGELOG). Do not treat a green firecracker pass as implying libkrun
-      also works on Linux — they are different code paths.
+      also works on Linux — they are different code paths. `ci.yml`'s
+      `libkrun-linux` job (main pushes/PRs + `workflow_dispatch`, not
+      `release.yml`) build+vets this tagged path on every change so a
+      compile/link regression is caught early — that is a CI check, not a
+      release gate, and it never boots a real VM (no `/dev/kvm` on hosted
+      runners). A green `libkrun-linux` CI job says nothing about whether
+      Linux libkrun actually runs; only the macOS live pass above does that
+      for its own platform.
 
 > Never refer to the Linux KVM host by its LAN IP in the repo, CI logs, or the
 > release notes — call it "the Linux runner".
