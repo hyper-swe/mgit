@@ -64,8 +64,15 @@ jobs:
           go-version: "1.26"
 
       - name: Install libkrun (bottled)
+        # This runner's Homebrew refuses to load a formula from a
+        # newly-added third-party tap until it's explicitly trusted (first
+        # seen on this job's first real run in Actions, 2026-07-30):
+        # "Refusing to load formula libkrun/krun/libkrun from untrusted tap
+        # libkrun/krun" -- `brew trust` is the exact remedy the error itself
+        # names.
         run: |
           brew tap libkrun/krun
+          brew trust libkrun/krun
           brew install libkrun
 
       - name: Build, vet and test the tagged path
@@ -119,10 +126,16 @@ jobs:
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
 
       - name: Install Rust (distro rustc is far too old for libkrun)
+        # krun-init-blob's build.rs links krun-init as a static musl binary
+        # (so it runs as the guest's PID 1 with no libc dependency) and
+        # panics if the musl target isn't installed -- caught on this job's
+        # first real run in Actions (2026-07-30); a local container repro
+        # in an earlier session evidently pre-had this target cached.
         run: |
           curl -sSf https://sh.rustup.rs -o /tmp/rustup.sh
           sh /tmp/rustup.sh -y --default-toolchain stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustup" target add "$(uname -m)-unknown-linux-musl"
 
       - name: Build libkrunfw (compiles a kernel; the slow step, ~3-4 min)
         # `cd dir && make`, NOT `make -C dir`: libkrunfw's own Makefile

@@ -42,13 +42,19 @@ func TestMountWorktree_InvalidDescriptor_FailsClosed(t *testing.T) {
 	assert.Contains(t, err.Error(), "incomplete worktree mount descriptor")
 }
 
-// TestMountWorktree_CmdlineUnreadable_FailsClosed verifies an unreadable
-// kernel cmdline fails closed rather than silently skipping the worktree.
-func TestMountWorktree_CmdlineUnreadable_FailsClosed(t *testing.T) {
+// TestMountWorktree_CmdlineUnreadableNoEnvTokens_NoOp verifies that an
+// unreadable/missing kernel cmdline is not, by itself, a fatal condition:
+// bootTokens() falls back to the env channel (libkrun boots with no cmdline
+// of its own to read at all), so with no env tokens either, mountWorktree is
+// a no-op exactly like the no-descriptor case above -- not the hard "cmdline
+// unreadable" error the earlier cmdline-only design returned before the
+// env-channel merge. Refs: ADR-010, FR-17.3
+func TestMountWorktree_CmdlineUnreadableNoEnvTokens_NoOp(t *testing.T) {
 	orig := procCmdline
 	procCmdline = filepath.Join(t.TempDir(), "no-such-cmdline")
 	t.Cleanup(func() { procCmdline = orig })
-	assert.Error(t, mountWorktree())
+	t.Setenv(guestboot.EnvBootTokens, "")
+	assert.NoError(t, mountWorktree())
 }
 
 // errStopAfterScratch halts makeRootWritableWith right after the scratch
@@ -98,14 +104,25 @@ func TestMakeRootWritable_OverlayDeviceSelection(t *testing.T) {
 	}
 }
 
-// TestMakeRootWritable_CmdlineUnreadable_FailsClosed verifies that an
-// unreadable kernel cmdline fails the writable-root setup closed rather
-// than silently proceeding without an overlay descriptor.
-func TestMakeRootWritable_CmdlineUnreadable_FailsClosed(t *testing.T) {
+// TestMakeRootWritable_CmdlineUnreadable_FallsBackToEnvBootTokens verifies
+// that an unreadable/missing kernel cmdline is not fatal to the
+// writable-root setup: bootTokens() falls back to the env channel, so with
+// no env tokens either, the parsed overlay descriptor is empty (tmpfs
+// fallback) -- the same outcome as the "no_device_tmpfs_fallback" case in
+// TestMakeRootWritable_OverlayDeviceSelection, not a cmdline-read error.
+// Drives makeRootWritableWith directly (the injectable path) so the
+// privileged overlay mount that makeRootWritable() itself would attempt
+// never runs. Refs: ADR-010, FR-17.3, FR-17.17
+func TestMakeRootWritable_CmdlineUnreadable_FallsBackToEnvBootTokens(t *testing.T) {
 	orig := procCmdline
 	procCmdline = filepath.Join(t.TempDir(), "no-such-cmdline")
 	t.Cleanup(func() { procCmdline = orig })
-	err := makeRootWritable()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "read kernel cmdline")
+	t.Setenv(guestboot.EnvBootTokens, "")
+
+	desc := guestboot.ParseOverlayUpper(bootTokens())
+	m := &recordingMounter{}
+	err := makeRootWritableWith(m, desc)
+	require.ErrorIs(t, err, errStopAfterScratch)
+	assert.True(t, m.called, "scratch mounter must be consulted")
+	assert.False(t, m.got.Valid(), "unreadable cmdline with no env tokens yields tmpfs fallback, not a fatal error")
 }
