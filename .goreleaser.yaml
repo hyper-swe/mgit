@@ -96,12 +96,23 @@ builds:
         # Ad-hoc sign (identity "-") with the hypervisor entitlements. The
         # plist carries BOTH com.apple.security.hypervisor (libkrun/HVF) and
         # com.apple.security.virtualization (vzf) — one binary, either
-        # backend. Neither is restricted, so no notarization is needed for
-        # them to be honored on Apple Silicon.
+        # backend. Neither is restricted, so neither needs notarization to be
+        # HONORED once the binary runs.
+        #
+        # THAT IS NOT THE SAME AS BEING ALLOWED TO RUN. Gatekeeper is a
+        # separate mechanism: on Apple Silicon a DOWNLOADED file carries
+        # com.apple.quarantine, and a quarantined ad-hoc-signed binary is
+        # SIGKILLed on exec — no dialog, just "killed" (MGIT-64, reproduced on
+        # a second Mac). `go install` and Homebrew are unaffected (neither
+        # quarantines), so the exposed path is a direct archive download.
+        # Making that Just Work needs real notarization (Developer ID +
+        # notarytool + staple), which is an owner decision, not something this
+        # hook can fix. Do not read "no notarization needed" here as "the
+        # download works".
         #
         # This also covers the re-exec VM child, which IS this binary
         # (ADR-010): the entitlement attaches to the signed path, so the
-        # child inherits it by construction. Refs: MGIT-44, FR-17.15, MGIT-61.8
+        # child inherits it by construction. Refs: MGIT-44, MGIT-64, FR-17.15, MGIT-61.8
         - cmd: codesign --force --sign - --entitlements build/darwin/vz.entitlements "{{ .Path }}"
 
   # mgit-guest: the in-guest supervisor that runs as PID 1 inside every
@@ -160,6 +171,12 @@ archives:
     # snapshot build). The linux `mgit` comes from the existing linux build of
     # the CLI; the guest runs the same CLI the host does. Refs: MGIT-61.15
     files:
+      # goreleaser ships LICENSE/README/CHANGELOG by default, and declaring
+      # `files` REPLACES that default rather than adding to it — so they have
+      # to be named here or an Apache-2.0 product ships with no license text.
+      - LICENSE*
+      - README*
+      - CHANGELOG*
       - src: "dist/mgit-guest_linux_{{ .Arch }}*/mgit-guest"
         dst: "guest/"
         strip_parent: true

@@ -156,25 +156,39 @@ clean:
 	go clean -cache -testcache
 
 ## preflight: Pre-release quality gate checks
+## verify-archive: Build the release archives and assert what they actually contain.
+# The point is the ARTIFACT, not the build directory. dist/ always holds the
+# Linux guest binaries whether or not they were packaged, and reading it is
+# exactly how MGIT-65's second blocker shipped: the guest binaries were absent
+# from every tarball while the build dirs looked correct. These assertions
+# open the tarball. Refs: MGIT-65
+.PHONY: verify-archive
+verify-archive:
+	@command -v goreleaser >/dev/null || { echo "goreleaser not on PATH" >&2; exit 1; }
+	goreleaser release --snapshot --skip=publish --skip=validate --clean
+	go test ./internal/packaging/ -run TestArchives -count=1 -v
+
 .PHONY: preflight
 preflight:
 	@echo "=== mgit preflight checks ==="
 	@echo ""
-	@echo "[1/7] Linting..."
+	@echo "[1/8] Linting..."
 	@golangci-lint run ./... && echo "  PASS" || (echo "  FAIL"; exit 1)
-	@echo "[2/7] Tests with race detector..."
+	@echo "[2/8] Tests with race detector..."
 	@go test ./... -race -count=1 && echo "  PASS" || (echo "  FAIL"; exit 1)
-	@echo "[3/7] Test coverage..."
+	@echo "[3/8] Test coverage..."
 	@$(MAKE) test-cover
-	@echo "[4/7] Vulnerability scan..."
+	@echo "[4/8] Vulnerability scan..."
 	@govulncheck ./... && echo "  PASS" || (echo "  FAIL"; exit 1)
-	@echo "[5/7] Build binary..."
+	@echo "[5/8] Build binary..."
 	@$(MAKE) build && echo "  PASS" || (echo "  FAIL"; exit 1)
-	@echo "[6/7] Binary smoke test..."
+	@echo "[6/8] Binary smoke test..."
 	@./$(BINARY_PATH) --version && echo "  PASS"
-	@echo "[7/7] Anti-stub check..."
+	@echo "[7/8] Anti-stub check..."
 	@grep -rn '"not yet implemented"\|"not implemented"\|"integration pending"' \
 		--include='*.go' --exclude='*_test.go' . && (echo "  FAIL: stubs found"; exit 1) || echo "  PASS"
+	@echo "[8/8] Release archive contents..."
+	@$(MAKE) verify-archive >/dev/null && echo "  PASS" || (echo "  FAIL"; exit 1)
 	@echo ""
 	@echo "=== All preflight checks passed ==="
 

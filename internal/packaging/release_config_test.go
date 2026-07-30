@@ -250,3 +250,26 @@ func TestGoreleaserConfig_IsValid(t *testing.T) {
 		t.Errorf("goreleaser check failed: %v\n%s", err, out)
 	}
 }
+
+// TestBrewFormula_InstallsTheGuestBinaries closes the install path most macOS
+// users take, and the one that reproduces MGIT-65's second defect most
+// exactly: the formula installed `mgit` and `mgit-sandboxd` and nothing from
+// the archive's `guest/` directory, so a brewed mgit resolved no guest
+// binaries, fell through to the source build, and died with "cannot find main
+// module" on a machine that has never had the mgit source.
+//
+// libexec, not bin: everything Homebrew puts in bin is linked onto PATH, and
+// mgit-guest on a host PATH is exactly what the distribution boundary forbids.
+// Refs: MGIT-65, MGIT-44, MGIT-61.15
+func TestBrewFormula_InstallsTheGuestBinaries(t *testing.T) {
+	formula := readRepoFile(t, "brew/mgit.rb")
+
+	if !strings.Contains(formula, `libexec.install "guest"`) {
+		t.Error("the formula must install the archive's guest/ directory into libexec; " +
+			"without it a brewed mgit cannot compose a guest base at all")
+	}
+	if strings.Contains(formula, `bin.install "guest"`) {
+		t.Error("guest binaries must not land in bin: Homebrew links bin onto PATH, " +
+			"and mgit-guest is guest-only")
+	}
+}
