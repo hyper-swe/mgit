@@ -61,7 +61,11 @@ func buildMgitHookTestBinary(t *testing.T) string {
 	projectRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
 
 	bin := filepath.Join(t.TempDir(), "mgit-hooktest")
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// 60s was too tight for a cold module/build cache -- this test's own `go
+	// build` subprocess got killed mid-download on this branch's first real
+	// CI run (a fresh runner with nothing cached yet). 180s covers a cold
+	// cache; a warm one (the common case) still finishes in a few seconds.
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/mgit/") //nolint:gosec // fixed argv, test-only
 	cmd.Dir = projectRoot
