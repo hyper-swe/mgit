@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Lets a feature branch's jobs be verified before they ever reach main or a
+  # PR -- added specifically to give the new libkrun-linux job (below) its
+  # first real run, since push/pull_request alone never fire on this branch.
+  workflow_dispatch:
 
 permissions:
   contents: read
