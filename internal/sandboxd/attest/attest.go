@@ -5,8 +5,16 @@
 // and cannot forge one. Verification binds every field via a
 // byte-stable, length-prefixed signing payload (IDD §3.3) and selects
 // the public key by key_id so attestations survive key rotation
-// (FR-17.38). Host-side only; pure Go (stdlib crypto). Refs: FR-17.6,
-// FR-17.38, SEC-01, MGIT-11.8.1
+// (FR-17.38).
+//
+// The payload is VERSIONED, and each attestation records which layout it was
+// signed over, because the set of facts a host attests grows: the guest base
+// digest (MGIT-61.15) was added after the original five fields. New fields are
+// appended to exactly the earlier bytes, so an attestation issued before a
+// field existed still hashes to what it was signed over and keeps verifying.
+//
+// Host-side only; pure Go (stdlib crypto). Refs: FR-17.6, FR-17.38, SEC-01,
+// MGIT-11.8.1, MGIT-61.15
 package attest
 
 import (
@@ -135,14 +143,20 @@ func NewService(hostRoot string, clock func() time.Time) (*Service, error) {
 // (the land flow) MUST pass hashes it computed from bytes it itself read
 // hash-on-write — Attest signs what it is given, so it must never be fed
 // guest-asserted hashes (SEC-01, IDD §3.1). Refs: FR-17.6
-func (s *Service) Attest(_ context.Context, sandboxID, commitHash, contentHash string) (*model.Attestation, error) {
+func (s *Service) Attest(_ context.Context, subj model.AttestationSubject) (*model.Attestation, error) {
 	att := &model.Attestation{
-		SandboxID:   sandboxID,
-		CommitHash:  commitHash,
-		ContentHash: contentHash,
+		SandboxID:   subj.SandboxID,
+		CommitHash:  subj.CommitHash,
+		ContentHash: subj.ContentHash,
+		BaseDigest:  subj.BaseDigest,
 		Alg:         model.AlgEd25519,
 		KeyID:       s.activeKey,
 		IssuedAt:    s.clock().UTC(),
+		// Everything issued from here on is signed over the payload that
+		// includes the base digest, whether or not one was available: the
+		// version describes the LAYOUT, not the contents, so a reader never
+		// has to guess which shape produced the signature.
+		PayloadVersion: model.AttestPayloadWithBase,
 	}
 	att.HostSignature = ed25519.Sign(s.priv, signingPayload(att))
 	// Validate the fully-formed attestation; a malformed (sandboxID,
@@ -184,17 +198,42 @@ func (s *Service) Verify(_ context.Context, att *model.Attestation) error {
 // key_id (UTF-8), then issued_at as the raw 8 big-endian bytes of
 // UnixNano — never re-serialized JSON or RFC3339. Length prefixing rules
 // out field-boundary collisions; binding key_id rules out key/alg
-// confusion. Refs: FR-17.38
+// confusion.
+//
+// From AttestPayloadWithBase on, the version number and the base digest
+// follow. An attestation cannot be downgraded by stripping the digest and the
+// marker together: the signature verifies against exactly one byte string,
+// and the older layout is a different (shorter) one. Refs: FR-17.38, MGIT-61.15
 func signingPayload(a *model.Attestation) []byte {
 	var buf bytes.Buffer
 	for _, field := range []string{a.SandboxID, a.CommitHash, a.ContentHash, a.KeyID} {
-		var length [8]byte
-		binary.BigEndian.PutUint64(length[:], uint64(len(field)))
-		buf.Write(length[:])
-		buf.WriteString(field)
+		writeLengthPrefixed(&buf, field)
 	}
 	var nano [8]byte
 	binary.BigEndian.PutUint64(nano[:], uint64(a.IssuedAt.UTC().UnixNano())) //nolint:gosec // signed/unsigned bit pattern is stable and only used as signed input
 	buf.Write(nano[:])
+
+	// Exact layout, never "at least": a future layout that reorders or drops a
+	// field would otherwise be mis-verified as this one. The vocabulary is
+	// closed by Attestation.Validate, which runs before this.
+	if a.PayloadVersion == model.AttestPayloadWithBase {
+		// The version number goes INTO the signed bytes so the payload is
+		// self-describing — not because downgrade needs it: appending any
+		// field already makes the byte string differ from the older layout's,
+		// which is what a stripped-field forgery runs into.
+		var version [8]byte
+		binary.BigEndian.PutUint64(version[:], uint64(a.PayloadVersion)) //nolint:gosec // a small non-negative constant
+		buf.Write(version[:])
+		writeLengthPrefixed(&buf, a.BaseDigest)
+	}
 	return buf.Bytes()
+}
+
+// writeLengthPrefixed appends one 8-byte big-endian length followed by the
+// field's UTF-8 bytes, which is what rules out field-boundary collisions.
+func writeLengthPrefixed(buf *bytes.Buffer, field string) {
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(len(field)))
+	buf.Write(length[:])
+	buf.WriteString(field)
 }

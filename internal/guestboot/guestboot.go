@@ -11,7 +11,14 @@
 // device), and the guest mounts whichever it is told (ADR-005 per-backend
 // worktree delivery). The cmdline carries no secrets — only the worktree
 // path and how to mount it — so it does not weaken the no-host-passthrough
-// posture (SEC-01). Refs: FR-17.3, MGIT-11.6.5
+// posture (SEC-01).
+//
+// TWO TRANSPORTS, ONE FORMAT. libkrun boots libkrunfw's OWN kernel, so that
+// backend never composes a command line and has nowhere to append these
+// tokens. It supplies the identical tokens through the guest ENVIRONMENT
+// instead (EnvBootTokens), and the guest merges both sources with BootTokens
+// before parsing — so every descriptor parser here is reused verbatim rather
+// than growing a second format per backend. Refs: FR-17.3, MGIT-11.6.5, ADR-010
 package guestboot
 
 import (
@@ -45,6 +52,55 @@ const (
 	// it cannot give the guest a path to the host (SEC-09 stays one-way).
 	KeyPublishPorts = "mgit.publish_ports"
 )
+
+// EnvBootTokens is the guest environment variable carrying the same
+// space-separated boot tokens the kernel command line carries, for backends
+// that cannot compose a cmdline (libkrun boots libkrunfw's own kernel). It is
+// host-supplied — the backend sets it when configuring the VM — and reaches
+// the guest exactly like the cmdline does.
+//
+// It carries boot descriptors — a mount path, a tag, port numbers — and never
+// a secret; SEC-01 keeps those off both transports. Refs: FR-17.3, ADR-010
+//
+//nolint:gosec // G101 false positive: this is an env-var NAME, not a credential.
+const EnvBootTokens = "MGIT_GUEST_BOOT"
+
+// BootTokens merges the two host->guest token transports into the single
+// string the parsers below consume.
+//
+// The cmdline goes FIRST and the env LAST: the parsers overwrite as they
+// scan, so the last occurrence of a key wins, which makes the env channel
+// authoritative wherever both carry the same key.
+//
+// That ordering is the opposite of what cmdline convention suggests, and it
+// is deliberate. libkrun renders the workload's whole ENVIRONMENT onto
+// /proc/cmdline in its own syntax, wrapping each variable in double quotes —
+// so a guest reading the cmdline sees a quote-mangled copy of the very
+// descriptor mgit put in the environment, ending in mgit.worktree_src=work"
+// rather than work. Letting the cmdline win meant the guest tried to mount a
+// virtiofs tag that did not exist and died at boot with a bare EINVAL.
+//
+// A backend that genuinely owns the cmdline (firecracker, vzf) is unaffected:
+// it sets no env channel, so there is nothing to override it.
+//
+// For the record: the strictly correct rule is "the channel THIS BACKEND
+// owns wins" -- per-backend, not a single global precedence. Env-over-cmdline
+// is only safe here because no shipped backend sets BOTH channels for the
+// same VM (libkrun: env only; firecracker/vzf: cmdline only), so the two
+// orderings coincide today. That coincidence is latent, not guaranteed: a
+// backend that composed both would need this function to know which one it
+// owns, which this signature cannot express. Re-verified empirically on
+// firecracker 2026-07-30 (the live e2e suite, unchanged pass count) rather
+// than by this reasoning alone. Refs: FR-17.3, ADR-010, MGIT-61.15
+func BootTokens(cmdline, env string) string {
+	switch {
+	case strings.TrimSpace(cmdline) == "":
+		return env
+	case strings.TrimSpace(env) == "":
+		return cmdline
+	}
+	return cmdline + " " + env
+}
 
 // WorktreeMount is the host-supplied worktree delivery descriptor.
 type WorktreeMount struct {

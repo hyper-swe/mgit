@@ -53,7 +53,7 @@ func newService(t *testing.T) (*Service, string, *recorder) {
 // verifies against host key material. Refs: SEC-01, FR-17.6
 func TestAttest_IssuedHostSide(t *testing.T) {
 	svc, _, _ := newService(t)
-	att, err := svc.Attest(context.Background(), testSandbox, testCommit, testContent)
+	att, err := svc.Attest(context.Background(), model.AttestationSubject{SandboxID: testSandbox, CommitHash: testCommit, ContentHash: testContent})
 	require.NoError(t, err)
 	require.NoError(t, att.Validate())
 	assert.Equal(t, model.AlgEd25519, att.Alg)
@@ -68,7 +68,7 @@ func TestAttest_IssuedHostSide(t *testing.T) {
 // verification. Refs: SEC-01
 func TestAttest_GuestCannotForge_NoKey(t *testing.T) {
 	svc, _, _ := newService(t)
-	good, err := svc.Attest(context.Background(), testSandbox, testCommit, testContent)
+	good, err := svc.Attest(context.Background(), model.AttestationSubject{SandboxID: testSandbox, CommitHash: testCommit, ContentHash: testContent})
 	require.NoError(t, err)
 
 	// A guest forging with its own key (same key_id claim) must fail:
@@ -91,7 +91,7 @@ func TestAttest_GuestCannotForge_NoKey(t *testing.T) {
 // fails verification. Refs: SEC-01, FR-17.6
 func TestAttest_BindsCommitAndSandbox(t *testing.T) {
 	svc, _, _ := newService(t)
-	att, err := svc.Attest(context.Background(), testSandbox, testCommit, testContent)
+	att, err := svc.Attest(context.Background(), model.AttestationSubject{SandboxID: testSandbox, CommitHash: testCommit, ContentHash: testContent})
 	require.NoError(t, err)
 
 	otherCommit := strings.Repeat("a", 40)
@@ -133,7 +133,7 @@ func TestAttest_KeyStoredOwnerOnlySeparateFile(t *testing.T) {
 // Refs: FR-17.38
 func TestAttest_RotationAuditsFingerprints(t *testing.T) {
 	svc, hostRoot, rec := newService(t)
-	oldAtt, err := svc.Attest(context.Background(), testSandbox, testCommit, testContent)
+	oldAtt, err := svc.Attest(context.Background(), model.AttestationSubject{SandboxID: testSandbox, CommitHash: testCommit, ContentHash: testContent})
 	require.NoError(t, err)
 
 	require.NoError(t, GenerateKey(context.Background(), hostRoot, rec)) // rotate
@@ -146,7 +146,7 @@ func TestAttest_RotationAuditsFingerprints(t *testing.T) {
 	assert.NoError(t, rotated.Verify(context.Background(), oldAtt),
 		"an attestation under a rotated-out key must still verify via key_id")
 
-	newAtt, err := rotated.Attest(context.Background(), testSandbox, testCommit, testContent)
+	newAtt, err := rotated.Attest(context.Background(), model.AttestationSubject{SandboxID: testSandbox, CommitHash: testCommit, ContentHash: testContent})
 	require.NoError(t, err)
 	assert.NotEqual(t, oldAtt.KeyID, newAtt.KeyID, "rotation changes the active key_id")
 }
@@ -162,9 +162,11 @@ func TestNewService_NoKey_FailsClosed(t *testing.T) {
 // (no signing oracle for garbage hashes).
 func TestAttest_RejectsMalformedInput(t *testing.T) {
 	svc, _, _ := newService(t)
-	_, err := svc.Attest(context.Background(), "", testCommit, testContent)
+	_, err := svc.Attest(context.Background(), model.AttestationSubject{
+		CommitHash: testCommit, ContentHash: testContent})
 	require.Error(t, err)
-	_, err = svc.Attest(context.Background(), testSandbox, "nothex", testContent)
+	_, err = svc.Attest(context.Background(), model.AttestationSubject{
+		SandboxID: testSandbox, CommitHash: "nothex", ContentHash: testContent})
 	require.Error(t, err)
 }
 
@@ -239,7 +241,7 @@ func TestVerify_NilAndBadAlg(t *testing.T) {
 	svc, _, _ := newService(t)
 	assert.ErrorIs(t, svc.Verify(context.Background(), nil), model.ErrAttestationInvalid)
 
-	att, err := svc.Attest(context.Background(), testSandbox, testCommit, testContent)
+	att, err := svc.Attest(context.Background(), model.AttestationSubject{SandboxID: testSandbox, CommitHash: testCommit, ContentHash: testContent})
 	require.NoError(t, err)
 	badAlg := *att
 	badAlg.Alg = "rsa"
@@ -247,4 +249,120 @@ func TestVerify_NilAndBadAlg(t *testing.T) {
 
 	hollow := &model.Attestation{} // fails structural Validate
 	assert.ErrorIs(t, svc.Verify(context.Background(), hollow), model.ErrAttestationInvalid)
+}
+
+// THE ENVIRONMENT THAT PRODUCED A COMMIT IS PART OF WHAT WE ATTEST.
+//
+// Until now the host signed WHAT was produced (commit + content hashes) and
+// WHERE (sandbox id), but said nothing about the userspace the agent ran in.
+// Since a base is now anything a user pulls from a registry, "produced in a
+// sandbox built from base@sha256:…" is a claim worth making — and worth
+// making unforgeable. Refs: MGIT-61.15 req 7, FR-17.6, SEC-01
+
+const testBaseDigest = "sha256:30bc69fafb7c86266348d4755bc509b3ece26213db28c03a9a6e4db333c1f05a"
+
+func testSubject() model.AttestationSubject {
+	return model.AttestationSubject{
+		SandboxID: testSandbox, CommitHash: testCommit,
+		ContentHash: testContent, BaseDigest: testBaseDigest,
+	}
+}
+
+func TestAttest_TheSignatureCoversTheBaseDigest(t *testing.T) {
+	// A recorded-but-unsigned base digest would be decoration: anyone could
+	// rewrite it and every verification would still pass.
+	svc, _, _ := newService(t)
+	att, err := svc.Attest(context.Background(), testSubject())
+	require.NoError(t, err)
+	require.Equal(t, testBaseDigest, att.BaseDigest, "the digest must be recorded")
+	require.NoError(t, svc.Verify(context.Background(), att))
+
+	att.BaseDigest = "sha256:" + strings.Repeat("0", 64)
+
+	require.Error(t, svc.Verify(context.Background(), att),
+		"rewriting the base digest must break the signature")
+}
+
+func TestAttest_StrippingTheBaseDigestIsAlsoDetected(t *testing.T) {
+	// The downgrade attempt: drop the field AND the version marker, so the
+	// record looks like one issued before base digests existed. The payload
+	// bytes differ, so the signature cannot verify against either shape.
+	svc, _, _ := newService(t)
+	att, err := svc.Attest(context.Background(), testSubject())
+	require.NoError(t, err)
+
+	att.BaseDigest = ""
+	att.PayloadVersion = 0
+
+	require.Error(t, svc.Verify(context.Background(), att),
+		"an attestation cannot be downgraded to hide the base it was issued for")
+}
+
+func TestVerify_AnAttestationFromBeforeBaseDigests_StillVerifies(t *testing.T) {
+	// Backward compatibility, and the reason the payload carries a version:
+	// a record signed by an older daemon has neither field, and must remain
+	// valid rather than becoming retroactively unverifiable.
+	svc, _, _ := newService(t)
+	legacy := &model.Attestation{
+		SandboxID: testSandbox, CommitHash: testCommit, ContentHash: testContent,
+		Alg: model.AlgEd25519, KeyID: svc.activeKey, IssuedAt: fixedClock()().UTC(),
+		// No BaseDigest, no PayloadVersion — exactly the old shape.
+	}
+	legacy.HostSignature = ed25519.Sign(svc.priv, signingPayload(legacy))
+
+	require.NoError(t, svc.Verify(context.Background(), legacy),
+		"attestations issued before this field existed must keep verifying")
+}
+
+func TestAttest_WithNoBaseDigest_StillVerifies(t *testing.T) {
+	// A sandbox whose base digest the host cannot name (nothing recorded at
+	// launch) must still get an attestation: the environment claim is
+	// additive, and losing attestation entirely would be a far worse trade.
+	svc, _, _ := newService(t)
+	subj := testSubject()
+	subj.BaseDigest = ""
+
+	att, err := svc.Attest(context.Background(), subj)
+
+	require.NoError(t, err)
+	assert.Empty(t, att.BaseDigest)
+	require.NoError(t, svc.Verify(context.Background(), att))
+}
+
+// TestVerify_ABaseDigestOutsideItsLayout_IsRefused closes the inject
+// direction of the downgrade, which is the dangerous one.
+//
+// Strip-the-field is caught by the bytes differing. Its mirror is not: take an
+// attestation signed under the ORIGINAL layout, where the payload ends before
+// any base digest, then set a base digest and leave the version alone. The
+// signed bytes never change, so the signature still verifies — and the record
+// now carries an environment claim no signature covers. A field that is
+// "signed" only when a version number says so must refuse to be present when
+// that version says it is not. Refs: MGIT-61.15, SEC-01, FR-17.38
+func TestVerify_ABaseDigestOutsideItsLayout_IsRefused(t *testing.T) {
+	svc, _, _ := newService(t)
+	legacy := &model.Attestation{
+		SandboxID: testSandbox, CommitHash: testCommit, ContentHash: testContent,
+		Alg: model.AlgEd25519, KeyID: svc.activeKey, IssuedAt: fixedClock()().UTC(),
+	}
+	legacy.HostSignature = ed25519.Sign(svc.priv, signingPayload(legacy))
+	require.NoError(t, svc.Verify(context.Background(), legacy), "precondition")
+
+	legacy.BaseDigest = testBaseDigest // signed by nothing
+
+	require.Error(t, svc.Verify(context.Background(), legacy),
+		"a base digest outside the layout that covers it must never be accepted")
+}
+
+// TestVerify_AnUnknownPayloadLayout_IsRefused keeps the vocabulary closed. An
+// unrecognized version means the verifier cannot know which bytes were signed,
+// and guessing is how a signature ends up covering less than it appears to.
+func TestVerify_AnUnknownPayloadLayout_IsRefused(t *testing.T) {
+	svc, _, _ := newService(t)
+	att, err := svc.Attest(context.Background(), testSubject())
+	require.NoError(t, err)
+
+	att.PayloadVersion = 99
+
+	require.Error(t, svc.Verify(context.Background(), att))
 }

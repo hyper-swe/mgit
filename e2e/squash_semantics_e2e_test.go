@@ -53,6 +53,49 @@ func TestE2E_Squash_LandsOnTaskBranch_MainUntouched(t *testing.T) {
 	assert.Contains(t, logPromoted, "MGIT-2", "the unrelated commit remains after promote")
 }
 
+// TestE2E_SquashToMain_FromLinkedWorktree_Refused is the real-binary e2e for
+// the worktree guard: squash.go's RunE refuses --to-main from a linked
+// worktree because promoting would switch the shared parent HEAD out from
+// under it. TestE2E_Squash_LandsOnTaskBranch_MainUntouched above proves
+// --to-main's promote behavior end to end; TestE2E_Worktree_
+// GuardsAgainstSharedHeadMutation (worktree_commit_e2e_test.go) proves the
+// command is among several a worktree must reject, but only generically
+// (assert.Error, no message check). Neither pins the guard's own contract —
+// that it names "linked worktree" and the bound task, and that main is left
+// untouched by the refusal — the way cmd/mgit/squash_to_main_test.go already
+// does at the cmd (in-process) layer. This is that same proof through the
+// real compiled binary. Refs: MGIT-24, MGIT-61.13, FR-7.2a
+func TestE2E_SquashToMain_FromLinkedWorktree_Refused(t *testing.T) {
+	bin := buildMgitBinary(t)
+	repoDir := t.TempDir()
+	gitCmd(t, repoDir, "init")
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "readme.md"), []byte("base\n"), 0o600))
+	gitCmd(t, repoDir, "add", "readme.md")
+	gitCmd(t, repoDir, "commit", "-m", "base")
+
+	mustMgit(t, bin, repoDir, "init")
+	commitFile(t, bin, repoDir, "MAIN-1", "seed.txt", "seed\n")
+	mustMgit(t, bin, repoDir, "squash", "--task-id", "MAIN-1") // creates task/MAIN-1 to worktree from
+
+	wt := filepath.Join(repoDir, "wt")
+	mustMgit(t, bin, repoDir, "worktree", "add", "--task", "MAIN-2", wt)
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "wt.txt"), []byte("wt change\n"), 0o600))
+	mustMgit(t, bin, wt, "add", "wt.txt")
+	mustMgit(t, bin, wt, "commit", "-m", "wt change")
+
+	mainLogBefore := mustMgit(t, bin, repoDir, "log")
+
+	out, err := runMgit(t, bin, wt, "squash", "--task-id", "MAIN-2", "--to-main")
+	require.Error(t, err, "a linked worktree must not be able to promote to main")
+	assert.Contains(t, out, "linked worktree")
+	assert.Contains(t, out, "MAIN-2", "the error names the bound task")
+
+	// The refusal is a genuine no-op: the parent's main log is byte-for-byte
+	// unchanged, not just "an error was returned but who knows what ran first".
+	mainLogAfter := mustMgit(t, bin, repoDir, "log")
+	assert.Equal(t, mainLogBefore, mainLogAfter, "a refused --to-main must not touch main")
+}
+
 // mustMgit runs mgit and fails the test on error, returning stdout.
 func mustMgit(t *testing.T, bin, repoDir string, args ...string) string {
 	t.Helper()

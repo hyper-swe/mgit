@@ -20,9 +20,11 @@ func realAttestor(t *testing.T) (*attest.Service, *model.Attestation) {
 	require.NoError(t, attest.GenerateKey(context.Background(), hostRoot, noopKeyAuditor{}))
 	svc, err := attest.NewService(hostRoot, func() time.Time { return time.Unix(0, 0).UTC() })
 	require.NoError(t, err)
-	att, err := svc.Attest(context.Background(), "01JXSBLAND00000000000000000",
-		"0123456789abcdef0123456789abcdef01234567",
-		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+	att, err := svc.Attest(context.Background(), model.AttestationSubject{
+		SandboxID:   "01JXSBLAND00000000000000000",
+		CommitHash:  "0123456789abcdef0123456789abcdef01234567",
+		ContentHash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	})
 	require.NoError(t, err)
 	return svc, att
 }

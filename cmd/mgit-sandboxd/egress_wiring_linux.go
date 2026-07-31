@@ -5,8 +5,6 @@ package main
 import (
 	"context"
 	"log/slog"
-	"net"
-	"net/netip"
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -37,7 +35,7 @@ func wireEgress(svc *service.SandboxService, events *index.Store, clock func() t
 	runner, err := egress.NewRunner(egress.RunnerConfig{
 		Audit:     events,
 		Lookup:    egress.SystemLookup(nil),
-		Dial:      hostEgressDial,
+		Dial:      egress.HostDial,
 		Clock:     clock,
 		Logger:    logger,
 		ProxyPort: egressProxyPort,
@@ -90,10 +88,3 @@ func (c fcEgressController) StartEgress(ctx context.Context, info model.SandboxI
 
 // StopEgress tears the sandbox's egress stack down (idempotent).
 func (c fcEgressController) StopEgress(sandboxID string) { _ = c.runner.Stop(sandboxID) }
-
-// hostEgressDial opens the authorized host-side connection to a destination
-// the proxy approved. Refs: SEC-04
-func hostEgressDial(ctx context.Context, ip netip.Addr, port int) (net.Conn, error) {
-	var d net.Dialer
-	return d.DialContext(ctx, "tcp", netip.AddrPortFrom(ip, uint16(port)).String())
-}

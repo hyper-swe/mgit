@@ -39,11 +39,24 @@ type LandedCommitReader interface {
 	GetTaskCommits(ctx context.Context, taskID string) ([]index.CommitRecord, error)
 }
 
+// sandboxOrigin is the host's record of where a land came from: the sandbox
+// identity the peer was authorized as, and the digest of the guest base that
+// sandbox booted. Both are host-established; neither is guest-asserted. They
+// travel together because the attestation binds both, and a land that carried
+// one without the other could attest a commit to an environment nobody
+// recorded. Refs: SEC-01, MGIT-61.15
+type sandboxOrigin struct {
+	id         string
+	baseDigest string
+}
+
 // Attestor issues a host attestation for an observed commit (SEC-01): it
-// signs only the (sandboxID, commitHash, contentHash) the host itself
-// computed from the bytes it read. *attest.Service satisfies it. Refs: FR-17.6, SEC-01
+// signs only what the host itself established — the hashes it computed from
+// the bytes it read, the sandbox identity it authorized, and the guest base
+// that sandbox was launched from. *attest.Service satisfies it.
+// Refs: FR-17.6, SEC-01, MGIT-61.15
 type Attestor interface {
-	Attest(ctx context.Context, sandboxID, commitHash, contentHash string) (*model.Attestation, error)
+	Attest(ctx context.Context, subj model.AttestationSubject) (*model.Attestation, error)
 }
 
 // poolParentResolver is the pool-aware parent resolver the land service both
@@ -235,7 +248,11 @@ func (s *LandService) Land(ctx context.Context, taskID string) (*LandSummary, er
 	if err != nil {
 		return nil, fmt.Errorf("sandbox land: resolve sandbox: %w", err)
 	}
-	sandboxID := info.ID
+	// The host's own record of where this land comes from: the launch-assigned
+	// identity AND the base that sandbox booted. Both are read here, from host
+	// state, so nothing downstream can be told a different origin by the guest.
+	// Refs: SEC-01, SEC-05, MGIT-61.15
+	origin := sandboxOrigin{id: info.ID, baseDigest: info.ImageDigest}
 
 	// Per-sandbox single-flight (F7): coalesce concurrent triggers for ONE
 	// sandbox into a single in-flight land. A hostile guest spamming its notify
@@ -245,8 +262,8 @@ func (s *LandService) Land(ctx context.Context, taskID string) (*LandSummary, er
 	// runs the land and any concurrent caller for the same sandbox shares its
 	// result instead of launching a second pull. Keyed by sandbox ID so it also
 	// covers the control-plane verb. Refs: MGIT-11.10.11, MGIT-11.13.5
-	v, err, _ := s.flight.Do(sandboxID, func() (interface{}, error) {
-		return s.landGuarded(ctx, tid, sandboxID)
+	v, err, _ := s.flight.Do(origin.id, func() (interface{}, error) {
+		return s.landGuarded(ctx, tid, origin)
 	})
 	if err != nil {
 		return nil, err
@@ -260,25 +277,26 @@ func (s *LandService) Land(ctx context.Context, taskID string) (*LandSummary, er
 // a slot does not free in time. The single-flight leader runs this; coalesced
 // followers do not, so concurrent triggers for one sandbox consume one slot.
 // Refs: MGIT-11.13.5
-func (s *LandService) landGuarded(ctx context.Context, tid model.TaskID, sandboxID string) (*LandSummary, error) {
+func (s *LandService) landGuarded(ctx context.Context, tid model.TaskID, origin sandboxOrigin) (*LandSummary, error) {
 	select {
 	case s.sem <- struct{}{}:
 		defer func() { <-s.sem }()
 	case <-ctx.Done():
 		s.logger.Warn("land rejected: concurrency cap reached",
-			"event", "land_rejected", "sandbox_id", sandboxID,
+			"event", "land_rejected", "sandbox_id", origin.id,
 			"max_concurrent_lands", s.limits.MaxConcurrentLands, "error", ctx.Err().Error())
 		return nil, fmt.Errorf("sandbox land: concurrency cap of %d reached: %w",
 			s.limits.MaxConcurrentLands, ctx.Err())
 	}
-	return s.landOnce(ctx, tid, sandboxID)
+	return s.landOnce(ctx, tid, origin)
 }
 
 // landOnce performs one land for an already-resolved sandbox: pull the pool
 // once, derive the new chain, and route through the orchestrator. It is invoked
 // under both the per-sandbox single-flight and the global concurrency slot.
-func (s *LandService) landOnce(ctx context.Context, tid model.TaskID, sandboxID string) (*LandSummary, error) {
+func (s *LandService) landOnce(ctx context.Context, tid model.TaskID, origin sandboxOrigin) (*LandSummary, error) {
 	taskID := tid.String()
+	sandboxID := origin.id
 	pool, err := s.puller.Pull(ctx, sandboxID)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox land: pull pool: %w", err)
@@ -294,7 +312,7 @@ func (s *LandService) landOnce(ctx context.Context, tid model.TaskID, sandboxID 
 		return &LandSummary{Commits: 0, Branch: model.TaskBranchName(taskID)}, nil
 	}
 
-	req, err := s.buildRequest(ctx, tid, sandboxID, basePos, pool, chain)
+	req, err := s.buildRequest(ctx, tid, origin, basePos, pool, chain)
 	if err != nil {
 		s.puller.Discard(sandboxID)
 		return nil, err
@@ -347,7 +365,7 @@ func (s *LandService) newChain(ctx context.Context, taskID string, pool []land.O
 // so intra-batch parents resolve; the orchestrator (same resolver) re-binds
 // every commit before importing. Attestations are issued only under
 // require_sandbox, from hashes the host computed (SEC-01). Refs: FR-17.5, FR-17.6, SEC-01
-func (s *LandService) buildRequest(ctx context.Context, tid model.TaskID, sandboxID string,
+func (s *LandService) buildRequest(ctx context.Context, tid model.TaskID, origin sandboxOrigin,
 	basePos int, pool []land.Object, chain []land.PoolCommit) (LandRequest, error) {
 	requireSandbox, err := s.requireSandbox(ctx)
 	if err != nil {
@@ -361,18 +379,18 @@ func (s *LandService) buildRequest(ctx context.Context, tid model.TaskID, sandbo
 
 	commits := make([]ClaimedCommit, 0, len(chain))
 	for _, pc := range chain {
-		cc, err := s.claimCommit(ctx, tid, sandboxID, pool, pc, requireSandbox)
+		cc, err := s.claimCommit(ctx, tid, origin, pool, pc, requireSandbox)
 		if err != nil {
 			return LandRequest{}, err
 		}
 		commits = append(commits, cc)
 	}
-	return LandRequest{TaskID: tid.String(), SandboxID: sandboxID, BasePosition: basePos, Commits: commits}, nil
+	return LandRequest{TaskID: tid.String(), SandboxID: origin.id, BasePosition: basePos, Commits: commits}, nil
 }
 
 // claimCommit derives one commit from its bytes and issues its host
 // attestation when require_sandbox is on.
-func (s *LandService) claimCommit(ctx context.Context, tid model.TaskID, sandboxID string,
+func (s *LandService) claimCommit(ctx context.Context, tid model.TaskID, origin sandboxOrigin,
 	pool []land.Object, pc land.PoolCommit, requireSandbox bool) (ClaimedCommit, error) {
 	parentFiles, err := s.parents.ParentFileSet(ctx, pc.ParentID)
 	if err != nil {
@@ -384,9 +402,24 @@ func (s *LandService) claimCommit(ctx context.Context, tid model.TaskID, sandbox
 	}
 	var att *model.Attestation
 	if requireSandbox {
-		// Sign only the (sandboxID, hashes) the host computed from the bytes,
-		// never guest-asserted values (SEC-01).
-		att, err = s.attestor.Attest(ctx, sandboxID, c.CommitID, c.ContentHash)
+		if origin.baseDigest == "" {
+			// SandboxInfo.Validate rejects an empty ImageDigest, so this is a
+			// state the model says cannot happen. Log it rather than attest
+			// an empty environment claim in silence: if a resolver ever stops
+			// populating it, the suite stays green and every attestation
+			// quietly says nothing about where it came from. Refs: MGIT-61.15
+			s.logger.Warn("attesting a commit with no recorded guest base",
+				"event", "attest_no_base", "sandbox_id", origin.id, "task_id", tid.String())
+		}
+		// Sign only what the HOST established, never guest-asserted values
+		// (SEC-01): the hashes it computed from the bytes it read, plus the
+		// sandbox identity and base digest it recorded at launch.
+		att, err = s.attestor.Attest(ctx, model.AttestationSubject{
+			SandboxID:   origin.id,
+			CommitHash:  c.CommitID,
+			ContentHash: c.ContentHash,
+			BaseDigest:  origin.baseDigest,
+		})
 		if err != nil {
 			return ClaimedCommit{}, fmt.Errorf("sandbox land: attest commit: %w", err)
 		}

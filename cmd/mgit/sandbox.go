@@ -69,10 +69,11 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 		sandboxStatusCmd(connect),
 		sandboxPublishedCmd(connect), // list a task's one-way published ports (SEC-09)
 		sandboxRemoveCmd(connect),
-		sandboxGrantsCmd(connect),     // list pending capability requests (deny->prompt, MGIT-11.9.4)
-		sandboxGrantCmd(connect),      // approve one pending capability request
-		sandboxShellCmd(connect),      // T2 confined-agent interactive attach (MGIT-11.11.4)
-		sandboxImageCmd(),             // host-local image registry (no daemon)
+		sandboxGrantsCmd(connect), // list pending capability requests (deny->prompt, MGIT-11.9.4)
+		sandboxGrantCmd(connect),  // approve one pending capability request
+		sandboxShellCmd(connect),  // T2 confined-agent interactive attach (MGIT-11.11.4)
+		sandboxImageCmd(),
+		sandboxBaseCmd(),              // host-local image registry (no daemon)
 		sandboxClaudeHookCmd(connect), // hidden: Claude Code PreToolUse hook (MGIT-11.11.1)
 	)
 	return cmd
@@ -129,12 +130,18 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 	var allow, publish []string
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use:   "launch --task <id> --worktree <path> --image <ref>",
+		Use:   "launch --task <id> --worktree <path>",
 		Short: "Register a sandbox for a task (the VM boots on first exec)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if task == "" || worktree == "" || image == "" {
-				return fmt.Errorf("--task-id, --worktree and --image are required")
+			if task == "" || worktree == "" {
+				return fmt.Errorf("--task-id and --worktree are required")
+			}
+			if image == "" {
+				var err error
+				if image, err = repoGuestBaseRef(); err != nil {
+					return err
+				}
 			}
 			// One-way published ports (SEC-09): host 127.0.0.1:<host> reaches the
 			// guest's <guest>. Parsed and validated host-side before the RPC.
@@ -163,7 +170,8 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 	}
 	bindTaskIDFlag(cmd, &task, "task ID to bind (required)")
 	cmd.Flags().StringVar(&worktree, "worktree", "", "worktree path the sandbox mounts (required)")
-	cmd.Flags().StringVar(&image, "image", "", "digest-pinned image reference <name>@sha256:<hex> (required)")
+	cmd.Flags().StringVar(&image, "image", "",
+		"digest-pinned image reference <name>@sha256:<hex>; defaults to this repo's registered guest base")
 	cmd.Flags().StringVar(&network, "network", model.NetworkModeNone, "network mode: none | allowlist | open")
 	cmd.Flags().StringArrayVar(&allow, "allow", nil, "allowlist entry (repeatable; allowlist mode only)")
 	cmd.Flags().StringArrayVar(&publish, "publish", nil,

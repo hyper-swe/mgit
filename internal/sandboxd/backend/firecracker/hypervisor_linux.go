@@ -185,7 +185,7 @@ func buildConfig(cfg microvm.VMConfig, p vmPaths, worktreeImg string) fc.Config 
 		out.NetworkInterfaces = fc.NetworkInterfaces{{
 			StaticConfiguration: &fc.StaticNetworkConfiguration{
 				HostDevName: egress.TapName(cfg.SandboxID),
-				MacAddress:  guestMAC(cfg.SandboxID),
+				MacAddress:  microvm.GuestMAC(cfg.SandboxID),
 				IPConfiguration: &fc.IPConfiguration{
 					IPAddr:      guestNet,
 					Gateway:     net.IP(gw.AsSlice()),
@@ -201,8 +201,15 @@ func buildConfig(cfg microvm.VMConfig, p vmPaths, worktreeImg string) fc.Config 
 // VMM process is tied to a detached lifetime context so the guest
 // outlives the request that launched it; Stop cancels it.
 func (h *fcHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
-	stateDir := filepath.Dir(cfg.OverlayPath)
-	p := sandboxPaths(stateDir)
+	// Refuse rather than resolve relatively: every per-VM artifact (API
+	// socket, vsock socket, console, worktree image) is placed under the state
+	// dir so teardown is one RemoveAll, and a process-relative path would
+	// scatter them into the daemon's cwd and survive it (FR-17.19).
+	if cfg.StateDir == "" {
+		return nil, fmt.Errorf("%w: firecracker needs a sandbox state dir for its per-VM sockets",
+			model.ErrSandboxBackendUnavailable)
+	}
+	p := sandboxPaths(cfg.StateDir)
 
 	// Copy-and-land worktree delivery (ADR-005): pack the worktree into a
 	// per-VM ext4 image in the state dir (cleaned by teardown's RemoveAll),
@@ -210,7 +217,7 @@ func (h *fcHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
 	// on a background context (the Hypervisor seam has none).
 	var worktreeImg string
 	if cfg.WorktreePath != "" {
-		worktreeImg = filepath.Join(stateDir, worktreeImageName)
+		worktreeImg = filepath.Join(cfg.StateDir, worktreeImageName)
 		// PrivateStorePath (SEC-03) is laid into the image at <worktree>/.mgit
 		// and escaping worktree symlinks are rejected; empty = legacy direct
 		// pack (no provisioner wired). Refs: SEC-03, MGIT-11.6.8

@@ -127,12 +127,18 @@ func (p *Proxy) handle(ctx context.Context, guest net.Conn) {
 	if err := encodeReply(guest, true, ""); err != nil {
 		return
 	}
-	splice(guest, upstream)
+	Splice(guest, upstream)
 }
 
-// splice copies bytes both ways until either side closes, then unblocks the
-// other by closing both. Refs: SEC-04
-func splice(a, b net.Conn) {
+// Splice copies bytes both ways until either side closes, then unblocks the
+// other by closing BOTH. Closing both is the point: a plain pair of io.Copy
+// goroutines leaves one side blocked forever when its peer half-closes, which
+// on a sandbox data path is a leaked connection per flow.
+//
+// Exported so every enforcement point splices identically — the CONNECT proxy
+// here and the libkrun netstack gateway, which terminates the guest's TCP
+// itself. Refs: SEC-04, MGIT-61.9
+func Splice(a, b net.Conn) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	cp := func(dst, src net.Conn) {

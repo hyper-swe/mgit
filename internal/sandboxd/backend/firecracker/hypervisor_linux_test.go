@@ -129,10 +129,10 @@ func TestKVM_RootfsReadOnly_OverlayCOW(t *testing.T) {
 	cfg := microvm.VMConfig{
 		CPUs: 2, MemoryMB: 512,
 		KernelPath: "/img/vmlinux", RootfsPath: "/img/rootfs.sqfs", RootfsReadOnly: true,
-		Cmdline: bootCmdline, OverlayPath: "/state/sb1/overlay.img",
+		Cmdline: bootCmdline, StateDir: "/state/sb1", OverlayPath: "/state/sb1/overlay.img",
 		VsockEnabled: true,
 	}
-	fcfg := buildConfig(cfg, sandboxPaths(filepath.Dir(cfg.OverlayPath)), "")
+	fcfg := buildConfig(cfg, sandboxPaths(cfg.StateDir), "")
 
 	require.Len(t, fcfg.Drives, 2, "exactly a rootfs + overlay drive")
 	root := fcfg.Drives[0]
@@ -236,9 +236,9 @@ func TestKVM_BuildConfig_VsockDisabled(t *testing.T) {
 	cfg := microvm.VMConfig{
 		CPUs: 1, MemoryMB: 256,
 		KernelPath: "/img/vmlinux", RootfsPath: "/img/rootfs.sqfs", RootfsReadOnly: true,
-		OverlayPath: "/state/sb1/overlay.img", VsockEnabled: false,
+		StateDir: "/state/sb1", OverlayPath: "/state/sb1/overlay.img", VsockEnabled: false,
 	}
-	fcfg := buildConfig(cfg, sandboxPaths(filepath.Dir(cfg.OverlayPath)), "")
+	fcfg := buildConfig(cfg, sandboxPaths(cfg.StateDir), "")
 	assert.Empty(t, fcfg.VsockDevices, "no vsock device when the control plane is disabled")
 }
 
@@ -278,11 +278,19 @@ func TestKVM_NewPlatformHypervisor_NoKVMDevice(t *testing.T) {
 
 // TestKVM_CreateVM_InvalidConfigSurfaces covers the validation branch:
 // a config the VMM would reject fails at Validate, before any process is
-// spawned. Constructs the hypervisor directly so it needs no /dev/kvm.
+// spawned. Constructs the hypervisor directly so it needs no /dev/kvm --
+// but it does need a StateDir: CreateVM's own state-dir guard clause
+// (FR-17.19, "firecracker needs a sandbox state dir for its per-VM
+// sockets") runs BEFORE Validate, so an empty StateDir short-circuits
+// there instead of reaching the branch this test targets. That guard
+// fired on every platform (proven without /dev/kvm or the firecracker
+// binary present at all), not just a KVM-less CI runner -- the fixture
+// was missing a required field, this was never an environment gap.
 func TestKVM_CreateVM_InvalidConfigSurfaces(t *testing.T) {
 	hv := &fcHypervisor{bin: "firecracker"}
 	_, err := hv.CreateVM(microvm.VMConfig{
 		CPUs: 1, MemoryMB: 256,
+		StateDir:    t.TempDir(),
 		KernelPath:  filepath.Join(t.TempDir(), "absent-kernel"),
 		RootfsPath:  filepath.Join(t.TempDir(), "absent-rootfs"),
 		OverlayPath: filepath.Join(t.TempDir(), "overlay.img"),

@@ -82,9 +82,9 @@ func (safeParents) Deregister([]string)                                 {}
 // safeAttestor is a stateless, concurrency-safe Attestor.
 type safeAttestor struct{}
 
-func (safeAttestor) Attest(_ context.Context, sandboxID, commitHash, contentHash string) (*model.Attestation, error) {
+func (safeAttestor) Attest(_ context.Context, subj model.AttestationSubject) (*model.Attestation, error) {
 	return &model.Attestation{
-		SandboxID: sandboxID, CommitHash: commitHash, ContentHash: contentHash,
+		SandboxID: subj.SandboxID, CommitHash: subj.CommitHash, ContentHash: subj.ContentHash,
 		Alg: model.AlgEd25519, KeyID: "host-key", HostSignature: []byte("sig"),
 		IssuedAt: time.Unix(0, 0).UTC(),
 	}, nil

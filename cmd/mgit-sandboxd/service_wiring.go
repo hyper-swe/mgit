@@ -31,6 +31,9 @@ const sandboxIndexDB = "sandbox-index.db"
 // store. Handlers go through this service, never the manager directly
 // (architecture rule). Refs: FR-17.13, FR-17.18, MGIT-11.10.8
 func buildSandboxService(manager model.SandboxManager, hostRoot string, clock func() time.Time, logger *slog.Logger) (*service.SandboxService, *index.Store, *policy.Store, func() error, error) {
+	// index.New creates the host root on the way to its own database, which
+	// is what makes the first `mgit sandbox …` in a fresh repo work — nothing
+	// else had created .mgit/sandbox by then. Refs: FR-17.13, MGIT-61.15
 	events, err := index.New(filepath.Join(hostRoot, sandboxIndexDB), clock)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("open sandbox audit index: %w", err)

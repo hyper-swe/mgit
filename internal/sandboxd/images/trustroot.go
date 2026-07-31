@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -87,4 +89,31 @@ func existingFingerprint(dir string) string {
 		return hostkey.Fingerprint(pub)
 	}
 	return ""
+}
+
+// EnsureSigningKey returns the host's image-signing key, creating the trust
+// root on first use.
+//
+// It exists so that every command which signs into images.lock behaves the
+// same way. `image install` generated a missing trust root; `base from` and
+// `base set` did not, so a new user following the guidance mgit itself
+// printed hit a second wall telling them to run `image init` — guidance that
+// leads into another error is worse than none.
+//
+// An EXISTING key is returned untouched, never rotated: rotation invalidates
+// every image already registered under it, so a convenience must not reach
+// for it. Rotation stays an explicit act (`mgit sandbox image init`).
+// Refs: MGIT-65, FR-17.38
+func EnsureSigningKey(ctx context.Context, hostRoot string, audit TrustRootAuditor) (ed25519.PrivateKey, error) {
+	priv, err := LoadSigningKey(hostRoot)
+	if err == nil {
+		return priv, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		// The key exists but is unreadable or malformed. Generating over it
+		// would destroy whatever is there and silently orphan every image it
+		// signed, so this must stay an error.
+		return nil, err
+	}
+	return GenerateTrustRoot(ctx, hostRoot, audit)
 }

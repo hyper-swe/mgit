@@ -218,3 +218,94 @@ func TestExec_ContextDeadline_Applied(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ok\n", string(res.Stdout))
 }
+
+// muteConn is a connection that accepts everything written to it and then
+// returns EOF — the exact shape of libkrun's vsock while the guest is still
+// booting: the host-side endpoint exists and takes the request, and nothing
+// inside the guest is there to receive it.
+type muteConn struct{ net.Conn }
+
+func (muteConn) Read([]byte) (int, error)         { return 0, io.EOF }
+func (muteConn) Write(p []byte) (int, error)      { return len(p), nil }
+func (muteConn) Close() error                     { return nil }
+func (muteConn) SetDeadline(time.Time) error      { return nil }
+func (muteConn) SetReadDeadline(time.Time) error  { return nil }
+func (muteConn) SetWriteDeadline(time.Time) error { return nil }
+
+// muteDialer hands back mute connections for its first failFirst calls, then
+// delegates to inner.
+//
+// This is NOT what flakyDialer models. flakyDialer fails the DIAL; here the
+// dial succeeds and the failure only shows up after the request has been
+// sent, which is why a retry loop watching dial errors alone sails past it.
+// Refs: MGIT-61.15, MGIT-58
+type muteDialer struct {
+	failFirst int
+	calls     int
+	inner     GuestDialer
+}
+
+func (d *muteDialer) DialGuest(ctx context.Context, id string) (net.Conn, error) {
+	d.calls++
+	if d.calls <= d.failFirst {
+		return muteConn{}, nil
+	}
+	return d.inner.DialGuest(ctx, id)
+}
+
+// TestExec_GuestConnectionThatImmediatelyEOFs_IsRetried covers the first
+// command an agent runs after `mgit work --sandbox`, which is the one that
+// races the guest's boot. Before this, it failed with a bare "read frame:
+// EOF" and the SECOND command succeeded — the worst possible shape for
+// trust in the tool.
+func TestExec_GuestConnectionThatImmediatelyEOFs_IsRetried(t *testing.T) {
+	skipWithoutPOSIXShell(t)
+	dialer := &muteDialer{failFirst: 2, inner: &pipeDialer{}}
+	mgr := execManager(t, dialer)
+	ctx := context.Background()
+	info, err := mgr.Launch(ctx, launchOpts("MGIT-1", model.NetworkModeNone))
+	require.NoError(t, err)
+
+	res, err := mgr.Exec(ctx, info.ID, model.ExecRequest{Command: []string{"echo", "ready"}})
+
+	require.NoError(t, err, "a connection that EOFs before the guest is listening must be retried")
+	assert.Equal(t, 0, res.ExitCode)
+	assert.Equal(t, 3, dialer.calls, "the two dead connections must each have been retried")
+}
+
+// TestExec_OnceTheGuestHasAnswered_ASilentEOFIsReported verifies the retry
+// window CLOSES. A guest that dies mid-session must surface as a failure, not
+// be quietly re-run — the retry is only ever safe before the guest has proven
+// it can receive anything.
+func TestExec_OnceTheGuestHasAnswered_ASilentEOFIsReported(t *testing.T) {
+	skipWithoutPOSIXShell(t)
+	// Answers the first command, then goes mute for every command after it.
+	dialer := &muteAfterDialer{inner: &pipeDialer{}}
+	mgr := execManager(t, dialer)
+	ctx := context.Background()
+	info, err := mgr.Launch(ctx, launchOpts("MGIT-1", model.NetworkModeNone))
+	require.NoError(t, err)
+	_, err = mgr.Exec(ctx, info.ID, model.ExecRequest{Command: []string{"echo", "one"}})
+	require.NoError(t, err, "the first command must succeed for this test to mean anything")
+
+	start := time.Now()
+	_, err = mgr.Exec(ctx, info.ID, model.ExecRequest{Command: []string{"echo", "two"}})
+
+	require.Error(t, err, "a guest that stops answering mid-session is a real failure")
+	assert.Less(t, time.Since(start), time.Second,
+		"it must fail immediately, not sit in the first-command retry window")
+}
+
+// muteAfterDialer answers once, then goes mute.
+type muteAfterDialer struct {
+	answered bool
+	inner    GuestDialer
+}
+
+func (d *muteAfterDialer) DialGuest(ctx context.Context, id string) (net.Conn, error) {
+	if d.answered {
+		return muteConn{}, nil
+	}
+	d.answered = true
+	return d.inner.DialGuest(ctx, id)
+}

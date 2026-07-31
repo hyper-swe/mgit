@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -41,6 +43,17 @@ type Store struct {
 func New(dbPath string, clock func() time.Time) (*Store, error) {
 	if clock == nil {
 		return nil, fmt.Errorf("clock must not be nil")
+	}
+	// Create the directory the database lives in, as every other store in
+	// this repo does for its own state. SQLite reports a missing parent as
+	// "unable to open database file: out of memory (14)", which names neither
+	// the path nor the problem, and leaving that to callers means each one
+	// re-learns it the hard way. 0700: these files are audit and index state.
+	// Refs: FR-17.13, MGIT-61.15
+	if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, fmt.Errorf("create index directory %s: %w", dir, err)
+		}
 	}
 
 	// Open write connection pool (single writer for mutual exclusion)

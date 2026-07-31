@@ -67,12 +67,16 @@ func rootCmd() *cobra.Command {
 		gcCmd(),
 		importCmd(),
 		docsCmd(),
-		worktreeCmd(),
-		workCmd(),
+		// Host-only: these drive the sandbox daemon, the host agent shell or
+		// the host worktree registry, none of which exist inside a guest.
+		// Marked so an agent whose shell is routed into the sandbox gets a
+		// diagnosis instead of a socket error (MGIT-61.7).
+		hostOnly(worktreeCmd()),
+		hostOnly(workCmd()),
 		diffCmd(),
-		sandboxCmd(),
-		serveCmd(),
-		runCmd(),
+		hostOnly(sandboxCmd()),
+		hostOnly(serveCmd()),
+		hostOnly(runCmd()),
 		versionCmd(),
 	)
 

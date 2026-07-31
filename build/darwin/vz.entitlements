@@ -2,7 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- vzf backend: Virtualization.framework -->
 	<key>com.apple.security.virtualization</key>
+	<true/>
+	<!-- libkrun backend: Hypervisor.framework (HVF) — a DIFFERENT key.
+	     One signed binary carries both backends, so both entitlements
+	     ship regardless of build tags (ADR-010, MGIT-61.8). -->
+	<key>com.apple.security.hypervisor</key>
 	<true/>
 </dict>
 </plist>

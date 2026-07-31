@@ -135,13 +135,39 @@ func TestGoreleaser_ArchivesShipSandboxd(t *testing.T) {
 	}
 }
 
-// TestGoreleaser_GuestNotShippedOnHost enforces the distribution decision:
-// mgit-guest is PID 1 inside the guest rootfs image, NOT a host binary. It
-// must never be added to the host builds/archives. Refs: MGIT-44, ADR-005
-func TestGoreleaser_GuestNotShippedOnHost(t *testing.T) {
+// TestGoreleaser_GuestBinariesShipBesideMgitNotOnHostPath enforces the
+// distribution decision as ADR-010 leaves it.
+//
+// mgit-guest is PID 1 INSIDE the guest and is meaningless on a host. It used
+// to reach the guest inside the rootfs image we built and published; under
+// libkrun there is no rootfs to publish — the user brings an OCI image and we
+// compose a base from it — so the guest binaries have to travel in the mgit
+// archive instead. That makes two things load-bearing at once: they must BE
+// in the archive (or `brew install mgit` cannot compose a base at all, having
+// neither a Go toolchain nor the source), and they must NOT sit next to mgit
+// where a package manager would link them onto PATH. A guest/ subdirectory
+// satisfies both. Refs: MGIT-44, MGIT-61.15, ADR-005, ADR-010
+func TestGoreleaser_GuestBinariesShipBesideMgitNotOnHostPath(t *testing.T) {
 	cfg := readRepoFile(t, ".goreleaser.yaml")
-	if strings.Contains(cfg, "./cmd/mgit-guest/") {
-		t.Error("mgit-guest must not be a host build target — it ships inside the guest image (ADR-005), not on host PATH")
+	if !strings.Contains(cfg, "main: ./cmd/mgit-guest/") {
+		t.Error("mgit-guest must be built for the release: a host install carries no " +
+			"Go toolchain and no source, so without it `mgit sandbox base from` cannot compose a base")
+	}
+
+	_, archives, ok := strings.Cut(cfg, "\narchives:")
+	if !ok {
+		t.Fatal(".goreleaser.yaml has no archives section")
+	}
+	if strings.Contains(archives, "- mgit-guest\n") {
+		t.Error("mgit-guest must not be an archive build id — that lands it beside mgit, " +
+			"where a package manager links it onto host PATH")
+	}
+	// Exactly the string the host-side lookup joins onto its own directory.
+	// goreleaser templates `src` in this section but NOT `dst`, so this must
+	// stay a literal — a `{{ .Arch }}` here would ship as those characters.
+	if !strings.Contains(archives, `dst: "guest/"`) {
+		t.Error("the guest binaries must be archived under guest/, which is " +
+			"where `mgit sandbox base` looks for them")
 	}
 }
 
@@ -181,21 +207,23 @@ func TestReleaseWorkflow_RunsGoreleaserOnMac(t *testing.T) {
 	}
 }
 
-// TestInstallDoc_CoversGoInstallAndGuestImage guards the distribution facts
-// this ticket owns: the documented go-install path for the daemon and the
-// guest-image distribution decision. The README narrative (MGIT-49) links
-// this reference; the facts live here so they cannot silently drift.
-// Refs: MGIT-44
-func TestInstallDoc_CoversGoInstallAndGuestImage(t *testing.T) {
+// TestInstallDoc_CoversGoInstallAndTheGuestBase guards the distribution facts
+// the install reference owns: how the daemon is installed, how the guest base
+// is provisioned, and where the guest binaries live. The README narrative
+// (MGIT-49) links this reference; the facts live here so they cannot silently
+// drift from what the commands actually do. Refs: MGIT-44, MGIT-61.15
+func TestInstallDoc_CoversGoInstallAndTheGuestBase(t *testing.T) {
 	doc := readRepoFile(t, "docs/INSTALL-SANDBOX.md")
 	tests := []struct {
 		name  string
 		token string
 	}{
 		{"go-install path for the daemon", "go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest"},
-		{"guest-image distribution decision", "guest image"},
+		{"the one command that provisions a base", "mgit sandbox base from"},
+		{"no default base ships, so launch fails closed", "ships no default base"},
+		{"the guest binaries travel in the archive", "guest/"},
 		{"guest binary is not on host PATH", "mgit-guest"},
-		{"ties to the guest-image build ticket", "MGIT-30"},
+		{"the kernel+rootfs path still has its build ticket", "MGIT-30"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -220,5 +248,28 @@ func TestGoreleaserConfig_IsValid(t *testing.T) {
 	cmd.Dir = repoRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("goreleaser check failed: %v\n%s", err, out)
+	}
+}
+
+// TestBrewFormula_InstallsTheGuestBinaries closes the install path most macOS
+// users take, and the one that reproduces MGIT-65's second defect most
+// exactly: the formula installed `mgit` and `mgit-sandboxd` and nothing from
+// the archive's `guest/` directory, so a brewed mgit resolved no guest
+// binaries, fell through to the source build, and died with "cannot find main
+// module" on a machine that has never had the mgit source.
+//
+// libexec, not bin: everything Homebrew puts in bin is linked onto PATH, and
+// mgit-guest on a host PATH is exactly what the distribution boundary forbids.
+// Refs: MGIT-65, MGIT-44, MGIT-61.15
+func TestBrewFormula_InstallsTheGuestBinaries(t *testing.T) {
+	formula := readRepoFile(t, "brew/mgit.rb")
+
+	if !strings.Contains(formula, `libexec.install "guest"`) {
+		t.Error("the formula must install the archive's guest/ directory into libexec; " +
+			"without it a brewed mgit cannot compose a guest base at all")
+	}
+	if strings.Contains(formula, `bin.install "guest"`) {
+		t.Error("guest binaries must not land in bin: Homebrew links bin onto PATH, " +
+			"and mgit-guest is guest-only")
 	}
 }

@@ -134,14 +134,6 @@ func GatewayFor(sandboxID string) netip.Addr {
 	return gateway
 }
 
-// guestMAC derives a stable, locally-administered (02:..) unicast MAC for a
-// sandbox's guest NIC. Refs: FR-17.7
-func guestMAC(sandboxID string) string {
-	sum := sha256.Sum256([]byte(sandboxID))
-	// 0x02 = locally administered, unicast (low two bits of the first octet).
-	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", sum[0], sum[1], sum[2], sum[3], sum[4])
-}
-
 // tapPlanFor builds the shared egress TapPlan for a sandbox's host tap,
 // single-sourcing the per-mode firewall invariants from the egress package
 // and the fixed gateway ports the egress.Runner binds. extIface is the host

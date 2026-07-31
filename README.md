@@ -55,7 +55,7 @@ or with Go:
 go install github.com/hyper-swe/mgit/cmd/mgit@latest
 ```
 
-Start an agent on a task. `mgit work` provisions a task-bound worktree and wires the agent's harness; with `--sandbox` it also launches the task's microVM. The `--sandbox` leg requires [enabling the sandbox](#enable-the-sandbox) first (the daemon and a guest image); everything else in this walkthrough works without it.
+Start an agent on a task. `mgit work` provisions a task-bound worktree and wires the agent's harness; with `--sandbox` it also launches the task's microVM. The `--sandbox` leg requires [enabling the sandbox](#enable-the-sandbox) first (the daemon and a guest base); everything else in this walkthrough works without it.
 
 ```bash
 mgit init                                    # set mgit up alongside your existing git repo
@@ -179,24 +179,30 @@ git clone https://github.com/hyper-swe/mgit.git && cd mgit && make build
 
 **Binary releases**: pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are on [GitHub Releases](https://github.com/hyper-swe/mgit/releases).
 
+> **macOS: a downloaded archive is quarantined and will not run until you clear it.** Any transfer that sets the `com.apple.quarantine` attribute (a browser download, AirDrop — not `scp` or a local build) causes Gatekeeper to kill the ad-hoc-signed binaries outright on Apple Silicon (`zsh: killed`, no dialog). Both `mgit` and `mgit-sandboxd` are affected. Fix: `xattr -d com.apple.quarantine mgit mgit-sandboxd`, verified to fully resolve it. Whether a Homebrew install has the same problem is not yet verified — see [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#release-archive).
+
 Everything above installs the `mgit` binary, which is all you need for the version-control workflow: init, worktrees, commit, log, squash, and landing by patch. The microVM sandbox (`mgit run`, `mgit work --sandbox`) is a separate, optional layer with its own prerequisites.
 
 ### Enable the sandbox
 
-The sandbox needs a second host binary, `mgit-sandboxd`, and a guest image. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`.
+The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`.
 
+- **macOS** requires Apple Silicon (arm64), macOS 14+; the release/brew daemon links libkrun and is code-signed with the hypervisor entitlement (a `go install`-ed daemon is unsigned and must be signed locally).
 - **Linux** requires KVM (`/dev/kvm`) and the `firecracker` binary on `PATH`.
-- **macOS** requires Apple Silicon (arm64), macOS 13+; the release/brew daemon is code-signed with the virtualization entitlement (a `go install`-ed daemon is unsigned and must be signed locally).
 - **Windows and Intel macOS** have no sandbox backend yet; core mgit runs without it.
 
-The daemon boots a guest image (kernel + rootfs). Register a pinned one in a repo with a single command: it fetches the platform's image bundle from the release, verifies each artifact's sha256, sets up the signing trust root, and registers the digest-pinned image:
+Then compose the Linux userspace the VM boots — from any public OCI image, pulled straight from its registry with no Docker and no container runtime:
 
 ```bash
-mgit sandbox image install                       # fetches the shipped bundle for your platform
-mgit sandbox image install --from <dir-or-url>   # or from a local dir / your own build
+mgit sandbox image init                # once per repo: create the signing trust root
+mgit sandbox base from debian:12       # or node:22, python:3.12, golang:1.23 …
 ```
 
-`mgit run` and `mgit work --sandbox` then use it automatically. The full walkthrough, platform prerequisites, building your own image, and the guest-image story are in [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md).
+That pulls the image, injects `mgit` and `mgit-guest`, pins the composed tree by content digest and signs it into your repo's trust root. `mgit run` and `mgit work --sandbox` use it automatically from then on.
+
+**Pick the image your task's toolchain needs** — the base *is* the environment your agent works in. mgit ships no default base: it redistributes no kernel and no userspace, and with none registered a launch fails closed naming the command above rather than booting something you never chose. Choosing the contents is safe precisely because the guest is the untrusted side: a poisoned base burns a throwaway VM, while the store quarantine, egress policy, land airlock and attestation signing are all enforced host-side.
+
+The full walkthrough, platform prerequisites, the kernel+rootfs path used by the firecracker backend, and the trust model are in [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md).
 
 **Without the sandbox**, mgit is still a complete checkpointed working substrate. `mgit run` and `mgit sandbox land` are the only sandbox-gated commands; integrate a task's result by exporting its squash as a patch and applying it to your git:
 
@@ -211,7 +217,7 @@ The everyday surface:
 | Command | Description |
 |---------|-------------|
 | `mgit init` | Set mgit up alongside your existing git repo |
-| `mgit work PATH --task-id ID [--sandbox --image REF]` | Start an agent on a task: worktree + agent wiring + optional microVM |
+| `mgit work PATH --task-id ID [--sandbox]` | Start an agent on a task: worktree + agent wiring + optional microVM |
 | `mgit run -- <command>` | Run a command in the task's microVM (fail-closed; never on the host) |
 | `mgit commit -m MSG` | Create a task-tagged micro-commit (task ID auto-inherited in a worktree) |
 | `mgit log --task-id ID` | View a task's step-by-step history |
@@ -256,7 +262,7 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 
 | Command | Description |
 |---------|-------------|
-| `mgit work PATH --task-id ID [--sandbox --image REF]` | Start an agent on a task: task-bound worktree + agent-shell wiring + optional sandbox |
+| `mgit work PATH --task-id ID [--sandbox]` | Start an agent on a task: task-bound worktree + agent-shell wiring + optional sandbox |
 | `mgit worktree add PATH --task-id ID [--branch]` | Create an isolated worktree without the agent-shell wiring |
 | `mgit worktree list [--porcelain]` | List active worktrees |
 | `mgit worktree remove PATH [--force]` | Remove a worktree |
@@ -276,9 +282,10 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 | `mgit sandbox land --task-id ID` | Pull + host-verify + land the sandbox's changes |
 | `mgit sandbox status ID` / `list` / `remove ID` | Inspect or tear down sandboxes |
 | `mgit sandbox grants --task-id ID` / `grant --task-id ID KEY` | Review and approve per-task egress requests |
-| `mgit sandbox image init` / `add --kernel … --rootfs …` | Manage the signed, digest-pinned guest image set |
+| `mgit sandbox base from <oci-image>` / `set <dir>` | Compose this repo's guest base from an OCI image, or use a tree you built |
+| `mgit sandbox image init` / `add --kernel … --rootfs …` | Manage the signed, digest-pinned image set (firecracker kernel + rootfs) |
 
-Sandbox commands require the host daemon and a guest image, and run on Linux (Firecracker/KVM) and macOS (Virtualization.framework).
+Sandbox commands require the host daemon and a guest base, and run on macOS (libkrun, Apple Silicon) and Linux (firecracker/KVM).
 
 </details>
 
@@ -351,7 +358,7 @@ mgit's sandbox is designed around one premise: **the guest is the hostile party*
 | **Worktree mount** | The guest sees working-tree files only; the host's shared object store, index, and other tasks' data are not part of the guest view. |
 | **Land / attestation** | Commits are re-verified host-side (dual-hash + task binding) and carry a **host-anchored attestation**: the guest holds no signing key and cannot forge provenance. Land is the only path from the guest's private store to your repo, and it is append-only. |
 
-Additional properties: guest images are digest-pinned **and** Ed25519-signature-verified at boot; capability escalations (extra egress) are derived only from the host-observed denied connection, scoped to the sandbox lifetime, and audited (there is no "allow all"); the local daemon socket is same-UID peer-credential authenticated; a global concurrency + memory ceiling bounds host resource use.
+Additional properties: the guest base is digest-pinned **and** Ed25519-signature-verified at boot; capability escalations (extra egress) are derived only from the host-observed denied connection, scoped to the sandbox lifetime, and audited (there is no "allow all"); the local daemon socket is same-UID peer-credential authenticated; a global concurrency + memory ceiling bounds host resource use.
 
 This model has been **adversarially audited**: a red-team design audit plus an independent story-closure code review against each control, with the audit anchors checked into the repo ([`AUDIT-FR17-SANDBOX-V1.md`](AUDIT-FR17-SANDBOX-V1.md), [`AUDIT-FR17-SANDBOX-SECURITY-V1.md`](AUDIT-FR17-SANDBOX-SECURITY-V1.md)). The hardware-isolation boundary is the load-bearing guarantee; the seam-level defenses are under continuous, independently-reviewed hardening, and open findings are treated as release-gating.
 

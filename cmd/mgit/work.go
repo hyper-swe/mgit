@@ -88,7 +88,7 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	cmd.Flags().StringVar(&opts.Branch, "branch", "", "branch name (default: task/<task-id>)")
 	cmd.Flags().StringVar(&opts.Base, "base", "", "pin the task's fork-base to an explicit commit/ref (default: current local working state)")
 	cmd.Flags().BoolVar(&opts.LaunchSandbox, "sandbox", false, "also launch the task's microVM sandbox (requires --image)")
-	cmd.Flags().StringVar(&opts.Image, "image", "", "digest-pinned image <name>@sha256:<hex> (with --sandbox)")
+	cmd.Flags().StringVar(&opts.Image, "image", "", "digest-pinned image <name>@sha256:<hex>; defaults to this repo's registered guest base")
 	cmd.Flags().StringVar(&opts.Network, "network", model.NetworkModeNone, "sandbox network mode: none | allowlist | open")
 	cmd.Flags().StringArrayVar(&opts.Allow, "allow", nil, "allowlist entry (repeatable; allowlist mode only)")
 }
@@ -168,25 +168,30 @@ func workSetup(ctx context.Context, out io.Writer, deps workDeps, opts workOptio
 // CLAUDE.md env block is regenerated to the live network posture (MGIT-11.11.2).
 // Refs: MGIT-34, NFR-17.6
 func launchWorkSandbox(ctx context.Context, out io.Writer, deps workDeps, opts workOptions, wt *model.WorktreeInfo) {
-	if opts.Image == "" {
-		_, _ = fmt.Fprintf(out, "sandbox not launched: --image is required with --sandbox; "+
-			"run `mgit sandbox launch --task %s --worktree %s --image <ref>`\n", wt.TaskID, wt.Path)
-		return
+	image := opts.Image
+	if image == "" {
+		// No --image means "this repo's base" — the digest is the base's, not
+		// something the user should ever have to carry between commands.
+		var err error
+		if image, err = repoGuestBaseRef(); err != nil {
+			_, _ = fmt.Fprintf(out, "sandbox not launched: %v\n", err)
+			return
+		}
 	}
 	cl, err := deps.connect(ctx)
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "sandbox not launched (%v); the worktree and agent wiring are ready — "+
 			"run `mgit sandbox launch --task %s --worktree %s --image %s` once the backend is available\n",
-			err, wt.TaskID, wt.Path, opts.Image)
+			err, wt.TaskID, wt.Path, image)
 		return
 	}
 	info, err := cl.Launch(ctx, model.SandboxLaunchOptions{
-		TaskID: wt.TaskID, WorktreePath: canonicalPath(wt.Path), ImageRef: opts.Image,
+		TaskID: wt.TaskID, WorktreePath: canonicalPath(wt.Path), ImageRef: image,
 		Network: model.NetworkPolicy{Mode: opts.Network, Allowlist: opts.Allow},
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "sandbox not launched (%v); run `mgit sandbox launch --task %s "+
-			"--worktree %s --image %s` to retry\n", err, wt.TaskID, wt.Path, opts.Image)
+			"--worktree %s --image %s` to retry\n", err, wt.TaskID, wt.Path, image)
 		return
 	}
 	writeSandboxEnvDoc(out, info)

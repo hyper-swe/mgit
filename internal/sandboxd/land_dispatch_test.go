@@ -75,8 +75,11 @@ func (emptyLedger) GetTaskCommits(context.Context, string) ([]index.CommitRecord
 
 type nopAttestor struct{}
 
-func (nopAttestor) Attest(_ context.Context, sandboxID, commitHash, contentHash string) (*model.Attestation, error) {
-	return &model.Attestation{SandboxID: sandboxID, CommitHash: commitHash, ContentHash: contentHash}, nil
+func (nopAttestor) Attest(_ context.Context, subj model.AttestationSubject) (*model.Attestation, error) {
+	return &model.Attestation{
+		SandboxID: subj.SandboxID, CommitHash: subj.CommitHash,
+		ContentHash: subj.ContentHash, BaseDigest: subj.BaseDigest,
+	}, nil
 }
 
 // landAdapter wraps the service land result to the daemon's SandboxLander.

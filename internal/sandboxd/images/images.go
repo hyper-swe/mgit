@@ -39,6 +39,11 @@ type Entry struct {
 	RootfsPath   string `json:"rootfs_path"`   // host path to the read-only rootfs
 	Cmdline      string `json:"cmdline"`       // guest kernel command line
 	Signature    []byte `json:"signature"`     // Ed25519(trust_root, SigningPayload(name, entry))
+	// Source records WHERE a composed base came from — the resolved OCI
+	// reference, registry and digest included. It is provenance for a human
+	// tracing a base back to its image; the Digest above is what boot
+	// actually verifies. Empty for images built locally. Refs: MGIT-61.15
+	Source string `json:"source,omitempty"`
 }
 
 // Lock is the images.lock document: image name -> pinned entry.
@@ -112,13 +117,28 @@ func (s *Store) Resolve(imageRef string) (ResolvedImage, error) {
 		return ResolvedImage{}, fmt.Errorf("%w: image %q signature does not verify against the trust root",
 			model.ErrVerificationFailed, name)
 	}
-	// Both the rootfs and the kernel content must hash to their pinned
-	// digests (FR-17.17): a repointed path is caught here.
+	// The root content must hash to its pinned digest (FR-17.17): a repointed
+	// path is caught here. It may be a rootfs FILE or a guest base DIRECTORY.
 	if err := verifyContentDigest(entry.RootfsPath, entry.Digest); err != nil {
 		return ResolvedImage{}, err
 	}
-	if err := verifyContentDigest(entry.KernelPath, entry.KernelDigest); err != nil {
-		return ResolvedImage{}, err
+	// A libkrun guest base carries NO kernel — libkrunfw supplies one — so an
+	// entry with neither a kernel path nor a kernel digest skips that check.
+	// This cannot be used to skip verification of a real kernel: the signing
+	// payload covers BOTH digests, so blanking them invalidates the signature
+	// checked above. A HALF-specified kernel is refused rather than guessed
+	// at. Refs: FR-17.17, FR-17.29, MGIT-61.15, ADR-010
+	switch {
+	case entry.KernelPath == "" && entry.KernelDigest == "":
+		// kernel-less base; nothing to verify
+	case entry.KernelPath == "" || entry.KernelDigest == "":
+		return ResolvedImage{}, fmt.Errorf(
+			"%w: image %q has a half-specified kernel (path=%q digest=%q)",
+			model.ErrVerificationFailed, name, entry.KernelPath, entry.KernelDigest)
+	default:
+		if err := verifyContentDigest(entry.KernelPath, entry.KernelDigest); err != nil {
+			return ResolvedImage{}, err
+		}
 	}
 
 	return ResolvedImage{
@@ -129,14 +149,16 @@ func (s *Store) Resolve(imageRef string) (ResolvedImage, error) {
 }
 
 // SigningPayload is the canonical, unambiguous byte sequence the trust
-// root signs for one lock entry: the image name, the rootfs digest,
-// the kernel digest, and the cmdline, each length-prefixed so no two
-// distinct field sets collide. The host signing tool and the verifier
+// root signs for one lock entry: the image name, the rootfs digest, the
+// kernel digest, the cmdline, and the source provenance, each length-prefixed
+// so no two distinct field sets collide. The host signing tool and the verifier
 // MUST produce identical bytes. Signature itself is excluded.
 // Refs: FR-17.29, FR-17.38
 func SigningPayload(name string, e Entry) []byte {
 	var buf bytes.Buffer
-	for _, field := range []string{name, e.Digest, e.KernelDigest, e.Cmdline} {
+	// Source is signed alongside the digests: provenance an attacker can
+	// rewrite without breaking verification would be decoration, not audit.
+	for _, field := range []string{name, e.Digest, e.KernelDigest, e.Cmdline, e.Source} {
 		var length [8]byte
 		binary.BigEndian.PutUint64(length[:], uint64(len(field)))
 		buf.Write(length[:])
@@ -158,11 +180,28 @@ func (s *Store) readLock() (Lock, error) {
 	return lock, nil
 }
 
+// contentDigest hashes whatever the pinned artifact is: a rootfs FILE for the
+// firecracker/vzf image path, or a guest base DIRECTORY for libkrun, where
+// libkrunfw supplies the kernel and the root is a shared tree. Dispatching
+// here rather than at each call site means a tree gets verified on every
+// resolve exactly as a file does — a digest recorded once and never
+// re-checked would protect nothing. Refs: FR-17.17, MGIT-61.15
+func contentDigest(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("images: stat %s: %w", path, err)
+	}
+	if info.IsDir() {
+		return TreeDigest(path)
+	}
+	return ComputeDigest(path)
+}
+
 // verifyContentDigest recomputes a file's SHA-256 (streamed, never
 // buffered: images are multi-GB and this runs at every boot) and compares
 // it to the pinned digest. Refs: FR-17.17, NFR-17.1
 func verifyContentDigest(path, pinnedDigest string) error {
-	got, err := ComputeDigest(path)
+	got, err := contentDigest(path)
 	if err != nil {
 		return fmt.Errorf("%w: %w", model.ErrVerificationFailed, err)
 	}

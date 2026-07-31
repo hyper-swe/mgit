@@ -10,11 +10,14 @@ tap owner must apply for MGIT-44.
 
 `Formula/mgit.rb` must install **both** host binaries on the platforms whose
 release archive carries them (Linux any arch; macOS arm64), and install only
-`mgit` where the archive is mgit-only (macOS amd64). The archive layout is:
+`mgit` where the archive is mgit-only (macOS amd64). The archive layout is
+(verified against a real `goreleaser release --snapshot` build — the
+`.Os`/`.Arch` template tokens in `.goreleaser.yaml` render **lowercase**, not
+title-cased):
 
-- `mgit_<ver>_Linux_{amd64,arm64}.tar.gz` → `mgit`, `mgit-sandboxd`
-- `mgit_<ver>_Darwin_arm64.tar.gz` → `mgit`, `mgit-sandboxd`
-- `mgit_<ver>_Darwin_amd64.tar.gz` → `mgit` only
+- `mgit_<ver>_linux_{amd64,arm64}.tar.gz` → `mgit`, `mgit-sandboxd`
+- `mgit_<ver>_darwin_arm64.tar.gz` → `mgit`, `mgit-sandboxd`
+- `mgit_<ver>_darwin_amd64.tar.gz` → `mgit` only
 
 ### If the formula is hand-maintained
 

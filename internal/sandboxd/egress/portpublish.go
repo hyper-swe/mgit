@@ -87,5 +87,5 @@ func (p *Publisher) forward(ctx context.Context, host net.Conn, port int) {
 		_ = host.Close()
 		return
 	}
-	splice(host, guest)
+	Splice(host, guest)
 }

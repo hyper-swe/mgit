@@ -112,26 +112,32 @@ func serveLandConn(worktreePath string, conn net.Conn, logger *slog.Logger) {
 	}
 }
 
+// bootTokens returns the host->guest boot descriptors from BOTH transports:
+// the kernel command line (firecracker, vzf) and the guest environment
+// (libkrun, which boots libkrunfw's own kernel and has no cmdline of ours to
+// append to). guestboot.BootTokens defines the precedence. A missing or
+// unreadable cmdline is not fatal — the env channel may still carry the
+// descriptors. Refs: FR-17.3, ADR-010
+func bootTokens() string {
+	cmdline, err := os.ReadFile(procCmdline)
+	if err != nil {
+		cmdline = nil // env-only boot (or an unreadable /proc); not fatal here
+	}
+	return guestboot.BootTokens(string(cmdline), os.Getenv(guestboot.EnvBootTokens))
+}
+
 // worktreeMountPath re-reads the kernel cmdline worktree descriptor to learn
 // the worktree's absolute path (the land server's repository). Empty when no
 // worktree was delivered.
 func worktreeMountPath() string {
-	cmdline, err := os.ReadFile(procCmdline)
-	if err != nil {
-		return ""
-	}
-	return guestboot.ParseWorktreeMount(string(cmdline)).Path
+	return guestboot.ParseWorktreeMount(bootTokens()).Path
 }
 
 // publishPorts reads the kernel cmdline published-ports descriptor to learn
 // which guest TCP ports to bridge over AF_VSOCK (SEC-09). Empty when no ports
 // are published or the cmdline is unreadable. Refs: SEC-09, FR-17.8
 func publishPorts() []int {
-	cmdline, err := os.ReadFile(procCmdline)
-	if err != nil {
-		return nil
-	}
-	return guestboot.ParsePublishPorts(string(cmdline))
+	return guestboot.ParsePublishPorts(bootTokens())
 }
 
 // mountGuestFilesystems mounts the worktree at its identical absolute host
@@ -204,11 +210,7 @@ type scratchMounter interface {
 // which tolerate EBUSY): switch_root must run exactly once at boot, so any
 // error here is fatal rather than tolerated. Refs: FR-17.3, FR-17.17, NFR-17.7, MGIT-11.6.6, MGIT-11.6.7
 func makeRootWritable() error {
-	cmdline, err := os.ReadFile(procCmdline)
-	if err != nil {
-		return fmt.Errorf("mgit-guest: read kernel cmdline: %w", err)
-	}
-	return makeRootWritableWith(unixScratchMounter{}, guestboot.ParseOverlayUpper(string(cmdline)))
+	return makeRootWritableWith(unixScratchMounter{}, guestboot.ParseOverlayUpper(bootTokens()))
 }
 
 // makeRootWritableWith performs the writable-root overlay + switch_root over
@@ -231,6 +233,15 @@ func makeRootWritableWith(m scratchMounter, o guestboot.OverlayUpper) error {
 	if err := unix.Mount("overlay", newRoot, "overlay", 0, opts); err != nil {
 		return fmt.Errorf("mgit-guest: mount overlay root: %w", err)
 	}
+	// Make the mount tree private BEFORE any MS_MOVE. MS_MOVE returns EINVAL
+	// on a shared mount, and whether the initial namespace is shared is up to
+	// the VMM's own init: firecracker and vzf leave it private, libkrun does
+	// not, so moving /proc there failed with a bare "invalid argument". Doing
+	// it first is what util-linux's switch_root does and is correct on every
+	// backend. Refs: FR-17.17, MGIT-11.6.6, ADR-010
+	if err := unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, ""); err != nil {
+		return fmt.Errorf("mgit-guest: make mount tree private: %w", err)
+	}
 	// Carry the already-mounted pseudo-filesystems into the new root so they
 	// survive switch_root (their mount points exist in the lower image).
 	for _, m := range []string{"/proc", "/dev"} {
@@ -238,12 +249,9 @@ func makeRootWritableWith(m scratchMounter, o guestboot.OverlayUpper) error {
 			return fmt.Errorf("mgit-guest: move %s into new root: %w", m, err)
 		}
 	}
-	// switch_root into the writable overlay (util-linux style): make the
-	// mount tree private (so MS_MOVE onto / is allowed), move newroot onto
-	// /, chroot in. The read-only image remains the overlay's lower.
-	if err := unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, ""); err != nil {
-		return fmt.Errorf("mgit-guest: make mount tree private: %w", err)
-	}
+	// switch_root into the writable overlay (util-linux style): move newroot
+	// onto /, chroot in. The tree was made private above, which is what
+	// allows MS_MOVE onto /. The read-only image remains the overlay's lower.
 	if err := unix.Chdir(newRoot); err != nil {
 		return fmt.Errorf("mgit-guest: chdir new root: %w", err)
 	}
@@ -335,11 +343,7 @@ func mountPseudoFS(source, target, fstype string) error {
 // kernel command line and mounts the worktree at its identical absolute
 // path. Refs: FR-17.3, MGIT-11.6.5
 func mountWorktree() error {
-	cmdline, err := os.ReadFile(procCmdline)
-	if err != nil {
-		return fmt.Errorf("mgit-guest: read kernel cmdline: %w", err)
-	}
-	wt := guestboot.ParseWorktreeMount(string(cmdline))
+	wt := guestboot.ParseWorktreeMount(bootTokens())
 	if wt.Empty() {
 		return nil // no worktree to deliver
 	}

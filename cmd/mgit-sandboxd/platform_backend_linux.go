@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux && !(libkrun && cgo)
 
 package main
 
@@ -34,6 +34,13 @@ func newHypervisorBackend(deps hypervisorDeps) (model.SandboxManager, microvm.Gu
 	if err != nil {
 		return nil, nil, err
 	}
+	// GA position (2026-07-29, ADR-010): firecracker is the Linux default —
+	// libkrun's real-VM boot does not yet complete on Linux/KVM (unresolved
+	// hang past VM entry). Logged so an operator can always tell which VMM a
+	// given daemon build actually linked, matching the libkrun wiring's log.
+	deps.logger.Info("sandbox VMM linked at build time",
+		"event", "vmm_linked", "vmm", model.BackendKVM,
+		"detail", "firecracker subprocess per VM; the Linux GA default")
 	mgr, err := firecracker.NewManager(firecracker.Config{
 		WorkDir:          deps.workDir,
 		Resolve:          newImageResolver(deps.hostRoot, deps.clock),

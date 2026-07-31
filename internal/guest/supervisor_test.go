@@ -279,3 +279,32 @@ func TestEnvValue(t *testing.T) {
 	assert.Equal(t, "/second", envValue([]string{"PATH=/first", "X=1", "PATH=/second"}, "PATH"))
 	assert.Equal(t, "", envValue([]string{"X=1"}, "PATH"))
 }
+
+// TestGuestAgent_BaseEnv_MarksProcessesAsInSandbox pins the marker the guest
+// image's mgit CLI reads to refuse host-only verbs with a diagnosis rather
+// than a socket error. The supervisor is the only writer, so if it stops
+// setting this, every in-guest `mgit sandbox ...` degrades to a confusing
+// failure. Refs: MGIT-61.7, FR-17.11
+func TestGuestAgent_BaseEnv_MarksProcessesAsInSandbox(t *testing.T) {
+	sup := NewSupervisor(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	var marker string
+	for _, kv := range sup.BaseEnv {
+		if v, ok := strings.CutPrefix(kv, GuestModeEnv+"="); ok {
+			marker = v
+		}
+	}
+	assert.NotEmpty(t, marker,
+		"the guest base env must carry %s so the in-guest mgit CLI knows where it is (MGIT-61.7)", GuestModeEnv)
+
+	// And it must actually reach the child, not merely sit in the struct.
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell required")
+	}
+	var stdout, stderr strings.Builder
+	_, err := sup.Execute(context.Background(),
+		model.ExecRequest{Command: []string{"sh", "-c", "printf %s \"$" + GuestModeEnv + "\""}},
+		&stdout, &stderr)
+	require.NoError(t, err)
+	assert.Equal(t, marker, stdout.String(), "the marker must reach the guest child's environment")
+}

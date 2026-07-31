@@ -34,10 +34,11 @@ type SupervisorConfig struct {
 // proxy. The daemon serves Proxy() on the per-sandbox egress channel and
 // drives Resolver() for the guest's DNS. Refs: SEC-04, FR-17.8
 type Supervisor struct {
-	allowlist *Allowlist
-	resolver  *Resolver
-	proxy     *Proxy
-	dns       *DNSServer
+	allowlist  *Allowlist
+	resolver   *Resolver
+	authorizer *Authorizer
+	proxy      *Proxy
+	dns        *DNSServer
 }
 
 // NewSupervisor builds the allowlist-mode egress stack. It is an error to
@@ -92,8 +93,14 @@ func NewSupervisor(cfg SupervisorConfig) (*Supervisor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("egress supervisor: %w", err)
 	}
-	return &Supervisor{allowlist: al, resolver: resolver, proxy: proxy, dns: dns}, nil
+	return &Supervisor{allowlist: al, resolver: resolver, authorizer: authorizer, proxy: proxy, dns: dns}, nil
 }
+
+// Authorizer returns the assembled flow authorizer, for enforcement points
+// that terminate the guest's connections themselves instead of serving the
+// CONNECT proxy — the libkrun netstack gateway consults it per flow.
+// Refs: SEC-04, ADR-010
+func (s *Supervisor) Authorizer() *Authorizer { return s.authorizer }
 
 // Allowlist returns this sandbox's compiled allowlist so the daemon can apply
 // a host-approved, sandbox-lifetime capability grant (Allowlist.GrantIP) to
@@ -111,6 +118,18 @@ func (s *Supervisor) Resolver() *Resolver { return s.resolver }
 // DNS returns the restricted DNS server (served on the sandbox gateway's
 // :53 so the guest resolves only allowlisted names). Refs: SEC-07
 func (s *Supervisor) DNS() *DNSServer { return s.dns }
+
+// HostDial is the production DialFunc: it opens the authorized host-side
+// connection to a destination the authorizer approved, to the PINNED IP it
+// returned (never a re-resolution). It is exported for the same reason
+// SystemLookup is — every enforcement point must dial the same way, whether
+// it runs in the daemon (the CONNECT proxy) or in a VM's own process (the
+// libkrun netstack gateway). A timeout or address-family rule added here
+// then reaches both. Refs: SEC-04
+func HostDial(ctx context.Context, ip netip.Addr, port int) (net.Conn, error) {
+	var d net.Dialer
+	return d.DialContext(ctx, "tcp", netip.AddrPortFrom(ip, uint16(port)).String()) //nolint:gosec // OK: the authorizer range-checks the port
+}
 
 // SystemLookup adapts a *net.Resolver to LookupFunc, resolving on the HOST
 // and mapping a not-found result to ErrNXDOMAIN so the resolver can count

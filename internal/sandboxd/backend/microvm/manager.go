@@ -12,7 +12,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -23,6 +25,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/hyper-swe/mgit/internal/execwire"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/guestexec"
 	"github.com/hyper-swe/mgit/internal/sandboxd/provision"
@@ -64,7 +67,20 @@ type ImagePaths struct {
 // builds; each platform translates it to its native configuration. It
 // carries the FR-17 isolation contract.
 type VMConfig struct {
-	SandboxID      string // host-assigned lifecycle ID; lets a backend key a live-VM registry to its dialer (vzf, FR-17.16)
+	SandboxID string // host-assigned lifecycle ID; lets a backend key a live-VM registry to its dialer (vzf, FR-17.16)
+	// StateDir is the per-sandbox state directory (SandboxStateDir) every
+	// host-side per-VM artifact belongs under, so teardown stays one RemoveAll
+	// (FR-17.19). It is carried explicitly because deriving it — vzf's
+	// filepath.Dir(OverlayPath) trick — breaks for a backend with no overlay:
+	// libkrun boots a virtiofs root, and a derived "." would drop its net
+	// backing sockets in the daemon cwd, shared across sandboxes and surviving
+	// teardown. Refs: FR-17.19, ADR-010
+	StateDir string
+	// TaskID is the task this sandbox serves, carried so a backend that
+	// enforces egress in the VM's own process (libkrun's re-exec child) can
+	// stamp its audit records; the daemon-side backends take it from the
+	// service wiring instead. Refs: FR-17.8
+	TaskID         string
 	CPUs           int
 	MemoryMB       int
 	KernelPath     string
@@ -81,8 +97,20 @@ type VMConfig struct {
 	// Refs: SEC-03, FR-17.3, FR-17.5
 	PrivateStorePath string
 	WorktreeTag      string // mount tag
-	AttachNIC        bool   // false in none mode (FR-17.7)
-	NetworkMode      string // model.NetworkMode*: backend wires NAT (open) vs proxy-route (allowlist) vs no NIC (none) (FR-17.7, FR-17.8)
+	// AttachNIC is DERIVED (NetworkMode != none), not authoritative — it is a
+	// convenience for backends whose "no device" default is fail-CLOSED (vzf,
+	// firecracker). A backend whose default is fail-OPEN must ignore it and key
+	// off NetworkMode: libkrun, for one, silently enables TSI when a VM has no
+	// net device, so honoring AttachNIC=false there is an egress leak, not a
+	// closed network. Refs: FR-17.7, ADR-010
+	AttachNIC   bool
+	NetworkMode string // model.NetworkMode*: backend wires NAT (open) vs proxy-route (allowlist) vs no NIC (none) (FR-17.7, FR-17.8)
+	// NetworkAllowlist is the launch policy's allowlist, verbatim. Backends
+	// whose egress enforcement runs in the daemon (firecracker's proxy) get
+	// the policy from the service wiring and may ignore this; a backend whose
+	// enforcement lives in the VM's own process (libkrun) has only this seam
+	// to receive it. Refs: FR-17.8, SEC-04, ADR-010
+	NetworkAllowlist []string
 	VsockEnabled     bool
 	BalloonEnabled   bool
 	// PublishPorts are the GUEST TCP ports the guest must expose for one-way
@@ -210,6 +238,10 @@ type sandbox struct {
 	info model.SandboxInfo
 	vm   VM
 	dir  string // per-sandbox state dir under WorkDir
+	// guestReady records that the guest has answered on the control vsock at
+	// least once. Until it has, a command that gets nothing back is retried;
+	// after it has, the same failure is real and is reported. Refs: MGIT-61.15
+	guestReady bool
 }
 
 // Manager implements model.SandboxManager over a platform Hypervisor.
@@ -301,7 +333,7 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 		return nil, fmt.Errorf("%s launch: %w", m.cfg.Backend, err)
 	}
 
-	vm, err := m.cfg.Hypervisor.CreateVM(vmConfig(id, opts, images, overlay, privateStore))
+	vm, err := m.cfg.Hypervisor.CreateVM(vmConfig(id, dir, opts, images, overlay, privateStore))
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("%s launch: create vm: %w", m.cfg.Backend, err)
@@ -399,9 +431,11 @@ func (m *Manager) quarantine(taskID, worktreePath, stateDir string) (string, err
 // overlay (FR-17.17), worktree share, the SEC-03 private store, vsock
 // control plane, and a NIC only when the network mode is not "none"
 // (FR-17.7). Refs: FR-17.3, FR-17.17, SEC-03
-func vmConfig(id string, opts model.SandboxLaunchOptions, images ImagePaths, overlay, privateStore string) VMConfig {
+func vmConfig(id, stateDir string, opts model.SandboxLaunchOptions, images ImagePaths, overlay, privateStore string) VMConfig {
 	return VMConfig{
 		SandboxID:        id,
+		StateDir:         stateDir,
+		TaskID:           opts.TaskID,
 		CPUs:             opts.CPUs,
 		MemoryMB:         opts.MemoryMB,
 		KernelPath:       images.KernelPath,
@@ -414,6 +448,7 @@ func vmConfig(id string, opts model.SandboxLaunchOptions, images ImagePaths, ove
 		WorktreeTag:      "work",
 		AttachNIC:        opts.Network.Mode != model.NetworkModeNone,
 		NetworkMode:      opts.Network.Mode,
+		NetworkAllowlist: opts.Network.Allowlist,
 		VsockEnabled:     true,
 		BalloonEnabled:   true,
 		PublishPorts:     guestPublishPorts(opts.PublishPorts),
@@ -450,6 +485,12 @@ func (m *Manager) newSandboxInfo(id string, opts model.SandboxLaunchOptions) mod
 		State:            model.StateRunning,
 		MemoryMB:         opts.MemoryMB,
 		CreatedAt:        now,
+		// The launch options' port mappings, so Status/published (SEC-09)
+		// can report what was actually configured — guestPublishPorts above
+		// only projects the guest-side port numbers into the VM config;
+		// nothing previously carried the full HostPort/GuestPort pairs into
+		// the record Resolve/List return. Refs: SEC-09, MGIT-61.13
+		PublishPorts: opts.PublishPorts,
 	}
 	if opts.TTL > 0 {
 		info.ExpiresAt = now.Add(opts.TTL)
@@ -494,21 +535,91 @@ func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*
 			model.ErrSandboxBackendUnavailable)
 	}
 
+	return m.execUntilTheGuestAnswers(ctx, id, req)
+}
+
+// execUntilTheGuestAnswers runs one command, retrying the whole exchange
+// while the guest has never yet answered on this sandbox.
+//
+// A dial that succeeds is not proof the guest is up. libkrun's host-side
+// vsock endpoint exists from the moment the VM starts, so during the ~1s the
+// guest takes to boot, the connection is accepted, the request is written,
+// and the connection is then closed with nothing forwarded — which reached
+// the user as a bare "read frame: EOF" on the FIRST command after
+// `mgit work --sandbox`, with the second command working. That is the worst
+// possible shape for trust in the tool.
+//
+// The retry is narrow on purpose. It applies only while this sandbox's guest
+// has never once answered, and only when the failure was an EOF with nothing
+// received — no output, no result frame. Under those two conditions the
+// command provably never reached a listener, so re-sending it cannot run
+// anything twice. Once the guest has answered, an EOF means something went
+// wrong mid-command and is reported as it happens.
+// Refs: MGIT-61.15, MGIT-58, FR-17.11
+func (m *Manager) execUntilTheGuestAnswers(
+	ctx context.Context, id string, req model.ExecRequest,
+) (*model.ExecResult, error) {
+	deadline := time.Now().Add(m.cfg.GuestReadyTimeout)
+	for attempt := 0; ; attempt++ {
+		result, stdout, stderr, err := m.execOnce(ctx, id, req)
+		if err == nil {
+			m.markGuestAnswered(id)
+			return &model.ExecResult{Stdout: stdout, Stderr: stderr, ExitCode: result.ExitCode}, nil
+		}
+		if !m.guestNeverAnswered(id) || !isSilentEOF(err, stdout, stderr) ||
+			!time.Now().Add(guestReadyPollInterval).Before(deadline) {
+			return nil, fmt.Errorf("%s exec: %w", m.cfg.Backend, err)
+		}
+		m.cfg.Logger.Debug("guest not serving yet; retrying the first command",
+			"event", "guest_not_serving", "sandbox_id", id, "attempts", attempt+1)
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%s exec: %w", m.cfg.Backend, err)
+		case <-time.After(guestReadyPollInterval):
+		}
+	}
+}
+
+// execOnce performs a single dial-and-run exchange.
+func (m *Manager) execOnce(
+	ctx context.Context, id string, req model.ExecRequest,
+) (execwire.Result, []byte, []byte, error) {
 	conn, err := m.dialGuestReady(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("%s exec: dial guest: %w", m.cfg.Backend, err)
+		return execwire.Result{}, nil, nil, fmt.Errorf("dial guest: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
-
 	var stdout, stderr bytes.Buffer
 	result, err := guestexec.Run(conn, req, &stdout, &stderr)
-	if err != nil {
-		return nil, fmt.Errorf("%s exec: %w", m.cfg.Backend, err)
+	return result, stdout.Bytes(), stderr.Bytes(), err
+}
+
+// isSilentEOF reports whether the guest closed the connection having sent
+// NOTHING at all — the signature of a command that never reached a listener.
+func isSilentEOF(err error, stdout, stderr []byte) bool {
+	return errors.Is(err, io.EOF) && len(stdout) == 0 && len(stderr) == 0
+}
+
+// guestNeverAnswered reports whether this sandbox's guest has yet to answer
+// on the control channel.
+func (m *Manager) guestNeverAnswered(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sb, ok := m.sandboxes[id]
+	return ok && !sb.guestReady
+}
+
+// markGuestAnswered records that the guest served a command, which ends the
+// first-command retry window for this sandbox.
+func (m *Manager) markGuestAnswered(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if sb, ok := m.sandboxes[id]; ok {
+		sb.guestReady = true
 	}
-	return &model.ExecResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ExitCode: result.ExitCode}, nil
 }
 
 // dialGuestReady dials the guest control vsock, retrying on failure until
@@ -645,14 +756,32 @@ func (m *Manager) newID() (string, error) {
 	return id.String(), nil
 }
 
-// SandboxStateDir returns the per-sandbox state directory: a subdirectory
-// of the manager's work dir named for the sandbox ID. It holds every
-// per-sandbox host artifact (the COW overlay and the backend's sockets),
-// so teardown is one RemoveAll. It is exported as the single source of
-// this convention: a backend's guest dialer reconstructs a sandbox's
-// socket path from the same dir, so both must agree. Refs: FR-17.19
+// stateDirSegmentLen is how much of the sandbox ID names its state
+// directory. Refs: MGIT-61.15
+const stateDirSegmentLen = 8
+
+// SandboxStateDir returns the per-sandbox state directory: a subdirectory of
+// the manager's work dir named from the sandbox ID. It holds every
+// per-sandbox host artifact (the COW overlay and the backend's sockets), so
+// teardown is one RemoveAll. It is exported as the single source of this
+// convention: a backend's guest dialer reconstructs a sandbox's socket path
+// from the same dir, so both must agree. Refs: FR-17.19
+//
+// It uses the TAIL of the ID rather than the whole thing because unix sockets
+// are bound under this directory and sun_path caps the entire path at 104
+// bytes. macOS hands every process a 48-byte private TMPDIR, which is where
+// the daemon's runtime dir lands; a full 26-character ULID on top of that put
+// every socket path over the limit, so no VM could boot on a stock Mac at
+// all. The tail is used, not the head: a ULID's leading characters are its
+// timestamp and are identical for sandboxes created in the same millisecond,
+// while the tail is the random part. It remains a suffix of the ID, so a
+// directory found on disk still greps back to its sandbox.
 func SandboxStateDir(workDir, sandboxID string) string {
-	return filepath.Join(workDir, sandboxID)
+	seg := sandboxID
+	if len(seg) > stateDirSegmentLen {
+		seg = seg[len(seg)-stateDirSegmentLen:]
+	}
+	return filepath.Join(workDir, seg)
 }
 
 // createOverlay creates the per-sandbox writable disk as a SPARSE file

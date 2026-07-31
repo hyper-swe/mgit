@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -53,7 +54,7 @@ func BuildEntry(kernelPath, rootfsPath, cmdline string) (Entry, error) {
 
 // Sign returns a copy of e with its detached Ed25519 Signature set for
 // the given image name, over the canonical SigningPayload (name + both
-// digests + cmdline). The host signer and the boot-time verifier
+// digests + cmdline + source). The host signer and the boot-time verifier
 // (Store.Resolve) produce identical payload bytes. Refs: FR-17.29
 func Sign(name string, e Entry, priv ed25519.PrivateKey) Entry {
 	e.Signature = ed25519.Sign(priv, SigningPayload(name, e))
@@ -129,4 +130,48 @@ func writeLockFile(hostRoot string, lock Lock) error {
 		return fmt.Errorf("images: write %s: %w", lockFileName, err)
 	}
 	return nil
+}
+
+// BuildBaseEntry computes the content digest of a libkrun GUEST BASE — a
+// directory tree — and returns an UNSIGNED entry for it, exactly as
+// BuildEntry does for a kernel+rootfs pair. The caller signs and registers it.
+//
+// There is no kernel: libkrunfw supplies one, so KernelPath and KernelDigest
+// are empty and the guest command line is unused (libkrun boots its own
+// kernel and the boot descriptors ride the guest environment instead — see
+// guestboot.EnvBootTokens). Everything else — signing payload, registration,
+// and re-verification on every Resolve — is the path already used for files.
+// Refs: FR-17.17, FR-17.29, MGIT-61.15, ADR-010
+func BuildBaseEntry(baseDir string) (Entry, error) {
+	digest, err := TreeDigest(baseDir)
+	if err != nil {
+		return Entry{}, err
+	}
+	return Entry{Digest: digest, RootfsPath: baseDir}, nil
+}
+
+// ErrNoSuchImage reports that no image is registered under a name.
+//
+// It is a distinct sentinel because callers must tell "you have not set up a
+// base yet" — which has a one-command remedy — apart from "your images.lock
+// is unreadable", which does not. Refs: MGIT-61.15
+var ErrNoSuchImage = errors.New("images: no image registered under that name")
+
+// PinnedRef returns the digest-pinned reference registered under name, in the
+// same `<name>@sha256:<hex>` form Register handed back.
+//
+// It exists so a launch can boot the base a user already registered without
+// making them retype a digest they never chose. The digest is read from the
+// lock rather than recomputed: verification of the tree against it happens at
+// resolve time, where a mismatch must fail the boot. Refs: MGIT-61.15, FR-17.17
+func PinnedRef(hostRoot, name string) (string, error) {
+	lock, err := readLockFile(hostRoot)
+	if err != nil {
+		return "", err
+	}
+	entry, ok := lock.Images[name]
+	if !ok {
+		return "", fmt.Errorf("%w: %q", ErrNoSuchImage, name)
+	}
+	return name + "@" + entry.Digest, nil
 }

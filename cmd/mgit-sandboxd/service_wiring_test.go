@@ -111,3 +111,27 @@ func repeat64(b byte) string {
 	}
 	return string(out)
 }
+
+// TestBuildSandboxService_CreatesTheHostRootItOwns covers the very first
+// `mgit sandbox …` command in a fresh repo.
+//
+// .mgit/sandbox is the daemon's own directory — its audit index, policy and
+// trust root all live there — but nothing created it before the daemon tried
+// to open a database inside it. A user who ran any sandbox command before
+// `mgit sandbox image init` got a daemon that died with
+//
+//	open sandbox audit index: … unable to open database file: out of memory (14)
+//
+// which the CLI then reported as "not dialable after spawn". Two unrelated
+// pieces of nonsense for one missing mkdir. Refs: MGIT-61.15, FR-17.13
+func TestBuildSandboxService_CreatesTheHostRootItOwns(t *testing.T) {
+	hostRoot := filepath.Join(t.TempDir(), "repo", ".mgit", "sandbox")
+	clock := func() time.Time { return time.Unix(0, 0).UTC() }
+
+	_, _, _, closeAudit, err := buildSandboxService(nopManager{}, hostRoot, clock, testLogger())
+
+	require.NoError(t, err, "the daemon must stand up the directory it owns")
+	t.Cleanup(func() { _ = closeAudit() })
+	require.DirExists(t, hostRoot)
+	require.FileExists(t, filepath.Join(hostRoot, sandboxIndexDB))
+}

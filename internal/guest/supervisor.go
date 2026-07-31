@@ -47,6 +47,16 @@ func NewSupervisor(logger *slog.Logger) *Supervisor {
 	return &Supervisor{BaseEnv: defaultBaseEnv(), Logger: logger}
 }
 
+// GuestModeEnv marks a process as running inside a sandbox guest. The mgit
+// CLI — which now ships in the guest image so agents can commit there
+// (MGIT-61.7) — reads it to refuse host-only verbs (sandbox/run/serve/work)
+// with a diagnosis instead of an unrelated socket error.
+//
+// It is a usability marker, NOT a containment control: the host daemon
+// socket and shared store are absent from the guest regardless. cmd/mgit
+// reads the same name. Refs: MGIT-61.7, FR-17.11
+const GuestModeEnv = "MGIT_IN_SANDBOX"
+
 // defaultBaseEnv is the minimal clean environment every guest child
 // starts from — never the host's environment (SEC-01, FR-17.3).
 func defaultBaseEnv() []string {
@@ -54,6 +64,7 @@ func defaultBaseEnv() []string {
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"HOME=/work",
 		"TMPDIR=/tmp",
+		GuestModeEnv + "=1",
 	}
 }
 
