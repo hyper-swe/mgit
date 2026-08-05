@@ -49,12 +49,31 @@ validate **different VMMs by default** — this is not a symmetric check:
       not just the posture script, before a release that touches
       `internal/sandboxd/backend/firecracker` or `internal/sandboxd/backend/
       microvm`.
-- [ ] **macOS (arm64) — libkrun, the macOS GA default.** On an Apple Silicon
-      host (macOS 14+), with the entitlement-signed `mgit-sandboxd` from the
-      release archive (this now links libkrun by default — no tag needed)
-      and a guest image, the same script must print `PASS (live)`. Also
-      confirm `make test-libkrun`'s full suite passes on this host, and that
-      libkrun's own real-VM e2e (`make e2e-libkrun`) is green.
+- [ ] **macOS (arm64) — libkrun, the macOS GA default.** libkrun needs
+      NEITHER a kernel NOR a rootfs (libkrunfw supplies the kernel; the guest
+      base is composed from an OCI image) — do **not** set `MGIT_GUEST_IMAGE`
+      or `MGIT_GUEST_KERNEL`/`MGIT_GUEST_ROOTFS` here — they are the Linux
+      form, and the script now ignores them on Darwin in favor of composing
+      from OCI. On an
+      Apple Silicon host (macOS 14+), with the entitlement-signed
+      `mgit-sandboxd` and the `guest/mgit` + `guest/mgit-guest` pair from the
+      release archive (no tag needed; extract the real downloaded archive,
+      not a local build — see the downloaded-archive smoke step below, which
+      this reuses):
+      ```
+      bash scripts/e2e/sandbox_posture.sh <bindir>
+      ```
+      composes a base from `debian:12` by default (override with
+      `MGIT_GUEST_OCI_REF=<image>`) and must print `SANDBOX POSTURE E2E: PASS
+      (live)`. **Before 2026-08-05 this script unconditionally required the
+      Linux kernel/rootfs env vars, so on macOS it SKIPPED even on a fully
+      working, entitlement-signed host — the mandatory macOS live pass never
+      actually exercised the shipped libkrun/OCI path.** Confirmed by running
+      it exactly as this checklist used to document, on real Apple Silicon
+      hardware, immediately before the fix. A SKIP here means the gate did
+      **not** run, not that it is optional — do not proceed to publish on a
+      skip. Also confirm `make test-libkrun`'s full suite passes on this
+      host, and that libkrun's own real-VM e2e (`make e2e-libkrun`) is green.
 - [ ] **Linux libkrun (`-tags libkrun`) is NOT part of the release gate.**
       It is not the Linux default and its real-VM boot is not yet fully
       validated end to end on KVM (MGIT-61.13 P4, "Known limitations" in the
