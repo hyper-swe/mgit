@@ -80,6 +80,19 @@ jobs:
         with:
           cosign-release: v2.4.1
 
+      # The darwin daemon LINKS libkrun (the macOS default backend, ADR-010),
+      # and goreleaser's before-hook runs `make check-libkrun-net` to refuse a
+      # build against a libkrun without networking support. Both need the
+      # library present on this runner. `brew trust` is required because the
+      # runner's Homebrew refuses to load a formula from a third-party tap
+      # otherwise -- the same three steps ci.yml's libkrun job uses.
+      # Refs: MGIT-61.14, MGIT-61.8, ADR-010
+      - name: Install libkrun (bottled)
+        run: |
+          brew tap libkrun/krun
+          brew trust libkrun/krun
+          brew install libkrun
+
       # goreleaser CGO-builds + entitlement-signs the darwin daemon (post
       # hook in .goreleaser.yaml) and cross-builds the rest.
       - name: Run GoReleaser
