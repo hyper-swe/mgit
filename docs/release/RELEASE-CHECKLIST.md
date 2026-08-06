@@ -99,9 +99,32 @@ validate **different VMMs by default** — this is not a symmetric check:
    but the notes it produces are user-facing and easy to forget.
 2. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. This triggers
    `release.yml` (preflight → e2e gate → macOS release build+sign → GoReleaser).
-3. Reconcile the Homebrew tap so the formula installs **both** binaries — apply
-   the change in `docs/release/homebrew-tap-formula.md` to the separate
-   `hyper-swe/homebrew-tap` repo (must not touch the `mtix` formula). MGIT-44.
+3. **Homebrew tap: version + checksums are automatic; the formula body is
+   NOT.** `release.yml`'s `homebrew` job dispatches `{tag, project: "mgit"}`
+   to `hyper-swe/homebrew-tap`; its own `update-formula.yml` (verified by
+   reading it directly, not inferred) downloads that release's
+   `checksums.txt` and rewrites ONLY `version` and the four `sha256` values
+   in `Formula/mgit.rb` there. It never touches `install`, `caveats`, or
+   `depends_on`. So: a routine release needs **no action here**. If
+   `brew/mgit.rb` in this repo changed since the last release (install
+   logic, caveats, dependencies), manually copy its body into
+   `Formula/mgit.rb` in `hyper-swe/homebrew-tap` and commit it there — that
+   repo cannot be pushed to from this one, and nothing else does this sync.
+   **Must not touch the `mtix` formula in that repo.**
+   - [ ] As of 2026-08-05, the LIVE tap formula does not install the
+         archive's `guest/` directory into `libexec` at all (verified by
+         reading `Formula/mgit.rb` in the tap directly) — `brew/mgit.rb`
+         here has had the `libexec.install "guest"` step since MGIT-65, but
+         it was never synced. A `brew install`-ed mgit **cannot currently
+         compose a guest base** (`mgit sandbox base from <ref>` fails with
+         "cannot find main module" the same way an archive missing `guest/`
+         did before MGIT-65). Sync `brew/mgit.rb`'s current body to the tap
+         before the next release closes this gap.
+   - [ ] The live formula's caveats also still say macOS 13 (should be 14)
+         and `mgit sandbox image install` for macOS (should be `mgit
+         sandbox base from <ref>` — libkrun composes from OCI, it does not
+         take a kernel/rootfs). `brew/mgit.rb` here already has the
+         corrected caveats; sync covers this too. MGIT-44, MGIT-64, MGIT-65.
 4. Complete the two live sandbox passes above and note them on the release.
 5. **Publish the guest-image bundle** — ⛔ **ON HOLD, DO NOT RUN (MGIT-61.12).**
    The owner decided 2026-07-29 to complete the libkrun path before publishing.

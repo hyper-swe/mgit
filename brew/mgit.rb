@@ -2,27 +2,40 @@ class Mgit < Formula
   desc "Sandboxed, checkpointed working substrate for LLM coding agents"
   homepage "https://github.com/hyper-swe/mgit"
   license "Apache-2.0"
+  # version + all four sha256 below are a template: the tap's own
+  # update-formula.yml (hyper-swe/homebrew-tap) overwrites them at every real
+  # release from that release's checksums.txt via a literal TEXT regex over
+  # this file's declaration order (darwin arm/intel, linux arm/intel) --
+  # `sha256 "[A-Fa-f0-9]*"`, one quoted literal per line, NOT a Ruby
+  # variable: a shared constant would render as `sha256 SOME_CONST` in the
+  # file, which the regex does not match at all. That regex also requires
+  # 64 HEX characters -- the literal word "PLACEHOLDER" that used to be here
+  # does NOT match it either, so the automated update would silently leave a
+  # non-hex value in place forever instead of overwriting it. 64 zeros is a
+  # valid (obviously fake) sha256-shaped placeholder the real regex actually
+  # replaces. Never hand-edit these four lines; they are correct only right
+  # after a real release's automated update.
   version "0.1.0"
 
   on_macos do
     on_arm do
       url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_darwin_arm64.tar.gz"
-      sha256 "PLACEHOLDER"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
     on_intel do
       url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_darwin_amd64.tar.gz"
-      sha256 "PLACEHOLDER"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_linux_arm64.tar.gz"
-      sha256 "PLACEHOLDER"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
     on_intel do
       url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_linux_amd64.tar.gz"
-      sha256 "PLACEHOLDER"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
     end
   end
 
@@ -33,7 +46,7 @@ class Mgit < Formula
     # one install block correct across every bottle rather than branching
     # per-platform: it installs the daemon wherever the archive carries it
     # and silently skips it where the archive is mgit-only.
-    # Refs: MGIT-44, docs/release/homebrew-tap-formula.md
+    # Refs: MGIT-44
     bin.install "mgit-sandboxd" if File.exist?("mgit-sandboxd")
     # The linux mgit + mgit-guest the archive carries under guest/. They are
     # what `mgit sandbox base from <image>` injects into a guest base, and a
@@ -61,19 +74,41 @@ class Mgit < Formula
   # start. The libkrun/krun tap builds with NET=1, so `brew install libkrun`
   # is covered — this caveat exists for anyone using a hand-built library.
   # Refs: MGIT-61.14, ADR-010
+  #
+  # Guest provisioning differs by BACKEND, not just by platform: macOS
+  # (libkrun) composes its guest from an OCI image with no kernel/rootfs of
+  # its own (libkrunfw supplies the kernel); Linux (firecracker) still needs
+  # a real kernel + rootfs pair. Presenting one unified step here would be
+  # firecracker's framing leaking onto a platform that does not use
+  # firecracker at all. Refs: MGIT-61.13, MGIT-61.15, ADR-010
   def caveats
     <<~EOS
-      Sandbox: mgit-sandboxd uses the libkrun backend on macOS, which needs
-      macOS 14+ on Apple Silicon. libkrun is installed as a dependency; it
-      must be built WITH networking support, which the libkrun/krun tap does.
+      Core mgit (init, commit, worktrees, squash, land) is ready to use.
 
-      If you build libkrun yourself, build it with `make NET=1`. Verify:
+      To activate the microVM sandbox (mgit run, mgit work --sandbox):
+        1. Prerequisites:
+           - Linux: KVM (/dev/kvm) and the `firecracker` binary on PATH
+           - macOS: Apple Silicon (arm64), macOS 14 or later (libkrun backend)
+           (Windows and Intel macOS have no sandbox backend yet)
+        2. Provision the guest (the two backends do this differently):
+           - macOS (libkrun): compose one from any Linux image --
+               mgit sandbox base from debian:12
+           - Linux (firecracker): register a kernel + rootfs pair --
+               mgit sandbox image install
+             (or, from artifacts you already have:
+               mgit sandbox image add --kernel <vmlinux> --rootfs <rootfs>)
+
+      libkrun (macOS) is installed as a dependency; it must be built WITH
+      networking support, which the libkrun/krun tap does. If you build
+      libkrun yourself, build it with `make NET=1`. Verify:
 
         nm -gU "$(brew --prefix libkrun)/lib/libkrun.dylib" | grep krun_add_net_unixgram
 
       A libkrun without that symbol cannot host a sandbox: mgit requires an
       explicit network device in every mode, and without one the guest would
       get unrestricted host egress. mgit-sandboxd fails closed in that case.
+
+      Guide: https://github.com/hyper-swe/mgit/blob/main/docs/INSTALL-SANDBOX.md
     EOS
   end
 
