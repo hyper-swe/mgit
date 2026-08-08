@@ -5,6 +5,36 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - unreleased
+
+Three defects of the same shape as 0.4.1's, all found by asking what a guest can actually *do* rather than what the host can demonstrate. Two of them were in the shipped Linux backend; one was in the 0.4.1 fix itself.
+
+### Fixed — firecracker (Linux) guests had no resolver
+
+- **The guest had a route but no `/etc/resolv.conf`.** firecracker's guest gets its address and default route from the SDK's `ip=` kernel boot parameter, but the kernel writes that parameter's nameservers to `/proc/net/pnp`, **not** `/etc/resolv.conf` — and the guest rootfs ships no `/etc` directory at all (verified by reading the image, not inferred). So every `getaddrinfo` caller in the guest — npm, apt, curl, git — had no resolver, the same `EAI_AGAIN` half of MGIT-68 on a different backend. The host now sends a **resolver-only** `guestboot` descriptor and the guest-side machinery added in 0.4.1 applies it. Resolver-only is deliberate: the kernel's `ip=` already addresses the guest and that mechanism works, so mgit does not send a second, redundant link configuration. (MGIT-69)
+
+### Fixed — allowlist mode was unusable from inside a firecracker guest
+
+- **An ordinary program could not connect to anything, allowlisted or not.** Allowlist mode gave the guest no direct route and permitted exactly two host ports: mgit's DNS resolver, and mgit's **length-prefixed CONNECT proxy** — a protocol nothing in any guest speaks. No proxy environment variables were injected and there was no redirect, so `npm install` and `curl` had no way through the policy at all. The enforcement was real; there was no door. The e2e drove the proxy from the **host**, so it demonstrated the policy while never proving a guest could use it.
+- **The guest's TCP is now REDIRECTed into a transparent proxy** that authorizes each flow on the **original destination recovered from conntrack** (host-observed via `SO_ORIGINAL_DST`, never guest-asserted — SEC-05) and dials the **pinned** address the authorizer returns (DNS-rebind defense, SEC-04). This gives firecracker the same semantics libkrun's netstack gateway already had, so one policy now means one thing on both backends. The default-deny is unchanged: the redirect changes *how* a flow reaches the authorizer, never *whether* policy decides it. A denied flow is **reset** (`SO_LINGER 0`) rather than closed cleanly, so a policy refusal stays distinguishable from an empty reply. (MGIT-69)
+
+### Fixed — open mode resolved nothing, on both backends
+
+- **0.4.1 pointed every networked guest's `/etc/resolv.conf` at the gateway, but open mode bound no resolver there** — so every name in open mode failed with "connection refused" against a dead port. The 0.4.1 open-mode test dialled a **raw IP**, which is why it could not see this: a raw IP is not a substitute for a name, they exercise different halves of the stack. Both backends now serve an open-mode resolver on the gateway. It lifts **which names resolve** and nothing else, so open-mode DNS is now *audited*, rate-limited (SEC-07 anti-tunnel) and subject to the unconditional IP denials — which it never was when the guest resolved through NAT on its own. (MGIT-69)
+
+### Fixed — vzf silently ignored the allowlist policy (SEC-04 false containment)
+
+- **`--network allowlist` on the vzf backend granted UNRESTRICTED egress.** vzf attaches a macOS NAT device whenever the mode is not `none`, and there is no host tap, firewall, egress proxy or pinning resolver on that path — `wireEgress` is a no-op off Linux, so nothing else supplied them. The user asked for a filtered network and got an open one, with no error. vzf now **refuses** allowlist mode, naming the backend that can enforce it (the default libkrun) — the same call the container backend already makes for the same reason, because silently approximating a containment policy is worse than declining it. `none` and `open` are unaffected; open is honestly unrestricted by definition. (MGIT-70)
+
+### Known limitations
+
+- **vzf guests are still unaddressed in `open` mode.** Its address comes from macOS vmnet's own DHCP server, and `mgit-guest` (PID 1) has no DHCP client, so 0.4.1's static descriptor does not transfer. vzf is a non-default build (`-tags vzf`; libkrun is the macOS default), and closing this needs either a DHCP client in the guest or a host-side lease query — more than a modest change, so it is filed rather than rushed. (MGIT-70)
+
+### Tests — the scaffolding that hid all of this
+
+- **Two more pieces of test scaffolding were masking the production path**, both the same species as the self-configuring guest that hid MGIT-68. Every firecracker network probe ran `ip addr add` + `ip route replace` **itself** (`netUpPrefix`) before probing, so whether the production boot path addresses the guest at all had never been asserted anywhere. And every DNS assertion passed the server **explicitly** (`nslookup <name> <gateway>`), which bypasses `/etc/resolv.conf` — the path a real caller takes. The new real-VM tests use neither: they assert the guest's own view, after the production boot path, with an **allow assertion for every deny assertion**, and a denial that reports "unreachable" now **fails** as a dead network rather than an enforced one.
+- **`TestE2E_PortPublish_GuestCannotReachHostLoopback` was negative-only** and would have passed on a guest with no working network at all. It now proves the guest's network is alive against a control listener on the gateway *before* asserting it cannot reach host loopback (SEC-09).
+
 ## [0.4.1] - 2026-08-08
 
 ### Fixed — P0: guest egress was non-functional on macOS/libkrun in 0.4.0

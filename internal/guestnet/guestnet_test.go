@@ -288,7 +288,7 @@ func TestApply_ResolverOnly_NeedsNoLinker(t *testing.T) {
 	assert.Equal(t, "nameserver 172.31.4.1\n", string(data))
 }
 
-// TestApply_LinkDescriptor_StillNeedsALinker keeps the fail-closed behaviour
+// TestApply_LinkDescriptor_StillNeedsALinker keeps the fail-closed behavior
 // where it belongs: a descriptor that DOES ask for link configuration must
 // not silently succeed without a configurator.
 func TestApply_LinkDescriptor_StillNeedsALinker(t *testing.T) {

@@ -147,7 +147,7 @@ func dnsQueryA(t *testing.T, name string) []byte {
 //
 // Open mode used to return early from Start and bind NOTHING, while the guest
 // was still pointed at the gateway for DNS — so every name resolution in open
-// mode hit a dead port. The open-mode assertions dialled a raw IP, so nothing
+// mode hit a dead port. The open-mode assertions dialed a raw IP, so nothing
 // caught it. Refs: MGIT-69, FR-17.7, SEC-07
 func TestRunner_OpenMode_ServesDNSOnTheGateway(t *testing.T) {
 	r := testRunner(t, &dialRecorder{})

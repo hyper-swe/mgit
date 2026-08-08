@@ -26,7 +26,7 @@ type OpenDNSConfig struct {
 // makes a single resolv.conf descriptor correct on every backend), so with
 // nothing listening there, every name in open mode failed with "connection
 // refused" against a dead port. The tests could not see it because the
-// open-mode assertions dialled a RAW IP. Refs: MGIT-69, FR-17.7
+// open-mode assertions dialed a RAW IP. Refs: MGIT-69, FR-17.7
 //
 // Serving it here is also a security GAIN, not merely a fix: open-mode name
 // resolution becomes auditable, rate-limited (SEC-07 anti-tunnel) and subject

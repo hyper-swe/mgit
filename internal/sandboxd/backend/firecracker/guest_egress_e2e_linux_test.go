@@ -71,7 +71,7 @@ func bannerListener(t *testing.T) net.Listener {
 
 // startEgressFor brings up the host egress stack for a launched sandbox,
 // hermetically: an allowlisted name resolves to a public-looking address and
-// authorized flows are dialled to the local banner listener.
+// authorized flows are dialed to the local banner listener.
 func startEgressFor(t *testing.T, info *model.SandboxInfo, mode string, allowlist []string, target net.Listener) *recordingEgressAudit {
 	t.Helper()
 	audit := &recordingEgressAudit{}
@@ -227,7 +227,7 @@ func TestE2E_Network_Allowlist_OffListIsRefusedNotUnreachable(t *testing.T) {
 // TestE2E_Network_Open_GuestResolvesThroughTheGateway is the open-mode allow
 // assertion for NAMES. Open mode bound no resolver at all while the guest was
 // told its nameserver was the gateway, so every name failed against a dead
-// port — invisible because the open-mode assertion dialled a raw IP.
+// port — invisible because the open-mode assertion dialed a raw IP.
 // Refs: MGIT-69, FR-17.7, SEC-07
 func TestE2E_Network_Open_GuestResolvesThroughTheGateway(t *testing.T) {
 	kernel, rootfs := requireGuestImage(t)

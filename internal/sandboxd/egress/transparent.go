@@ -50,7 +50,7 @@ type TransparentProxyConfig struct {
 // this listener on the gateway. The kernel rewrites the destination but
 // conntrack remembers the original, which OriginalDst recovers. That original
 // destination — host-observed, never guest-asserted (SEC-05) — is what the
-// authorizer decides on, and an allowed flow is dialled to the PINNED address
+// authorizer decides on, and an allowed flow is dialed to the PINNED address
 // the authorizer returns, never a re-resolution (DNS-rebind defense).
 //
 // This makes firecracker's allowlist mode behave like libkrun's netstack

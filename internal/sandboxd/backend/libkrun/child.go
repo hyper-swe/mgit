@@ -157,7 +157,7 @@ func childPolicy(spec vmSpec, logger *slog.Logger, clock func() time.Time) (flow
 		// that an unrestricted guest resolves for itself — but the guest is
 		// told its nameserver IS the gateway, so with nothing bound there every
 		// name in open mode failed "connection refused" against a dead port.
-		// The open-mode e2e dialled a raw IP, so it never noticed.
+		// The open-mode e2e dialed a raw IP, so it never noticed.
 		// Refs: MGIT-69, SEC-07
 		dns, err := egress.NewOpenDNSServer(egress.OpenDNSConfig{
 			SandboxID: spec.SandboxID, TaskID: spec.TaskID,

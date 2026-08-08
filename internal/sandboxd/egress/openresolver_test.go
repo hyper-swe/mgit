@@ -47,7 +47,7 @@ func openResolverCfg(t *testing.T, aud Auditor, lookup LookupFunc) ResolverConfi
 // This exists because open mode bound NO resolver at all, while the guest was
 // still told its nameserver was the gateway — so every name in open mode
 // failed with "connection refused" against a port nothing listened on. A
-// test that only dialled a RAW IP could not see it. Refs: MGIT-69, FR-17.7
+// test that only dialed a RAW IP could not see it. Refs: MGIT-69, FR-17.7
 func TestResolver_ResolveAny_ResolvesANameNoAllowlistNames(t *testing.T) {
 	aud := &recordingAuditor{}
 	r, err := NewResolver(openResolverCfg(t, aud, resolvesTo("140.82.112.3")))
@@ -70,7 +70,7 @@ func TestResolver_ResolveAny_StillAudits(t *testing.T) {
 	_, err = r.Resolve(context.Background(), "anything.example")
 	require.NoError(t, err)
 
-	recs := aud.records
+	recs := aud.snapshot()
 	require.NotEmpty(t, recs, "open-mode DNS must still produce an audit record")
 	assert.Equal(t, model.EgressAllow, recs[len(recs)-1].Decision)
 }

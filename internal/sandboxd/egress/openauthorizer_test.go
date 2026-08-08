@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/netip"
+	"sync"
 	"testing"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -21,11 +22,29 @@ import (
 // a bug that dropped the policy. Refs: SEC-04, FR-17.8, MGIT-61.9
 
 // recordingAuditor captures the egress records an authorizer emits.
-type recordingAuditor struct{ records []*model.EgressRecord }
+//
+// It is mutex-guarded because the transparent proxy audits from its own
+// per-connection goroutine while the test reads: the records are genuinely
+// concurrent, not merely shared. Read them with snapshot().
+type recordingAuditor struct {
+	mu      sync.Mutex
+	records []*model.EgressRecord
+}
 
 func (r *recordingAuditor) AppendEgressRecord(_ context.Context, rec *model.EgressRecord) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.records = append(r.records, rec)
 	return nil
+}
+
+// snapshot returns a copy of the records recorded so far.
+func (r *recordingAuditor) snapshot() []*model.EgressRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]*model.EgressRecord, len(r.records))
+	copy(out, r.records)
+	return out
 }
 
 func testOpenAuthorizer(t *testing.T, aud Auditor) *OpenAuthorizer {
@@ -56,10 +75,10 @@ func TestOpenAuthorizer_AllowsAnyDestinationAndAuditsIt(t *testing.T) {
 		t.Errorf("DestIP = %v, want the requested address pinned for the dialer", dec.DestIP)
 	}
 	// The gain over iptables NAT: a per-flow record.
-	if len(aud.records) != 1 {
-		t.Fatalf("got %d audit records, want 1 — open mode must still be observable", len(aud.records))
+	if recs := aud.snapshot(); len(recs) != 1 {
+		t.Fatalf("got %d audit records, want 1 — open mode must still be observable", len(recs))
 	}
-	rec := aud.records[0]
+	rec := aud.snapshot()[0]
 	if rec.Decision != model.EgressAllow || rec.DestIP != "93.184.216.34" || rec.DestPort != 443 {
 		t.Errorf("audit record = %+v, want an allow for the requested destination", rec)
 	}
@@ -89,8 +108,8 @@ func TestOpenAuthorizer_StillRefusesWhatHasNoEgressPath(t *testing.T) {
 			if dec.Allow || err == nil {
 				t.Fatalf("open mode admitted %+v; it must refuse what the data path cannot carry", tt.flow)
 			}
-			if len(aud.records) != 1 || aud.records[0].Decision != model.EgressDeny {
-				t.Errorf("the refusal must still be audited, got %+v", aud.records)
+			if recs := aud.snapshot(); len(recs) != 1 || recs[0].Decision != model.EgressDeny {
+				t.Errorf("the refusal must still be audited, got %+v", aud.snapshot())
 			}
 		})
 	}

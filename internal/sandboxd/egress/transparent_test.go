@@ -75,6 +75,25 @@ func serveTransparent(t *testing.T, p *TransparentProxy) string {
 	return ln.Addr().String()
 }
 
+// dialAndDrain connects and reads to EOF, returning whatever bytes arrived and
+// the first error from EITHER the dial or the read.
+//
+// A refusal can surface at either point: SO_LINGER 0 makes the reset race the
+// client's connect, so the same policy denial appears as a failed Dial on one
+// platform and a failed Read on another. What must hold is the OUTCOME — no
+// bytes, and an error that reads as a reset — not where it surfaced.
+func dialAndDrain(t *testing.T, addr string) (string, error) {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got, err := io.ReadAll(conn)
+	return string(got), err
+}
+
 // TestTransparentProxy_AllowlistedDestination_CarriesRealBytes is the MGIT-69
 // allow assertion at the unit layer: an ordinary TCP connection — no proxy
 // protocol, no client awareness — reaches an allowlisted destination and gets
@@ -112,20 +131,20 @@ func TestTransparentProxy_OffAllowlist_IsRefused(t *testing.T) {
 	p, aud := transparentFixture(t, []string{"1.2.3.4:443"}, orig, target)
 	addr := serveTransparent(t, p)
 
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	got, _ := io.ReadAll(conn)
+	got, _ := dialAndDrain(t, addr)
 
 	assert.Empty(t, got, "a denied flow must carry no bytes from the destination")
-	var sawDeny bool
-	for _, r := range aud.records {
-		if r.Decision == model.EgressDeny {
-			sawDeny = true
+	// The audit is written by the proxy's own goroutine, which may still be
+	// running when the client's reset arrives — so wait for it rather than
+	// racing it.
+	require.Eventually(t, func() bool {
+		for _, r := range aud.snapshot() {
+			if r.Decision == model.EgressDeny {
+				return true
+			}
 		}
-	}
-	assert.True(t, sawDeny, "a denied flow must be audited as a denial (FR-17.18)")
+		return false
+	}, 5*time.Second, 10*time.Millisecond, "a denied flow must be audited as a denial (FR-17.18)")
 }
 
 // TestTransparentProxy_PinnedNameResolution_IsHonored verifies the whole
@@ -162,25 +181,17 @@ func TestTransparentProxy_PinnedNameResolution_IsHonored(t *testing.T) {
 	addr := serveTransparent(t, p)
 
 	// Without the resolution first, the raw IP is not allowlisted.
-	c1, err := net.DialTimeout("tcp", addr, 5*time.Second)
-	require.NoError(t, err)
-	_ = c1.SetReadDeadline(time.Now().Add(5 * time.Second))
-	before, _ := io.ReadAll(c1)
-	_ = c1.Close()
+	before, _ := dialAndDrain(t, addr)
 	assert.Empty(t, before, "a raw IP with no prior resolution is not allowlisted (SEC-04)")
 
 	// The guest resolves the allowlisted name; the resolver pins the address.
 	_, err = res.Resolve(context.Background(), "allowed.example")
 	require.NoError(t, err)
 
-	c2, err := net.DialTimeout("tcp", addr, 5*time.Second)
-	require.NoError(t, err)
-	defer func() { _ = c2.Close() }()
-	_ = c2.SetReadDeadline(time.Now().Add(5 * time.Second))
-	after, err := io.ReadAll(c2)
+	after, err := dialAndDrain(t, addr)
 
 	require.NoError(t, err)
-	assert.Equal(t, "PINNED-OK", string(after),
+	assert.Equal(t, "PINNED-OK", after,
 		"the pinned address of an allowlisted name must be reachable transparently")
 }
 
@@ -216,11 +227,7 @@ func TestTransparentProxy_UnknownOriginalDst_IsRefused(t *testing.T) {
 	require.NoError(t, err)
 	addr := serveTransparent(t, p)
 
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	got, _ := io.ReadAll(conn)
+	got, _ := dialAndDrain(t, addr)
 
 	assert.Empty(t, got)
 }
@@ -252,13 +259,10 @@ func TestTransparentProxy_DeniedFlow_LooksLikeARefusalNotAnEmptyReply(t *testing
 	p, _ := transparentFixture(t, []string{"1.2.3.4:443"}, orig, target)
 	addr := serveTransparent(t, p)
 
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
-	require.NoError(t, err)
-	defer func() { _ = conn.Close() }()
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	_, err = io.ReadAll(conn)
+	got, err := dialAndDrain(t, addr)
 
+	assert.Empty(t, got)
 	require.Error(t, err, "a denied flow must not read as a clean, empty response")
 	assert.Contains(t, err.Error(), "reset",
-		"the guest must see a reset, so a policy refusal is distinguishable from an empty reply")
+		"the client must see a reset, so a policy refusal is distinguishable from an empty reply")
 }
