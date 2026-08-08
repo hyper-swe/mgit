@@ -30,6 +30,7 @@ import (
 	"github.com/hyper-swe/mgit/internal/sandboxd/guestexec"
 	"github.com/hyper-swe/mgit/internal/sandboxd/provision"
 	"github.com/hyper-swe/mgit/internal/sandboxd/quarantine"
+	"github.com/hyper-swe/mgit/internal/sandboxd/worktreesync"
 )
 
 // defaultOverlaySizeMB sizes the writable overlay when the request
@@ -238,6 +239,12 @@ type sandbox struct {
 	info model.SandboxInfo
 	vm   VM
 	dir  string // per-sandbox state dir under WorkDir
+	// privateStore is the host directory backing the guest's private store,
+	// needed to re-stage the worktree for a sync (MGIT-71).
+	privateStore string
+	// syncMu serializes worktree sync against exec, so no command ever
+	// observes a partially-applied tree. Refs: MGIT-71
+	syncMu sync.Mutex
 	// guestReady records that the guest has answered on the control vsock at
 	// least once. Until it has, a command that gets nothing back is retried;
 	// after it has, the same failure is real and is reported. Refs: MGIT-61.15
@@ -345,8 +352,21 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 
 	info := m.newSandboxInfo(id, opts)
 
+	// Record what was DELIVERED, so a later sync can tell a host edit from a
+	// guest one. Backends that stage into a shared host directory (virtiofs)
+	// can then propagate host changes into a running guest; backends that
+	// deliver a block image built at launch cannot, and simply have no staged
+	// tree here. Refs: MGIT-71, ADR-011
+	if staged := stagedTreePath(dir); staged != "" {
+		if err := worktreesync.RecordDelivery(staged, dir); err != nil {
+			m.cfg.Logger.Warn("could not record the worktree delivery baseline; "+
+				"sync will treat every host path as new",
+				"event", "sync_baseline_failed", "sandbox_id", id, "error", err.Error())
+		}
+	}
+
 	m.mu.Lock()
-	m.sandboxes[id] = &sandbox{info: info, vm: vm, dir: dir}
+	m.sandboxes[id] = &sandbox{info: info, vm: vm, dir: dir, privateStore: privateStore}
 	m.mu.Unlock()
 
 	// Bind the sandbox to its host-observed peer identity so incoming
@@ -529,6 +549,13 @@ func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*
 	if sb.info.State != model.StateRunning {
 		return nil, fmt.Errorf("%w: sandbox %q is %s, not running",
 			model.ErrSandboxBackendUnavailable, id, sb.info.State)
+	}
+	// Carry host worktree changes in BEFORE the command runs, so the agent
+	// loop tests the code the host actually has rather than a launch-time
+	// snapshot. Unchanged host worktree => no work; a conflict with un-landed
+	// guest work refuses the exec by name. Refs: MGIT-71, ADR-011
+	if err := m.syncBeforeExec(ctx, sb); err != nil {
+		return nil, err
 	}
 	if m.cfg.GuestDialer == nil {
 		return nil, fmt.Errorf("%w: exec requires the guest vsock transport (MGIT-11.9.2)",
