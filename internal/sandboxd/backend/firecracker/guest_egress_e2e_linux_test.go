@@ -225,7 +225,7 @@ func TestE2E_Network_Allowlist_GuestResolvesAndReachesAnAllowlistedDestination(t
 	// Diagnostics for the redirect itself, so a failure above says WHERE it
 	// broke rather than only that no bytes arrived.
 	t.Logf("guest nat/route view: %s", probe(t, mgr, info.ID,
-		"ip route get 140.82.112.3 2>&1; echo ---; nc -w 3 -z 140.82.112.3 443 2>&1; echo zrc=$?"))
+		"ip route get 140.82.112.3 2>&1"))
 
 	// 3. The allow is audited (FR-17.18).
 	var sawAllow bool
@@ -273,10 +273,33 @@ func TestE2E_Network_Allowlist_OffListIsRefusedNotUnreachable(t *testing.T) {
 	// pinned — the SEC-04 raw-IP bypass case.
 	out := guestDial(t, mgr, info.ID, "140.82.114.4", 443)
 
+	// WHAT A REFUSAL LOOKS LIKE HERE, and why it is not an exit code.
+	//
+	// The kernel's REDIRECT completes the TCP handshake with the local proxy
+	// BEFORE mgit sees the flow and decides, so `nc` reports a successful
+	// connect (rc=0) even for a denied destination — it connected to the
+	// enforcement point, not to the destination. That is inherent to a
+	// redirect (TPROXY behaves the same) and differs from libkrun, whose
+	// userspace gateway resets during the handshake so the guest sees
+	// ECONNREFUSED at connect. The substantive claim is identical on both:
+	// NO BYTES FROM THE DESTINATION, and nothing dialed toward it.
+	//
+	// rc=0 is in fact the proof the network is ALIVE — the guest reached the
+	// enforcement point. A dead network would report "unreachable" instead,
+	// which is asserted against below.
 	assert.NotContains(t, out, guestBannerText, "an off-allowlist destination must carry no data (T3)")
-	assert.NotContains(t, out, "rc=0", "an off-allowlist flow must not succeed")
 	assert.NotContains(t, out, "unreachable",
 		"the flow must fail because POLICY refused it, not because the guest has no route")
+	assert.NotContains(t, out, "no route to host",
+		"the flow must fail because POLICY refused it, not because the guest has no route")
+
+	// HOST-side proof: nothing was ever dialed toward the destination. This is
+	// the assertion an exit code cannot make.
+	select {
+	case <-accepted:
+		t.Fatal("SEC-04 VIOLATION: an off-allowlist flow was proxied to the destination")
+	case <-time.After(2 * time.Second):
+	}
 	var sawDeny bool
 	for _, r := range audit.snapshot() {
 		if r.Decision == model.EgressDeny {
