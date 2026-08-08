@@ -185,6 +185,11 @@ func splitOptionalPort(raw string) (string, int, error) {
 // Refs: SEC-04, FR-17.8
 func (al *Allowlist) AllowsName(host string, port int) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	// The rule set is mutable on a RUNNING sandbox (SetRules, MGIT-72), so
+	// every read of it is guarded. Before live policy changes existed these
+	// slices were immutable after Compile and needed no lock.
+	al.mu.RLock()
+	defer al.mu.RUnlock()
 	for _, r := range al.names {
 		if r.matches(host) && portOK(r.port, port) {
 			return true
@@ -198,6 +203,8 @@ func (al *Allowlist) AllowsName(host string, port int) bool {
 // (SEC-07 anti-tunnel). Refs: SEC-07, FR-17.8
 func (al *Allowlist) HasName(host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	al.mu.RLock()
+	defer al.mu.RUnlock()
 	for _, r := range al.names {
 		if r.matches(host) {
 			return true
@@ -212,11 +219,14 @@ func (al *Allowlist) HasName(host string) bool {
 // IP/CIDR entry names it (SEC-04 raw-IP bypass defense). Refs: SEC-04
 func (al *Allowlist) AllowsIP(ip netip.Addr, port int) bool {
 	ip = ip.Unmap()
+	al.mu.RLock()
 	for _, r := range al.nets {
 		if r.prefix.Contains(ip) && portOK(r.port, port) {
+			al.mu.RUnlock()
 			return true
 		}
 	}
+	al.mu.RUnlock()
 	// A host-approved live grant (SEC-05) admits exactly this (ip, port). The
 	// authorizer still applies the unconditional denied-range gate first, so a
 	// grant can never re-open a denied range. Refs: FR-17.12, SEC-05
