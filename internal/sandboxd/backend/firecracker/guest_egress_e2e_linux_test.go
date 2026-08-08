@@ -23,6 +23,7 @@ package firecracker
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -164,13 +165,32 @@ func TestE2E_Network_Allowlist_GuestResolvesAndReachesAnAllowlistedDestination(t
 	assert.Contains(t, lookup, allowedTestIP.String(),
 		"an allowlisted name must resolve through the guest's DEFAULT resolver")
 
-	// 2. An ORDINARY TCP connection to that name must carry REAL BYTES. This
-	//    is the assertion whose absence let allowlist mode ship unusable: the
-	//    guest speaks no proxy protocol, and before the transparent redirect
-	//    it had no way through the policy at all.
-	got := probe(t, mgr, info.ID, "nc -w 6 allowed.test 443 </dev/null 2>&1")
+	// 2. An ORDINARY TCP connection must carry REAL BYTES — the assertion
+	//    whose absence let allowlist mode ship unusable. The guest speaks no
+	//    proxy protocol, and before the transparent redirect it had no way
+	//    through the policy at all.
+	//
+	//    It dials the address the resolution above PINNED, which is the
+	//    resolve-then-connect-by-IP sequence every real client performs and
+	//    the exact case authorizeRawIP's pin path exists for: the IP is
+	//    admitted because the HOST resolved it from an allowlisted name, not
+	//    because the IP itself is listed. A hardcoded IP never resolved is
+	//    still denied — asserted in the deny test below.
+	got := probe(t, mgr, info.ID,
+		fmt.Sprintf("nc -w 6 %s 443 </dev/null 2>&1", allowedTestIP))
 	assert.Contains(t, got, guestBannerText,
 		"an ordinary guest program must reach the allowlisted destination and read real bytes")
+
+	// DIAGNOSTIC, deliberately not an assertion: whether the guest's own
+	// getaddrinfo can resolve. This fixture's busybox is statically linked
+	// against a minimal libc and reports "bad address" even though nslookup —
+	// which reads the same /etc/resolv.conf — succeeds above. That is a
+	// property of the test rootfs, not of mgit: on a real base image
+	// (`mgit sandbox base from debian:12-slim`) apt, curl and getent all
+	// resolve through this same mechanism. Logged so the difference stays
+	// visible rather than being quietly assumed away.
+	t.Logf("guest getaddrinfo (fixture busybox libc, informational): %q",
+		strings.TrimSpace(probe(t, mgr, info.ID, "nc -w 4 allowed.test 443 </dev/null 2>&1")))
 
 	// 3. The allow is audited (FR-17.18).
 	var sawAllow bool
@@ -201,12 +221,16 @@ func TestE2E_Network_Allowlist_OffListIsRefusedNotUnreachable(t *testing.T) {
 	requireGuestIsAddressed(t, mgr, info)
 
 	// Control: the ALLOWED flow works, so a refusal below is policy, not
-	// breakage. Without this the assertion proves nothing.
-	allowed := probe(t, mgr, info.ID, "nc -w 6 allowed.test 443 </dev/null 2>&1")
+	// breakage. Without this the assertion proves nothing. Resolve first so
+	// the address is pinned, then dial it — the real client sequence.
+	probe(t, mgr, info.ID, "nslookup allowed.test 2>&1")
+	allowed := probe(t, mgr, info.ID,
+		fmt.Sprintf("nc -w 6 %s 443 </dev/null 2>&1", allowedTestIP))
 	require.Contains(t, allowed, guestBannerText,
 		"the control (allowed) flow must work, or a denial here would prove nothing")
 
-	// A public address the policy does not name.
+	// A public address the policy does not name and no resolution ever
+	// pinned — the SEC-04 raw-IP bypass case.
 	out := probe(t, mgr, info.ID, "nc -w 6 140.82.114.4 443 </dev/null 2>&1; echo rc=$?")
 
 	assert.NotContains(t, out, guestBannerText, "an off-allowlist destination must carry no data (T3)")
