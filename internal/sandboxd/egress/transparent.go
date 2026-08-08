@@ -30,6 +30,9 @@ type TransparentProxyConfig struct {
 	Dial        DialFunc        // nil => HostDial
 	OriginalDst OriginalDstFunc // nil => the platform's real mechanism
 	Logger      *slog.Logger
+	// Flows, when set, registers each spliced connection so a live policy
+	// revoke can KILL it rather than only refusing the next one (MGIT-72).
+	Flows *FlowRegistry
 }
 
 // TransparentProxy is the allowlist-mode egress path for guests that speak
@@ -61,6 +64,7 @@ type TransparentProxy struct {
 	dial    DialFunc
 	origDst OriginalDstFunc
 	logger  *slog.Logger
+	flows   *FlowRegistry
 }
 
 // NewTransparentProxy validates the configuration and returns the proxy. An
@@ -77,6 +81,7 @@ func NewTransparentProxy(cfg TransparentProxyConfig) (*TransparentProxy, error) 
 		dial:    cfg.Dial,
 		origDst: cfg.OriginalDst,
 		logger:  cfg.Logger,
+		flows:   cfg.Flows,
 	}
 	if p.dial == nil {
 		p.dial = HostDial
@@ -157,7 +162,8 @@ func (p *TransparentProxy) handle(ctx context.Context, guest net.Conn) {
 		refuse(guest)
 		return
 	}
-	Splice(guest, outbound)
+	// Tracked so a live revoke can terminate this flow (MGIT-72).
+	SpliceTracked(p.flows, guest, outbound)
 }
 
 // refuse closes a redirected connection so the guest sees a RESET rather than
