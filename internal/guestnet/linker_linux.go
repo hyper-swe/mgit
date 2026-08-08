@@ -19,7 +19,7 @@ import (
 // with no PATH and no shell — there is no iproute2 to exec, and shelling out
 // of PID 1 to configure the network would be a new failure mode for no gain.
 // Why not netlink: RTM_NEWADDR/RTM_NEWROUTE would be several hundred lines of
-// hand-rolled message marshalling for the same three operations. Refs: MGIT-68
+// hand-rolled message marshaling for the same three operations. Refs: MGIT-68
 func NewLinker() Linker { return unixLinker{} }
 
 // unixLinker applies the address, netmask, up-flag and default route.
