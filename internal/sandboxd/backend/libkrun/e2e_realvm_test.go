@@ -187,7 +187,12 @@ func TestE2E_Libkrun_RealVM_Boots(t *testing.T) {
 // hardware: with the NIC bound to the discard socket, a guest dial to an
 // arbitrary destination fails. It is the fail-closed half of the ADR-010
 // guardrail — the same probe reaches the internet if libkrun is left on its
-// TSI default. Refs: FR-17.7, SEC-04, ADR-010
+// TSI default.
+//
+// The guest here CONFIGURES ITS OWN NIC (testdata/netguest is its own PID 1),
+// which is what makes this a claim about none mode rather than about an
+// unaddressed interface: the guest has an address, a netmask and a default
+// route, and still gets nowhere. Refs: FR-17.7, SEC-04, ADR-010, MGIT-68
 func TestE2E_Libkrun_RealVM_NoneMode_NoEgress(t *testing.T) {
 	requireRealVM(t)
 	guestRoot := buildGuest(t)
@@ -195,17 +200,31 @@ func TestE2E_Libkrun_RealVM_NoneMode_NoEgress(t *testing.T) {
 	cfg := realVMConfig(t, guestRoot, model.NetworkModeNone, nil)
 	console := bootVM(t, cfg)
 
+	// Without this, "denied" would only mean the guest never had a network to
+	// begin with — the MGIT-68 failure mode wearing a passing test's clothes.
+	if !strings.Contains(console, "configured 10.0.2.15/24") {
+		t.Fatalf("the guest did not configure its NIC, so a denial here proves nothing "+
+			"about none mode; console:\n%s", console)
+	}
 	if !strings.Contains(console, "GUEST-RESULT OFF_ALLOWLIST = DENIED") {
 		t.Fatalf("guest reached the network in none mode — TSI leak or missing NIC (ADR-010); console:\n%s", console)
 	}
-	t.Logf("REAL VM PASS: none mode denied guest egress\n%s", console)
+	t.Logf("REAL VM PASS: none mode denied egress to a guest that HAD an address and a "+
+		"default route\n%s", console)
 }
 
 // TestE2E_Libkrun_RealVM_Allowlist_DefaultDeny proves the same claim through
 // the REAL egress authorizer: allowlist mode runs the netstack gateway in the
 // VM's own child process, and a destination the policy does not name is reset
 // rather than proxied. This is litmus assertion 2 (no reverse tunnel / no
-// exfiltration) against a real guest. Refs: SEC-04, FR-17.8
+// exfiltration) against a real guest.
+//
+// The denial REASON is asserted, not merely the failure: a policy denial
+// resets the handshake, so the guest sees "connection refused". "network is
+// unreachable" would mean the guest had no route at all, which is a broken
+// sandbox rather than an enforced one — and is what this test used to accept.
+// The matching ALLOW assertions live in e2e_realvm_net_test.go.
+// Refs: SEC-04, FR-17.8, MGIT-68
 func TestE2E_Libkrun_RealVM_Allowlist_DefaultDeny(t *testing.T) {
 	requireRealVM(t)
 	guestRoot := buildGuest(t)
@@ -218,7 +237,14 @@ func TestE2E_Libkrun_RealVM_Allowlist_DefaultDeny(t *testing.T) {
 	if !strings.Contains(console, "GUEST-RESULT OFF_ALLOWLIST = DENIED") {
 		t.Fatalf("an off-allowlist destination was reachable from the guest (T3 exfiltration); console:\n%s", console)
 	}
-	t.Logf("REAL VM PASS: allowlist mode default-denied an off-list destination\n%s", console)
+	if strings.Contains(console, "network is unreachable") || strings.Contains(console, "no route to host") {
+		t.Fatalf("the off-list flow failed because the guest has NO NETWORK, not because "+
+			"policy refused it (MGIT-68); console:\n%s", console)
+	}
+	if !strings.Contains(console, "connection refused") && !strings.Contains(console, "connection reset") {
+		t.Errorf("the denial is not recognizable as a policy refusal (expected a reset); console:\n%s", console)
+	}
+	t.Logf("REAL VM PASS: allowlist mode RESET an off-list destination\n%s", console)
 }
 
 // TestE2E_Libkrun_RealVM_VirtiofsPerf is ADR-010 Gate 2: virtio-fs must be

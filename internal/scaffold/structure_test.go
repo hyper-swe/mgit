@@ -108,6 +108,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		"execwire":     true, // host<->guest exec wire protocol (FR-17.11, MGIT-11.9.2)
 		"landwire":     true, // host<->guest land object-frame wire protocol (FR-17.5, MGIT-11.10.10)
 		"guestboot":    true, // host->guest worktree-mount boot contract (FR-17.3, MGIT-11.6.5)
+		"guestnet":     true, // guest NIC/resolver configuration at boot (FR-17.7, MGIT-68)
 		"controlproto": true, // host CLI<->daemon control-plane protocol (FR-17.34, MGIT-11.10.7)
 		"agentadapter": true, // cooperative agent-harness routing config (FR-17, MGIT-11.11.1)
 		"packaging":    true, // release/distribution config regression guards (MGIT-44)

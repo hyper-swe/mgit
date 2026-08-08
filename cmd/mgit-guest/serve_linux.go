@@ -16,6 +16,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/guest"
 	"github.com/hyper-swe/mgit/internal/guestboot"
+	"github.com/hyper-swe/mgit/internal/guestnet"
 )
 
 // procCmdline is the kernel command line the host appends the worktree
@@ -29,6 +30,14 @@ var procCmdline = "/proc/cmdline"
 // listeners run until the context is canceled; the first that fails returns.
 func serveGuest(ctx context.Context, supervisor *guest.Supervisor, execPort, landPort, notifyPort uint32, logger *slog.Logger) error {
 	if err := mountGuestFilesystems(); err != nil {
+		return err
+	}
+	// Address the NIC BEFORE serving anything: mgit-guest is PID 1, so if it
+	// does not configure the guest's network nothing else will, and every
+	// command the agent runs in here fails ENETUNREACH (MGIT-68). It runs
+	// after the mounts because the writable-root overlay is what makes
+	// /etc/resolv.conf writable. Refs: MGIT-68, FR-17.7, SEC-07
+	if err := configureGuestNetwork(logger); err != nil {
 		return err
 	}
 	worktreePath := worktreeMountPath()
@@ -131,6 +140,28 @@ func bootTokens() string {
 // worktree was delivered.
 func worktreeMountPath() string {
 	return guestboot.ParseWorktreeMount(bootTokens()).Path
+}
+
+// guestResolvPath is where the guest's resolver configuration is written; a
+// var so tests can point it somewhere other than the real /etc.
+var guestResolvPath = guestnet.DefaultResolvPath
+
+// configureGuestNetwork gives eth0 its address, netmask and default route and
+// points the resolver at the gateway, from the descriptor the host sent over
+// the same boot-token channel as every other descriptor.
+//
+// A sandbox with no network descriptor (none mode) configures nothing and
+// boots normally. A sandbox WITH one that cannot be applied fails the boot:
+// the alternative is a guest that comes up with an unaddressed NIC and fails
+// every flow — indistinguishable, from inside, from a correctly enforced
+// deny. That indistinguishability is exactly what let v0.4.0 ship with guest
+// egress entirely non-functional. Refs: MGIT-68, FR-17.7, FR-17.8, SEC-07
+func configureGuestNetwork(logger *slog.Logger) error {
+	return guestnet.Apply(guestboot.ParseGuestNetwork(bootTokens()), guestnet.Deps{
+		Link:       guestnet.NewLinker(),
+		ResolvPath: guestResolvPath,
+		Logger:     logger,
+	})
 }
 
 // publishPorts reads the kernel cmdline published-ports descriptor to learn
