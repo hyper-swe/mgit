@@ -26,6 +26,10 @@ type RunnerConfig struct {
 	Logger    *slog.Logger
 	ProxyPort int
 	DNSPort   int
+	// TransparentPort is where the tap's REDIRECT sends the guest's ordinary
+	// TCP, and where the transparent proxy listens. It is what lets an
+	// unmodified guest program egress in allowlist mode at all. Refs: MGIT-69
+	TransparentPort int
 }
 
 // Binding describes one sandbox's egress: its identity, the host gateway IP
@@ -43,6 +47,9 @@ type Binding struct {
 type Endpoints struct {
 	ProxyAddr string
 	DNSAddr   string
+	// TransparentAddr is the redirect target an ordinary guest program's TCP
+	// is steered to in allowlist mode (MGIT-69). Empty in none/open mode.
+	TransparentAddr string
 }
 
 // Runner owns the lifecycle of the host egress stack for every running
@@ -66,11 +73,26 @@ type Runner struct {
 // supervisor, so a host-approved capability grant can widen the LIVE
 // allowlist (FR-17.12, SEC-05).
 type activeEgress struct {
-	cancel    context.CancelFunc
-	tcp       net.Listener
-	udp       net.PacketConn
-	endpoints Endpoints
-	sup       *Supervisor
+	cancel      context.CancelFunc
+	tcp         net.Listener
+	udp         net.PacketConn
+	transparent net.Listener
+	endpoints   Endpoints
+	sup         *Supervisor
+}
+
+// closeListeners releases whatever sockets are open. It is the partial-failure
+// path during Start (before cancel exists) and is safe on absent listeners:
+// open mode has no TCP half at all.
+func (a *activeEgress) closeListeners() {
+	for _, l := range []net.Listener{a.tcp, a.transparent} {
+		if l != nil {
+			_ = l.Close()
+		}
+	}
+	if a.udp != nil {
+		_ = a.udp.Close()
+	}
 }
 
 // NewRunner validates the configuration and returns a Runner.
@@ -106,8 +128,16 @@ func (r *Runner) SetDenialObserver(fn func(model.ObservedDenial)) {
 // proxy) returning empty endpoints. It is an error to start the same
 // sandbox twice. Refs: SEC-04, FR-17.8
 func (r *Runner) Start(ctx context.Context, b Binding) (Endpoints, error) {
-	if b.Policy.Mode != model.NetworkModeAllowlist {
-		return Endpoints{}, nil // none has no NIC; open uses host NAT — no proxy
+	switch b.Policy.Mode {
+	case model.NetworkModeNone:
+		return Endpoints{}, nil // no NIC at all
+	case model.NetworkModeOpen:
+		// Open uses host NAT for its flows, so it runs no proxy — but it does
+		// need a RESOLVER on the gateway, because that is where the guest is
+		// told to look. It used to bind nothing there, so every name in open
+		// mode failed against a dead port while the raw-IP tests stayed green.
+		// Refs: MGIT-69, SEC-07
+		return r.startOpenDNS(ctx, b)
 	}
 
 	r.mu.Lock()
@@ -130,16 +160,91 @@ func (r *Runner) Start(ctx context.Context, b Binding) (Endpoints, error) {
 		return Endpoints{}, err
 	}
 	ae.sup = sup
+	// The TRANSPARENT listener is what an ordinary guest program actually
+	// uses: the tap REDIRECTs its TCP here, and this proxy authorizes it on
+	// the original destination. The length-prefixed CONNECT proxy above stays
+	// for callers that speak it, but nothing in a guest does — which is why
+	// allowlist mode was unusable from inside. Refs: MGIT-69, SEC-04
+	transparent, err := NewTransparentProxy(TransparentProxyConfig{
+		Authorizer: sup.Authorizer(), Dial: r.cfg.Dial, Logger: r.cfg.Logger,
+	})
+	if err != nil {
+		ae.closeListeners()
+		return Endpoints{}, fmt.Errorf("egress runner: %w", err)
+	}
+	tln, err := r.listenTransparent(ctx, b.GatewayIP)
+	if err != nil {
+		ae.closeListeners()
+		return Endpoints{}, err
+	}
+	ae.transparent = tln
+	ae.endpoints.TransparentAddr = tln.Addr().String()
+
 	//nolint:gosec // G118: cancel is stored in ae.cancel and invoked by Stop — the egress lifecycle deliberately outlives Start
 	runCtx, cancel := context.WithCancel(ctx)
 	ae.cancel = cancel
 	go func() { _ = sup.Proxy().Serve(runCtx, ae.tcp) }()
 	go func() { _ = sup.DNS().ServeUDP(runCtx, ae.udp) }()
+	go func() { _ = transparent.Serve(runCtx, ae.transparent) }()
 
 	r.active[b.SandboxID] = ae
 	r.cfg.Logger.Info("sandbox egress started", "event", "egress_started",
 		"sandbox_id", b.SandboxID, "task_id", b.TaskID,
-		"proxy", ae.endpoints.ProxyAddr, "dns", ae.endpoints.DNSAddr)
+		"proxy", ae.endpoints.ProxyAddr, "dns", ae.endpoints.DNSAddr,
+		"transparent", ae.endpoints.TransparentAddr)
+	return ae.endpoints, nil
+}
+
+// listenTransparent binds the redirect target on the gateway.
+func (r *Runner) listenTransparent(ctx context.Context, gw netip.Addr) (net.Listener, error) {
+	var lc net.ListenConfig
+	addr := fmt.Sprintf("%s:%d", gw, r.cfg.TransparentPort)
+	ln, err := lc.Listen(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("egress runner: listen transparent proxy %s: %w", addr, err)
+	}
+	return ln, nil
+}
+
+// startOpenDNS serves open mode's resolver on the sandbox gateway. It binds
+// the UDP socket only: open mode's flows go out through host NAT, so there is
+// no proxy to run, but name resolution still goes through mgit — which is
+// what keeps it audited, rate-limited and subject to the unconditional IP
+// denials rather than being whatever the guest reached through NAT.
+// Refs: MGIT-69, SEC-04, SEC-07
+func (r *Runner) startOpenDNS(ctx context.Context, b Binding) (Endpoints, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.active[b.SandboxID]; exists {
+		return Endpoints{}, fmt.Errorf("egress runner: sandbox %q already started", b.SandboxID)
+	}
+
+	dns, err := NewOpenDNSServer(OpenDNSConfig{
+		SandboxID: b.SandboxID, TaskID: b.TaskID,
+		Audit: r.cfg.Audit, Lookup: r.cfg.Lookup, Clock: r.cfg.Clock, Logger: r.cfg.Logger,
+	})
+	if err != nil {
+		return Endpoints{}, fmt.Errorf("egress runner: %w", err)
+	}
+
+	var lc net.ListenConfig
+	udpAddr := fmt.Sprintf("%s:%d", b.GatewayIP, r.cfg.DNSPort)
+	udp, err := lc.ListenPacket(ctx, "udp", udpAddr)
+	if err != nil {
+		return Endpoints{}, fmt.Errorf("egress runner: listen open-mode dns %s: %w", udpAddr, err)
+	}
+
+	//nolint:gosec // G118: cancel is stored in ae.cancel and invoked by Stop — the egress lifecycle deliberately outlives Start
+	runCtx, cancel := context.WithCancel(ctx)
+	ae := &activeEgress{
+		cancel: cancel, udp: udp,
+		endpoints: Endpoints{DNSAddr: udp.LocalAddr().String()},
+	}
+	go func() { _ = dns.ServeUDP(runCtx, udp) }()
+
+	r.active[b.SandboxID] = ae
+	r.cfg.Logger.Info("sandbox open-mode dns started", "event", "egress_open_dns_started",
+		"sandbox_id", b.SandboxID, "task_id", b.TaskID, "dns", ae.endpoints.DNSAddr)
 	return ae.endpoints, nil
 }
 
@@ -175,7 +280,15 @@ func (r *Runner) Stop(sandboxID string) error {
 		return nil
 	}
 	ae.cancel()
-	err1 := ae.tcp.Close()
+	// An open-mode sandbox has a DNS socket but NO proxy or transparent
+	// listener, so the TCP halves are legitimately absent here.
+	var err1 error
+	if ae.tcp != nil {
+		err1 = ae.tcp.Close()
+	}
+	if ae.transparent != nil {
+		_ = ae.transparent.Close()
+	}
 	err2 := ae.udp.Close()
 	r.cfg.Logger.Info("sandbox egress stopped", "event", "egress_stopped", "sandbox_id", sandboxID)
 	if err1 != nil {

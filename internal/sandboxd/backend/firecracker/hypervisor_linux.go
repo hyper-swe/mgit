@@ -159,6 +159,18 @@ func buildConfig(cfg microvm.VMConfig, p vmPaths, worktreeImg string) fc.Config 
 	// publisher's host->guest vsock connect reaches the guest dev server. No
 	// ports => no token. Refs: SEC-09, FR-17.8
 	kernelArgs = guestboot.AppendPublishPortsCmdline(kernelArgs, cfg.PublishPorts)
+	// Tell the guest its RESOLVER (MGIT-69). The SDK's ip= boot parameter
+	// already gives the guest an address and a default route — that mechanism
+	// works and is left alone — but the kernel writes the nameservers it
+	// carries to /proc/net/pnp, NOT /etc/resolv.conf, and the guest rootfs
+	// ships no /etc at all. So every getaddrinfo caller in the guest (npm,
+	// apt, curl) had no resolver, exactly the EAI_AGAIN half of MGIT-68 on a
+	// different backend. This descriptor is resolver-only for that reason:
+	// mgit does not re-send link configuration the kernel already applied.
+	// Refs: MGIT-69, FR-17.8, SEC-07
+	if cfg.AttachNIC {
+		kernelArgs = guestboot.AppendNetworkCmdline(kernelArgs, guestNetworkFor(cfg.SandboxID))
+	}
 
 	out := fc.Config{
 		SocketPath:      p.socket,

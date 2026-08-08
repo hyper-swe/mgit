@@ -19,7 +19,10 @@ func allowlistPlan() TapPlan {
 		GatewayIP: netip.MustParseAddr("172.31.0.1"),
 		ProxyPort: 1080,
 		DNSPort:   53,
-		ExtIface:  "eth0",
+		// The transparent redirect port is part of a working allowlist plan
+		// (MGIT-69), so the shared fixture carries it.
+		TransparentPort: 1081,
+		ExtIface:        "eth0",
 	}
 }
 
@@ -176,4 +179,99 @@ func TestTapPlan_Validate(t *testing.T) {
 	bad.ProxyPort = 0
 	_, err = bad.SetupCommands()
 	assert.Error(t, err, "allowlist mode needs a proxy port")
+}
+
+// TestTapPlan_OpenMode_LetsTheGuestReachTheGatewayResolver verifies open mode
+// explicitly permits the guest to reach the host resolver on the gateway.
+//
+// Open mode binds a resolver there now (MGIT-69). Relying on the host's
+// default INPUT policy to admit that traffic would make open-mode DNS work or
+// fail depending on unrelated host firewall configuration — the kind of
+// implicit dependency that produces "it works on my machine". Refs: MGIT-69
+func TestTapPlan_OpenMode_LetsTheGuestReachTheGatewayResolver(t *testing.T) {
+	p := TapPlan{
+		Mode: model.NetworkModeOpen, TapDev: "mgt0123456789",
+		GuestIP:   netip.MustParseAddr("172.31.4.2"),
+		GatewayIP: netip.MustParseAddr("172.31.4.1"),
+		ProxyPort: 1080, DNSPort: 53, ExtIface: "eth0",
+	}
+
+	cmds, err := p.SetupCommands()
+	require.NoError(t, err)
+	out := flatten(cmds)
+
+	assert.Contains(t, out, "-p udp -d 172.31.4.1 --dport 53 -j ACCEPT",
+		"open mode must admit guest DNS to the gateway resolver")
+	assert.Contains(t, out, "iptables -I INPUT 1 -i mgt0123456789 -j fmgt0123456789",
+		"the chain must be reachable from INPUT, or the gateway-bound resolver is never hit")
+	assert.Contains(t, out, "MASQUERADE", "open mode still NATs the guest out")
+}
+
+// TestTapPlan_OpenMode_TeardownRemovesTheInputJump verifies the new INPUT
+// jump is removed too — a rule left behind after teardown is host residue
+// (SEC-10 / FR-17.19).
+func TestTapPlan_OpenMode_TeardownRemovesTheInputJump(t *testing.T) {
+	p := TapPlan{
+		Mode: model.NetworkModeOpen, TapDev: "mgt0123456789",
+		GuestIP:   netip.MustParseAddr("172.31.4.2"),
+		GatewayIP: netip.MustParseAddr("172.31.4.1"),
+		ProxyPort: 1080, DNSPort: 53, ExtIface: "eth0",
+	}
+
+	out := flatten(p.TeardownCommands())
+
+	assert.Contains(t, out, "iptables -D INPUT -i mgt0123456789 -j fmgt0123456789")
+}
+
+// TestTapPlan_Allowlist_RedirectsGuestTCPToTheTransparentProxy is the
+// firewall half of MGIT-69's allowlist fix.
+//
+// Allowlist mode permitted the guest to reach only mgit's DNS port and its
+// length-prefixed CONNECT proxy — a protocol nothing in any guest speaks — so
+// an ordinary program could not open a connection to ANY destination. The
+// guest's TCP is now REDIRECTed into the transparent proxy, which authorizes
+// it on the host-observed original destination. Refs: MGIT-69, SEC-04
+func TestTapPlan_Allowlist_RedirectsGuestTCPToTheTransparentProxy(t *testing.T) {
+	p := allowlistPlan()
+
+	cmds, err := p.SetupCommands()
+	require.NoError(t, err)
+	out := flatten(cmds)
+
+	assert.Contains(t, out, "iptables -t nat -A nmgt0a1b2c3d -p tcp -j REDIRECT --to-ports 1081",
+		"guest TCP must be redirected into the transparent proxy")
+	assert.Contains(t, out, "iptables -t nat -I PREROUTING 1 -i mgt0a1b2c3d -j nmgt0a1b2c3d")
+	assert.Contains(t, out, "-p tcp -d 172.31.0.1 --dport 1081 -j ACCEPT",
+		"the redirected destination must survive the filter chain's default DROP")
+	// The default-deny is unchanged: the redirect changes HOW a flow reaches
+	// the authorizer, never WHETHER policy decides it.
+	assert.Contains(t, out, "iptables -A fmgt0a1b2c3d -j DROP")
+	assert.NotContains(t, out, "MASQUERADE", "allowlist still grants no direct route")
+}
+
+// TestTapPlan_Allowlist_TeardownRemovesTheRedirect verifies the nat chain and
+// its PREROUTING jump are removed: a leftover REDIRECT would silently capture
+// a later sandbox's traffic on a reused tap name. Refs: FR-17.19, SEC-10
+func TestTapPlan_Allowlist_TeardownRemovesTheRedirect(t *testing.T) {
+	p := allowlistPlan()
+
+	out := flatten(p.TeardownCommands())
+
+	assert.Contains(t, out, "iptables -t nat -D PREROUTING -i mgt0a1b2c3d -j nmgt0a1b2c3d")
+	assert.Contains(t, out, "iptables -t nat -F nmgt0a1b2c3d")
+	assert.Contains(t, out, "iptables -t nat -X nmgt0a1b2c3d")
+}
+
+// TestTapPlan_Allowlist_WithoutATransparentPort_IsRejected keeps the
+// fail-closed rule at plan level: allowlist mode without the redirect port is
+// a guest that can reach nothing at all, which is the bug — not a valid
+// stricter posture. Refs: MGIT-69
+func TestTapPlan_Allowlist_WithoutATransparentPort_IsRejected(t *testing.T) {
+	p := allowlistPlan()
+	p.TransparentPort = 0
+
+	_, err := p.SetupCommands()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "transparent")
 }

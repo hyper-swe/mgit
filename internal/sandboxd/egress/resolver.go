@@ -34,6 +34,19 @@ type ResolverConfig struct {
 	Lookup    LookupFunc
 	Audit     Auditor
 	Clock     func() time.Time
+	// ResolveAny lifts the allowlist gate: OPEN mode resolves any name.
+	//
+	// It exists because open mode previously bound no resolver at all while
+	// the guest was still pointed at the gateway for DNS, so every name in
+	// open mode failed against a port nothing listened on (MGIT-69). Making
+	// open mode resolve through this resolver — rather than leaving the guest
+	// to find its own — is also what keeps open-mode DNS AUDITED, rate-limited
+	// and subject to the unconditional IP denials.
+	//
+	// It relaxes ONLY which names may be looked up. Everything else — the
+	// rate limit, the NXDOMAIN-burst flag, the denied-range filter, the pin,
+	// the audit record — still applies. Refs: MGIT-69, SEC-04, SEC-07
+	ResolveAny bool
 	// Logger records audit-write failures so a dropped durable record is never
 	// silent (CLAUDE.md "no swallowed errors"). Optional; nil => discard.
 	Logger *slog.Logger
@@ -69,8 +82,11 @@ type Resolver struct {
 // NewResolver validates the configuration and returns a Resolver.
 func NewResolver(cfg ResolverConfig) (*Resolver, error) {
 	switch {
-	case cfg.Allowlist == nil:
-		return nil, fmt.Errorf("egress resolver: allowlist must not be nil")
+	case cfg.Allowlist == nil && !cfg.ResolveAny:
+		// Fail closed on construction: a resolver with neither a gate nor an
+		// explicit "resolve anything" is a misconfiguration, and defaulting
+		// either way silently would be the wrong answer half the time.
+		return nil, fmt.Errorf("egress resolver: allowlist must not be nil unless ResolveAny is set")
 	case cfg.Lookup == nil:
 		return nil, fmt.Errorf("egress resolver: lookup must not be nil")
 	case cfg.Audit == nil:
@@ -103,7 +119,9 @@ func NewResolver(cfg ResolverConfig) (*Resolver, error) {
 // exfiltration), enforces the per-window query cap, and counts NXDOMAIN
 // bursts. Every decision is audited as a dns record. Refs: SEC-07, FR-17.8
 func (r *Resolver) Resolve(ctx context.Context, name string) ([]netip.Addr, error) {
-	if !r.cfg.Allowlist.HasName(name) {
+	// The allowlist gate is the ONLY thing open mode lifts (ResolveAny);
+	// every control below it still applies. Refs: MGIT-69, SEC-07
+	if !r.cfg.ResolveAny && !r.cfg.Allowlist.HasName(name) {
 		r.audit(ctx, model.EgressDeny, name, "dns: name not allowlisted")
 		return nil, fmt.Errorf("%w: %q", ErrNameNotAllowlisted, name)
 	}

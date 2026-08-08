@@ -243,6 +243,38 @@ func TestE2E_Libkrun_RealVM_OpenMode_ReachesRawIP(t *testing.T) {
 	t.Logf("REAL VM PASS (open): guest reached a raw IP with no allowlist entry\n%s", out)
 }
 
+// TestE2E_Libkrun_RealVM_OpenMode_ResolvesThroughTheGateway closes the hole
+// this test file's own raw-IP assertion left open.
+//
+// v0.4.1 pointed the guest's /etc/resolv.conf at the gateway in EVERY
+// networked mode, but open mode bound no resolver there — so every name in
+// open mode failed "connection refused" against a dead port while the raw-IP
+// assertion above stayed green. A raw IP is not a substitute for a name: they
+// exercise different halves of the stack. Refs: MGIT-69, SEC-07, FR-17.7
+func TestE2E_Libkrun_RealVM_OpenMode_ResolvesThroughTheGateway(t *testing.T) {
+	requireRealVM(t)
+	requireHostInternet(t)
+
+	probe := netProbeVM(t, model.NetworkModeOpen, nil)
+
+	resolved := probe("resolve", netE2EHost)
+	if !strings.Contains(resolved, "PROBE-RESULT RESOLVE = OK") {
+		t.Fatalf("open mode resolved nothing through its own resolver: %s\ninterfaces: %s",
+			resolved, probe("ifaces"))
+	}
+
+	// And the name is usable end to end, with real bytes back.
+	out := probe("fetch", fmt.Sprintf("%s:%d", netE2EHost, netE2EPort))
+	if !strings.Contains(out, "PROBE-RESULT FETCH = ALLOWED") {
+		t.Fatalf("open mode could not fetch by NAME: %s", out)
+	}
+	if !strings.Contains(out, "bytes=") || strings.Contains(out, "bytes=0") {
+		t.Errorf("connected but read no real bytes: %s", out)
+	}
+	t.Logf("REAL VM PASS (open dns): guest resolved %s through the gateway resolver "+
+		"and fetched real bytes\n%s\n%s", netE2EHost, resolved, out)
+}
+
 // TestE2E_Libkrun_RealVM_Allowlist_DenyIsAPolicyRefusal keeps the deny
 // assertion but makes it DISTINGUISHABLE from a dead network: an off-list
 // flow must be REFUSED (the forwarder resets the handshake), not merely fail.

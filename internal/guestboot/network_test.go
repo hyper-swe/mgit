@@ -45,12 +45,26 @@ func TestAppendNetworkCmdline_EmptyBase(t *testing.T) {
 	assert.Equal(t, "mgit.net_ip=10.0.2.15 mgit.net_prefix=24 mgit.net_gw=10.0.2.2 mgit.net_dns=10.0.2.2", out)
 }
 
-// TestAppendNetworkCmdline_NoAddress_AddsNothing verifies a sandbox with no
-// network (none mode) leaves the token stream untouched, so the guest can
+// TestAppendNetworkCmdline_NoDescriptor_AddsNothing verifies a sandbox with
+// no network (none mode) leaves the token stream untouched, so the guest can
 // tell "no network was configured for me" from "network config failed".
-func TestAppendNetworkCmdline_NoAddress_AddsNothing(t *testing.T) {
+func TestAppendNetworkCmdline_NoDescriptor_AddsNothing(t *testing.T) {
 	assert.Equal(t, "console=ttyS0", AppendNetworkCmdline("console=ttyS0", GuestNetwork{}))
-	assert.Equal(t, "console=ttyS0", AppendNetworkCmdline("console=ttyS0", GuestNetwork{Gateway: "10.0.2.2"}))
+}
+
+// TestAppendNetworkCmdline_IncoherentDescriptor_TravelsAndIsRejected pins a
+// deliberate choice: a partial descriptor is EMITTED, not silently dropped.
+// It can only come from a host-side mistake, and a guest that fails its boot
+// naming the bad descriptor is far easier to diagnose than the silently
+// network-less guest dropping it would produce — which is precisely the
+// failure MGIT-68 shipped. Refs: MGIT-68, MGIT-69
+func TestAppendNetworkCmdline_IncoherentDescriptor_TravelsAndIsRejected(t *testing.T) {
+	out := AppendNetworkCmdline("console=ttyS0", GuestNetwork{Gateway: "10.0.2.2"})
+
+	assert.Equal(t, "console=ttyS0 mgit.net_gw=10.0.2.2", out, "no empty keys on the wire")
+	got := ParseGuestNetwork(out)
+	assert.Equal(t, GuestNetwork{Gateway: "10.0.2.2"}, got)
+	assert.False(t, got.Valid(), "the guest must reject it rather than half-configure")
 }
 
 // TestParseGuestNetwork_IgnoresUnrelatedTokens verifies the network keys are
@@ -131,4 +145,48 @@ func TestGuestNetwork_Netmask(t *testing.T) {
 	}
 	assert.Nil(t, GuestNetwork{IP: "10.0.2.15", PrefixLen: 0, Gateway: "10.0.2.2"}.Netmask(),
 		"an invalid descriptor has no netmask")
+}
+
+// TestGuestNetworkRoundTrip_ResolverOnly verifies the RESOLVER-ONLY shape: a
+// backend whose guest is already addressed by other means (firecracker's
+// kernel `ip=` autoconfiguration) needs only to be told its nameserver, and
+// must not be handed a second, redundant link configuration. Refs: MGIT-69
+func TestGuestNetworkRoundTrip_ResolverOnly(t *testing.T) {
+	n := GuestNetwork{DNS: "172.31.4.1"}
+
+	got := ParseGuestNetwork(AppendNetworkCmdline("console=ttyS0 ip=172.31.4.2::172.31.4.1:255.255.255.252::eth0:off", n))
+
+	assert.Equal(t, n, got)
+	assert.True(t, got.Valid(), "a resolver-only descriptor is coherent")
+	assert.False(t, got.Empty())
+	assert.False(t, got.ConfiguresLink(), "resolver-only must not claim link configuration")
+	assert.Equal(t, "172.31.4.1", got.Resolver())
+}
+
+// TestGuestNetwork_ConfiguresLink separates the two shapes the guest must
+// tell apart: a full link descriptor it applies with ioctls, and a
+// resolver-only one where the address is already the kernel's business.
+func TestGuestNetwork_ConfiguresLink(t *testing.T) {
+	assert.True(t, GuestNetwork{IP: "10.0.2.15", PrefixLen: 24, Gateway: "10.0.2.2"}.ConfiguresLink())
+	assert.False(t, GuestNetwork{DNS: "10.0.2.2"}.ConfiguresLink())
+	assert.False(t, GuestNetwork{}.ConfiguresLink())
+	// A descriptor carrying ANY link field claims link configuration, so a
+	// partial one is rejected as incomplete rather than silently downgraded
+	// to resolver-only.
+	assert.True(t, GuestNetwork{Gateway: "10.0.2.2", DNS: "10.0.2.2"}.ConfiguresLink())
+	assert.False(t, GuestNetwork{Gateway: "10.0.2.2", DNS: "10.0.2.2"}.Valid())
+}
+
+// TestAppendNetworkCmdline_ResolverOnly verifies only the resolver token is
+// emitted — no empty address/prefix keys the guest would have to special-case.
+func TestAppendNetworkCmdline_ResolverOnly(t *testing.T) {
+	assert.Equal(t, "mgit.net_dns=172.31.4.1", AppendNetworkCmdline("", GuestNetwork{DNS: "172.31.4.1"}))
+}
+
+// TestGuestNetwork_Valid_ResolverOnly rejects a malformed resolver-only
+// descriptor rather than leaving the guest pointed at nonsense.
+func TestGuestNetwork_Valid_ResolverOnly(t *testing.T) {
+	assert.True(t, GuestNetwork{DNS: "10.0.2.2"}.Valid())
+	assert.False(t, GuestNetwork{DNS: "not-an-ip"}.Valid())
+	assert.False(t, GuestNetwork{DNS: "fd00::2"}.Valid(), "the gateways serve IPv4 only")
 }

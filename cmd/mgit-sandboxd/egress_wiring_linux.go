@@ -19,6 +19,11 @@ import (
 const (
 	egressProxyPort = 1080
 	egressDNSPort   = 53
+	// egressTransparentPort is the REDIRECT target for the guest's ordinary
+	// TCP — the path an unmodified program (npm, apt, curl) egresses by. The
+	// CONNECT proxy above serves only callers that speak mgit's own protocol,
+	// which no guest does. Refs: MGIT-69, SEC-04
+	egressTransparentPort = 1081
 )
 
 // wireEgress installs the host egress controller on the sandbox service
@@ -33,13 +38,14 @@ const (
 // Refs: FR-17.7, FR-17.8, FR-17.12, SEC-04, SEC-05
 func wireEgress(svc *service.SandboxService, events *index.Store, clock func() time.Time, logger *slog.Logger) *service.CapabilityService {
 	runner, err := egress.NewRunner(egress.RunnerConfig{
-		Audit:     events,
-		Lookup:    egress.SystemLookup(nil),
-		Dial:      egress.HostDial,
-		Clock:     clock,
-		Logger:    logger,
-		ProxyPort: egressProxyPort,
-		DNSPort:   egressDNSPort,
+		Audit:           events,
+		Lookup:          egress.SystemLookup(nil),
+		Dial:            egress.HostDial,
+		Clock:           clock,
+		Logger:          logger,
+		TransparentPort: egressTransparentPort,
+		ProxyPort:       egressProxyPort,
+		DNSPort:         egressDNSPort,
 	})
 	if err != nil {
 		logger.Error("sandbox egress wiring failed; allowlist mode will fail closed", "error", err.Error())

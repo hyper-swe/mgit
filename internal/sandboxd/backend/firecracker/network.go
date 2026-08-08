@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hyper-swe/mgit/internal/guestboot"
 	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 )
 
@@ -65,6 +66,12 @@ func parseDefaultRouteIface(r io.Reader) (string, error) {
 const (
 	hostProxyPort = 1080
 	hostDNSPort   = 53
+	// hostTransparentPort is where the tap's nat chain REDIRECTs the guest's
+	// ordinary TCP so the transparent proxy can authorize it. Without it the
+	// guest's only reachable TCP port is mgit's length-prefixed CONNECT
+	// protocol, which nothing in any guest speaks — so no unmodified program
+	// could egress in allowlist mode at all. Refs: MGIT-69, SEC-04
+	hostTransparentPort = 1081
 )
 
 // NetRunner execs one privileged host network command (ip/iptables).
@@ -134,6 +141,23 @@ func GatewayFor(sandboxID string) netip.Addr {
 	return gateway
 }
 
+// guestNetworkFor is what the GUEST must be told about its own networking:
+// the resolver, and only the resolver.
+//
+// It is derived from the same subnetFor the SDK's IPConfiguration is built
+// from, so the nameserver on the kernel command line and the one in the
+// guest's /etc/resolv.conf cannot drift apart. It is deliberately
+// RESOLVER-ONLY: the kernel's `ip=` autoconfiguration already applies the
+// address, prefix and default route on this backend, and duplicating a
+// working mechanism is how the two copies eventually disagree.
+//
+// The gateway is the right answer in every mode that has a NIC, because the
+// host-side resolver binds there in both allowlist and open mode — allowlist
+// gating only which names resolve, not where. Refs: MGIT-69, SEC-07, FR-17.8
+func guestNetworkFor(sandboxID string) guestboot.GuestNetwork {
+	return guestboot.GuestNetwork{DNS: GatewayFor(sandboxID).String()}
+}
+
 // tapPlanFor builds the shared egress TapPlan for a sandbox's host tap,
 // single-sourcing the per-mode firewall invariants from the egress package
 // and the fixed gateway ports the egress.Runner binds. extIface is the host
@@ -142,13 +166,14 @@ func GatewayFor(sandboxID string) netip.Addr {
 func tapPlanFor(sandboxID, mode, extIface string) egress.TapPlan {
 	gateway, guest, _ := subnetFor(sandboxID)
 	return egress.TapPlan{
-		Mode:      mode,
-		TapDev:    egress.TapName(sandboxID),
-		GuestIP:   guest,
-		GatewayIP: gateway,
-		ProxyPort: hostProxyPort,
-		DNSPort:   hostDNSPort,
-		ExtIface:  extIface,
+		Mode:            mode,
+		TapDev:          egress.TapName(sandboxID),
+		GuestIP:         guest,
+		GatewayIP:       gateway,
+		ProxyPort:       hostProxyPort,
+		DNSPort:         hostDNSPort,
+		TransparentPort: hostTransparentPort,
+		ExtIface:        extIface,
 	}
 }
 
