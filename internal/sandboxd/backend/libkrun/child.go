@@ -145,8 +145,7 @@ func childPolicy(spec vmSpec, logger *slog.Logger, clock func() time.Time) (flow
 		// Open places no restriction on destinations, but it still gets an
 		// authorizer — the gateway refuses to run without one, and this is
 		// what makes open mode AUDITED per flow, which the iptables NAT path
-		// it replaces could not do. No DNS resolver: open mode connects by
-		// address and the guest's own resolution is unrestricted.
+		// it replaces could not do.
 		auth, err := egress.NewOpenAuthorizer(egress.OpenAuthorizerConfig{
 			SandboxID: spec.SandboxID, TaskID: spec.TaskID,
 			Audit: logAuditor{logger: logger}, Logger: logger,
@@ -154,7 +153,20 @@ func childPolicy(spec vmSpec, logger *slog.Logger, clock func() time.Time) (flow
 		if err != nil {
 			return nil, nil, fmt.Errorf("libkrun child open-mode egress: %w", err)
 		}
-		return auth, nil, nil
+		// Open mode gets a RESOLVER too. It used to get none, on the reasoning
+		// that an unrestricted guest resolves for itself — but the guest is
+		// told its nameserver IS the gateway, so with nothing bound there every
+		// name in open mode failed "connection refused" against a dead port.
+		// The open-mode e2e dialed a raw IP, so it never noticed.
+		// Refs: MGIT-69, SEC-07
+		dns, err := egress.NewOpenDNSServer(egress.OpenDNSConfig{
+			SandboxID: spec.SandboxID, TaskID: spec.TaskID,
+			Audit: logAuditor{logger: logger}, Clock: clock, Logger: logger,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("libkrun child open-mode dns: %w", err)
+		}
+		return auth, dns, nil
 	}
 	// Allowlist: the standard per-sandbox assembly.
 	sup, err := egress.NewSupervisor(egress.SupervisorConfig{

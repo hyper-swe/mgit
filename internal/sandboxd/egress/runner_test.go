@@ -77,9 +77,12 @@ func TestRunner_Start_RunsProxyAndDNS(t *testing.T) {
 	assert.True(t, allow, "allowlisted flow admitted through the running proxy")
 }
 
-// TestRunner_Start_NoneAndOpen_NoListeners verifies the runner starts no
-// proxy for none/open modes (no proxy needed). Refs: FR-17.7
-func TestRunner_Start_NoneAndOpen_NoListeners(t *testing.T) {
+// TestRunner_Start_NoneAndOpen_RunNoProxy verifies neither none nor open mode
+// starts an egress proxy: none has no NIC, and open's flows go out through
+// host NAT. Open DOES serve DNS on the gateway (MGIT-69) — asserted in
+// TestRunner_OpenMode_ServesDNSOnTheGateway — which is why only the PROXY is
+// asserted absent here. Refs: FR-17.7, MGIT-69
+func TestRunner_Start_NoneAndOpen_RunNoProxy(t *testing.T) {
 	for _, mode := range []string{model.NetworkModeNone, model.NetworkModeOpen} {
 		t.Run(mode, func(t *testing.T) {
 			r := testRunner(t, &dialRecorder{})
@@ -89,8 +92,8 @@ func TestRunner_Start_NoneAndOpen_NoListeners(t *testing.T) {
 				Policy:    model.NetworkPolicy{Mode: mode},
 			})
 			require.NoError(t, err)
+			t.Cleanup(func() { _ = r.Stop("01SB") })
 			assert.Empty(t, ep.ProxyAddr, "%s mode runs no egress proxy", mode)
-			assert.False(t, r.Running("01SB"))
 		})
 	}
 }
@@ -137,4 +140,63 @@ func TestNewRunner_Validates(t *testing.T) {
 func dnsQueryA(t *testing.T, name string) []byte {
 	t.Helper()
 	return buildQuery(t, name, dnsmessage.TypeA)
+}
+
+// TestRunner_OpenMode_ServesDNSOnTheGateway verifies open mode binds a
+// resolver where the guest is told to look.
+//
+// Open mode used to return early from Start and bind NOTHING, while the guest
+// was still pointed at the gateway for DNS — so every name resolution in open
+// mode hit a dead port. The open-mode assertions dialed a raw IP, so nothing
+// caught it. Refs: MGIT-69, FR-17.7, SEC-07
+func TestRunner_OpenMode_ServesDNSOnTheGateway(t *testing.T) {
+	r := testRunner(t, &dialRecorder{})
+
+	eps, err := r.Start(context.Background(), Binding{
+		SandboxID: "sbx-open", TaskID: "MGIT-69",
+		GatewayIP: netip.MustParseAddr("127.0.0.1"),
+		Policy:    model.NetworkPolicy{Mode: model.NetworkModeOpen},
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, eps.DNSAddr, "open mode must serve DNS on the gateway")
+	assert.Empty(t, eps.ProxyAddr, "open mode still runs no proxy — its flows go out via host NAT")
+	assert.True(t, r.Running("sbx-open"))
+	require.NoError(t, r.Stop("sbx-open"), "stopping an open-mode sandbox must not panic on its absent proxy")
+	assert.False(t, r.Running("sbx-open"))
+}
+
+// TestRunner_NoneMode_ServesNothing verifies a network-less sandbox still
+// binds nothing at all: there is no NIC to serve.
+func TestRunner_NoneMode_ServesNothing(t *testing.T) {
+	r := testRunner(t, &dialRecorder{})
+
+	eps, err := r.Start(context.Background(), Binding{
+		SandboxID: "sbx-none", TaskID: "MGIT-69",
+		GatewayIP: netip.MustParseAddr("127.0.0.1"),
+		Policy:    model.NetworkPolicy{Mode: model.NetworkModeNone},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, Endpoints{}, eps)
+	assert.False(t, r.Running("sbx-none"))
+}
+
+// TestRunner_OpenMode_RejectsDoubleStart verifies the same guard the
+// allowlist path has: two live stacks for one sandbox would leave one
+// unreferenced and un-stoppable.
+func TestRunner_OpenMode_RejectsDoubleStart(t *testing.T) {
+	r := testRunner(t, &dialRecorder{})
+	b := Binding{
+		SandboxID: "sbx-open2", TaskID: "MGIT-69",
+		GatewayIP: netip.MustParseAddr("127.0.0.1"),
+		Policy:    model.NetworkPolicy{Mode: model.NetworkModeOpen},
+	}
+	_, err := r.Start(context.Background(), b)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Stop(b.SandboxID) })
+
+	_, err = r.Start(context.Background(), b)
+
+	require.Error(t, err)
 }

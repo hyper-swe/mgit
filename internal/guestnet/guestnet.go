@@ -127,23 +127,30 @@ func Apply(n guestboot.GuestNetwork, deps Deps) error {
 	if !n.Valid() {
 		return fmt.Errorf("mgit-guest: incomplete guest network descriptor: %+v", n)
 	}
-	if d.Link == nil {
-		return fmt.Errorf("mgit-guest: no link configurator on this platform; "+
-			"cannot configure %s with %+v", NIC, n)
-	}
-	if err := waitForNIC(d); err != nil {
-		return err
-	}
-	if err := d.Link.Configure(NIC, n); err != nil {
-		return fmt.Errorf("mgit-guest: configure %s as %s/%d gw %s: %w",
-			NIC, n.IP, n.PrefixLen, n.Gateway, err)
+	// A RESOLVER-ONLY descriptor means the link is already someone else's job
+	// — on firecracker the guest kernel applies an `ip=` boot parameter — and
+	// all that is missing is the resolver the kernel does not write. There is
+	// no link to configure, so neither the NIC wait nor a Linker applies.
+	// Refs: MGIT-69
+	if n.ConfiguresLink() {
+		if d.Link == nil {
+			return fmt.Errorf("mgit-guest: no link configurator on this platform; "+
+				"cannot configure %s with %+v", NIC, n)
+		}
+		if err := waitForNIC(d); err != nil {
+			return err
+		}
+		if err := d.Link.Configure(NIC, n); err != nil {
+			return fmt.Errorf("mgit-guest: configure %s as %s/%d gw %s: %w",
+				NIC, n.IP, n.PrefixLen, n.Gateway, err)
+		}
 	}
 	if err := writeResolvConf(d.ResolvPath, n.Resolver()); err != nil {
 		return err
 	}
 	d.Logger.Info("guest network configured",
-		"event", "guest_net_configured", "iface", NIC, "ip", n.IP,
-		"prefix_len", n.PrefixLen, "gateway", n.Gateway, "resolver", n.Resolver())
+		"event", "guest_net_configured", "iface", NIC, "link_configured", n.ConfiguresLink(),
+		"ip", n.IP, "prefix_len", n.PrefixLen, "gateway", n.Gateway, "resolver", n.Resolver())
 	return nil
 }
 

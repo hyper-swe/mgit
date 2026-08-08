@@ -57,12 +57,34 @@ func (n GuestNetwork) Empty() bool {
 	return n.IP == "" && n.PrefixLen == 0 && n.Gateway == "" && n.DNS == ""
 }
 
-// Valid reports whether the descriptor fully and sanely specifies an IPv4
-// link. IPv6 is rejected because the backends' gateways serve IPv4 only, so
-// an IPv6 descriptor could only produce a guest that configures a NIC and
-// still reaches nothing. A guest with an invalid (but non-empty) descriptor
-// must fail closed rather than half-configure. Refs: MGIT-68, FR-17.7
+// ConfiguresLink reports whether this descriptor carries LINK configuration
+// (address, prefix, gateway) rather than being resolver-only.
+//
+// The two shapes exist because the backends differ in who addresses the NIC.
+// libkrun has no kernel command line of ours, so mgit-guest configures the
+// link itself from a full descriptor. firecracker's SDK renders an `ip=` boot
+// parameter and the guest KERNEL configures the link — but the kernel writes
+// the nameservers to /proc/net/pnp, not /etc/resolv.conf, so that guest needs
+// telling ONLY its resolver. Sending it a second link configuration would
+// duplicate a working mechanism for no gain. Refs: MGIT-68, MGIT-69
+func (n GuestNetwork) ConfiguresLink() bool {
+	return n.IP != "" || n.PrefixLen != 0 || n.Gateway != ""
+}
+
+// Valid reports whether the descriptor is coherent — either a complete IPv4
+// LINK descriptor (address, prefix and gateway, with an optional resolver),
+// or a RESOLVER-ONLY one (a nameserver and nothing else).
+//
+// A descriptor carrying only SOME link fields is invalid rather than being
+// downgraded to resolver-only: half a link descriptor means the host got it
+// wrong, and a guest that quietly configured less than it was told would hide
+// that. IPv6 is rejected because the backends' gateways serve IPv4 only, so
+// an IPv6 descriptor could only produce a guest that configures something and
+// still reaches nothing. Refs: MGIT-68, MGIT-69, FR-17.7
 func (n GuestNetwork) Valid() bool {
+	if !n.ConfiguresLink() {
+		return isIPv4(n.DNS) // resolver-only
+	}
 	if n.PrefixLen < 1 || n.PrefixLen > 32 {
 		return false
 	}
@@ -101,17 +123,30 @@ func isIPv4(s string) bool {
 }
 
 // AppendNetworkCmdline returns base with the guest network descriptor
-// appended as space-separated key=value pairs. A descriptor with no address
-// adds nothing — a none-mode sandbox gets no tokens, so its guest attempts no
-// configuration at all. Refs: MGIT-68, FR-17.7
+// appended as space-separated key=value pairs. An EMPTY descriptor adds
+// nothing — a none-mode sandbox gets no tokens, so its guest attempts no
+// configuration at all — and a resolver-only descriptor emits only the
+// resolver key, so the guest has no empty link fields to special-case.
+// Refs: MGIT-68, MGIT-69, FR-17.7
 func AppendNetworkCmdline(base string, n GuestNetwork) string {
-	if n.IP == "" {
+	if n.Empty() {
 		return base
 	}
-	parts := []string{
-		KeyNetIP + "=" + n.IP,
-		KeyNetPrefix + "=" + strconv.Itoa(n.PrefixLen),
-		KeyNetGateway + "=" + n.Gateway,
+	// Only fields that are actually set are emitted, so a resolver-only
+	// descriptor carries one token and no empty link keys. An INCOHERENT
+	// descriptor is still emitted rather than dropped: it can only come from
+	// a host-side mistake, and the guest rejects it loudly at boot, which is
+	// far easier to diagnose than the silently network-less guest that
+	// dropping it would produce. Refs: MGIT-68, MGIT-69
+	var parts []string
+	if n.IP != "" {
+		parts = append(parts, KeyNetIP+"="+n.IP)
+	}
+	if n.PrefixLen != 0 {
+		parts = append(parts, KeyNetPrefix+"="+strconv.Itoa(n.PrefixLen))
+	}
+	if n.Gateway != "" {
+		parts = append(parts, KeyNetGateway+"="+n.Gateway)
 	}
 	if n.DNS != "" {
 		parts = append(parts, KeyNetDNS+"="+n.DNS)

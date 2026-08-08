@@ -37,6 +37,20 @@ type TapPlan struct {
 	ProxyPort int        // host egress proxy port on GatewayIP (allowlist mode)
 	DNSPort   int        // host resolver port on GatewayIP (allowlist mode)
 	ExtIface  string     // host external interface to NAT through (open mode)
+	// TransparentPort is where the guest's ordinary TCP is REDIRECTed so the
+	// transparent proxy can authorize it (allowlist mode).
+	//
+	// Without it, allowlist mode reaches only ProxyPort — mgit's
+	// length-prefixed CONNECT protocol, which nothing in any guest speaks —
+	// so no ordinary program could connect anywhere at all. Refs: MGIT-69
+	TransparentPort int
+}
+
+// natChainName is the per-sandbox nat chain holding this tap's REDIRECT rule.
+// Separate from the filter chain because nat and filter are distinct tables;
+// a dedicated chain keeps teardown deterministic (flush + delete).
+func (p TapPlan) natChainName() string {
+	return "n" + p.TapDev // "n"+<=14 = <=15 chars, within iptables' 28-char limit
 }
 
 // SetupCommands renders the ordered host commands that bring up the tap and
@@ -87,12 +101,34 @@ func (p TapPlan) linkUpCommands() [][]string {
 // to any other destination is refused regardless of host-global rules.
 // Refs: SEC-04, FR-17.8
 func (p TapPlan) allowlistRules() [][]string {
-	c := p.chainName()
+	c, nc := p.chainName(), p.natChainName()
 	gw := p.GatewayIP.String()
 	proxy := fmt.Sprintf("%d", p.ProxyPort)
 	dns := fmt.Sprintf("%d", p.DNSPort)
+	transparent := fmt.Sprintf("%d", p.TransparentPort)
 	return [][]string{
+		// REDIRECT the guest's ordinary TCP into the transparent proxy, which
+		// authorizes it on the original destination conntrack remembers. This
+		// is what lets an unmodified program (npm, apt, curl, git) egress at
+		// all in allowlist mode: before it, the only reachable TCP port was
+		// mgit's length-prefixed CONNECT proxy, which nothing in any guest
+		// speaks. The redirect changes HOW a flow reaches the authorizer, never
+		// WHETHER policy decides it — the chain below still default-denies.
+		// Refs: MGIT-69, SEC-04
+		{"iptables", "-t", "nat", "-N", nc},
+		// The gateway's OWN services (the CONNECT proxy, TCP DNS) are exempt:
+		// redirecting them would make mgit's own endpoints unreachable from
+		// the guest, and would have the transparent proxy authorize a flow
+		// whose destination is the gateway — an RFC1918 address the
+		// unconditional denials refuse. RETURN must precede the catch-all.
+		{"iptables", "-t", "nat", "-A", nc, "-p", "tcp", "-d", gw, "-j", "RETURN"},
+		{"iptables", "-t", "nat", "-A", nc, "-p", "tcp", "-j", "REDIRECT", "--to-ports", transparent},
+		{"iptables", "-t", "nat", "-I", "PREROUTING", "1", "-i", p.TapDev, "-j", nc},
+
 		{"iptables", "-N", c},
+		// The redirected flow arrives at the gateway on the transparent port;
+		// without this it would meet the chain's default DROP.
+		{"iptables", "-A", c, "-p", "tcp", "-d", gw, "--dport", transparent, "-j", "ACCEPT"},
 		{"iptables", "-A", c, "-p", "tcp", "-d", gw, "--dport", proxy, "-j", "ACCEPT"},
 		{"iptables", "-A", c, "-p", "udp", "-d", gw, "--dport", dns, "-j", "ACCEPT"},
 		{"iptables", "-A", c, "-p", "tcp", "-d", gw, "--dport", dns, "-j", "ACCEPT"},
@@ -108,10 +144,19 @@ func (p TapPlan) allowlistRules() [][]string {
 // are inserted at the top of their chains. Refs: FR-17.7
 func (p TapPlan) openRules() [][]string {
 	c := p.chainName()
+	gw := p.GatewayIP.String()
+	dns := fmt.Sprintf("%d", p.DNSPort)
 	return [][]string{
 		{"sysctl", "-w", "net.ipv4.ip_forward=1"},
 		{"iptables", "-N", c},
 		{"iptables", "-A", c, "-o", p.ExtIface, "-j", "ACCEPT"},
+		// Open mode binds a resolver on the gateway too (MGIT-69), so admit
+		// the guest's DNS to it EXPLICITLY. Leaving it to the host's default
+		// INPUT policy would make open-mode name resolution work or fail
+		// depending on unrelated host firewall configuration.
+		{"iptables", "-A", c, "-p", "udp", "-d", gw, "--dport", dns, "-j", "ACCEPT"},
+		{"iptables", "-A", c, "-p", "tcp", "-d", gw, "--dport", dns, "-j", "ACCEPT"},
+		{"iptables", "-I", "INPUT", "1", "-i", p.TapDev, "-j", c},
 		{"iptables", "-I", "FORWARD", "1", "-i", p.TapDev, "-j", c},
 		{"iptables", "-I", "FORWARD", "1", "-i", p.ExtIface, "-o", p.TapDev, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
 		{"iptables", "-t", "nat", "-I", "POSTROUTING", "1", "-s", p.GuestIP.String(), "-o", p.ExtIface, "-j", "MASQUERADE"},
@@ -130,15 +175,22 @@ func (p TapPlan) TeardownCommands() [][]string {
 	var cmds [][]string
 	switch p.Mode {
 	case model.NetworkModeAllowlist:
+		nc := p.natChainName()
 		cmds = append(cmds,
 			[]string{"iptables", "-D", "INPUT", "-i", p.TapDev, "-j", c},
 			[]string{"iptables", "-D", "FORWARD", "-i", p.TapDev, "-j", c},
+			// A leftover REDIRECT would silently capture traffic if a tap name
+			// were ever reused. Refs: FR-17.19, SEC-10
+			[]string{"iptables", "-t", "nat", "-D", "PREROUTING", "-i", p.TapDev, "-j", nc},
+			[]string{"iptables", "-t", "nat", "-F", nc},
+			[]string{"iptables", "-t", "nat", "-X", nc},
 		)
 	case model.NetworkModeOpen:
 		cmds = append(cmds,
 			[]string{"iptables", "-t", "nat", "-D", "POSTROUTING", "-s", p.GuestIP.String(), "-o", p.ExtIface, "-j", "MASQUERADE"},
 			[]string{"iptables", "-D", "FORWARD", "-i", p.ExtIface, "-o", p.TapDev, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
 			[]string{"iptables", "-D", "FORWARD", "-i", p.TapDev, "-j", c},
+			[]string{"iptables", "-D", "INPUT", "-i", p.TapDev, "-j", c},
 		)
 	}
 	cmds = append(cmds,
@@ -165,6 +217,15 @@ func (p TapPlan) validate() error {
 		}
 		if p.DNSPort < 1 || p.DNSPort > 65535 {
 			return fmt.Errorf("tap plan: allowlist mode needs a valid dns port, got %d", p.DNSPort)
+		}
+		// Fail closed rather than treating a missing redirect port as a
+		// stricter posture: without it the guest reaches only a proxy protocol
+		// it does not speak, which is a sandbox that cannot work, not a safer
+		// one. Refs: MGIT-69
+		if p.TransparentPort < 1 || p.TransparentPort > 65535 {
+			return fmt.Errorf(
+				"tap plan: allowlist mode needs a valid transparent redirect port, got %d",
+				p.TransparentPort)
 		}
 	case model.NetworkModeOpen:
 		if p.ExtIface == "" {

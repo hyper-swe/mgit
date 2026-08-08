@@ -253,3 +253,50 @@ func TestApply_NoLinker_FailsClosed(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no link configurator")
 }
+
+// TestApply_ResolverOnly_WritesResolvConfAndLeavesTheLinkAlone is the MGIT-69
+// guest half: firecracker's guest is already addressed by the kernel's `ip=`
+// autoconfiguration, so mgit-guest must write the resolver and touch nothing
+// else. Re-applying an address there would duplicate a working mechanism, and
+// the NIC wait would be dead weight. Refs: MGIT-69
+func TestApply_ResolverOnly_WritesResolvConfAndLeavesTheLinkAlone(t *testing.T) {
+	link := &fakeLink{}
+	deps, resolv := testDeps(t, link)
+	looked := 0
+	deps.LookupIface = func(string) error { looked++; return nil }
+
+	require.NoError(t, Apply(guestboot.GuestNetwork{DNS: "172.31.4.1"}, deps))
+
+	assert.Empty(t, link.calls, "resolver-only must not configure the link")
+	assert.Zero(t, looked, "resolver-only must not wait for the NIC")
+	data, err := os.ReadFile(resolv) //nolint:gosec // test-owned temp path
+	require.NoError(t, err)
+	assert.Equal(t, "nameserver 172.31.4.1\n", string(data))
+}
+
+// TestApply_ResolverOnly_NeedsNoLinker verifies the resolver-only path does
+// not fail closed on a nil Linker: there is no link to configure, so a
+// missing configurator is irrelevant rather than fatal.
+func TestApply_ResolverOnly_NeedsNoLinker(t *testing.T) {
+	deps, resolv := testDeps(t, nil)
+	deps.Link = nil
+
+	require.NoError(t, Apply(guestboot.GuestNetwork{DNS: "172.31.4.1"}, deps))
+
+	data, err := os.ReadFile(resolv) //nolint:gosec // test-owned temp path
+	require.NoError(t, err)
+	assert.Equal(t, "nameserver 172.31.4.1\n", string(data))
+}
+
+// TestApply_LinkDescriptor_StillNeedsALinker keeps the fail-closed behavior
+// where it belongs: a descriptor that DOES ask for link configuration must
+// not silently succeed without a configurator.
+func TestApply_LinkDescriptor_StillNeedsALinker(t *testing.T) {
+	deps, _ := testDeps(t, nil)
+	deps.Link = nil
+
+	err := Apply(validNet, deps)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no link configurator")
+}

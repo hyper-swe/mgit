@@ -42,6 +42,9 @@ type vzHypervisor struct{ reg *liveVMs }
 // worktree share at the identical path, vsock device, optional NAT
 // NIC, and the memory balloon. Refs: FR-17.3, FR-17.7, FR-17.17, NFR-17.4
 func (h *vzHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
+	if err := refuseUnenforceableNetwork(cfg.NetworkMode); err != nil {
+		return nil, err
+	}
 	// Tell the guest to mount the virtiofs worktree share (tag) at the
 	// worktree's identical path (FR-17.3, guestboot, MGIT-11.6.5).
 	cmdline := cfg.Cmdline

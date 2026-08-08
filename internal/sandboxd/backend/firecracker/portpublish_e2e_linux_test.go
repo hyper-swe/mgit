@@ -30,6 +30,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -207,6 +208,38 @@ func TestE2E_PortPublish_GuestCannotReachHostLoopback(t *testing.T) {
 	info := launchNetSandbox(t, mgr, ref, model.NetworkModeOpen, nil)
 
 	up := netUpPrefix(info.ID)
+
+	// CONTROL FIRST (the MGIT-68/MGIT-69 rule): prove the guest's network is
+	// ALIVE before asserting what it cannot reach. Without a control, a guest
+	// with no working egress at all satisfies the denial below perfectly, and
+	// "blocked" is indistinguishable from "broken" — which is exactly how a
+	// dead guest network shipped twice. The control listens on the GATEWAY
+	// (the host's tap address, which the guest may legitimately reach) while
+	// the assertion below is about host LOOPBACK, which it may not.
+	// The control listens on the gateway's DNS port because open mode's rules
+	// ACCEPT that port explicitly. An ephemeral port would fall through mgit's
+	// chain to the HOST's INPUT policy, so the control would be testing the
+	// box's firewall rather than mgit's plumbing — and it timed out on exactly
+	// that. Nothing else binds this per-sandbox gateway address.
+	control, err := net.Listen("tcp",
+		net.JoinHostPort(GatewayFor(info.ID).String(), strconv.Itoa(hostDNSPort)))
+	require.NoError(t, err)
+	defer func() { _ = control.Close() }()
+	go func() {
+		for {
+			c, aerr := control.Accept()
+			if aerr != nil {
+				return
+			}
+			_, _ = io.WriteString(c, "CONTROL-REACHABLE\n")
+			_ = c.Close()
+		}
+	}()
+	alive := guestProbe(t, mgr, info.ID,
+		up+fmt.Sprintf("sleep 2 | nc -w 4 %s %d 2>&1", GatewayFor(info.ID), hostDNSPort))
+	require.Contains(t, string(alive.Stdout)+string(alive.Stderr), "CONTROL-REACHABLE",
+		"the guest's network must be working, or the loopback denial below proves nothing")
+
 	// BOUNDED probe: nc with a short timeout, then report the exit code. A
 	// success (rc=0) would mean the guest reached the host loopback — a SEC-09
 	// breach. We expect a non-zero rc (connection refused/timed out).

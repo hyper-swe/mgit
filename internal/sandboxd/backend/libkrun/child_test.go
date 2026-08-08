@@ -125,8 +125,13 @@ func TestChildPolicy_PerMode(t *testing.T) {
 		{name: "none_has_no_policy", mode: model.NetworkModeNone},
 		{name: "allowlist_gets_authorizer_and_dns", mode: model.NetworkModeAllowlist, wantAuth: true, wantDNS: true},
 		// Open is unrestricted but still AUDITED, so it gets an authorizer —
-		// and no DNS resolver, because it connects by address.
-		{name: "open_gets_an_allow_all_authorizer", mode: model.NetworkModeOpen, wantAuth: true},
+		// and a RESOLVER too (MGIT-69). It used to get none, on the reasoning
+		// that open mode "connects by address"; but the guest is TOLD its
+		// nameserver is the gateway, so with nothing bound there every name in
+		// open mode failed against a dead port, and the raw-IP e2e could not
+		// see it. Open lifts which names resolve, not whether they can.
+		{name: "open_gets_an_allow_all_authorizer_and_a_resolver",
+			mode: model.NetworkModeOpen, wantAuth: true, wantDNS: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

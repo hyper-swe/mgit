@@ -65,6 +65,12 @@ func parseDefaultRouteIface(r io.Reader) (string, error) {
 const (
 	hostProxyPort = 1080
 	hostDNSPort   = 53
+	// hostTransparentPort is where the tap's nat chain REDIRECTs the guest's
+	// ordinary TCP so the transparent proxy can authorize it. Without it the
+	// guest's only reachable TCP port is mgit's length-prefixed CONNECT
+	// protocol, which nothing in any guest speaks — so no unmodified program
+	// could egress in allowlist mode at all. Refs: MGIT-69, SEC-04
+	hostTransparentPort = 1081
 )
 
 // NetRunner execs one privileged host network command (ip/iptables).
@@ -142,13 +148,14 @@ func GatewayFor(sandboxID string) netip.Addr {
 func tapPlanFor(sandboxID, mode, extIface string) egress.TapPlan {
 	gateway, guest, _ := subnetFor(sandboxID)
 	return egress.TapPlan{
-		Mode:      mode,
-		TapDev:    egress.TapName(sandboxID),
-		GuestIP:   guest,
-		GatewayIP: gateway,
-		ProxyPort: hostProxyPort,
-		DNSPort:   hostDNSPort,
-		ExtIface:  extIface,
+		Mode:            mode,
+		TapDev:          egress.TapName(sandboxID),
+		GuestIP:         guest,
+		GatewayIP:       gateway,
+		ProxyPort:       hostProxyPort,
+		DNSPort:         hostDNSPort,
+		TransparentPort: hostTransparentPort,
+		ExtIface:        extIface,
 	}
 }
 
