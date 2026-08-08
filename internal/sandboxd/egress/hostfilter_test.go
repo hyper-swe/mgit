@@ -275,3 +275,27 @@ func TestTapPlan_Allowlist_WithoutATransparentPort_IsRejected(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transparent")
 }
+
+// TestTapPlan_Allowlist_RedirectExemptsTheGatewaysOwnServices verifies traffic
+// the guest sends to the GATEWAY itself is not redirected.
+//
+// A blanket REDIRECT captures everything, including the guest's connections to
+// mgit's own CONNECT proxy and TCP DNS on the gateway. Those would then be
+// authorized as "destination = the gateway", an RFC1918 address the
+// unconditional denials refuse — so mgit's own services would become
+// unreachable from the guest and the refusal would name the wrong destination.
+// Refs: MGIT-69, SEC-04
+func TestTapPlan_Allowlist_RedirectExemptsTheGatewaysOwnServices(t *testing.T) {
+	cmds, err := allowlistPlan().SetupCommands()
+	require.NoError(t, err)
+	out := flatten(cmds)
+
+	assert.Contains(t, out, "iptables -t nat -A nmgt0a1b2c3d -p tcp -d 172.31.0.1 -j RETURN",
+		"the gateway's own services must be exempt from the redirect")
+	// And the exemption must come BEFORE the catch-all, or it never matches.
+	exempt := strings.Index(out, "-d 172.31.0.1 -j RETURN")
+	redirect := strings.Index(out, "-j REDIRECT --to-ports")
+	require.Positive(t, exempt)
+	require.Positive(t, redirect)
+	assert.Less(t, exempt, redirect, "the RETURN must precede the REDIRECT to have any effect")
+}

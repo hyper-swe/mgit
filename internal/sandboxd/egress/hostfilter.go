@@ -116,6 +116,12 @@ func (p TapPlan) allowlistRules() [][]string {
 		// WHETHER policy decides it — the chain below still default-denies.
 		// Refs: MGIT-69, SEC-04
 		{"iptables", "-t", "nat", "-N", nc},
+		// The gateway's OWN services (the CONNECT proxy, TCP DNS) are exempt:
+		// redirecting them would make mgit's own endpoints unreachable from
+		// the guest, and would have the transparent proxy authorize a flow
+		// whose destination is the gateway — an RFC1918 address the
+		// unconditional denials refuse. RETURN must precede the catch-all.
+		{"iptables", "-t", "nat", "-A", nc, "-p", "tcp", "-d", gw, "-j", "RETURN"},
 		{"iptables", "-t", "nat", "-A", nc, "-p", "tcp", "-j", "REDIRECT", "--to-ports", transparent},
 		{"iptables", "-t", "nat", "-I", "PREROUTING", "1", "-i", p.TapDev, "-j", nc},
 
