@@ -30,6 +30,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -215,7 +216,13 @@ func TestE2E_PortPublish_GuestCannotReachHostLoopback(t *testing.T) {
 	// dead guest network shipped twice. The control listens on the GATEWAY
 	// (the host's tap address, which the guest may legitimately reach) while
 	// the assertion below is about host LOOPBACK, which it may not.
-	control, err := net.Listen("tcp", net.JoinHostPort(GatewayFor(info.ID).String(), "0"))
+	// The control listens on the gateway's DNS port because open mode's rules
+	// ACCEPT that port explicitly. An ephemeral port would fall through mgit's
+	// chain to the HOST's INPUT policy, so the control would be testing the
+	// box's firewall rather than mgit's plumbing — and it timed out on exactly
+	// that. Nothing else binds this per-sandbox gateway address.
+	control, err := net.Listen("tcp",
+		net.JoinHostPort(GatewayFor(info.ID).String(), strconv.Itoa(hostDNSPort)))
 	require.NoError(t, err)
 	defer func() { _ = control.Close() }()
 	go func() {
@@ -228,9 +235,8 @@ func TestE2E_PortPublish_GuestCannotReachHostLoopback(t *testing.T) {
 			_ = c.Close()
 		}
 	}()
-	controlPort := control.Addr().(*net.TCPAddr).Port
 	alive := guestProbe(t, mgr, info.ID,
-		up+fmt.Sprintf("nc -w 4 %s %d </dev/null 2>&1", GatewayFor(info.ID), controlPort))
+		up+fmt.Sprintf("sleep 2 | nc -w 4 %s %d 2>&1", GatewayFor(info.ID), hostDNSPort))
 	require.Contains(t, string(alive.Stdout)+string(alive.Stderr), "CONTROL-REACHABLE",
 		"the guest's network must be working, or the loopback denial below proves nothing")
 
