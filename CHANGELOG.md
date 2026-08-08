@@ -5,7 +5,7 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.1] - unreleased
+## [0.4.1] - 2026-08-08
 
 ### Fixed — P0: guest egress was non-functional on macOS/libkrun in 0.4.0
 
@@ -22,29 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **firecracker (Linux) writes no `/etc/resolv.conf` either.** Its guest gets an address and route from the kernel's `ip=` autoconfiguration (supplied by the firecracker SDK), so routing works — but nothing writes a resolver file, and its allowlist e2e only ever resolves with the server named explicitly (`nslookup <name> <gateway>`), which does not exercise the default-resolver path a real `getaddrinfo` caller (npm, curl, apt) uses. Not changed here because it could not be live-validated on KVM in this cycle, and an unvalidated change to the working Linux backend does not belong in a P0 hotfix. Filed with the evidence.
 - **vzf (macOS, `-tags vzf`, non-default) has the same unconfigured-NIC shape as libkrun did.** It attaches a NAT NIC and nothing configures the guest; its address is vmnet-assigned, so the static descriptor used here does not apply unchanged. Filed.
-
-## [0.4.1] - 2026-08-08
-
-### Fixed
-
-- **Guest egress on macOS/libkrun was non-functional** (MGIT-68). Nothing
-  configured the guest's network interface: `mgit-guest` is PID 1 and did no
-  address setup, the gateway served no DHCP, and libkrunfw owns the kernel
-  command line, so `eth0` came up unaddressed with no default route. Every flow
-  failed — `ENETUNREACH` for a raw IP in `open` mode, `EAI_AGAIN` for DNS in
-  `allowlist` mode, because the gateway's resolver was equally unreachable. The
-  host now delivers the guest's address, prefix, gateway and resolver over the
-  existing boot-token channel, and the guest applies them (and writes
-  `/etc/resolv.conf`) before serving any command. Containment was never
-  weakened by this — `none` mode, the SEC-03 quarantine, SEC-09 publishing and
-  the vsock control plane were unaffected — but `allowlist` and `open` could
-  not carry traffic at all. Reported by the HyperSwe lane.
-- **The tests that should have caught it asserted only denials.** An
-  unaddressed guest fails every flow, which is indistinguishable from correctly
-  enforced containment, so the real-VM network tests passed while proving
-  nothing. Every deny assertion is now paired with an allow assertion, and a
-  denial must be distinguishable by reason (a policy reset) from an absent
-  network.
 
 ## [0.4.0] - 2026-08-06
 
