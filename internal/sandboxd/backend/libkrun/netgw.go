@@ -23,6 +23,7 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 	"gvisor.dev/gvisor/pkg/waiter"
 
+	"github.com/hyper-swe/mgit/internal/guestboot"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 )
@@ -49,6 +50,37 @@ const (
 
 // gatewayMAC is the host end's link address on the virtual wire.
 var gatewayMAC = tcpip.LinkAddress("\x02\x00\x00\x00\x00\x02")
+
+// guestNetworkFor is the descriptor the GUEST needs to use this wire: its own
+// address, the link prefix, the default gateway, and the resolver.
+//
+// It is derived from the constants directly above rather than restated
+// anywhere, so the two ends of the wire cannot drift. Nothing else configures
+// the guest's NIC — mgit-guest is PID 1 in the sandbox, so no init, dhclient
+// or NetworkManager ever runs — and without this descriptor the guest boots
+// with eth0 present but UNADDRESSED and with no default route. That is
+// MGIT-68: it fails every flow, allowed or denied, which a test asserting
+// only that denied destinations are denied cannot distinguish from working
+// enforcement.
+//
+// none mode gets NO descriptor: its NIC exists only to keep libkrun off its
+// fail-open TSI fallback and is backed by a discard socket, so there is no
+// gateway to point a guest at. Refs: MGIT-68, FR-17.7, SEC-07, ADR-010
+func guestNetworkFor(mode string) guestboot.GuestNetwork {
+	if mode == model.NetworkModeNone {
+		return guestboot.GuestNetwork{}
+	}
+	return guestboot.GuestNetwork{
+		IP:        guestIP,
+		PrefixLen: gwPrefixLen,
+		Gateway:   gatewayIP,
+		// The resolver is the gateway: serveDNS binds the host-side pinning
+		// resolver at gatewayIP:dnsPort, and it is the ONLY UDP endpoint in
+		// the stack, so any other nameserver the guest inherited is
+		// unreachable by construction. Refs: SEC-07
+		DNS: gatewayIP,
+	}
+}
 
 // flowAuthorizer is the egress policy seam. *egress.Authorizer satisfies it;
 // the gateway holds only this interface so the policy stays owned by the

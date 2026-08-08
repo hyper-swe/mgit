@@ -214,13 +214,19 @@ func deliverWorktree(cfg microvm.VMConfig) (string, error) {
 // the FR-17.3 worktree descriptor to; the guest reads the identical tokens
 // from this variable instead (guestboot.BootTokens). Without it the share is
 // attached but never mounted, and the guest sees an empty worktree path.
-// Refs: SEC-05, FR-17.3, ADR-010
+//
+// The same channel carries the guest's NETWORK descriptor (MGIT-68). It has
+// to: firecracker and vzf can hand the guest an address on the kernel command
+// line, and libkrun has no command line of ours at all — which is precisely
+// why this backend shipped with an unconfigured guest NIC.
+// Refs: SEC-05, FR-17.3, MGIT-68, ADR-010
 func guestEnv(cfg microvm.VMConfig) []string {
 	env := []string{"PATH=/bin:/sbin:/usr/bin:/usr/sbin"}
 	tokens := guestboot.AppendCmdline("", guestboot.WorktreeMount{
 		Path: cfg.WorktreePath, FSType: "virtiofs", Source: cfg.WorktreeTag,
 	})
 	tokens = guestboot.AppendPublishPortsCmdline(tokens, cfg.PublishPorts)
+	tokens = guestboot.AppendNetworkCmdline(tokens, guestNetworkFor(cfg.NetworkMode))
 	if tokens != "" {
 		env = append(env, guestboot.EnvBootTokens+"="+tokens)
 	}
