@@ -46,6 +46,9 @@ type ProxyConfig struct {
 	Authorizer *Authorizer
 	Dial       DialFunc
 	Logger     *slog.Logger
+	// Flows, when set, registers each spliced connection so a live policy
+	// revoke can KILL it (MGIT-72).
+	Flows *FlowRegistry
 	// HandshakeTimeout bounds reading the CONNECT frame from a possibly
 	// hung/hostile guest (0 => 30s). It does not bound the spliced flow.
 	HandshakeTimeout time.Duration
@@ -127,7 +130,8 @@ func (p *Proxy) handle(ctx context.Context, guest net.Conn) {
 	if err := encodeReply(guest, true, ""); err != nil {
 		return
 	}
-	Splice(guest, upstream)
+	// Tracked so a live revoke can terminate this flow (MGIT-72).
+	SpliceTracked(p.cfg.Flows, guest, upstream)
 }
 
 // Splice copies bytes both ways until either side closes, then unblocks the

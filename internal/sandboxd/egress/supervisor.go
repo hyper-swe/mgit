@@ -39,6 +39,10 @@ type Supervisor struct {
 	authorizer *Authorizer
 	proxy      *Proxy
 	dns        *DNSServer
+	// flows tracks this sandbox's live spliced connections so a live policy
+	// revoke can terminate established flows, not merely refuse the next one.
+	// Refs: MGIT-72
+	flows *FlowRegistry
 }
 
 // NewSupervisor builds the allowlist-mode egress stack. It is an error to
@@ -85,7 +89,9 @@ func NewSupervisor(cfg SupervisorConfig) (*Supervisor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("egress supervisor: %w", err)
 	}
-	proxy, err := NewProxy(ProxyConfig{Authorizer: authorizer, Dial: cfg.Dial, Logger: cfg.Logger})
+	flows := NewFlowRegistry()
+	proxy, err := NewProxy(ProxyConfig{
+		Authorizer: authorizer, Dial: cfg.Dial, Logger: cfg.Logger, Flows: flows})
 	if err != nil {
 		return nil, fmt.Errorf("egress supervisor: %w", err)
 	}
@@ -93,7 +99,8 @@ func NewSupervisor(cfg SupervisorConfig) (*Supervisor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("egress supervisor: %w", err)
 	}
-	return &Supervisor{allowlist: al, resolver: resolver, authorizer: authorizer, proxy: proxy, dns: dns}, nil
+	return &Supervisor{allowlist: al, resolver: resolver, authorizer: authorizer,
+		proxy: proxy, dns: dns, flows: flows}, nil
 }
 
 // Authorizer returns the assembled flow authorizer, for enforcement points
@@ -106,6 +113,11 @@ func (s *Supervisor) Authorizer() *Authorizer { return s.authorizer }
 // a host-approved, sandbox-lifetime capability grant (Allowlist.GrantIP) to
 // the LIVE enforcement path. Refs: FR-17.12, SEC-05
 func (s *Supervisor) Allowlist() *Allowlist { return s.allowlist }
+
+// Flows returns this sandbox's live-flow registry, so a policy revoke can kill
+// established connections (MGIT-72) and an enforcement point that splices
+// flows itself can register them.
+func (s *Supervisor) Flows() *FlowRegistry { return s.flows }
 
 // Proxy returns the assembled egress proxy (served on the sandbox's egress
 // channel). Refs: SEC-04
