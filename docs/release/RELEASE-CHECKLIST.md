@@ -175,7 +175,9 @@ validate **different VMMs by default** — this is not a symmetric check:
    `NET=1` explicitly today, but that is a THIRD-PARTY build flag: if the
    formula ever drops it, every Mac install breaks. Verify per release:
    ```
-   brew tap libkrun/krun && brew install libkrun
+   brew tap libkrun/krun
+   brew trust libkrun/krun   # required: Homebrew refuses to load an untrusted tap
+   brew install libkrun
    nm -gU "$(brew --prefix libkrun)/lib/libkrun.dylib" | grep krun_add_net_unixgram
    ```
    A match is required. `make check-libkrun-net` performs the same check at

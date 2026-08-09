@@ -37,7 +37,7 @@ func TestDaemonFailureDetail_NamesTheMissingLibraryAndHowToGetIt(t *testing.T) {
 			log: "dyld[95534]: Library not loaded: /opt/homebrew/opt/libkrun/lib/libkrun.1.dylib\n" +
 				"  Referenced from: <1D9BC4F8> /usr/local/bin/mgit-sandboxd\n" +
 				"  Reason: tried: '/opt/homebrew/opt/libkrun/lib/libkrun.1.dylib' (no such file)\n",
-			want: []string{"libkrun", "brew install", "INSTALL-SANDBOX"},
+			want: []string{"libkrun", "brew install", "brew trust libkrun/krun", "INSTALL-SANDBOX"},
 		},
 		{
 			name: "linux_ld_so",
@@ -67,6 +67,42 @@ func TestDaemonFailureDetail_NamesTheMissingLibraryAndHowToGetIt(t *testing.T) {
 			}
 		})
 	}
+}
+
+// THE REMEDY MUST BE A COMMAND THAT ACTUALLY RUNS.
+//
+// The libkrun hint used to read `brew tap libkrun/krun && brew install
+// libkrun`, which fails on a fresh Mac: Homebrew refuses to LOAD a formula
+// from an untrusted third-party tap, and `libkrun` alone in ARGV does not
+// satisfy its explicit-request escape hatch (the formula's full name is
+// `libkrun/krun/libkrun`). Naming the fully-qualified formula instead is no
+// better — libkrun itself depends on libkrunfw from the same untrusted tap,
+// and nothing in ARGV can whitelist a transitive dependency. `brew trust
+// libkrun/krun` is the only step that unblocks the whole tap, so it has to
+// come first and it has to be in the message. Both facts were established on
+// a Homebrew prefix with libkrun genuinely absent. Refs: MGIT-75, MGIT-61.15
+func TestMissingLibraryRemedy_LibkrunHintTrustsTheTapBeforeInstalling(t *testing.T) {
+	got := missingLibraryRemedy("libkrun.1.dylib")
+
+	trustAt := strings.Index(got, "brew trust libkrun/krun")
+	require.NotEqual(t, -1, trustAt,
+		"the hint must name `brew trust libkrun/krun`; without it every command it "+
+			"suggests dies on Homebrew's untrusted-tap gate, got %q", got)
+
+	installAt := strings.Index(got, "brew install")
+	require.NotEqual(t, -1, installAt, "the hint must still name the install command, got %q", got)
+	assert.Less(t, trustAt, installAt,
+		"trust must be suggested BEFORE install; the reverse order fails on a fresh Mac")
+}
+
+// libkrunfw is a dependency of libkrun from the same untrusted tap, so a hint
+// that trusts only the single libkrun formula (`brew trust --formula
+// libkrun/krun/libkrun`) still fails. Whole-tap trust is the one that works.
+func TestMissingLibraryRemedy_LibkrunHintTrustsTheWholeTapNotOneFormula(t *testing.T) {
+	got := missingLibraryRemedy("libkrun.so.1")
+
+	assert.NotContains(t, got, "brew trust --formula",
+		"per-formula trust does not cover libkrun's own libkrunfw dependency, got %q", got)
 }
 
 func TestDaemonFailureDetail_ReadsTheDaemonsOwnLogFormat(t *testing.T) {

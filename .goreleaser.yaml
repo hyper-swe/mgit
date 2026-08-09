@@ -71,8 +71,13 @@ builds:
   #
   # BACKEND: libkrun, the GA default on macOS (ADR-010). It is no longer
   # behind a build tag, so this build LINKS libkrun and the release runner
-  # must have it installed (`brew tap libkrun/krun && brew install libkrun`)
+  # must have it installed (`brew tap libkrun/krun && brew trust libkrun/krun
+  # && brew install libkrun` — the trust step is required, see release.yml)
   # with networking enabled — the before-hook checks that. macOS 14+ floor.
+  #
+  # That is a RELEASE-RUNNER prerequisite only. The shipped brew formula
+  # deliberately does NOT depend on libkrun: a third-party-tap dependency
+  # aborts the install for every user who lacks it (MGIT-75).
   # vzf remains in the tree behind `-tags vzf` and is not shipped.
   # Refs: MGIT-44, FR-17.15, ADR-010, MGIT-61.14
   - id: mgit-sandboxd-darwin

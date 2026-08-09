@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -272,4 +273,218 @@ func TestBrewFormula_InstallsTheGuestBinaries(t *testing.T) {
 		t.Error("guest binaries must not land in bin: Homebrew links bin onto PATH, " +
 			"and mgit-guest is guest-only")
 	}
+}
+
+// thirdPartyDependsOnRe matches a `depends_on` whose formula name is
+// tap-qualified (`user/tap/formula`) — i.e. any dependency Homebrew has to
+// reach outside homebrew/core to resolve. Homebrew/core dependencies are bare
+// names and stay legal.
+var thirdPartyDependsOnRe = regexp.MustCompile(`depends_on\s+"[^"/]+/[^"/]+/[^"]+"`)
+
+// findThirdPartyDependsOn returns the first tap-qualified `depends_on` in
+// Ruby CODE, or "" when there is none. Comment lines are skipped: the formula
+// documents the removed dependency verbatim so it is not reintroduced by
+// someone who does not know why it went, and a check that cannot tell a
+// warning from the thing it warns about is useless.
+func findThirdPartyDependsOn(formula string) string {
+	for _, line := range strings.Split(formula, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if got := thirdPartyDependsOnRe.FindString(line); got != "" {
+			return got
+		}
+	}
+	return ""
+}
+
+// TestBrewFormula_DeclaresNoThirdPartyTapDependency is the MGIT-75 regression
+// guard: `brew install hyper-swe/tap/mgit` must not require a second,
+// untrusted tap.
+//
+// The formula declared `depends_on "libkrun/krun/libkrun"`, and Homebrew
+// refuses to LOAD a formula from an untrusted third-party tap. Resolving that
+// dependency therefore aborted the install before anything was downloaded —
+// exit 1, nothing installed — for every user who did not already have libkrun.
+// Reproduced on a Homebrew prefix with libkrun genuinely absent, in both
+// states a real user can be in: with the libkrun/krun tap absent ("No
+// available formula ... This command requires the tap libkrun/krun") and with
+// it tapped but not trusted ("Refusing to load formula libkrun/krun/libkrun
+// from untrusted tap").
+//
+// `=> :optional` is NOT an acceptable fix and must not be reintroduced. It
+// does dodge the load (measured), but its opt-in path (`--with-libkrun`)
+// still dies on libkrunfw — libkrun's own dependency from the same untrusted
+// tap, which no ARGV entry can whitelist. That would advertise an activation
+// route that does not work, which is worse than not declaring one.
+//
+// Core mgit never links libkrun (CGO-free); only mgit-sandboxd does, and it
+// fails closed with an actionable message when the library is missing
+// (missingLibraryRemedy). So the dependency is genuinely optional at runtime
+// and belongs in the caveats, not in the dependency graph. Refs: MGIT-75
+func TestBrewFormula_DeclaresNoThirdPartyTapDependency(t *testing.T) {
+	formula := readRepoFile(t, "brew/mgit.rb")
+
+	if got := findThirdPartyDependsOn(formula); got != "" {
+		t.Errorf("the formula declares a third-party-tap dependency (%s); Homebrew cannot "+
+			"resolve one from an untrusted tap, so this breaks `brew install "+
+			"hyper-swe/tap/mgit` for every user who does not already have it installed. "+
+			"Document the activation step in caveats instead", got)
+	}
+}
+
+// TestFindThirdPartyDependsOn is the test for the detector above. The guard
+// it powers is only worth having if it still fires on the exact line that
+// caused MGIT-75, so that case is checked directly rather than assumed —
+// the comment-skipping added to stop it matching the formula's own warning
+// is precisely the kind of change that can blind it.
+func TestFindThirdPartyDependsOn(t *testing.T) {
+	tests := []struct {
+		name    string
+		formula string
+		want    string
+	}{
+		{
+			name:    "the_mgit_75_regression",
+			formula: "on_macos do\n  depends_on \"libkrun/krun/libkrun\"\nend\n",
+			want:    `depends_on "libkrun/krun/libkrun"`,
+		},
+		{
+			name:    "optional_tag_is_still_third_party",
+			formula: "  depends_on \"libkrun/krun/libkrun\" => :optional\n",
+			want:    `depends_on "libkrun/krun/libkrun"`,
+		},
+		{
+			name:    "commented_out_is_not_a_dependency",
+			formula: "  # depends_on \"libkrun/krun/libkrun\"  <- do not add this back\n",
+			want:    "",
+		},
+		{
+			name:    "homebrew_core_dependency_is_fine",
+			formula: "  depends_on \"openssl@3\"\n",
+			want:    "",
+		},
+		{
+			name:    "no_dependencies_at_all",
+			formula: "class Mgit < Formula\nend\n",
+			want:    "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := findThirdPartyDependsOn(tt.formula); got != tt.want {
+				t.Errorf("findThirdPartyDependsOn() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBrewFormula_CaveatsGiveAWorkingSandboxActivation checks the other half
+// of the MGIT-75 fix: dropping the dependency is only correct if the sandbox
+// stays discoverable, and the activation it points at has to be a sequence
+// that actually runs. `brew install libkrun` on its own does not — the tap
+// must be trusted first. Refs: MGIT-75
+func TestBrewFormula_CaveatsGiveAWorkingSandboxActivation(t *testing.T) {
+	formula := readRepoFile(t, "brew/mgit.rb")
+
+	trustAt := strings.Index(formula, "brew trust libkrun/krun")
+	if trustAt == -1 {
+		t.Fatal("the caveats must name `brew trust libkrun/krun`: without it the libkrun " +
+			"install they suggest fails on Homebrew's untrusted-tap gate")
+	}
+	installAt := strings.Index(formula, "brew install libkrun")
+	if installAt == -1 {
+		t.Fatal("the caveats must still name the libkrun install command")
+	}
+	if trustAt > installAt {
+		t.Error("the caveats must tell the user to trust the tap BEFORE installing libkrun; " +
+			"the reverse order is the failure this task exists to fix")
+	}
+}
+
+// TestCIWorkflow_ProvesTheBrewInstallOnALibkrunFreeRunner is the guard on the
+// guard. MGIT-75 was invisible to every check we had because every machine
+// that runs them already had libkrun — a dry-run on such a machine never has
+// to load the dependency formula at all, so it passes.
+//
+// The job asserted here must therefore do two things, and asserting only the
+// first would recreate the false green: run the install on a runner where
+// libkrun is absent, and PROVE that absence before drawing any conclusion
+// from the result. Refs: MGIT-75, MGIT-69, MGIT-70
+func TestCIWorkflow_ProvesTheBrewInstallOnALibkrunFreeRunner(t *testing.T) {
+	ci := readRepoFile(t, ".github/workflows/ci.yml")
+
+	job, ok := cutSection(ci, "  brew-install-no-libkrun:", "\n  # ")
+	if !ok {
+		t.Fatal("CI must have a `brew-install-no-libkrun` job; without one, dropping the " +
+			"libkrun dependency can be silently reverted and nothing will notice")
+	}
+	if !strings.Contains(job, "runs-on: macos") {
+		t.Error("the job must run on macOS: the dependency that broke was macOS-only")
+	}
+	if !strings.Contains(job, checkScript) {
+		t.Errorf("the job must run %s", checkScript)
+	}
+	// The job must not provision libkrun itself. If it did, the dependency
+	// would resolve, the install would pass, and the job would certify the
+	// exact breakage it exists to catch.
+	if strings.Contains(job, "brew install libkrun") {
+		t.Error("the job must NOT install libkrun; a satisfied dependency is never " +
+			"loaded, which is the whole reason this failure went unnoticed")
+	}
+
+	script := readRepoFile(t, checkScript)
+	// The precondition. A check that merely installs and passes proves nothing
+	// unless it first established that libkrun was not already there.
+	if !strings.Contains(script, "brew list --versions libkrun") {
+		t.Error("the check must prove libkrun is absent before it trusts its own result; " +
+			"a pass on a machine that already has libkrun is exactly the false green " +
+			"it exists to prevent")
+	}
+	if !strings.Contains(script, `"$BREW" install "$FORMULA"`) {
+		t.Error("the check must run a REAL brew install of the formula")
+	}
+	// --dry-run is what passed while the bug was live: it never has to fetch,
+	// so on a machine with the dependency satisfied it resolves nothing. The
+	// script explains that in prose, so only executable lines are checked.
+	if line, found := findInCode(script, "--dry-run"); found {
+		t.Errorf("the check must not use `brew install --dry-run` (%q); that is the "+
+			"command that reported success while the install was broken", line)
+	}
+}
+
+// findInCode reports whether `needle` appears on a line of a shell script that
+// is not a comment, returning that line. A guard that cannot distinguish a
+// command from a comment warning against it is not a guard.
+func findInCode(script, needle string) (string, bool) {
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.Contains(trimmed, needle) {
+			return trimmed, true
+		}
+	}
+	return "", false
+}
+
+// checkScript is the repo-relative path of the first-hour-install check. CI
+// and a developer reproducing locally run the same file, so neither can go
+// green in a way the other would not.
+const checkScript = "scripts/brew-install-no-libkrun.sh"
+
+// cutSection returns the text from the line beginning `start` up to the next
+// occurrence of `end`, which is how these workflow assertions scope
+// themselves to one job rather than the whole file.
+func cutSection(s, start, end string) (string, bool) {
+	i := strings.Index(s, start)
+	if i == -1 {
+		return "", false
+	}
+	rest := s[i+len(start):]
+	if j := strings.Index(rest, end); j != -1 {
+		return rest[:j], true
+	}
+	return rest, true
 }

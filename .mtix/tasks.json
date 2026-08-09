@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-08-09T02:26:51Z",
+  "exported_at": "2026-08-09T02:55:13Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7892,15 +7892,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit75",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "9a9f75a00560baddb1a85e0c7e50a7b8f64f87e6c3be10f55f1ea8d083cecd56",
       "created_at": "2026-08-09T02:22:01Z",
-      "updated_at": "2026-08-09T02:22:01Z"
+      "updated_at": "2026-08-09T02:55:12Z",
+      "closed_at": "2026-08-09T02:55:12Z"
     },
     {
       "id": "MGIT-76",
@@ -7916,15 +7917,39 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "claude-mgit-76",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "dae520e8f3d47f030cb9bffb29230ae075087fe224d2ae2fb17f97cd923e9126",
+      "created_at": "2026-08-09T02:26:50Z",
+      "updated_at": "2026-08-09T02:30:17Z"
+    },
+    {
+      "id": "MGIT-77",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 77,
+      "project": "MGIT",
+      "title": "mgit commit silently creates an EMPTY commit when nothing is staged — agents lose their work",
+      "description": "Found while dogfooding an mgit worktree for MGIT-75 (worktree /tmp/mgit-75-wt, mgit v0.4.3-0.20260809022710-9d5e21860be7).\n\n`mgit commit -m \"...\"` with NOTHING staged reports SUCCESS — prints a commit hash, exits 0 — and creates a commit whose tree is byte-identical to its parent. The work is not recorded. Reproduced deliberately, minimal case:\n\n    $ echo friction-probe \u003e FRICTION.txt\n    $ mgit commit -m \"friction probe: unstaged commit\"\n    [d0ae42ff] [MGIT:MGIT-75] friction probe: unstaged commit\n    $ echo $?\n    0\n    # FRICTION.txt is absent from the commit tree; `git ls-tree \u003ccommit\u003e FRICTION.txt` is empty.\n\n`mgit commit --help` documents `--allow-empty  Allow commit with no staged changes`, which states the intended default: refuse. The default does not refuse. It does the opposite of what the flag implies, without a word.\n\nWHY THIS IS P1 AND NOT A PAPERCUT\n\n1. It is silent and it destroys the substrate's whole value proposition. Two full commits of MGIT-75's work went into empty commits before it was noticed; only a manual `git ls-tree` over the .mgit store caught it. An agent that trusts the exit code has no way to detect this.\n\n2. The generated agent instructions walk agents straight into it. The `mgit work`-generated block in a worktree's CLAUDE.md says:\n\n     \"Commit after every coherent step. Run `mgit commit -m \"\u003cwhat changed\u003e\"` once a step compiles/passes — the task ID is auto-inherited from this worktree\"\n\n   It never mentions `mgit add`. An agent following the instructions mgit itself generates produces a branch of empty commits and a squash patch with zero hunks.\n\n3. The downstream signal is also empty, not wrong. `mgit squash --task-id \u003cID\u003e --to-git` on such a branch emits a well-formed git format-patch with NO diff hunks, and `git apply` accepts it happily. So the land step succeeds and lands nothing. There is no error anywhere in the chain.\n\n4. `mgit status` reports the files as modified the whole time, so the tool shows the user their changes are pending while commit quietly declines to take them.\n\nSECONDARY: status output is ambiguous about staging. Before `mgit add` the entries render as `  M path` and after as `M   path` — a column shift is the only difference between \"will be committed\" and \"will be silently dropped\".",
+      "prompt": "Make `mgit commit` refuse to create an empty commit unless `--allow-empty` is passed, and make the agent-facing instructions mgit generates match how commit actually works.\n\nReproduce first (do not fix from this description alone — see the bug-report RCA discipline): create an mgit worktree, modify a file WITHOUT `mgit add`, run `mgit commit`, and confirm the resulting commit's tree equals its parent's while the command exits 0.\n\nScope to consider:\n1. `mgit commit` with no staged changes must fail with a non-zero exit and an actionable message naming `mgit add` (and `--allow-empty` for the deliberate case). This is the core fix.\n2. The `mgit work`-generated CLAUDE.md block must tell the agent to stage. Either document `mgit add -A` (or explicit paths) before `mgit commit`, or give `mgit commit` a stage-and-commit flag and document that. Decide which, and say why — an agent loop that needs two commands per step will drop one.\n3. Consider whether `mgit squash --to-git` should warn when it produces a patch with no hunks. A land step that silently lands nothing is the same failure one layer down.\n4. Consider making `mgit status` state the staged/unstaged split in words rather than by column position.\n\nRefs: MGIT-75 (found during), MGIT-26 (dogfood pilot), MGIT-32/33 (previous defects found the same way)",
+      "acceptance": "1. `mgit commit` with no staged changes exits non-zero and names the remedy (`mgit add`), with a test that pins the exit code AND the empty-tree condition — not just the message.\n\n2. `mgit commit --allow-empty` still succeeds with no staged changes (the flag keeps its documented meaning).\n\n3. A regression test proves the positive path records content: after `mgit add \u003cpath\u003e` + `mgit commit`, the commit's tree DIFFERS from its parent and contains the file. The bug shipped because nothing asserted that a commit actually carries a change.\n\n4. The CLAUDE.md block generated by `mgit work` describes a sequence that, followed literally by an agent with no other knowledge, produces commits that contain the work. Verify by following it literally in a fresh worktree.\n\n5. Verified end-to-end: in a fresh mgit worktree, make a change, follow the generated instructions verbatim, then `mgit squash --task-id \u003cID\u003e --to-git` and confirm the patch has the expected diff hunks.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
       "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "mcp",
       "agent_state": "",
       "weight": 1,
-      "content_hash": "dae520e8f3d47f030cb9bffb29230ae075087fe224d2ae2fb17f97cd923e9126",
-      "created_at": "2026-08-09T02:26:50Z",
-      "updated_at": "2026-08-09T02:26:50Z"
+      "content_hash": "92a137dd65398f32b37a02d6e43b0d5a9a45de5a37a4697d77ec9076304c7fcf",
+      "created_at": "2026-08-09T02:54:41Z",
+      "updated_at": "2026-08-09T02:54:41Z"
     },
     {
       "id": "MGIT-8",
@@ -9726,6 +9751,20 @@
       "last_heartbeat": "2026-07-03T10:58:00Z"
     },
     {
+      "agent_id": "claude-mgit-76",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-76",
+      "last_heartbeat": "2026-08-09T02:30:17Z"
+    },
+    {
+      "agent_id": "claude-mgit75",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-75",
+      "last_heartbeat": "2026-08-09T02:30:05Z"
+    },
+    {
       "agent_id": "claude-opus-4-8",
       "project": "MGIT",
       "state": "working",
@@ -9796,6 +9835,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 338,
-  "checksum": "2e32496c383e9e6df3d868164e020f28f46b95e0bbf7cb08b0635fdf19e624f8"
+  "node_count": 339,
+  "checksum": "fa1ecd06f00460558fb0f6e2492d77a908ae9da41ab39bbb6a904db8bc456c59"
 }

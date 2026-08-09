@@ -28,8 +28,9 @@ every channel below does — is what makes `mgit run` find the daemon.
 - **macOS:** Apple Silicon (arm64), **macOS 14+**. The daemon links **libkrun**
   — the default backend since GA (ADR-010) — via CGO, and must be code-signed
   with the `com.apple.security.hypervisor` entitlement (the release archive and
-  Homebrew bottle are already signed; see the go-install caveat below). libkrun
-  is a hard dependency: `brew install hyper-swe/tap/mgit` pulls it in. Intel
+  Homebrew bottle are already signed; see the go-install caveat below).
+  **`brew install hyper-swe/tap/mgit` does not install libkrun**; you install
+  it yourself, once, as the [step below](#installing-libkrun-on-macos). Intel
   Macs are not supported for the sandbox — they run core mgit only.
 
   The older Virtualization.framework backend (vzf, macOS 13+) remains in the
@@ -37,6 +38,36 @@ every channel below does — is what makes `mgit run` find the daemon.
   configuration; it exists so the seam stays exercised.
 - **Windows and everything else:** no sandbox backend yet (epic MGIT-12); core
   mgit runs without containment.
+
+### Installing libkrun on macOS
+
+libkrun lives in a third-party Homebrew tap, and Homebrew will not load a
+formula from a tap you have not trusted. Trust it first, then install:
+
+```bash
+brew tap libkrun/krun
+brew trust libkrun/krun
+brew install libkrun
+```
+
+**All three commands are needed, in that order.** `brew install libkrun` on
+its own fails with *"Refusing to load formula libkrun/krun/libkrun from
+untrusted tap"*, and so does the fully-qualified `brew install
+libkrun/krun/libkrun` — one step later, on `libkrunfw`, which libkrun itself
+depends on from the same tap and which no command-line argument can whitelist.
+Whole-tap `brew trust` is what clears both.
+
+> **Why mgit does not install it for you.** It used to try: the formula
+> declared libkrun as a dependency, and because Homebrew resolves dependencies
+> before it fetches anything, `brew install hyper-swe/tap/mgit` aborted on the
+> untrusted tap and installed *nothing at all* — not even core mgit, which
+> never links libkrun. Core mgit is CGO-free and needs no hypervisor, so the
+> trust decision about a third-party VMM now belongs to the people who
+> actually want a sandbox. Refs: MGIT-75
+
+If you skip this step and try to start a sandbox anyway, nothing silently
+degrades: the daemon cannot load, and `mgit` reports the dynamic loader's
+error together with the three commands above.
 
 ### libkrun builds must have networking enabled
 
@@ -92,11 +123,16 @@ CGO_ENABLED=0 go build ./cmd/mgit/
 brew install hyper-swe/tap/mgit
 ```
 
-Installs `mgit` and, on Linux and macOS arm64, `mgit-sandboxd` alongside it,
-pulling in libkrun on macOS. The macOS bottle is signed with both the
-hypervisor (libkrun) and virtualization (vzf) entitlements. Whether a brew
-install is affected by the Gatekeeper quarantine issue below is not yet
-verified — see the note in "Release archive".
+Needs no other tap and no `brew trust`. Installs `mgit` and, on Linux and
+macOS arm64, `mgit-sandboxd` alongside it. The macOS bottle is signed with
+both the hypervisor (libkrun) and virtualization (vzf) entitlements.
+
+On macOS this gets you core mgit and the daemon binary, but **not** the
+hypervisor the daemon links — install libkrun separately
+([above](#installing-libkrun-on-macos)) when you want the sandbox.
+
+Whether a brew install is affected by the Gatekeeper quarantine issue below
+is not yet verified — see the note in "Release archive".
 
 ### Release archive
 
