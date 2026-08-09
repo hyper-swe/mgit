@@ -5,7 +5,7 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.2] - unreleased
+## [0.4.2] - 2026-08-09
 
 Three defects of the same shape as 0.4.1's, all found by asking what a guest can actually *do* rather than what the host can demonstrate. Two of them were in the shipped Linux backend; one was in the 0.4.1 fix itself.
 
@@ -36,8 +36,6 @@ Three defects of the same shape as 0.4.1's, all found by asking what a guest can
 
 - **Two more pieces of test scaffolding were masking the production path**, both the same species as the self-configuring guest that hid MGIT-68. Every firecracker network probe ran `ip addr add` + `ip route replace` **itself** (`netUpPrefix`) before probing, so whether the production boot path addresses the guest at all had never been asserted anywhere. And every DNS assertion passed the server **explicitly** (`nslookup <name> <gateway>`), which bypasses `/etc/resolv.conf` — the path a real caller takes. The new real-VM tests use neither: they assert the guest's own view, after the production boot path, with an **allow assertion for every deny assertion**, and a denial that reports "unreachable" now **fails** as a dead network rather than an enforced one.
 - **`TestE2E_PortPublish_GuestCannotReachHostLoopback` was negative-only** and would have passed on a guest with no working network at all. It now proves the guest's network is alive against a control listener on the gateway *before* asserting it cannot reach host loopback (SEC-09).
-
-## [0.4.2] - 2026-08-09
 
 ### Added
 
