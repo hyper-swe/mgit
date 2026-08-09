@@ -111,6 +111,10 @@ type netDeps struct {
 	dns    dnsResolver
 	dial   egress.DialFunc
 	logger *slog.Logger
+	// flows, when set, registers each spliced connection so a live policy
+	// revoke arriving over the control channel can TERMINATE established
+	// flows, not merely refuse the next one. Refs: MGIT-74, MGIT-72
+	flows *egress.FlowRegistry
 }
 
 // withDefaults fills the optional collaborators. A nil logger is discarded
@@ -155,6 +159,7 @@ type netGateway struct {
 	dns    dnsResolver
 	dial   egress.DialFunc
 	logger *slog.Logger
+	flows  *egress.FlowRegistry
 
 	// cancel stops the DNS server (and anything else scoped to the
 	// gateway's lifetime) at teardown.
@@ -203,6 +208,7 @@ func bindNetGateway(path string, deps netDeps) (*netGateway, error) {
 		dns:       deps.dns,
 		dial:      deps.dial,
 		logger:    deps.logger,
+		flows:     deps.flows,
 		cancel:    cancel,
 		peerReady: make(chan struct{}),
 	}
@@ -345,7 +351,8 @@ func (g *netGateway) handleForward(r *tcp.ForwarderRequest) {
 	// blocks until the flow ends. Reusing it rather than a local io.Copy
 	// pair is what closes BOTH sides when either half-closes.
 	guestConn := gonet.NewTCPConn(&wq, ep)
-	go egress.Splice(guestConn, outbound)
+	// Tracked so a live policy revoke can terminate this flow (MGIT-74).
+	go egress.SpliceTracked(g.flows, guestConn, outbound)
 }
 
 // DialGuestPort opens a host->guest connection to a port inside the guest.

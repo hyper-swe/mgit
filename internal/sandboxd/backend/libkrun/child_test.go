@@ -136,7 +136,7 @@ func TestChildPolicy_PerMode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			spec := baseSpec(tt.mode, shortTempDir(t))
-			auth, dns, err := childPolicy(spec, testChildLogger(), testClock())
+			auth, dns, _, err := childPolicy(spec, testChildLogger(), testClock())
 			if err != nil {
 				t.Fatalf("childPolicy: %v", err)
 			}

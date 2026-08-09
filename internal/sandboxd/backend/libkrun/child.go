@@ -79,13 +79,27 @@ func childMain(stdin io.Reader, handshake io.Writer, stderr io.Writer) int {
 // protocol, fail-closed teardown — is testable with a fake krunAPI on hosts
 // without libkrun.
 func childRun(api krunAPI, spec vmSpec, handshake io.Writer, logger *slog.Logger, clock func() time.Time) int {
-	auth, dns, err := childPolicy(spec, logger, clock)
+	auth, dns, sup, err := childPolicy(spec, logger, clock)
 	if err != nil {
 		return childFail(handshake, logger, err)
 	}
-	gc, err := newGuestCtx(api, spec, netDeps{auth: auth, dns: dns, logger: logger})
+	var flows *egress.FlowRegistry
+	if sup != nil {
+		flows = sup.Flows()
+	}
+	gc, err := newGuestCtx(api, spec, netDeps{auth: auth, dns: dns, logger: logger, flows: flows})
 	if err != nil {
 		return childFail(handshake, logger, err)
+	}
+	// Serve the host->child control channel BEFORE entering the VM:
+	// krun_start_enter never returns, but it does not stop this process's
+	// goroutines — the same property that lets the netstack gateway run here.
+	// Without this the daemon has no route to the policy this child enforces.
+	// Refs: MGIT-74, ADR-010
+	if stop, err := serveControlChannel(spec, sup, logger); err != nil {
+		return childFail(handshake, logger, err)
+	} else if stop != nil {
+		defer stop()
 	}
 
 	// "Configured, entering": the parent treats the VM as started once this
@@ -137,10 +151,10 @@ func writeHandshake(w io.Writer, logger *slog.Logger, h childHandshake) {
 // console log). The daemon's durable sandbox_events store is NOT reachable
 // from the child process yet — a known gap, tracked in MGIT-61.9.
 // Refs: SEC-04, FR-17.8, ADR-010
-func childPolicy(spec vmSpec, logger *slog.Logger, clock func() time.Time) (flowAuthorizer, dnsResolver, error) {
+func childPolicy(spec vmSpec, logger *slog.Logger, clock func() time.Time) (flowAuthorizer, dnsResolver, *egress.Supervisor, error) {
 	switch spec.NetworkMode {
 	case model.NetworkModeNone:
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	case model.NetworkModeOpen:
 		// Open places no restriction on destinations, but it still gets an
 		// authorizer — the gateway refuses to run without one, and this is
@@ -151,7 +165,7 @@ func childPolicy(spec vmSpec, logger *slog.Logger, clock func() time.Time) (flow
 			Audit: logAuditor{logger: logger}, Logger: logger,
 		})
 		if err != nil {
-			return nil, nil, fmt.Errorf("libkrun child open-mode egress: %w", err)
+			return nil, nil, nil, fmt.Errorf("libkrun child open-mode egress: %w", err)
 		}
 		// Open mode gets a RESOLVER too. It used to get none, on the reasoning
 		// that an unrestricted guest resolves for itself — but the guest is
@@ -164,9 +178,11 @@ func childPolicy(spec vmSpec, logger *slog.Logger, clock func() time.Time) (flow
 			Audit: logAuditor{logger: logger}, Clock: clock, Logger: logger,
 		})
 		if err != nil {
-			return nil, nil, fmt.Errorf("libkrun child open-mode dns: %w", err)
+			return nil, nil, nil, fmt.Errorf("libkrun child open-mode dns: %w", err)
 		}
-		return auth, dns, nil
+		// Open mode has no mutable allowlist: it is unrestricted by
+		// definition, so there is no supervisor to hand the control channel.
+		return auth, dns, nil, nil
 	}
 	// Allowlist: the standard per-sandbox assembly.
 	sup, err := egress.NewSupervisor(egress.SupervisorConfig{
@@ -180,9 +196,10 @@ func childPolicy(spec vmSpec, logger *slog.Logger, clock func() time.Time) (flow
 		Logger:    logger,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("libkrun child egress assembly: %w", err)
+		return nil, nil, nil, fmt.Errorf("libkrun child egress assembly: %w", err)
 	}
-	return sup.Authorizer(), sup.DNS(), nil
+	auth, dns := sup.Authorizer(), sup.DNS()
+	return auth, dns, sup, nil
 }
 
 // logAuditor satisfies egress.Auditor by writing each egress decision to the
