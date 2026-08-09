@@ -37,6 +37,42 @@ Three defects of the same shape as 0.4.1's, all found by asking what a guest can
 - **Two more pieces of test scaffolding were masking the production path**, both the same species as the self-configuring guest that hid MGIT-68. Every firecracker network probe ran `ip addr add` + `ip route replace` **itself** (`netUpPrefix`) before probing, so whether the production boot path addresses the guest at all had never been asserted anywhere. And every DNS assertion passed the server **explicitly** (`nslookup <name> <gateway>`), which bypasses `/etc/resolv.conf` — the path a real caller takes. The new real-VM tests use neither: they assert the guest's own view, after the production boot path, with an **allow assertion for every deny assertion**, and a denial that reports "unreachable" now **fails** as a dead network rather than an enforced one.
 - **`TestE2E_PortPublish_GuestCannotReachHostLoopback` was negative-only** and would have passed on a guest with no working network at all. It now proves the guest's network is alive against a control listener on the gateway *before* asserting it cannot reach host loopback (SEC-09).
 
+## [0.4.2] - 2026-08-09
+
+### Added
+
+- **Host worktree edits now reach a running guest** (MGIT-71). The guest is a
+  staged copy, not a live mount — that is what makes the SEC-03 quarantine
+  enforceable — so propagation re-stages through the same host-side checks a
+  launch uses: a sync can never deliver what a launch would have refused.
+  Collision policy, decided rather than defaulted: host-delivered files the
+  guest has not touched are updated; a file changed on both sides is a
+  **conflict** and the whole sync is refused with the paths named (`--force`
+  overwrites and reports every path it destroys); **guest-created files are
+  never touched**, so a build cache survives a sync. Reported by the HyperSwe
+  lane, whose loop this unblocks.
+
+### Fixed
+
+- **A data race in egress authorization** (MGIT-72). `AllowsName`/`HasName`/
+  `AllowsIP` read the compiled rule set without a lock. That was safe only
+  while rules were immutable after `Compile`; it is now guarded. Pre-existing
+  and latent — surfaced by the race detector while making policy mutable.
+
+### Known limitations
+
+- **Live policy revoke is not user-facing yet.** The enforcement core landed
+  (kill established flows by default, `--drain` opt-in) but there is no CLI or
+  MCP surface, and it does **not work on libkrun** — the macOS default — where
+  the authorizer runs inside the VM child process and the daemon has no route
+  to it. Deliberately unexposed rather than shipped as a verb that silently
+  does nothing on the default platform. MGIT-74 tracks the control channel;
+  MGIT-72 ships when it works everywhere.
+- **Host→guest sync is libkrun-only.** Firecracker delivers the worktree as an
+  ext4 image built at launch, which the host cannot write into; those sandboxes
+  keep launch-snapshot semantics and report the limitation rather than
+  pretending. The host decides *what* to apply; the backend decides *how*.
+
 ## [0.4.1] - 2026-08-08
 
 ### Fixed — P0: guest egress was non-functional on macOS/libkrun in 0.4.0
