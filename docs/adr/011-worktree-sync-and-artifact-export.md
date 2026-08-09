@@ -94,10 +94,18 @@ the reason this feature had to be validated on a real VM rather than in a
 unit test.
 
 **When it runs.** Automatically before an exec when the host worktree has
-changed (cheap manifest comparison; unchanged means no work at all), plus an
-explicit `mgit sandbox sync` for control. An exec blocked by a conflict fails
-closed naming the conflicting paths — an exec that silently runs against stale
-code is precisely the reported defect.
+changed (cheap manifest comparison; unchanged means no work at all). An exec
+blocked by a conflict fails closed naming the conflicting paths — an exec that
+silently runs against stale code is precisely the reported defect.
+
+*Amended 2026-08-09.* This paragraph originally also promised "an explicit
+`mgit sandbox sync` for control." Only the automatic half shipped in v0.4.2;
+the verb does not exist, which the HyperSwe lane found by reading the ADR and
+then the CLI. The gap is real rather than cosmetic — without the verb there is
+no way to re-stage without running something in the guest, and no way to obtain
+the conflict report except by attempting work and being refused. `MGIT-76`
+tracks shipping it. The text now describes what the binary does; the ADR should
+not be the reason someone expects a command that isn't there.
 
 ## MGIT-72 — established flows: kill, not drain
 
