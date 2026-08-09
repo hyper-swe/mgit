@@ -19,6 +19,10 @@ var hostOnlyPackages = []string{
 	"github.com/hyper-swe/mgit/internal/sandboxd/egress",
 	"github.com/hyper-swe/mgit/internal/sandboxd/worktreesync",
 	"github.com/hyper-swe/mgit/internal/sandboxd/staging",
+	// The host->child control channel (MGIT-74). A guest that could reach it
+	// could ask the child to widen its own policy, which is exactly the
+	// property the rest of this file exists to keep true.
+	"github.com/hyper-swe/mgit/internal/sandboxd/vmctl",
 }
 
 // TestGuestCannotReachPolicyEnforcement proves the SEC-05 authority claim

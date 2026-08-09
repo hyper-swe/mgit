@@ -409,7 +409,7 @@ func TestChildPolicy_UnknownMode_RefusesRatherThanGuessing(t *testing.T) {
 	// would mean "no gateway" — the discard socket — and quietly change the
 	// sandbox's network posture).
 	spec := baseSpec("bogus-mode", shortTempDir(t))
-	auth, dns, err := childPolicy(spec, testChildLogger(), testClock())
+	auth, dns, _, err := childPolicy(spec, testChildLogger(), testClock())
 	if err == nil {
 		t.Fatal("an unrecognized network mode must be refused, not guessed at")
 	}

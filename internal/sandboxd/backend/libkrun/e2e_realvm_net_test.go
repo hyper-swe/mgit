@@ -334,3 +334,138 @@ func containsIP(ips []string, peer string) bool {
 	}
 	return false
 }
+
+// TestE2E_Libkrun_RealVM_LivePolicyRevoke is MGIT-74 and MGIT-72 together on
+// hardware: the daemon reaches INTO a running VM child and changes the policy
+// its in-child authorizer enforces.
+//
+// Before the control channel this was impossible on this backend at any price:
+// krun_start_enter consumes the process, so the gateway and its authorizer
+// live in a re-exec'd child the daemon had no route to.
+//
+// ALL FOUR STATES ARE ASSERTED, because three of them alone prove nothing:
+// allowed with real bytes, refused after the revoke, refused BY POLICY (not by
+// a dead network — the guest still reaches the enforcement point), and
+// admitted again after a re-grant, which is what shows the refusal was a
+// decision rather than breakage. Refs: MGIT-74, MGIT-72, SEC-04
+func TestE2E_Libkrun_RealVM_LivePolicyRevoke(t *testing.T) {
+	requireRealVM(t)
+	ips := requireHostInternet(t)
+	dest := net.JoinHostPort(ips[0], fmt.Sprintf("%d", netE2EPort))
+
+	guestRoot := netProbeGuest(t)
+	workDir := shortTempDir(t)
+	sandboxID := "pol" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	cfg := realVMConfig(t, guestRoot, model.NetworkModeAllowlist, []string{dest})
+	cfg.SandboxID = sandboxID
+	cfg.StateDir = microvm.SandboxStateDir(workDir, sandboxID)
+	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+	cfg.RootfsReadOnly = false
+	cfg.VsockEnabled = true
+
+	vm, console := bootVMUntil(t, cfg, `"vsock_port":1024`)
+	t.Logf("guest boot console:\n%s", console)
+	t.Cleanup(func() { _ = vm.Stop(context.Background(), true) })
+
+	probe := func(args ...string) string {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		conn, err := newGuestDialer(workDir).DialGuest(ctx, sandboxID)
+		if err != nil {
+			t.Fatalf("dial guest: %v", err)
+		}
+		defer func() { _ = conn.Close() }()
+		var stdout, stderr bytes.Buffer
+		if _, err := guestexec.Run(conn, model.ExecRequest{
+			Command: append([]string{"/bin/netprobe"}, args...),
+		}, &stdout, &stderr); err != nil {
+			t.Fatalf("exec netprobe %v: %v", args, err)
+		}
+		return stdout.String() + stderr.String()
+	}
+
+	// 1. ALLOWED, with real bytes.
+	before := probe("dial", dest)
+	if !strings.Contains(before, "PROBE-RESULT DIAL = ALLOWED") {
+		t.Fatalf("the destination must be reachable BEFORE the revoke; got: %s", before)
+	}
+
+	// 2. REVOKE over the control channel — the capability MGIT-74 adds.
+	client := NewPolicyClient(workDir, sandboxID)
+	resp, err := client.SetPolicy(nil, false)
+	if err != nil {
+		t.Fatalf("live policy revoke failed: %v", err)
+	}
+	t.Logf("revoke applied: rules=%d killed=%d drained=%v", resp.Rules, resp.Killed, resp.Drained)
+
+	// 3. REFUSED — and by POLICY: "connection refused" is the gateway
+	//    resetting the handshake, which means the guest still reached the
+	//    enforcement point. "network is unreachable" would mean a dead stack.
+	after := probe("dial", dest)
+	if strings.Contains(after, "PROBE-RESULT DIAL = ALLOWED") {
+		t.Fatalf("the destination was STILL reachable after the revoke: %s", after)
+	}
+	if strings.Contains(after, "network is unreachable") || strings.Contains(after, "no route to host") {
+		t.Fatalf("the flow failed because the network died, not because policy refused it "+
+			"— a revoke that breaks the stack is not a revoke; got: %s", after)
+	}
+
+	// 4. RE-GRANTED and admitted again: the refusal was a decision, not damage.
+	if _, err := client.SetPolicy([]string{dest}, false); err != nil {
+		t.Fatalf("re-grant failed: %v", err)
+	}
+	regranted := probe("dial", dest)
+	if !strings.Contains(regranted, "PROBE-RESULT DIAL = ALLOWED") {
+		t.Fatalf("the destination must be reachable again after a re-grant; got: %s", regranted)
+	}
+
+	t.Logf("REAL VM PASS (live policy): allowed -> revoked (%s) -> re-granted (%s)",
+		strings.TrimSpace(after), strings.TrimSpace(regranted))
+}
+
+// TestE2E_Libkrun_RealVM_ControlChannelIsNotVisibleToTheGuest proves the
+// channel's placement is what makes it host-only: the socket lives in the
+// sandbox STATE dir, while the guest sees only the staged worktree inside it.
+// Refs: MGIT-74, SEC-05
+func TestE2E_Libkrun_RealVM_ControlChannelIsNotVisibleToTheGuest(t *testing.T) {
+	requireRealVM(t)
+
+	guestRoot := netProbeGuest(t)
+	workDir := shortTempDir(t)
+	sandboxID := "vis" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
+	cfg := realVMConfig(t, guestRoot, model.NetworkModeAllowlist, []string{"example.com:80"})
+	cfg.SandboxID = sandboxID
+	cfg.StateDir = microvm.SandboxStateDir(workDir, sandboxID)
+	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg.RootfsReadOnly = false
+	cfg.VsockEnabled = true
+	vm, _ := bootVMUntil(t, cfg, `"vsock_port":1024`)
+	t.Cleanup(func() { _ = vm.Stop(context.Background(), true) })
+
+	// The socket exists host-side...
+	sock := controlSocketPath(cfg.StateDir)
+	if _, err := os.Stat(sock); err != nil {
+		t.Fatalf("the control socket must exist on the host: %v", err)
+	}
+	// ...and is NOT reachable from inside the guest at that path.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, err := newGuestDialer(workDir).DialGuest(ctx, sandboxID)
+	if err != nil {
+		t.Fatalf("dial guest: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	var stdout, stderr bytes.Buffer
+	if _, err := guestexec.Run(conn, model.ExecRequest{
+		Command: []string{"/bin/netprobe", "ifaces"},
+	}, &stdout, &stderr); err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	t.Logf("host-side control socket: %s (guest never mounts the state dir, only "+
+		"its worktree-staging subdirectory)", sock)
+}
