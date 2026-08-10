@@ -25,6 +25,12 @@
 //     deletes anything that already exists at the destination.
 //   - Size and file-count limits bound the transfer, so an export cannot fill
 //     the host disk (T7).
+//   - Exported files carry the mode the guest set, and only ever a mode that
+//     was OBSERVED. Where a backend's share cannot express that mode in the
+//     host file's own permission bits it records it instead (libkrun on macOS
+//     presents guest-created files as 0600 and keeps the real st_mode in an
+//     attribute), and the sidecar attributes any mode read that way. Nothing
+//     is guessed and no guest is consulted; see sharemode.go and ADR-011.
 //   - The artifact lands atomically with a provenance sidecar naming the
 //     sandbox, task, base image digest and per-file hashes (the MGIT-61.15
 //     attestation pattern applied to files): a node_modules tree in a host

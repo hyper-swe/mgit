@@ -28,11 +28,18 @@ const ManifestSchema = "mgit.artifact-export/v1"
 // SHA-256 (ADR-002: mgit's authoritative hash); symlinks carry their target
 // text and are never followed. Directories are implied by their entries.
 type ManifestEntry struct {
-	Path    string `json:"path"`              // path relative to the exported root
-	Mode    string `json:"mode,omitempty"`    // octal permission bits, e.g. "0644"
-	Size    int64  `json:"size,omitempty"`    // bytes actually copied
-	SHA256  string `json:"sha256,omitempty"`  // hex SHA-256 of the copied bytes
-	Symlink string `json:"symlink,omitempty"` // link target text (symlinks only)
+	Path string `json:"path"`           // path relative to the exported root
+	Mode string `json:"mode,omitempty"` // octal permission bits, e.g. "0644"
+	// ModeSource attributes Mode when it did NOT come from a plain host stat
+	// of the staged file. It is "share-record" when the sandbox's virtio-fs
+	// backend keeps the mode in a stat record because its host permission bits
+	// cannot express it (libkrun on macOS, measured in MGIT-81), and is absent
+	// otherwise. An export never invents a mode; this says which real
+	// observation it reproduced. Refs: MGIT-81
+	ModeSource string `json:"mode_source,omitempty"`
+	Size       int64  `json:"size,omitempty"`    // bytes actually copied
+	SHA256     string `json:"sha256,omitempty"`  // hex SHA-256 of the copied bytes
+	Symlink    string `json:"symlink,omitempty"` // link target text (symlinks only)
 }
 
 // Manifest is the provenance sidecar written beside an exported artifact: it
@@ -80,7 +87,12 @@ func newManifest(req Request, entries []ManifestEntry, total int64) Manifest {
 // treeHash is the SHA-256 over a canonical rendering of the exported entries
 // (path, kind, mode, size, content hash), sorted by path. It identifies the
 // CONTENT of an artifact independently of where it landed, so a cache can tell
-// two exports of the same tree apart from two different trees. Refs: ADR-002
+// two exports of the same tree apart from two different trees.
+//
+// ModeSource is deliberately NOT hashed: it records where the host observed a
+// mode, not what the artifact is, so the same tree exported from libkrun and
+// from vzf hashes identically — which is what a cache keyed on this needs.
+// Refs: ADR-002, MGIT-81
 func treeHash(entries []ManifestEntry) string {
 	h := sha256.New()
 	var line strings.Builder

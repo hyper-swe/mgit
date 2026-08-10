@@ -207,12 +207,69 @@ recorded, as built:
   export that cannot be audited is **undone** — a file on the host with no
   record defeats the trail.
 
-**Measured limitation (macOS/libkrun).** virtio-fs presents guest-created files
-to the host with its own permission mapping: a file the guest writes `0755`
-reads as `0600` on the share. The export reproduces the modes the HOST observes
-— inventing the guest's intended mode would be worse — so an exported tree's
-executable bits may not survive on this backend. Found by the real-VM e2e; it is
-a property of the share, not of the export.
+### File modes: measured, then resolved (MGIT-81)
+
+MGIT-73 shipped with a measured limitation: on macOS/libkrun a file the guest
+wrote `0755` read as `0600` on the host share, and the export — which
+deliberately reproduces only modes it has observed — carried the `0600`
+outward, so an exported `node_modules` tree's `.bin` scripts arrived
+non-executable. MGIT-81 measured *where* the bits went and found the mode was
+observable host-side after all.
+
+**The measurements** (2026-08-10, Apple Silicon; the numbers are reproduced by
+`TestE2E_Libkrun_RealVM_ModeFidelity_HostCanObserveTheModeTheGuestSet` and
+`TestE2E_VZF_ModeFidelity_TheShareCarriesTheModeAndExportReproducesIt`, both
+real-VM):
+
+| what the guest did | guest on tmpfs (control) | guest on the share | host `lstat` | host share record |
+|---|---|---|---|---|
+| libkrun 1.19.4, write `0755` | `0755` | `0755` | **`0600`** | `0:0:0100755` |
+| libkrun 1.19.4, write `0644` | `0644` | `0644` | **`0600`** | `0:0:0100644` |
+| libkrun 1.19.4, `chmod 0755` | `0755` | `0755` | **`0600`** | `0:0:0100755` |
+| libkrun 1.19.4, `mkdir 0755` | `0755` | `0755` | **`0700`** | `0:0:0755` |
+| vzf (Virtualization.framework), write/chmod `0755` | `0755` | `0755` | `0755` | *(none)* |
+
+The guest's umask was `0022` on both backends and the tmpfs control arm kept
+every mode, so **neither the guest nor the workload loses anything**: the
+mapping is libkrun's macOS filesystem device, which gives guest-created inodes
+placeholder permission bits (`0600` files, `0700` directories) and records the
+real `st_mode` in the `user.containers.override_stat` extended attribute — the
+containers-ecosystem convention. Host-created files in the same staged tree
+carry no such record. vzf carries modes in the permission bits and writes no
+record at all.
+
+**The decision.** The export reads the share's record when there is one and the
+host's own permission bits when there is not, and reproduces that mode with an
+explicit `chmod` (an `O_CREATE` mode is masked by the exporting process's
+umask, which would have shaved an observed `0755` to `0700` under a `0077`
+daemon). This keeps the MGIT-73 property intact: **the guest does not
+participate.** The record is written by the backend's *host-side* filesystem
+device as it services the guest's `create`/`chmod`, exactly as the permission
+bits are on a backend that carries them; the guest is never asked, and cannot
+tell an export happened. No mode is invented — the only question resolved was
+which of two real host-side observations to trust.
+
+**Bounds on trusting the record.** Only permission bits are taken, masked to
+`0777`: uid/gid are ignored (an exported artifact belongs to the exporting
+user), setuid/setgid/sticky are dropped as they always were, and the record
+never decides what a file *is* — regular, symlink or directory comes from the
+host stat alone, so a hostile record cannot talk the export into treating a
+symlink as a regular file and sidestepping the escape checks. A malformed
+record is ignored rather than half-read, and the widest a well-formed one can
+ask for is `0777`, which the guest could equally have reached by an honest
+`chmod` on a backend that carries modes.
+
+**Attribution in the sidecar.** An entry whose mode came from the share record
+is marked `"mode_source": "share-record"`; a plain host stat is the default and
+stays implicit. It is excluded from the tree hash, so the same tree exported
+from libkrun and from vzf hashes identically. Exported **directories** are
+created `0750` whatever the guest set — an export widens nothing on the host
+beyond the user who asked for it.
+
+**Still true:** a backend whose share neither carries modes nor records them
+would export the placeholder bits, and the sidecar would say so by *not*
+claiming a share record. That is the honest failure, and it is what the two
+real-VM fidelity tests exist to catch.
 
 ## The test rule, applied
 

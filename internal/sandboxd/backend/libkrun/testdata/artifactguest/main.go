@@ -120,5 +120,10 @@ func main() {
 		return
 	}
 	fmt.Println("GUEST-RESULT ESCAPES = PLANTED")
+
+	// The mode-fidelity measurement rides along with the same real boot
+	// (MGIT-81): it needs a guest that has the share mounted, and booting a
+	// second VM to look at permissions would measure a different VM.
+	probeModes(wtPath)
 	fmt.Println("GUEST: done")
 }
