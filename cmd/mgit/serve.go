@@ -92,16 +92,24 @@ func serveCmd() *cobra.Command {
 			defer stop()
 
 			api := apihttp.NewServer(app.Repo, app.Index, clock, apihttp.WithLocker(locker))
-			// The sandbox connector is bound to the SERVED repo, not this
-			// process's cwd: `mgit serve --project` is routinely launched from
-			// an arbitrary directory (the Claude Desktop app), and a
-			// cwd-derived daemon would address a different repo's sandboxes or
-			// none at all. Refs: MGIT-76, MGIT-60
+			// Both sandbox tools dial the sandbox daemon per call, through the
+			// SAME connector the CLI uses — so an agent on MCP and an operator
+			// on the CLI act on one daemon and one audit trail, and a daemon
+			// that is not running fails the call rather than the server.
+			//
+			// The connector is bound to the SERVED repo, not this process's
+			// cwd: `mgit serve --project` is routinely launched from an
+			// arbitrary directory (the Claude Desktop app), and a cwd-derived
+			// daemon would address a different repo's sandboxes or none at
+			// all. Refs: MGIT-76, MGIT-72, MGIT-60
 			repoRoot := app.Repo.Root()
 			mcp := stdioMCP{srv: mcpapp.NewServer(app.Repo, app.Index,
 				mcpapp.WithLocker(locker),
 				mcpapp.WithSandboxSync(func(ctx context.Context) (mcpapp.SandboxSyncer, error) {
 					return sandboxConnectFor(ctx, repoRoot)
+				}),
+				mcpapp.WithSandboxPolicy(func(ctx context.Context) (mcpapp.SandboxPolicyClient, error) {
+					return mcpSandboxPolicyConnectorFor(ctx, repoRoot)
 				}),
 			).MCPServer()}
 			return runServe(ctx, api, mcp, serveOptions{

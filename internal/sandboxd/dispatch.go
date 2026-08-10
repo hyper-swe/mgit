@@ -55,6 +55,19 @@ type GrantCoordinator interface {
 	Approve(ctx context.Context, sandboxID, key string) (*model.CapabilityGrant, error)
 }
 
+// PolicyCoordinator serves the live egress-policy verbs: replace a RUNNING
+// sandbox's allowlist without relaunching it, and report the one in force.
+// *service.EgressPolicyService satisfies it.
+//
+// It is keyed by the RESOLVED sandbox binding, not by the task ID on the
+// request: the dispatch resolves task->sandbox through the service first, so
+// the sandbox a mutation lands on is always host-anchored (SEC-05).
+// Refs: MGIT-72, SEC-04, SEC-05
+type PolicyCoordinator interface {
+	Set(ctx context.Context, info model.SandboxInfo, entries []string, drain bool) (*model.EgressPolicyChange, error)
+	Show(ctx context.Context, info model.SandboxInfo) (*model.EgressPolicyState, error)
+}
+
 // execRelayChunkBytes bounds one exec output frame relayed to the client.
 // Output is forwarded in chunks no larger than this so a single frame can
 // never approach the execwire ceiling and the client sees output
@@ -115,6 +128,10 @@ func (d *Daemon) dispatch(ctx context.Context, conn net.Conn, req *controlproto.
 		d.serveGrant(ctx, conn, req.Grant)
 	case controlproto.KindSync:
 		d.serveSync(ctx, conn, req.Sync)
+	case controlproto.KindPolicySet:
+		d.servePolicySet(ctx, conn, req.PolicySet)
+	case controlproto.KindPolicyShow:
+		d.servePolicyShow(ctx, conn, req.PolicyShow)
 	default:
 		d.reply(conn, &controlproto.Response{},
 			fmt.Errorf("controlproto kind %#x not served by this daemon", req.Kind))
@@ -203,6 +220,59 @@ func (d *Daemon) serveSync(ctx context.Context, conn net.Conn, args *controlprot
 		resp.Error = err.Error()
 	}
 	d.writeResponse(conn, resp)
+}
+
+// servePolicySet replaces a running sandbox's egress allowlist. An empty entry
+// list is a full revoke.
+//
+// A nil coordinator reports the verb UNSERVED rather than replying success: a
+// daemon with no enforcer wired that answered "revoked" would leave the caller
+// running untrusted code believing egress was closed — the worst possible lie
+// this verb can tell. Refs: MGIT-72, SEC-04
+func (d *Daemon) servePolicySet(ctx context.Context, conn net.Conn, args *controlproto.PolicyArgs) {
+	if d.cfg.Policy == nil || d.cfg.Service == nil {
+		d.reply(conn, &controlproto.Response{},
+			fmt.Errorf("controlproto kind %#x not served by this daemon", controlproto.KindPolicySet))
+		return
+	}
+	info, err := d.cfg.Service.Status(ctx, args.TaskID)
+	if err != nil {
+		d.reply(conn, &controlproto.Response{}, err)
+		return
+	}
+	change, err := d.cfg.Policy.Set(ctx, *info, args.Entries, args.Drain)
+	if err != nil {
+		d.reply(conn, &controlproto.Response{}, err)
+		return
+	}
+	d.reply(conn, &controlproto.Response{Policy: &controlproto.PolicyResult{
+		Entries: change.Entries, RuleCount: change.RuleCount,
+		Killed: change.Killed, Drained: change.Drained,
+	}}, nil)
+}
+
+// servePolicyShow reports the egress policy a running sandbox is enforcing
+// right now — which after a live mutation is NOT its launch-time policy.
+// Refs: MGIT-72
+func (d *Daemon) servePolicyShow(ctx context.Context, conn net.Conn, ref *controlproto.TaskRef) {
+	if d.cfg.Policy == nil || d.cfg.Service == nil {
+		d.reply(conn, &controlproto.Response{},
+			fmt.Errorf("controlproto kind %#x not served by this daemon", controlproto.KindPolicyShow))
+		return
+	}
+	info, err := d.cfg.Service.Status(ctx, ref.TaskID)
+	if err != nil {
+		d.reply(conn, &controlproto.Response{}, err)
+		return
+	}
+	state, err := d.cfg.Policy.Show(ctx, *info)
+	if err != nil {
+		d.reply(conn, &controlproto.Response{}, err)
+		return
+	}
+	d.reply(conn, &controlproto.Response{Policy: &controlproto.PolicyResult{
+		Entries: state.Entries, RuleCount: state.RuleCount,
+	}}, nil)
 }
 
 // reply writes a success response, or an error response carrying a

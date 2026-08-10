@@ -30,6 +30,17 @@ func (f *fakeHandler) SetPolicy(entries []string, drain bool) (Response, error) 
 	return f.resp, f.err
 }
 
+// GetPolicy reports what the fake child claims to be enforcing.
+func (f *fakeHandler) GetPolicy() (Response, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.err != nil {
+		return Response{}, f.err
+	}
+	return Response{Entries: f.entries, Rules: len(f.entries)}, nil
+}
+
 func (f *fakeHandler) snapshot() ([]string, bool, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -173,4 +184,45 @@ func TestSocketName_FitsTheSunPathBudget(t *testing.T) {
 	assert.LessOrEqual(t, len(SocketName), 8,
 		"the control socket name must stay short; every byte comes out of the "+
 			"104-byte sun_path budget the whole per-VM path shares")
+}
+
+// TestGetPolicy_ReportsWhatTheChildIsEnforcing verifies the host can READ the
+// live policy out of the VM child, not only write it.
+//
+// Without a read, the only observable policy is the launch-time one, which a
+// live mutation makes wrong — so a caller could not confirm a revoke took
+// effect. Refs: MGIT-72, MGIT-74
+func TestGetPolicy_ReportsWhatTheChildIsEnforcing(t *testing.T) {
+	h := &fakeHandler{entries: []string{"registry.example:443"}}
+	client, _ := serveOn(t, h)
+
+	resp, err := client.GetPolicy()
+
+	require.NoError(t, err)
+	assert.True(t, resp.OK)
+	assert.Equal(t, []string{"registry.example:443"}, resp.Entries)
+	assert.Equal(t, 1, resp.Rules)
+}
+
+// TestGetPolicy_UnreachableChild_FailsClosed verifies a missing child is an
+// actionable error, never an empty policy — "nothing is allowed" and "nothing
+// is enforcing" must not look the same. Refs: MGIT-72, SEC-04
+func TestGetPolicy_UnreachableChild_FailsClosed(t *testing.T) {
+	client := Client{SocketPath: filepath.Join(t.TempDir(), "absent.sock")}
+
+	_, err := client.GetPolicy()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unreachable")
+}
+
+// TestDispatch_UnknownOp_IsRefused verifies a verb the child does not know is
+// REPORTED, never silently dropped: a dropped verb looks like success to the
+// host, which for a revoke means believing egress is closed when it is open.
+// Refs: MGIT-72, MGIT-74
+func TestDispatch_UnknownOp_IsRefused(t *testing.T) {
+	resp := dispatch(Request{Op: "widen-everything"}, &fakeHandler{})
+
+	assert.False(t, resp.OK)
+	assert.Contains(t, resp.Error, "unknown control op")
 }

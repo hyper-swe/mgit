@@ -84,14 +84,22 @@ func packageDeps(t *testing.T, pkg string) []string {
 // the two guards above.
 //
 // A dependency assertion that can never fire is worth nothing — it would pass
-// just as happily if `go list` returned an empty list or the package name were
-// misspelled. This asserts the HOST daemon DOES link the very packages the
-// guest must not, proving the check distinguishes linked from not-linked
-// rather than merely never finding anything. Refs: MGIT-72, SEC-05
+// just as happily if `go list` returned an empty list or a package name in
+// hostOnlyPackages were misspelled or renamed out from under it. This asserts
+// the HOST daemon DOES link EVERY package the guest must not, proving the
+// check distinguishes linked from not-linked rather than merely never finding
+// anything.
+//
+// It covers the whole forbidden list on purpose. A control that named only one
+// package would leave the others' guards vacuous the moment one was renamed —
+// which is precisely the decay a structural assertion exists to prevent.
+// Refs: MGIT-72, SEC-05
 func TestGuestAuthorityGuardCanActuallyDetectLinkage(t *testing.T) {
 	deps := packageDeps(t, "./cmd/mgit-sandboxd")
 
-	assert.Contains(t, deps, "github.com/hyper-swe/mgit/internal/sandboxd/staging",
-		"the host daemon must link the enforcement packages; if this fails the "+
-			"guest-side guards are vacuous and prove nothing")
+	for _, hostOnly := range hostOnlyPackages {
+		assert.Contains(t, deps, hostOnly,
+			"the host daemon must link %s; if it does not, the guest-side guard for "+
+				"that package is vacuous and proves nothing", hostOnly)
+	}
 }

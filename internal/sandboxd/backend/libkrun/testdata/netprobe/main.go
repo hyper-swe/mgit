@@ -13,9 +13,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,6 +45,8 @@ func main() {
 		resolve(arg(2))
 	case "fetch":
 		fetch(arg(2))
+	case "hold":
+		hold(arg(2), arg(3))
 	default:
 		fmt.Printf("PROBE-RESULT USAGE = UNKNOWN-VERB %q\n", verb)
 		os.Exit(2)
@@ -138,6 +142,101 @@ func fetch(addr string) {
 	}
 	fmt.Printf("PROBE-RESULT FETCH = ALLOWED peer=%s ips=%s bytes=%d head=%q\n",
 		peer, strings.Join(ips, ","), n, head)
+}
+
+// hold is the ESTABLISHED-FLOW probe: it opens a connection, carries real
+// bytes on it, announces that it is established, and then KEEPS IT OPEN while
+// the host mutates policy underneath it — reporting whether the connection
+// died or survived.
+//
+// WHY THIS VERB EXISTS. Every other verb here closes its connection before it
+// returns, so a revoke issued between two probe calls has nothing established
+// to terminate. That produced killed=0 on the first real-VM run of MGIT-72,
+// which is indistinguishable between "there was nothing to kill" and "kill is
+// broken" — and terminating the connection already carrying data is the entire
+// meaning of "revoke means revoke".
+//
+// The announcement is a SEPARATE line written before the hold begins: the host
+// streams the probe's stdout frame by frame, so it can wait for establishment
+// and only then revoke. A fixed sleep on the host would race the handshake.
+//
+// KEEP-ALIVE, not a bare connect: the request is HTTP/1.1 with an explicit
+// keep-alive so the destination itself holds the connection open for the
+// duration. A server-side close during the window makes the DRAIN control fail
+// loudly rather than making the KILL assertion pass by accident.
+// Refs: MGIT-72, SEC-04
+func hold(addr, seconds string) {
+	window := 10 * time.Second
+	if seconds != "" {
+		if n, err := strconv.Atoi(seconds); err == nil && n > 0 {
+			window = time.Duration(n) * time.Second
+		}
+	}
+	conn, err := net.DialTimeout("tcp", addr, dialTimeout)
+	if err != nil {
+		fmt.Printf("PROBE-RESULT HOLD = DIAL-DENIED reason=%q\n", err.Error())
+		return
+	}
+	defer func() { _ = conn.Close() }()
+
+	n, head, err := exchangeKeepAlive(conn, hostOf(addr))
+	if err != nil {
+		fmt.Printf("PROBE-RESULT HOLD = CONNECTED-NO-DATA reason=%q\n", err.Error())
+		return
+	}
+	// The host waits for THIS line before it mutates policy.
+	fmt.Printf("PROBE-HOLD ESTABLISHED bytes=%d head=%q\n", n, head)
+
+	watchConnection(conn, window)
+}
+
+// watchConnection polls an established connection for the window and reports
+// whether it DIED or SURVIVED, with the elapsed time either way.
+//
+// A read timeout means the connection is still up (nothing to read is not
+// death); any other read error is the connection going away, which is what a
+// kill looks like from inside the guest — a reset or an EOF depending on how
+// the host tore it down. Refs: MGIT-72
+func watchConnection(conn net.Conn, window time.Duration) {
+	start := time.Now()
+	deadline := start.Add(window)
+	buf := make([]byte, 1)
+	for time.Now().Before(deadline) {
+		_ = conn.SetReadDeadline(time.Now().Add(pollInterval))
+		_, err := conn.Read(buf)
+		if err == nil {
+			continue // real data: unambiguously alive
+		}
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			continue // nothing to read yet, still established
+		}
+		fmt.Printf("PROBE-RESULT HOLD = DIED after=%s reason=%q\n",
+			time.Since(start).Round(time.Millisecond), err.Error())
+		return
+	}
+	fmt.Printf("PROBE-RESULT HOLD = SURVIVED after=%s\n", time.Since(start).Round(time.Millisecond))
+}
+
+// pollInterval is how often the held connection is checked. Short enough that
+// a kill is observed promptly, long enough not to spin.
+const pollInterval = 250 * time.Millisecond
+
+// exchangeKeepAlive is exchange with an explicit HTTP/1.1 keep-alive, so the
+// destination does not close the connection after replying — the connection
+// has to still be the host's to kill, not one the server already ended.
+func exchangeKeepAlive(conn net.Conn, host string) (int, string, error) {
+	_ = conn.SetDeadline(time.Now().Add(dialTimeout))
+	if _, err := fmt.Fprintf(conn,
+		"GET / HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n\r\n", host); err != nil {
+		return 0, "", err
+	}
+	buf := make([]byte, headBytes)
+	n, err := conn.Read(buf)
+	if err != nil && n == 0 {
+		return 0, "", err
+	}
+	return n, strings.TrimSpace(string(buf[:n])), nil
 }
 
 // exchange sends a minimal HTTP request and reads the first bytes of the

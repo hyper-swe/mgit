@@ -2,9 +2,11 @@ package egress
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/netip"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -142,7 +144,7 @@ func pipePair(t *testing.T) (net.Conn, net.Conn) {
 // A caller who revokes registry egress and then runs untrusted code expects
 // the grant gone; a draining connection is precisely the exfiltration channel
 // they just revoked, and against a hostile guest a long-lived one can drain
-// arbitrarily long. Refs: MGIT-72, ADR-011, SEC-04
+// arbitrarily long. Refs: MGIT-72, ADR-012, SEC-04
 func TestFlowRegistry_CloseAll_KillsEstablishedFlows(t *testing.T) {
 	reg := NewFlowRegistry()
 	guest, peer := pipePair(t)
@@ -341,7 +343,7 @@ func awaitTrackedFlows(t *testing.T, r *Runner, sandboxID string, want int) {
 }
 
 // TestRunner_SetPolicy_KillsEstablishedFlows verifies the documented default:
-// revoke terminates in-flight connections. Refs: MGIT-72, ADR-011
+// revoke terminates in-flight connections. Refs: MGIT-72, ADR-012
 func TestRunner_SetPolicy_KillsEstablishedFlows(t *testing.T) {
 	rec := &dialRecorder{}
 	r := testRunner(t, rec)
@@ -453,4 +455,258 @@ func connectThroughProxy(t *testing.T, proxyAddr, host string, port int) bool {
 	allow, _, err := DecodeConnectReply(conn)
 	require.NoError(t, err)
 	return allow
+}
+
+// TestAllowlist_Rules_ReportsTheEntriesInForce verifies the compiled policy
+// can state what it is enforcing, not merely how many rules it holds.
+//
+// This is what lets a caller OBSERVE a live mutation. Without it, the only
+// readable policy is the launch-time one, which after a revoke is a lie — and
+// a revoke a caller cannot confirm is a revoke they have to take on faith.
+// Refs: MGIT-72
+func TestAllowlist_Rules_ReportsTheEntriesInForce(t *testing.T) {
+	al, err := Compile([]string{"registry.example:443", "10.1.0.0/16"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"registry.example:443", "10.1.0.0/16"}, al.Rules())
+
+	require.NoError(t, al.SetRules([]string{"proxy.example:8080"}))
+	assert.Equal(t, []string{"proxy.example:8080"}, al.Rules(),
+		"Rules must follow a live mutation, not report the launch policy")
+
+	require.NoError(t, al.SetRules(nil))
+	assert.Empty(t, al.Rules(), "a full revoke enforces nothing and must say so")
+}
+
+// TestAllowlist_Rules_IsACopy verifies a caller cannot mutate the running
+// policy by writing into the slice it was handed.
+func TestAllowlist_Rules_IsACopy(t *testing.T) {
+	al, err := Compile([]string{"registry.example:443"})
+	require.NoError(t, err)
+
+	got := al.Rules()
+	got[0] = "evil.example:443"
+
+	assert.Equal(t, []string{"registry.example:443"}, al.Rules())
+}
+
+// TestRunner_Policy_ReportsTheLivePolicy verifies the host-side runner can
+// report what a RUNNING sandbox is enforcing right now, including after a
+// mutation. Refs: MGIT-72
+func TestRunner_Policy_ReportsTheLivePolicy(t *testing.T) {
+	r := testRunner(t, &dialRecorder{})
+	_, err := r.Start(context.Background(), Binding{
+		SandboxID: "sb-live", TaskID: "MGIT-72",
+		GatewayIP: netip.MustParseAddr("127.0.0.1"),
+		Policy:    allowlistPolicy("a.example:443"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Stop("sb-live") })
+
+	state, err := r.Policy("sb-live")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a.example:443"}, state.Entries)
+	assert.Equal(t, 1, state.RuleCount)
+
+	_, err = r.SetPolicy("sb-live", []string{"b.example:443", "c.example:443"}, false)
+	require.NoError(t, err)
+
+	state, err = r.Policy("sb-live")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"b.example:443", "c.example:443"}, state.Entries)
+	assert.Equal(t, 2, state.RuleCount)
+}
+
+// TestRunner_Policy_UnknownSandbox_FailsClosed verifies an unknown sandbox is
+// an error, never an empty policy that would read as "nothing is allowed" and
+// let a caller believe egress is closed when nothing is enforcing at all.
+// Refs: MGIT-72, SEC-04
+func TestRunner_Policy_UnknownSandbox_FailsClosed(t *testing.T) {
+	r := testRunner(t, &dialRecorder{})
+
+	_, err := r.Policy("sb-absent")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no running egress stack")
+}
+
+// TestRunner_SetPolicy_KillsFlowsOnTheTRANSPARENTPath is the assertion whose
+// absence hid a live bug on the firecracker backend.
+//
+// There are TWO egress data paths in this runner, and only one of them is the
+// one a guest uses. The length-prefixed CONNECT proxy is what the pre-existing
+// kill tests drove — and nothing inside any guest speaks that protocol. An
+// ordinary program (npm, apt, curl) is REDIRECTED into the TRANSPARENT proxy
+// instead. That proxy was constructed without the flow registry, so every real
+// guest connection was untracked: a revoke swapped the ruleset and reported
+// killed=0 while the connection carrying data stayed open.
+//
+// That is the same shape as MGIT-68 and MGIT-69 — the enforcement was real,
+// the tests drove a path no guest takes, and the gap was invisible because
+// killed=0 reads identically to "there was nothing to kill".
+//
+// Refs: MGIT-72, MGIT-69, MGIT-68, SEC-04, ADR-012
+func TestRunner_SetPolicy_KillsFlowsOnTheTRANSPARENTPath(t *testing.T) {
+	dest, held := holdingTestDestination(t)
+	r, eps := transparentRunner(t, dest)
+
+	guest := dialTransparent(t, eps.TransparentAddr)
+	requireSplicedBytes(t, guest, held)
+
+	change, err := r.SetPolicy(transparentSandboxID, nil, false)
+
+	require.NoError(t, err)
+	assert.Positive(t, change.Killed,
+		"a flow established through the TRANSPARENT path — the only path a real guest "+
+			"takes — must be terminated by a revoke; killed=0 here means it was never tracked")
+	assertConnClosed(t, guest)
+}
+
+// TestRunner_SetPolicy_Drain_SparesFlowsOnTheTRANSPARENTPath is the positive
+// control for the test above: the same flow on the same path SURVIVES when
+// draining was asked for, which is what makes the kill a decision rather than
+// an artifact of the connection dying for some other reason.
+func TestRunner_SetPolicy_Drain_SparesFlowsOnTheTRANSPARENTPath(t *testing.T) {
+	dest, held := holdingTestDestination(t)
+	r, eps := transparentRunner(t, dest)
+
+	guest := dialTransparent(t, eps.TransparentAddr)
+	requireSplicedBytes(t, guest, held)
+
+	change, err := r.SetPolicy(transparentSandboxID, nil, true)
+
+	require.NoError(t, err)
+	assert.Zero(t, change.Killed, "a drained revoke terminates nothing")
+	assert.True(t, change.Drained)
+	assertConnAlive(t, guest)
+}
+
+// transparentSandboxID names the sandbox the transparent-path tests act on.
+const transparentSandboxID = "sbx-transparent"
+
+// transparentDestIP is the destination the transparent-path tests allowlist.
+// It must be genuinely public: the authorizer denies loopback and RFC1918
+// unconditionally (SEC-04/T9), so the ALLOWED flow is dialed to the local
+// holding listener through the injected Dial while the POLICY still names a
+// routable address.
+var transparentDestIP = netip.MustParseAddr("140.82.112.4")
+
+// transparentTestPort is the destination port the policy names.
+const transparentTestPort = 443
+
+// holdingTestDestination is a local stand-in for the allowlisted destination
+// that KEEPS connections open, so nothing but the revoke can end the flow. It
+// returns the listener and a channel carrying each accepted connection.
+func holdingTestDestination(t *testing.T) (net.Listener, chan net.Conn) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	accepted := make(chan net.Conn, 4)
+	go func() {
+		for {
+			c, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			_, _ = c.Write([]byte("REAL-BYTES\n"))
+			accepted <- c
+		}
+	}()
+	return ln, accepted
+}
+
+// transparentRunner starts an allowlist sandbox whose TRANSPARENT listener is
+// reachable directly, by injecting the OriginalDst the kernel's REDIRECT would
+// otherwise supply. Everything else — the authorizer, the policy, the splice —
+// is the production path.
+func transparentRunner(t *testing.T, dest net.Listener) (*Runner, Endpoints) {
+	t.Helper()
+	r, err := NewRunner(RunnerConfig{
+		Audit:  &fakeAuditor{},
+		Lookup: resolvesTo(transparentDestIP.String()),
+		Dial: func(ctx context.Context, _ netip.Addr, _ int) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "tcp", dest.Addr().String())
+		},
+		Clock:  frozenClock(),
+		Logger: quietLogger(),
+		// The seam the redirect would fill in. Without it this proxy would
+		// read SO_ORIGINAL_DST off a connection nothing redirected.
+		OriginalDst: func(net.Conn) (netip.AddrPort, error) {
+			return netip.AddrPortFrom(transparentDestIP, transparentTestPort), nil
+		},
+		ProxyPort: 0, DNSPort: 0, TransparentPort: 0,
+	})
+	require.NoError(t, err)
+	eps, err := r.Start(context.Background(), Binding{
+		SandboxID: transparentSandboxID, TaskID: "MGIT-72",
+		GatewayIP: netip.MustParseAddr("127.0.0.1"),
+		Policy: allowlistPolicy(
+			transparentDestIP.String() + ":" + strconv.Itoa(transparentTestPort)),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = r.Stop(transparentSandboxID) })
+	require.NotEmpty(t, eps.TransparentAddr, "the transparent listener must be bound")
+	return r, eps
+}
+
+// dialTransparent opens a connection into the transparent listener, standing
+// in for a guest program whose TCP the tap redirected there.
+func dialTransparent(t *testing.T, addr string) net.Conn {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+// requireSplicedBytes asserts the flow reached the destination and carried
+// real bytes back, so a later teardown is about an ESTABLISHED flow.
+func requireSplicedBytes(t *testing.T, guest net.Conn, accepted chan net.Conn) {
+	t.Helper()
+	select {
+	case <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the allowed flow never reached the destination, so nothing below proves anything")
+	}
+	require.NoError(t, guest.SetReadDeadline(time.Now().Add(5*time.Second)))
+	buf := make([]byte, 10)
+	n, err := guest.Read(buf)
+	require.NoError(t, err, "the flow must carry real bytes before the revoke")
+	require.Positive(t, n)
+}
+
+// assertConnClosed asserts a connection has been torn down.
+func assertConnClosed(t *testing.T, conn net.Conn) {
+	t.Helper()
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	buf := make([]byte, 1)
+	for {
+		_, err := conn.Read(buf)
+		if err == nil {
+			continue // draining buffered bytes; the close is what we are after
+		}
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			t.Fatal("the established flow was NOT torn down by the revoke — it is still open")
+		}
+		return // EOF or reset: the flow is gone
+	}
+}
+
+// assertConnAlive asserts a connection is still established: a read times out
+// (nothing to read) rather than reporting the peer gone.
+func assertConnAlive(t *testing.T, conn net.Conn) {
+	t.Helper()
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(750*time.Millisecond)))
+	buf := make([]byte, 1)
+	_, err := conn.Read(buf)
+	if err == nil {
+		return // real data: unambiguously alive
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return // idle but established
+	}
+	t.Fatalf("a DRAINED revoke must leave the established flow alone, but it ended: %v", err)
 }

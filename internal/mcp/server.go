@@ -27,6 +27,9 @@ type Option func(*config)
 type config struct {
 	locker         *lock.Guarder
 	sandboxConnect SandboxConnector
+	// sandboxPolicy resolves the sandbox daemon for the live egress-policy
+	// tool. Nil leaves the tool registered but failing closed (MGIT-72).
+	sandboxPolicy SandboxPolicyConnector
 }
 
 // WithLocker makes every tool call acquire the repo process lock for the
@@ -57,6 +60,9 @@ type Server struct {
 	// when the server was built without one; the tool then reports the daemon
 	// unavailable rather than fabricating a result. Refs: MGIT-76
 	sandboxConnect SandboxConnector
+	// sandboxPolicy is the daemon connector for the live egress-policy tool
+	// (FR-17 containment surface, MGIT-72).
+	sandboxPolicy SandboxPolicyConnector
 }
 
 // NewServer creates an MCP server with all mgit tools registered.
@@ -115,6 +121,7 @@ func NewServer(
 		wtStore:  ws,
 
 		sandboxConnect: cfg.sandboxConnect,
+		sandboxPolicy:  cfg.sandboxPolicy,
 	}
 
 	s.registerTools()
@@ -273,6 +280,26 @@ func (s *Server) registerTools() {
 	s.mcpServer.AddTool(mcp.NewTool("mgit_worktree_list",
 		mcp.WithDescription("List linked worktrees"),
 	), s.worktreeListTool)
+
+	// Live sandbox egress policy (FR-17.8, MGIT-72). This is the first
+	// sandbox verb on MCP, and it is here because an AGENT is its intended
+	// caller: provisioning grants registry egress for setup and revokes it
+	// before the untrusted run.
+	s.mcpServer.AddTool(mcp.NewTool("mgit_sandbox_policy",
+		mcp.WithDescription(
+			"Change or show a RUNNING sandbox's egress allowlist without relaunching it. "+
+				"action=set replaces the allowlist with the given destinations; action=revoke "+
+				"removes ALL egress; action=show reports the policy in force. ESTABLISHED "+
+				"connections are TERMINATED unless drain=true, because a draining connection is "+
+				"the exfiltration channel you just revoked. Every change is recorded in the "+
+				"append-only sandbox audit trail."),
+		mcp.WithString("action", mcp.Required(), mcp.Description("set | revoke | show")),
+		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task whose running sandbox to act on")),
+		mcp.WithArray("allow", mcp.Description(
+			"Destinations to permit for action=set (host:port, ip, or CIDR)")),
+		mcp.WithBoolean("drain", mcp.Description(
+			"Leave established connections to finish instead of terminating them (weaker)")),
+	), s.sandboxPolicyTool)
 
 	s.mcpServer.AddTool(mcp.NewTool("mgit_worktree_remove",
 		mcp.WithDescription("Remove a linked worktree"),

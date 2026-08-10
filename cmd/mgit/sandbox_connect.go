@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	mcpapp "github.com/hyper-swe/mgit/internal/mcp"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
@@ -180,4 +181,20 @@ func sandboxConnectFor(ctx context.Context, dir string) (sandboxClient, error) {
 			err, daemonFailureDetail(p.daemonLog))
 	}
 	return sandboxd.NewClient(p.socket, func() time.Time { return time.Now().UTC() }), nil
+}
+
+// mcpSandboxPolicyConnectorFor adapts the daemon connector for the repo
+// containing dir to the MCP server's live egress-policy tool.
+//
+// It reuses sandboxConnectFor rather than dialing separately, so the agent
+// surface and the CLI resolve the same repo-owned daemon (socket activation,
+// worktree->owning-repo resolution and all) and land on one audit trail. The
+// directory is a parameter for the same reason the sync connector's is: a
+// served repo is not this process's cwd. Refs: MGIT-72, MGIT-76, MGIT-57
+func mcpSandboxPolicyConnectorFor(ctx context.Context, dir string) (mcpapp.SandboxPolicyClient, error) {
+	cl, err := sandboxConnectFor(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	return cl, nil
 }

@@ -79,7 +79,7 @@ type policyHandler struct {
 // SetPolicy replaces the running allowlist and, unless draining, kills
 // established flows.
 //
-// ESTABLISHED FLOWS ARE KILLED by default (ADR-011): a caller who revokes
+// ESTABLISHED FLOWS ARE KILLED by default (ADR-012): a caller who revokes
 // registry egress and then runs untrusted code expects the grant gone, and a
 // draining connection is precisely the exfiltration channel they revoked —
 // against a hostile guest holding one open, "drain" can mean "never".
@@ -92,7 +92,10 @@ func (h *policyHandler) SetPolicy(entries []string, drain bool) (vmctl.Response,
 	if err := h.sup.Allowlist().SetRules(entries); err != nil {
 		return vmctl.Response{}, err
 	}
-	resp := vmctl.Response{Rules: h.sup.Allowlist().Entries(), Drained: drain}
+	al := h.sup.Allowlist()
+	// Entries is read back out of the allowlist rather than echoed from the
+	// request, so the reply states what is IN FORCE, not what was asked for.
+	resp := vmctl.Response{Rules: al.Entries(), Entries: al.Rules(), Drained: drain}
 	if !drain {
 		resp.Killed = h.sup.Flows().CloseAll()
 	}
@@ -104,6 +107,17 @@ func (h *policyHandler) SetPolicy(entries []string, drain bool) (vmctl.Response,
 		"entries", entries, "rule_count", resp.Rules,
 		"established_flows_killed", resp.Killed, "drained", drain)
 	return resp, nil
+}
+
+// GetPolicy reports the allowlist this child is enforcing right now.
+//
+// It reads the LIVE allowlist, so after a mutation it disagrees with the
+// sandbox's launch-time policy — which is the point: reporting the launch
+// policy would tell a caller egress is open when it has been revoked.
+// Refs: MGIT-72
+func (h *policyHandler) GetPolicy() (vmctl.Response, error) {
+	al := h.sup.Allowlist()
+	return vmctl.Response{Rules: al.Entries(), Entries: al.Rules()}, nil
 }
 
 // NewPolicyClient returns the HOST side of the control channel for one

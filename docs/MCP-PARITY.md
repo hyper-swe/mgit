@@ -27,6 +27,7 @@ Legend: ✓ full · ~ partial (see notes) · ✗ not offered.
 | checkout / cherry-pick / merge | ✓ | ✗ | ✗ | history-editing verbs, CLI-only by design |
 | gc / restore / import / bundle | ✓ | ✗ | ✗ | maintenance verbs, CLI-only |
 | sandbox sync (FR-17.40) | ✓ | ✓ | ✗ | `mgit_sandbox_sync` — re-stage the host worktree into a running guest; `dry_run` returns the conflict classification (MGIT-76) |
+| sandbox egress policy (FR-17.8) | ✓ | ✓ | ✗ | `mgit sandbox policy set/revoke/show` / `mgit_sandbox_policy` (MGIT-72) |
 | run / sandbox lifecycle (FR-17) | ✓ | ✗ | ✗ | launch/exec/shell/land/grants/image: CLI-only (see **Documented gaps**) |
 
 ## Documented MCP gaps
@@ -56,6 +57,39 @@ These are intentional or deferred; recorded here so an agent is not surprised
   daemon re-stages through the same host-side invariants a launch enforces),
   and its `dry_run` form is the only way to learn which paths diverged without
   running a command in the guest and being refused. Refs: MGIT-76, ADR-011
+
+## Live egress policy is on MCP on purpose (MGIT-72)
+
+`mgit_sandbox_policy` is the second sandbox verb offered over MCP (after
+`mgit_sandbox_sync`), and for the same reason: an **agent is its intended
+caller**, not an operator. The
+sequence it exists for is one an agent runs unattended:
+
+1. grant package-registry egress, `npm install` / `pip install`,
+2. revoke it,
+3. run the untrusted build and tests with the network closed.
+
+Before this, the only way to revoke was to relaunch the sandbox — which
+destroys the environment step 1 just provisioned — so callers held egress open
+for the whole run. Leaving the verb off MCP would have left the agent that
+needs it with nothing to call, which is why it is here while the lifecycle
+verbs are not.
+
+Two properties of the tool are worth knowing before you call it:
+
+- **`action: "revoke"` TERMINATES established connections** unless you pass
+  `drain: true`. That is the opposite of firewall convention and it is
+  deliberate — a draining connection is the exfiltration channel you just
+  revoked, and a hostile guest chooses how long it lives. The reasoning is in
+  ADR-012.
+- **`action: "set"` requires at least one `allow` entry.** An empty `set` and a
+  `revoke` are the same operation underneath, so an empty `set` is refused
+  rather than silently revoking everything.
+
+Every mutation is written to the append-only sandbox audit trail with the task
+binding, the resulting policy, and how many established flows it terminated.
+`action: "show"` reports the policy **in force**, which after a mutation is not
+the launch-time policy on `mgit sandbox status`.
 
 ## REST scope (decision record, MGIT-52)
 
