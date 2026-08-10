@@ -9,12 +9,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // ErrConflict is returned when a blocked plan is handed to Apply. The
 // all-or-nothing guarantee is enforced here rather than left to the caller's
-// discipline. Refs: MGIT-71
-var ErrConflict = errors.New("worktree sync blocked by guest-side changes")
+// discipline.
+//
+// It IS model.ErrWorktreeSyncConflict, not a copy: the refusal crosses the
+// manager, the service, the control plane and the CLI, and every one of those
+// layers must be able to classify it as a conflict rather than parse its text.
+// Refs: MGIT-71, MGIT-76
+var ErrConflict = model.ErrWorktreeSyncConflict
 
 // ErrUnsafePath is returned when a plan names a path that would resolve
 // outside the tree being written. Refs: SEC-03

@@ -17,7 +17,7 @@
 // (a host-side directory write where the guest's worktree is a shared host
 // directory, a guest-mediated push where it is a block image).
 //
-// Refs: MGIT-71, SEC-03, ADR-005, ADR-011
+// Refs: MGIT-71, MGIT-76, FR-17.40, SEC-03, ADR-005, ADR-011
 package worktreesync
 
 import (

@@ -53,8 +53,24 @@ func (c *Client) dialGreeted(ctx context.Context) (net.Conn, error) {
 }
 
 // roundTrip sends one request and returns the daemon's response, mapping a
-// response-level error to a Go error. Used by the non-streaming verbs.
+// response-level error to a Go error and DISCARDING the body. Used by the
+// non-streaming verbs, whose payloads carry nothing useful on failure.
 func (c *Client) roundTrip(ctx context.Context, req *controlproto.Request) (*controlproto.Response, error) {
+	resp, err := c.roundTripRaw(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != "" {
+		return nil, fmt.Errorf("sandbox: %s", resp.Error)
+	}
+	return resp, nil
+}
+
+// roundTripRaw sends one request and returns the daemon's response VERBATIM,
+// reporting only transport failures. A verb whose failure reply carries data
+// the caller needs — sync, whose refusal names the conflicting paths — uses
+// this and maps the response-level error itself. Refs: MGIT-76
+func (c *Client) roundTripRaw(ctx context.Context, req *controlproto.Request) (*controlproto.Response, error) {
 	conn, err := c.dialGreeted(ctx)
 	if err != nil {
 		return nil, err
@@ -69,10 +85,26 @@ func (c *Client) roundTrip(ctx context.Context, req *controlproto.Request) (*con
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: read response: %w", err)
 	}
-	if resp.Error != "" {
-		return nil, fmt.Errorf("sandbox: %s", resp.Error)
-	}
 	return resp, nil
+}
+
+// SyncWorktree re-stages the task's host worktree into its running sandbox,
+// or — with DryRun — asks only for the classification.
+//
+// A conflict comes back as an error AND a report: the error so a caller cannot
+// mistake a refusal for a sync, the report so it can name every diverged path
+// without asking again. Refs: MGIT-76, ADR-011
+func (c *Client) SyncWorktree(ctx context.Context, taskID string, opts model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error) {
+	resp, err := c.roundTripRaw(ctx, &controlproto.Request{
+		Kind: controlproto.KindSync, Sync: &controlproto.SyncArgs{TaskID: taskID, Sync: opts},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != "" {
+		return resp.Synced, fmt.Errorf("sandbox: %s", resp.Error)
+	}
+	return resp.Synced, nil
 }
 
 // Launch registers a sandbox for a task and returns its info (lazy: the VM

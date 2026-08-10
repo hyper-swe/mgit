@@ -24,6 +24,13 @@ type SandboxDispatcher interface {
 	List(ctx context.Context) ([]model.SandboxInfo, error)
 	Remove(ctx context.Context, taskID string, force bool) error
 	Status(ctx context.Context, taskID string) (*model.SandboxInfo, error)
+	// SyncWorktree re-stages a task's host worktree into its running guest,
+	// or (DryRun) reports the classification without touching it. It is part
+	// of the core verb set rather than an optional collaborator because a
+	// daemon that serves exec MUST be able to answer "is the guest running
+	// the code the host has" — the backend, not the daemon, is where the
+	// capability can legitimately be absent. Refs: MGIT-76, ADR-011
+	SyncWorktree(ctx context.Context, taskID string, opts model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error)
 }
 
 // SandboxLander serves the land verb. It is the daemon's ENTIRE land
@@ -106,6 +113,8 @@ func (d *Daemon) dispatch(ctx context.Context, conn net.Conn, req *controlproto.
 		d.serveGrants(ctx, conn, req.Grants)
 	case controlproto.KindGrant:
 		d.serveGrant(ctx, conn, req.Grant)
+	case controlproto.KindSync:
+		d.serveSync(ctx, conn, req.Sync)
 	default:
 		d.reply(conn, &controlproto.Response{},
 			fmt.Errorf("controlproto kind %#x not served by this daemon", req.Kind))
@@ -174,6 +183,26 @@ func (d *Daemon) serveGrant(ctx context.Context, conn net.Conn, args *controlpro
 	d.reply(conn, &controlproto.Response{Granted: &controlproto.GrantResult{
 		Capability: grant.Capability, DestIP: grant.ObservedDestIP, DestPort: grant.ObservedDestPort,
 	}}, nil)
+}
+
+// serveSync re-stages a task's host worktree into its running guest, or
+// reports the classification for a dry run.
+//
+// It does NOT use reply(), which collapses a failed op to its error string.
+// A conflict refusal must carry BOTH: the error, so the caller cannot mistake
+// it for success, and the classification, so the refusal names every diverged
+// path. Discovering those paths is the capability this verb adds, and making a
+// caller re-derive them would mean asking again against a tree that may
+// already have moved. Every field is host-computed (SEC-05).
+// Refs: MGIT-76, ADR-011
+func (d *Daemon) serveSync(ctx context.Context, conn net.Conn, args *controlproto.SyncArgs) {
+	report, err := d.cfg.Service.SyncWorktree(ctx, args.TaskID, args.Sync)
+	resp := &controlproto.Response{Synced: report}
+	if err != nil {
+		d.cfg.Logger.Warn("sandboxd op failed", "event", "op_error", "error", err.Error())
+		resp.Error = err.Error()
+	}
+	d.writeResponse(conn, resp)
 }
 
 // reply writes a success response, or an error response carrying a

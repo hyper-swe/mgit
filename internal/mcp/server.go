@@ -1,5 +1,5 @@
 // Package mcp implements the MCP (Model Context Protocol) server for mgit.
-// Provides 15 core tools for LLM agent integration via stdio transport.
+// Provides 16 core tools for LLM agent integration via stdio transport.
 // Refs: FR-10, MGIT-5.2.1
 package mcp
 
@@ -25,7 +25,8 @@ import (
 type Option func(*config)
 
 type config struct {
-	locker *lock.Guarder
+	locker         *lock.Guarder
+	sandboxConnect SandboxConnector
 }
 
 // WithLocker makes every tool call acquire the repo process lock for the
@@ -52,6 +53,10 @@ type Server struct {
 	config    *service.ConfigService
 	sync      *service.SyncService
 	wtStore   *gitstore.WorktreeStore
+	// sandboxConnect resolves the sandbox daemon for mgit_sandbox_sync. Nil
+	// when the server was built without one; the tool then reports the daemon
+	// unavailable rather than fabricating a result. Refs: MGIT-76
+	sandboxConnect SandboxConnector
 }
 
 // NewServer creates an MCP server with all mgit tools registered.
@@ -108,6 +113,8 @@ func NewServer(
 		config:   cfgSvc,
 		sync:     sync,
 		wtStore:  ws,
+
+		sandboxConnect: cfg.sandboxConnect,
 	}
 
 	s.registerTools()
@@ -179,7 +186,7 @@ func (s *Server) ToolDocs() []ToolDoc {
 	return out
 }
 
-// registerTools registers all 15 core MCP tools.
+// registerTools registers all 16 core MCP tools.
 // Refs: FR-10.2, FR-10.3
 func (s *Server) registerTools() {
 	// Core tools (5)
@@ -272,6 +279,17 @@ func (s *Server) registerTools() {
 		mcp.WithString("path", mcp.Required(), mcp.Description("Worktree path")),
 		mcp.WithBoolean("force", mcp.Description("Force remove even with uncommitted changes")),
 	), s.worktreeRemoveTool)
+
+	// Sandbox tool (1) — the one containment verb an agent needs BETWEEN
+	// rounds. Registered unconditionally so the documented surface does not
+	// depend on wiring; without a daemon connector it reports so. Refs: MGIT-76
+	s.mcpServer.AddTool(mcp.NewTool("mgit_sandbox_sync",
+		mcp.WithDescription("Re-stage the host worktree into a task's running sandbox; "+
+			"dry_run reports the classification (including every conflict) without touching the guest"),
+		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID whose sandbox receives the worktree")),
+		mcp.WithBoolean("force", mcp.Description("Overwrite paths the guest changed since delivery (each is reported)")),
+		mcp.WithBoolean("dry_run", mcp.Description("Classify only; deliver nothing")),
+	), s.sandboxSyncTool)
 }
 
 // --- Tool Handlers ---

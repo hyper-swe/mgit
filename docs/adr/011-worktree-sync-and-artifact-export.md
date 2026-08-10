@@ -2,7 +2,7 @@
 
 **Status:** accepted (design), implementation in progress
 **Date:** 2026-08-09
-**Refs:** MGIT-71, MGIT-72, MGIT-73, SEC-03, SEC-04, SEC-05, SEC-10, ADR-005, ADR-010
+**Refs:** MGIT-71, MGIT-72, MGIT-73, MGIT-76, SEC-03, SEC-04, SEC-05, SEC-10, ADR-005, ADR-010
 
 These three capability gaps are one design conversation. MGIT-71 moves files
 host→guest, MGIT-73 moves them guest→host, and MGIT-72 changes policy on a
@@ -94,18 +94,37 @@ the reason this feature had to be validated on a real VM rather than in a
 unit test.
 
 **When it runs.** Automatically before an exec when the host worktree has
-changed (cheap manifest comparison; unchanged means no work at all). An exec
-blocked by a conflict fails closed naming the conflicting paths — an exec that
-silently runs against stale code is precisely the reported defect.
+changed (cheap manifest comparison; unchanged means no work at all), plus an
+explicit `mgit sandbox sync` for control. An exec blocked by a conflict fails
+closed naming the conflicting paths — an exec that silently runs against stale
+code is precisely the reported defect.
 
-*Amended 2026-08-09.* This paragraph originally also promised "an explicit
-`mgit sandbox sync` for control." Only the automatic half shipped in v0.4.2;
-the verb does not exist, which the HyperSwe lane found by reading the ADR and
-then the CLI. The gap is real rather than cosmetic — without the verb there is
-no way to re-stage without running something in the guest, and no way to obtain
-the conflict report except by attempting work and being refused. `MGIT-76`
-tracks shipping it. The text now describes what the binary does; the ADR should
-not be the reason someone expects a command that isn't there.
+The explicit verb is not a convenience wrapper around the automatic one; it
+exists because two things are unobtainable without it. It **re-stages without
+running anything in the guest** — the integrating lane's workaround was a
+probing no-op exec every round, which is this verb spelled awkwardly at the
+cost of a guest process per round. And `--dry-run` **returns the collision
+classification without touching the guest**, so "which paths diverged" stops
+being discoverable only by attempting work and being refused. `--force` carries
+the pre-exec semantics unchanged: it overwrites, and every destroyed path is
+reported and audited.
+
+It is a CALLER, not a second mechanism. The verb, the automatic pre-exec stage
+and a launch all run the same `internal/sandboxd/staging` build and the same
+collision policy, so a sync can never deliver what either of the others would
+have refused — and that single-path property is the whole security argument for
+staging over a live mount. A dry run stops after the classification, before any
+write, and leaves the delivery manifest where it was; a query that advanced the
+baseline would make the next real sync believe the work was already delivered.
+It is never recorded as a sync in the audit trail either: an audit that cannot
+tell a query from a delivery is worse than none.
+
+On a backend that delivers the worktree as a launch-time image (firecracker),
+the verb **fails closed naming the limitation** rather than reporting a sync
+that did not happen — the host cannot write into an ext4 image the guest has
+mounted, and a verb that claims to have run is how stale code gets executed.
+Reporting the refusal is the honest answer; re-launching is the remedy.
+(`MGIT-76` shipped the verb; `MGIT-71` shipped the mechanism.)
 
 ## MGIT-72 — established flows: kill, not drain
 
@@ -156,7 +175,9 @@ Every deny assertion needs a matching allow assertion, and a denial must be
 distinguishable by reason from a broken path:
 
 - **sync** — prove the guest sees *new* content, not merely that stale content
-  is gone; and that a conflict is refused with its paths named.
+  is gone; and that a conflict is refused with its paths named. The explicit
+  verb needs a **positive control on the same running VM**: a sync that really
+  delivers, so a refusal is distinguishable from a broken path.
 - **revoke** — prove allow-with-real-bytes *then* deny-by-reason, both
   asserted, on one running sandbox.
 - **export** — prove a real tree lands intact *and* that a malicious one is

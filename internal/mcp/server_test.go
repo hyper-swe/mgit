@@ -25,9 +25,17 @@ func setupTestMCP(t *testing.T) *Server {
 	return srv
 }
 
+// setupTestMCPWith builds a test server with extra options wired (e.g. the
+// sandbox connector). Refs: MGIT-76
+func setupTestMCPWith(t *testing.T, opts ...Option) *Server {
+	t.Helper()
+	srv, _ := setupTestMCPWithRepo(t, opts...)
+	return srv
+}
+
 // setupTestMCPWithRepo also returns the backing repository, for tests that
 // need to stage real working files (content-bearing commits, MGIT-54).
-func setupTestMCPWithRepo(t *testing.T) (*Server, *gitstore.Repository) {
+func setupTestMCPWithRepo(t *testing.T, opts ...Option) (*Server, *gitstore.Repository) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	clock := fixedClock()
@@ -41,7 +49,7 @@ func setupTestMCPWithRepo(t *testing.T) (*Server, *gitstore.Repository) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = idx.Close() })
 
-	return NewServer(repo, idx), repo
+	return NewServer(repo, idx, opts...), repo
 }
 
 func makeToolReq(args map[string]any) mcptypes.CallToolRequest {

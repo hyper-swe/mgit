@@ -33,6 +33,11 @@ type sandboxClient interface {
 	// confined-agent, MGIT-11.11.4), proxying the supplied stdin/stdout/
 	// stderr and returning the session exit code.
 	Shell(ctx context.Context, taskID string, stdin io.Reader, stdout, stderr io.Writer) (int, error)
+	// SyncWorktree re-stages the task's host worktree into its running guest,
+	// or (DryRun) reports the classification without touching it. A conflict
+	// returns BOTH the error and the report naming what it refused.
+	// Refs: MGIT-76
+	SyncWorktree(ctx context.Context, taskID string, opts model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error)
 }
 
 // connectFunc resolves a live daemon (activation + greeting-verified) and
@@ -72,6 +77,7 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 		sandboxGrantsCmd(connect), // list pending capability requests (deny->prompt, MGIT-11.9.4)
 		sandboxGrantCmd(connect),  // approve one pending capability request
 		sandboxShellCmd(connect),  // T2 confined-agent interactive attach (MGIT-11.11.4)
+		sandboxSyncCmd(connect),   // re-stage the host worktree into a running guest (MGIT-76)
 		sandboxImageCmd(),
 		sandboxBaseCmd(),              // host-local image registry (no daemon)
 		sandboxClaudeHookCmd(connect), // hidden: Claude Code PreToolUse hook (MGIT-11.11.1)

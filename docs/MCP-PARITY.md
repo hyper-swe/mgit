@@ -26,7 +26,8 @@ Legend: ✓ full · ~ partial (see notes) · ✗ not offered.
 | worktree add/list/remove | ✓ | ✓ | ✗ | `mgit_worktree_*` (MGIT-45) |
 | checkout / cherry-pick / merge | ✓ | ✗ | ✗ | history-editing verbs, CLI-only by design |
 | gc / restore / import / bundle | ✓ | ✗ | ✗ | maintenance verbs, CLI-only |
-| run / sandbox (FR-17) | ✓ | ✗ | ✗ | containment lifecycle, CLI-only (needs the daemon) |
+| sandbox sync (FR-17.40) | ✓ | ✓ | ✗ | `mgit_sandbox_sync` — re-stage the host worktree into a running guest; `dry_run` returns the conflict classification (MGIT-76) |
+| run / sandbox lifecycle (FR-17) | ✓ | ✗ | ✗ | launch/exec/shell/land/grants/image: CLI-only (see **Documented gaps**) |
 
 ## Documented MCP gaps
 
@@ -42,9 +43,19 @@ These are intentional or deferred; recorded here so an agent is not surprised
   base (ADR-008); pinning an explicit base is CLI-only for now
   (`mgit work --base <ref>`).
 - **`mgit_diff` has no `--stat` / format switch.** It returns a unified diff.
-- **History-editing, maintenance, and sandbox verbs are CLI-only** — they are
-  either destructive (checkout/cherry-pick/merge), local maintenance
-  (gc/restore/import/bundle), or require the sandbox daemon (run/sandbox).
+- **History-editing and maintenance verbs are CLI-only** — they are either
+  destructive (checkout/cherry-pick/merge) or local maintenance
+  (gc/restore/import/bundle).
+- **The sandbox LIFECYCLE verbs are CLI-only** (`launch`, `exec`, `shell`,
+  `land`, `grants`/`grant`, `image`, `list`/`status`/`remove`). Provisioning a
+  microVM, approving a capability escalation, and landing guest commits are
+  operator decisions with host-side consequences; an agent reaches its sandbox
+  by having its shell routed through `mgit run`, not by driving the lifecycle.
+  `mgit_sandbox_sync` is the deliberate exception: it is the one sandbox
+  operation an agent needs BETWEEN rounds, it grants no new authority (the
+  daemon re-stages through the same host-side invariants a launch enforces),
+  and its `dry_run` form is the only way to learn which paths diverged without
+  running a command in the guest and being refused. Refs: MGIT-76, ADR-011
 
 ## REST scope (decision record, MGIT-52)
 

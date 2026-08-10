@@ -153,3 +153,24 @@ func (c *CeilingManager) Remove(ctx context.Context, id string, force bool) erro
 func (c *CeilingManager) Resolve(ctx context.Context, id string) (*model.SandboxInfo, error) {
 	return c.inner.Resolve(ctx, id)
 }
+
+// SyncWorktree forwards the OPTIONAL worktree-sync capability to the inner
+// backend, and reports it unsupported when the inner backend does not have it.
+//
+// It is here because this decorator wraps EVERY backend: an optional
+// capability a decorator does not forward simply disappears, and the service's
+// type assertion would then see an unsyncable sandbox no matter which backend
+// is running. The forward is unconditional in both directions — never
+// inventing the capability either, so firecracker's real limitation stays a
+// refusal rather than becoming a silent success.
+//
+// The ceiling itself has nothing to admit here: a sync consumes no VM slot and
+// no additional memory. Refs: MGIT-76, FR-17.26, ADR-011
+func (c *CeilingManager) SyncWorktree(ctx context.Context, id string, opts model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error) {
+	syncer, ok := c.inner.(model.WorktreeSyncer)
+	if !ok {
+		return nil, fmt.Errorf("%w: backend does not deliver the worktree as a live shared directory",
+			model.ErrSandboxSyncUnsupported)
+	}
+	return syncer.SyncWorktree(ctx, id, opts)
+}
