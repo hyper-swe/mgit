@@ -106,6 +106,23 @@ var (
 	// explicitly acknowledged). Refs: FR-17.15, FR-17.20
 	ErrSandboxBackendUnavailable = errors.New("no sandbox backend available on this platform")
 
+	// ErrSandboxSyncUnsupported indicates this sandbox's backend cannot
+	// propagate host worktree changes into a RUNNING guest. Firecracker
+	// delivers the worktree as an ext4 image built at launch and mounted by
+	// the guest, so the host cannot write into it without corrupting it; such
+	// a sandbox keeps launch-time-copy semantics and must be re-launched to
+	// pick up host changes. Reported rather than papered over: a sync that
+	// silently no-ops and claims success is how stale code gets executed.
+	// Refs: MGIT-71, MGIT-76, ADR-011
+	ErrSandboxSyncUnsupported = errors.New("this sandbox backend cannot sync a running guest's worktree")
+
+	// ErrWorktreeSyncConflict indicates a host->guest worktree sync was
+	// refused because the guest changed paths the host also changed. Nothing
+	// is applied — not even the unblocked paths — and the conflicting paths
+	// are named. Land the guest's work, or force the sync and accept that
+	// each overwritten path is destroyed and recorded. Refs: MGIT-71, ADR-011
+	ErrWorktreeSyncConflict = errors.New("worktree sync blocked by guest-side changes")
+
 	// ErrLandVerificationFailed indicates dual-hash or task-binding
 	// verification failed during sandbox land; nothing was imported.
 	// Refs: FR-17.5, FR-17.20, FR-17.24

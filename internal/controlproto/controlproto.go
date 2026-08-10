@@ -39,6 +39,7 @@ const (
 	KindStatus byte = 'S'
 	KindGrants byte = 'G' // list a task's pending capability requests
 	KindGrant  byte = 'A' // approve one pending capability request
+	KindSync   byte = 'Y' // re-stage a task's host worktree into its running guest
 )
 
 // Ceilings enforced before allocation (the daemon supervises all VMs; a
@@ -90,6 +91,15 @@ type GrantArgs struct {
 	Key    string `json:"key"`
 }
 
+// SyncArgs re-stages a task's host worktree into its RUNNING sandbox, or —
+// with DryRun — asks only for the classification. The options travel as the
+// model type so the CLI, the daemon and the backend cannot disagree about what
+// a flag means. Refs: MGIT-76
+type SyncArgs struct {
+	TaskID string                    `json:"task_id"`
+	Sync   model.WorktreeSyncOptions `json:"sync,omitempty"`
+}
+
 // PendingGrant is one capability request awaiting operator approval, carrying
 // only host-observed facts (SEC-05): the capability, the real destination the
 // host saw, and the Key to approve it with. Refs: FR-17.12, SEC-05
@@ -119,6 +129,7 @@ type Request struct {
 	Status *TaskRef                    `json:"status,omitempty"`
 	Grants *TaskRef                    `json:"grants,omitempty"`
 	Grant  *GrantArgs                  `json:"grant,omitempty"`
+	Sync   *SyncArgs                   `json:"sync,omitempty"`
 }
 
 // LandResult summarizes a completed land.
@@ -137,12 +148,18 @@ type Response struct {
 	Landed  *LandResult         `json:"landed,omitempty"`  // land
 	Pending []PendingGrant      `json:"pending,omitempty"` // grants
 	Granted *GrantResult        `json:"granted,omitempty"` // grant
+	// Synced carries a worktree sync's classification. It is set on SUCCESS
+	// and, deliberately, on a conflict REFUSAL as well — alongside Error —
+	// because a refusal that cannot name the paths it refused is not
+	// actionable, and re-deriving them would cost a second round trip against
+	// a tree that may have moved. Refs: MGIT-76
+	Synced *model.WorktreeSyncReport `json:"synced,omitempty"` // sync
 }
 
 // validKind reports whether k is a known request kind.
 func validKind(k byte) bool {
 	switch k {
-	case KindLaunch, KindExec, KindLand, KindList, KindRemove, KindStatus, KindGrants, KindGrant:
+	case KindLaunch, KindExec, KindLand, KindList, KindRemove, KindStatus, KindGrants, KindGrant, KindSync:
 		return true
 	default:
 		return false
@@ -198,6 +215,7 @@ func (req *Request) Validate() error {
 		KindStatus: req.Status != nil,
 		KindGrants: req.Grants != nil,
 		KindGrant:  req.Grant != nil,
+		KindSync:   req.Sync != nil,
 	}
 	for k, present := range set {
 		if present && k != req.Kind {
@@ -226,6 +244,11 @@ func (req *Request) Validate() error {
 	case KindGrant:
 		if req.Grant == nil || req.Grant.TaskID == "" || req.Grant.Key == "" {
 			return fmt.Errorf("controlproto: grant request missing task_id or key")
+		}
+		return nil
+	case KindSync:
+		if req.Sync == nil || req.Sync.TaskID == "" {
+			return fmt.Errorf("controlproto: sync request missing task_id")
 		}
 		return nil
 	case KindList:

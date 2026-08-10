@@ -33,11 +33,15 @@ type fakeDispatcher struct {
 	removed     string
 	removeForce bool
 	statusTask  string
+	syncTask    string
+	syncOpts    model.WorktreeSyncOptions
 
 	execResult *model.ExecResult
 	listResult []model.SandboxInfo
+	syncReport *model.WorktreeSyncReport
+	syncErr    error
 	opErr      error
-	panicOn    string // "register" | "exec" | "list" | "remove" | "status"
+	panicOn    string // "register" | "exec" | "list" | "remove" | "status" | "sync"
 }
 
 func (f *fakeDispatcher) maybePanic(op string) {
@@ -96,6 +100,17 @@ func (f *fakeDispatcher) Status(_ context.Context, taskID string) (*model.Sandbo
 		return nil, f.opErr
 	}
 	return &model.SandboxInfo{ID: "01JXSBSANDBOX", TaskID: taskID, State: model.StateRunning}, nil
+}
+
+// SyncWorktree records the sync request and returns the canned report. It has
+// its own error field: a sync test must be able to induce a REFUSAL without
+// also failing every other verb. Refs: MGIT-76
+func (f *fakeDispatcher) SyncWorktree(_ context.Context, taskID string, opts model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error) {
+	f.maybePanic("sync")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.syncTask, f.syncOpts = taskID, opts
+	return f.syncReport, f.syncErr
 }
 
 func dispatchLaunchOpts() model.SandboxLaunchOptions {

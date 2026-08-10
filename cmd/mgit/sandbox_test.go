@@ -45,6 +45,11 @@ type fakeSandboxClient struct {
 
 	shellTask  string
 	shellStdin string
+
+	syncTask   string
+	syncOpts   model.WorktreeSyncOptions
+	syncReport *model.WorktreeSyncReport
+	syncErr    error
 }
 
 func (f *fakeSandboxClient) Launch(_ context.Context, opts model.SandboxLaunchOptions) (*model.SandboxInfo, error) {
@@ -120,6 +125,14 @@ func (f *fakeSandboxClient) Grant(_ context.Context, taskID, key string) (*contr
 		return f.grantResult, nil
 	}
 	return &controlproto.GrantResult{Capability: "egress", DestIP: "203.0.113.7", DestPort: 443}, nil
+}
+
+// SyncWorktree records the sync request and returns the canned report. syncErr
+// is separate from opErr so a sync test can induce a REFUSAL without also
+// failing every other verb. Refs: MGIT-76
+func (f *fakeSandboxClient) SyncWorktree(_ context.Context, taskID string, opts model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error) {
+	f.syncTask, f.syncOpts = taskID, opts
+	return f.syncReport, f.syncErr
 }
 
 // runSandbox executes the sandbox command tree with the given args and a

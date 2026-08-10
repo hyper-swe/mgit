@@ -33,6 +33,7 @@ func TestToolDocs_CoversRegisteredSurface(t *testing.T) {
 		"mgit_worktree_add":    {"agent_id", "branch", "path", "task_id"},
 		"mgit_worktree_list":   {},
 		"mgit_worktree_remove": {"force", "path"},
+		"mgit_sandbox_sync":    {"dry_run", "force", "task_id"},
 	}
 
 	require.Len(t, docs, len(want), "ToolDocs must cover exactly the documented tool set")

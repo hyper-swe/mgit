@@ -126,13 +126,23 @@ func productionSandboxConnect(ctx context.Context) (sandboxClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get working directory: %w", err)
 	}
-	// Resolve the OWNING repo, not the raw cwd: from inside a linked worktree
-	// (whose .mgit is a directory holding only the marker + shims) the sandbox
-	// daemon, socket key, and host root all belong to the SHARED PARENT repo —
-	// keying them on the worktree spawned a second daemon against a
+	return sandboxConnectFor(ctx, cwd)
+}
+
+// sandboxConnectFor resolves the daemon owning the repo that contains dir.
+//
+// The directory is a parameter rather than always the process cwd because a
+// long-lived server can be started from anywhere and told which project to
+// serve (`mgit serve --project`): keying the daemon on ITS cwd would address a
+// different repo's sandboxes, or none. Refs: MGIT-57, MGIT-60, MGIT-76
+func sandboxConnectFor(ctx context.Context, dir string) (sandboxClient, error) {
+	// Resolve the OWNING repo, not the raw directory: from inside a linked
+	// worktree (whose .mgit is a directory holding only the marker + shims) the
+	// sandbox daemon, socket key, and host root all belong to the SHARED PARENT
+	// repo — keying them on the worktree spawned a second daemon against a
 	// nonexistent host root, which died, breaking `mgit run` inside the very
 	// worktree `mgit work --sandbox` creates. Refs: MGIT-57
-	repoRoot, err := sandboxRepoRoot(cwd)
+	repoRoot, err := sandboxRepoRoot(dir)
 	if err != nil {
 		return nil, err
 	}

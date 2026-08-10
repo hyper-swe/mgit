@@ -568,6 +568,7 @@ Branch commits behind main: 0
 | `mgit_worktree_add` | path, task_id, agent_id | Create linked worktree bound to task |
 | `mgit_worktree_list` | (none) | List all worktrees with status |
 | `mgit_worktree_remove` | path, force | Remove linked worktree |
+| `mgit_sandbox_sync` | task_id (required), force, dry_run | Re-stage the host worktree into a task's running sandbox; `dry_run` returns the collision classification without touching the guest (FR-17.40) |
 
 **FR-10.3** All MCP tool responses MUST be structured JSON (no human-readable formatting needed — MCP is always structured).
 
@@ -1048,12 +1049,12 @@ var (
 | ADR-005 Goal | Requirement(s) |
 |---|---|
 | 1 — no per-command permission prompts | FR-17.9, FR-17.11, FR-17.12 |
-| 2 — host OS/filesystem unreachable from sandboxed code | FR-17.3, FR-17.4, FR-17.14, FR-17.15 |
+| 2 — host OS/filesystem unreachable from sandboxed code | FR-17.3, FR-17.4, FR-17.14, FR-17.15, FR-17.40 |
 | 3 — platform agnostic, one CLI surface | FR-17.2, FR-17.15, FR-17.16, FR-17.21, FR-17.39 |
 | 4 — per-sandbox network policy | FR-17.7, FR-17.8, FR-17.13 |
 | 5 — full provenance, append-only audit | FR-17.1, FR-17.5, FR-17.6, FR-17.18 |
 | 6 — disposable without losing landed work | FR-17.19, FR-17.20, FR-17.9 |
-| 7 — seamless, zero-touch lifecycle | FR-17.9, FR-17.10, FR-17.11, FR-17.22 |
+| 7 — seamless, zero-touch lifecycle | FR-17.9, FR-17.10, FR-17.11, FR-17.22, FR-17.40 |
 | 8 — lightweight, near-zero idle footprint | FR-17.10, FR-17.16, NFR-17.1, NFR-17.2, NFR-17.3, NFR-17.4, NFR-17.5, NFR-17.6, NFR-17.7 |
 
 **FR-17.24** Hash-on-write land verification (SEC-06, F-03). Land verification MUST hash the exact buffer that is imported — a single read of each object, hashed and written from the same bytes. Verification MUST NOT hash one fetch and import a second fetch (verify-then-import TOCTOU). A guest that serves different bytes to a re-fetch MUST cause `ErrLandVerificationFailed`, never a clean import.
@@ -1090,6 +1091,16 @@ var (
 - **macOS host → Linux microVM** (`vzf`, FR-17.15) as the documented exception: macOS cannot host nested macOS guests and Mac developers target Linux/containers.
 
 The `land` integrity guarantees (dual hash per ADR-002, task-ID binding, host-anchored attestation FR-17.6) are OS-agnostic and MUST hold identically regardless of guest OS. WSL2 (shared utility VM, violates FR-17.1), LCOW (internal-only API, client-deprecated), QEMU+WHPX, and Cloud Hypervisor (Linux-host only) are rejected for the Windows backend — see ADR-006.
+
+**FR-17.40** Host→guest worktree sync (ADR-011). The guest's worktree is a staged COPY, not a live view (FR-17.3, SEC-03): a live share cannot host-side exclude an in-worktree store, rebind `.mgit` to the sandbox-local store, or reject an escaping symlink before the guest follows it, so it cannot fail closed. Host edits MUST therefore reach a running guest by RE-STAGING through the same `internal/sandboxd/staging` invariants a launch enforces — a sync MUST NOT be able to deliver anything a launch would have refused.
+
+- **When.** Automatically before an exec when the host worktree has changed (established by a delivery-manifest comparison; unchanged means no work at all), and on demand via `mgit sandbox sync --task <ID>`.
+- **Collision policy.** Host-delivered and guest-untouched paths are updated or deleted to match the host. A path the guest changed since delivery is a **CONFLICT**: the sync is refused ENTIRELY (not even its unblocked paths are applied) and every conflicting path MUST be named with its reason. Guest-created paths the host never delivered MUST never be touched or deleted.
+- **`--force`** MUST overwrite conflicting paths and MUST report and audit every path destroyed.
+- **`--dry-run`** MUST return the same classification without writing to the guest and without advancing the delivery manifest, so the conflict report is obtainable without executing anything in the guest.
+- **Atomicity.** A sync MUST hold the sandbox's exec lock, so no command observes a partially applied tree, and a failed sync MUST leave the delivery manifest unchanged so the next attempt re-derives the same work.
+- **Fail closed per backend.** A backend that delivers the worktree as a launch-time image (firecracker's ext4 image, which the guest has mounted) MUST report the limitation and name re-launch as the remedy. It MUST NOT no-op and report success: a sync that claims to have run is how stale code gets executed.
+- **Audit.** A sync that changed what the guest runs MUST be recorded with the sandbox, task, and per-class paths. A dry run MUST NOT be recorded as a sync.
 
 **FR-17.37** Security-finding traceability. Every audit finding maps to requirement criteria:
 

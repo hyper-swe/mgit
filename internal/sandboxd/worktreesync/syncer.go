@@ -21,15 +21,32 @@ const manifestName = "sync-manifest.json"
 // lives beside the live staged tree, inside the sandbox state dir.
 const stagedSubdir = "worktree-sync-candidate"
 
-// Result reports what a sync did, for the caller and for the audit record.
+// Result reports what a sync did — or, for a dry run, what it WOULD do — for
+// the caller and for the audit record.
 type Result struct {
 	Updated    []string // paths delivered into the guest
 	Deleted    []string // paths removed from the guest
 	Overridden []string // guest-modified paths overwritten by --force
 	Skipped    bool     // the host worktree was unchanged; nothing was done
+	// DryRun records that nothing was applied: every other field describes
+	// what a real sync would have done. It is set from the request rather
+	// than inferred, so a caller reading a Result can never mistake a
+	// classification for a delivery. Refs: MGIT-76
+	DryRun bool
+	// Conflicts are the paths that block (or, under Force, that were
+	// overwritten). A real sync reports them through ConflictError and
+	// applies nothing; a dry run reports them HERE, which is the whole point
+	// of the query — today the only way to discover a conflict is to attempt
+	// work and be refused. Refs: MGIT-76
+	Conflicts []Conflict
+	// Blocked reports that a real, unforced sync would be refused. Only
+	// meaningful on a dry run: a blocked real sync returns ConflictError
+	// instead of a Result. Refs: MGIT-76
+	Blocked bool
 }
 
-// Changed reports whether the sync altered the guest's tree.
+// Changed reports whether the sync altered the guest's tree (or, on a dry run,
+// whether it would).
 func (r Result) Changed() bool { return len(r.Updated) > 0 || len(r.Deleted) > 0 }
 
 // ConflictError is the refusal a blocked sync returns. It names every
@@ -57,6 +74,11 @@ type Request struct {
 	StateDir         string // sandbox state dir: holds the manifest and the staged trees
 	GuestTree        string // the tree the guest actually sees
 	Force            bool   // overwrite guest-modified paths (each one is reported)
+	// DryRun classifies without applying: the same staging build and the same
+	// collision policy run, then the Result is returned and the guest's tree
+	// and the delivery baseline are both left exactly as they were.
+	// Refs: MGIT-76
+	DryRun bool
 }
 
 // Sync propagates host worktree changes into a running sandbox's tree.
@@ -85,25 +107,25 @@ func Sync(req Request) (Result, error) {
 		return Result{}, fmt.Errorf("worktree sync: re-stage: %w", err)
 	}
 
-	host, err := BuildManifest(candidate)
-	if err != nil {
-		return Result{}, err
-	}
-	delivered, err := LoadManifest(req.StateDir)
-	if err != nil {
-		return Result{}, err
-	}
-	guest, err := BuildManifest(req.GuestTree)
+	host, delivered, guest, err := views(req, candidate)
 	if err != nil {
 		return Result{}, err
 	}
 
 	plan := Compute(delivered, host, guest)
 	if plan.Empty() {
-		return Result{Skipped: true}, nil
+		return Result{Skipped: true, DryRun: req.DryRun}, nil
 	}
 	if req.Force {
 		plan = plan.Forced()
+	}
+	if req.DryRun {
+		// A query stops HERE — after the same staging build and the same
+		// collision policy a real sync runs, which is what makes the report
+		// trustworthy, but before anything is written. The guest's tree and
+		// the delivery baseline are both left exactly as they were.
+		// Refs: MGIT-76
+		return classify(plan, true), nil
 	}
 	if plan.Blocked() {
 		return Result{}, &ConflictError{Conflicts: plan.Conflicts}
@@ -116,7 +138,33 @@ func Sync(req Request) (Result, error) {
 	if err := SaveManifest(req.StateDir, host); err != nil {
 		return Result{}, err
 	}
-	return Result{Updated: plan.Update, Deleted: plan.Delete, Overridden: plan.Overridden()}, nil
+	return classify(plan, false), nil
+}
+
+// views gathers the three trees the collision policy compares: what the host
+// HAS now (the freshly staged candidate), what it last DELIVERED, and what the
+// GUEST currently has.
+func views(req Request, candidate string) (host, delivered, guest Manifest, err error) {
+	if host, err = BuildManifest(candidate); err != nil {
+		return nil, nil, nil, err
+	}
+	if delivered, err = LoadManifest(req.StateDir); err != nil {
+		return nil, nil, nil, err
+	}
+	if guest, err = BuildManifest(req.GuestTree); err != nil {
+		return nil, nil, nil, err
+	}
+	return host, delivered, guest, nil
+}
+
+// classify renders a computed plan as a Result. dryRun records that nothing
+// was applied, so one shape describes a delivery and a projection without the
+// two being confusable. Refs: MGIT-76
+func classify(plan Plan, dryRun bool) Result {
+	return Result{
+		Updated: plan.Update, Deleted: plan.Delete, Overridden: plan.Overridden(),
+		Conflicts: plan.Conflicts, Blocked: plan.Blocked(), DryRun: dryRun,
+	}
 }
 
 // RecordDelivery writes the delivery baseline for a freshly staged tree. The
