@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a restrictive daemon umask no longer strips modes in EITHER direction
+
+- **The inbound twin of the export defect below, found by looking for it.** Worktree staging copied with `O_CREATE`, whose mode argument the kernel masks with the calling process's umask. `mgit-sandboxd` is a long-lived daemon and does not control the umask it inherits, so under `0077` a host `0755` build script was delivered into the guest at `0700` — an executable the agent then cannot run, with nothing anywhere reporting that the mode changed. Both directions now apply the mode with an explicit `chmod`. Nothing had ever asserted a delivered mode, which is why the same defect sat in both halves. (MGIT-81)
+
 ### Fixed — exported artifacts keep the mode the guest set (macOS/libkrun)
 
 - **An exported `node_modules` tree's `.bin` scripts arrived non-executable**, which blunts exactly the provisioning-cache reuse `mgit sandbox export` exists to enable. It was first recorded as a measured limitation of the share; measuring again, further in, showed it was recoverable. (MGIT-81)

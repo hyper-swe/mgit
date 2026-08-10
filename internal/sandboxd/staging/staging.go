@@ -188,6 +188,13 @@ func copyTree(src, dst string) error {
 }
 
 // copyFile copies a regular file from src to dst, preserving its mode.
+//
+// The mode is applied with an explicit chmod after the create, not left to
+// O_CREATE. The kernel masks an O_CREATE mode with the CALLING process's
+// umask, so a daemon running umask 0077 would deliver a host 0755 file into
+// the guest at 0700 — a build script the agent then cannot execute, with
+// nothing anywhere reporting that the mode changed. The symmetric defect in
+// the outbound direction is MGIT-81. Refs: MGIT-81, FR-17.3, SEC-03
 func copyFile(src, dst string) error {
 	fi, err := os.Lstat(src)
 	if err != nil {
@@ -211,6 +218,9 @@ func copyFile(src, dst string) error {
 	}
 	if err := out.Close(); err != nil {
 		return fmt.Errorf("close %s: %w", dst, err)
+	}
+	if err := os.Chmod(dst, fi.Mode().Perm()); err != nil {
+		return fmt.Errorf("chmod %s: %w", dst, err)
 	}
 	return nil
 }
