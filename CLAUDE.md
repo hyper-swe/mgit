@@ -802,6 +802,13 @@ echo.Start(":8080") → change to "127.0.0.1:8080"
 Run before marking task "done":
 
 ```bash
+# 0. Sandbox backends link libkrun through cgo, and pkg-config finds it only
+#    with this set. Without it `go build`/`go test` still appear to work —
+#    they skip the cgo packages — but `-race` and any libkrun-tagged build
+#    fail with a pkg-config error that names nothing useful. Export it FIRST.
+#    (Homebrew default shown; use `brew --prefix libkrun`/your own prefix.)
+export PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig:$PKG_CONFIG_PATH
+
 # 1. Unit tests (single-threaded)
 go test ./... -count=1
 

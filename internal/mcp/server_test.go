@@ -19,9 +19,9 @@ func fixedClock() func() time.Time {
 	return func() time.Time { return time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC) }
 }
 
-func setupTestMCP(t *testing.T) *Server {
+func setupTestMCP(t *testing.T, opts ...Option) *Server {
 	t.Helper()
-	srv, _ := setupTestMCPWithRepo(t)
+	srv, _ := setupTestMCPWithRepo(t, opts...)
 	return srv
 }
 

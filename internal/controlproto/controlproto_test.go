@@ -218,3 +218,108 @@ func TestControlProto_ResponseReadErrors(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+
+// TestRequest_Policy_RoundTripsAndValidates covers the live egress-policy
+// verbs: a set/revoke carries the replacement allowlist and the drain choice,
+// and a show carries only the task. Refs: MGIT-72
+func TestRequest_Policy_RoundTripsAndValidates(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     Request
+		wantErr bool
+	}{
+		{
+			name: "set_with_entries",
+			req: Request{Kind: KindPolicySet, PolicySet: &PolicyArgs{
+				TaskID: "MGIT-72", Entries: []string{"registry.npmjs.org:443"}}},
+		},
+		{
+			// A revoke is a set with NO entries — the same verb, so a caller
+			// cannot get "revoke" and "set" subtly out of step.
+			name: "revoke_is_an_empty_set",
+			req:  Request{Kind: KindPolicySet, PolicySet: &PolicyArgs{TaskID: "MGIT-72"}},
+		},
+		{
+			name: "drain_opt_in",
+			req:  Request{Kind: KindPolicySet, PolicySet: &PolicyArgs{TaskID: "MGIT-72", Drain: true}},
+		},
+		{
+			name: "show",
+			req:  Request{Kind: KindPolicyShow, PolicyShow: &TaskRef{TaskID: "MGIT-72"}},
+		},
+		{
+			name:    "set_without_task",
+			req:     Request{Kind: KindPolicySet, PolicySet: &PolicyArgs{}},
+			wantErr: true,
+		},
+		{
+			name:    "set_missing_payload",
+			req:     Request{Kind: KindPolicySet},
+			wantErr: true,
+		},
+		{
+			name:    "show_missing_payload",
+			req:     Request{Kind: KindPolicyShow},
+			wantErr: true,
+		},
+		{
+			// Kind and payload must agree: a mismatched pair is malformed, not
+			// silently coerced into whichever one the daemon happens to read.
+			name:    "kind_payload_mismatch",
+			req:     Request{Kind: KindPolicyShow, PolicySet: &PolicyArgs{TaskID: "MGIT-72"}},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			require.NoError(t, WriteRequest(&buf, &tt.req))
+			got, err := ReadRequest(&buf)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.req.Kind, got.Kind)
+			if tt.req.PolicySet != nil {
+				require.NotNil(t, got.PolicySet)
+				assert.Equal(t, tt.req.PolicySet.Entries, got.PolicySet.Entries)
+				assert.Equal(t, tt.req.PolicySet.Drain, got.PolicySet.Drain)
+			}
+		})
+	}
+}
+
+// TestRequest_PolicySet_TooManyEntries_FailsClosed bounds the replacement
+// allowlist before it can drive an allocation or a pathological compile in the
+// single daemon that supervises every VM. Refs: MGIT-72, MGIT-11.10.7
+func TestRequest_PolicySet_TooManyEntries_FailsClosed(t *testing.T) {
+	entries := make([]string, MaxPolicyEntries+1)
+	for i := range entries {
+		entries[i] = "a.example:443"
+	}
+	req := Request{Kind: KindPolicySet, PolicySet: &PolicyArgs{TaskID: "MGIT-72", Entries: entries}}
+
+	var buf bytes.Buffer
+	require.NoError(t, WriteRequest(&buf, &req))
+	_, err := ReadRequest(&buf)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "entries")
+}
+
+// TestResponse_Policy_RoundTrips verifies the outcome a caller reads back:
+// what is now enforced, and what the change did to established flows.
+func TestResponse_Policy_RoundTrips(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, WriteResponse(&buf, &Response{Policy: &PolicyResult{
+		Entries: []string{"registry.npmjs.org:443"}, RuleCount: 1, Killed: 2, Drained: false,
+	}}))
+
+	got, err := ReadResponse(&buf)
+
+	require.NoError(t, err)
+	require.NotNil(t, got.Policy)
+	assert.Equal(t, []string{"registry.npmjs.org:443"}, got.Policy.Entries)
+	assert.Equal(t, 2, got.Policy.Killed)
+}

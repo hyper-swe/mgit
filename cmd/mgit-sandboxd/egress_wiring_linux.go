@@ -36,7 +36,7 @@ const (
 // allowlist-widening granter, and the CapabilityService is installed as the
 // sandbox service's grant revoker so grants die with the sandbox (SEC-05).
 // Refs: FR-17.7, FR-17.8, FR-17.12, SEC-04, SEC-05
-func wireEgress(svc *service.SandboxService, events *index.Store, clock func() time.Time, logger *slog.Logger) *service.CapabilityService {
+func wireEgress(svc *service.SandboxService, events *index.Store, clock func() time.Time, logger *slog.Logger) egressWiring {
 	runner, err := egress.NewRunner(egress.RunnerConfig{
 		Audit:           events,
 		Lookup:          egress.SystemLookup(nil),
@@ -49,9 +49,13 @@ func wireEgress(svc *service.SandboxService, events *index.Store, clock func() t
 	})
 	if err != nil {
 		logger.Error("sandbox egress wiring failed; allowlist mode will fail closed", "error", err.Error())
-		return nil
+		return egressWiring{}
 	}
 	svc.SetEgressController(fcEgressController{runner: runner})
+	// The same runner is the LIVE policy enforcer for this backend: its
+	// authorizer is consulted per connection, so a mutated allowlist decides
+	// the next flow with no VM involvement. Refs: MGIT-72
+	wiring := egressWiring{Policy: runnerPolicyController{runner: runner}}
 
 	// Capability escalation: a host-observed egress denial can be escalated to a
 	// scoped, audited grant that widens THIS runner's live allowlist; the grant
@@ -61,7 +65,7 @@ func wireEgress(svc *service.SandboxService, events *index.Store, clock func() t
 		logger.Error("capability escalation wiring failed; escalation disabled", "error", err.Error())
 		logger.Info("sandbox egress enforcement wired", "event", "egress_wired",
 			"proxy_port", egressProxyPort, "dns_port", egressDNSPort)
-		return nil
+		return wiring
 	}
 	svc.SetCapabilityRevoker(capSvc)
 	// Replay live grants on resume: suspend tears the proxy down but keeps the
@@ -74,7 +78,40 @@ func wireEgress(svc *service.SandboxService, events *index.Store, clock func() t
 	runner.SetDenialObserver(capSvc.RecordDenial)
 	logger.Info("sandbox egress enforcement wired", "event", "egress_wired",
 		"proxy_port", egressProxyPort, "dns_port", egressDNSPort)
-	return capSvc
+	wiring.Grants = capSvc
+	return wiring
+}
+
+// runnerPolicyController adapts the host-side egress runner to the service's
+// live-policy seam. On this backend the enforcer lives in the DAEMON's own
+// process, so the mutation is a direct call — unlike libkrun, where it has to
+// cross into a re-exec'd VM child. Refs: MGIT-72
+type runnerPolicyController struct{ runner *egress.Runner }
+
+// SetEgressPolicy replaces the running allowlist, killing established flows
+// unless drain is set. Refs: MGIT-72, ADR-012
+func (c runnerPolicyController) SetEgressPolicy(
+	_ context.Context, sandboxID string, entries []string, drain bool,
+) (model.EgressPolicyChange, error) {
+	change, err := c.runner.SetPolicy(sandboxID, entries, drain)
+	if err != nil {
+		return model.EgressPolicyChange{}, err
+	}
+	return model.EgressPolicyChange{
+		Entries: change.Entries, RuleCount: change.RuleCount,
+		Killed: change.Killed, Drained: change.Drained,
+	}, nil
+}
+
+// EgressPolicy reports the allowlist in force. Refs: MGIT-72
+func (c runnerPolicyController) EgressPolicy(
+	_ context.Context, sandboxID string,
+) (model.EgressPolicyState, error) {
+	state, err := c.runner.Policy(sandboxID)
+	if err != nil {
+		return model.EgressPolicyState{}, err
+	}
+	return model.EgressPolicyState{Entries: state.Entries, RuleCount: state.RuleCount}, nil
 }
 
 // fcEgressController adapts egress.Runner to service.EgressController,

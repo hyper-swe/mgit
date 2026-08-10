@@ -40,6 +40,12 @@ const (
 	KindGrants byte = 'G' // list a task's pending capability requests
 	KindGrant  byte = 'A' // approve one pending capability request
 	KindSync   byte = 'Y' // re-stage a task's host worktree into its running guest
+	// KindPolicySet replaces a RUNNING sandbox's egress allowlist without
+	// relaunching it; an empty entry list is a full revoke (MGIT-72).
+	KindPolicySet byte = 'P'
+	// KindPolicyShow reports the allowlist a running sandbox is enforcing
+	// right now, which after a mutation is NOT its launch-time policy.
+	KindPolicyShow byte = 'Q'
 )
 
 // Ceilings enforced before allocation (the daemon supervises all VMs; a
@@ -56,6 +62,12 @@ const (
 	MaxEnv = 4096
 	// MaxEnvEntryBytes caps one env entry's length.
 	MaxEnvEntryBytes = 32 << 10 // 32 KiB
+	// MaxPolicyEntries caps a replacement egress allowlist. A real allowlist
+	// is a short list of host:port entries; anything larger is malformed or
+	// hostile, and this daemon supervises every VM. Refs: MGIT-72
+	MaxPolicyEntries = 1024
+	// MaxPolicyEntryBytes caps one allowlist entry.
+	MaxPolicyEntryBytes = 512
 )
 
 // DefaultRequestTimeout is the recommended per-request read deadline the
@@ -110,6 +122,33 @@ type PendingGrant struct {
 	Key        string `json:"key"`
 }
 
+// PolicyArgs replaces a RUNNING sandbox's egress allowlist (MGIT-72).
+//
+// REVOKE IS AN EMPTY SET, deliberately: one verb means a caller cannot get
+// "set" and "revoke" out of step, and there is no separate code path where a
+// revoke could quietly become a no-op.
+//
+// Drain leaves ESTABLISHED flows to finish. It is opt-in because the default
+// has to be the safe one: a caller who revokes registry egress and then runs
+// untrusted code expects the grant gone, and a draining connection is exactly
+// the exfiltration channel they just revoked. Refs: MGIT-72, ADR-012, SEC-04
+type PolicyArgs struct {
+	TaskID  string   `json:"task_id"`
+	Entries []string `json:"entries,omitempty"`
+	Drain   bool     `json:"drain,omitempty"`
+}
+
+// PolicyResult reports what a policy operation actually produced — the entries
+// now IN FORCE (not the ones requested), how many rules they compiled to, and
+// what the change did to established flows. Outcomes, not intentions.
+// Refs: MGIT-72
+type PolicyResult struct {
+	Entries   []string `json:"entries"`
+	RuleCount int      `json:"rule_count"`
+	Killed    int      `json:"killed"`
+	Drained   bool     `json:"drained"`
+}
+
 // GrantResult confirms an approved grant (host-observed destination). Refs: FR-17.12
 type GrantResult struct {
 	Capability string `json:"capability"`
@@ -130,6 +169,10 @@ type Request struct {
 	Grants *TaskRef                    `json:"grants,omitempty"`
 	Grant  *GrantArgs                  `json:"grant,omitempty"`
 	Sync   *SyncArgs                   `json:"sync,omitempty"`
+	// PolicySet mutates a running sandbox's egress allowlist; PolicyShow
+	// reads the one in force (MGIT-72).
+	PolicySet  *PolicyArgs `json:"policy_set,omitempty"`
+	PolicyShow *TaskRef    `json:"policy_show,omitempty"`
 }
 
 // LandResult summarizes a completed land.
@@ -154,12 +197,14 @@ type Response struct {
 	// actionable, and re-deriving them would cost a second round trip against
 	// a tree that may have moved. Refs: MGIT-76
 	Synced *model.WorktreeSyncReport `json:"synced,omitempty"` // sync
+	Policy *PolicyResult             `json:"policy,omitempty"` // policy set/show
 }
 
 // validKind reports whether k is a known request kind.
 func validKind(k byte) bool {
 	switch k {
-	case KindLaunch, KindExec, KindLand, KindList, KindRemove, KindStatus, KindGrants, KindGrant, KindSync:
+	case KindLaunch, KindExec, KindLand, KindList, KindRemove, KindStatus, KindGrants, KindGrant,
+		KindSync, KindPolicySet, KindPolicyShow:
 		return true
 	default:
 		return false
@@ -216,6 +261,9 @@ func (req *Request) Validate() error {
 		KindGrants: req.Grants != nil,
 		KindGrant:  req.Grant != nil,
 		KindSync:   req.Sync != nil,
+
+		KindPolicySet:  req.PolicySet != nil,
+		KindPolicyShow: req.PolicyShow != nil,
 	}
 	for k, present := range set {
 		if present && k != req.Kind {
@@ -251,6 +299,10 @@ func (req *Request) Validate() error {
 			return fmt.Errorf("controlproto: sync request missing task_id")
 		}
 		return nil
+	case KindPolicySet:
+		return validatePolicySet(req.PolicySet)
+	case KindPolicyShow:
+		return requireTask(req.PolicyShow)
 	case KindList:
 		return nil // no payload
 	default:
@@ -262,6 +314,28 @@ func (req *Request) Validate() error {
 func requireTask(ref *TaskRef) error {
 	if ref == nil || ref.TaskID == "" {
 		return fmt.Errorf("controlproto: request missing task_id")
+	}
+	return nil
+}
+
+// validatePolicySet bounds a replacement allowlist before it can reach the
+// compiler. An empty entry list is VALID — that is a full revoke, the whole
+// point of the verb — so only the task ID and the size ceilings are enforced
+// here; entry grammar is the allowlist compiler's job, and a policy that does
+// not compile is rejected with the running one untouched. Refs: MGIT-72
+func validatePolicySet(a *PolicyArgs) error {
+	if a == nil || a.TaskID == "" {
+		return fmt.Errorf("controlproto: policy request missing task_id")
+	}
+	if len(a.Entries) > MaxPolicyEntries {
+		return fmt.Errorf("controlproto: policy entries %d exceeds %d cap",
+			len(a.Entries), MaxPolicyEntries)
+	}
+	for _, e := range a.Entries {
+		if len(e) > MaxPolicyEntryBytes {
+			return fmt.Errorf("controlproto: policy entries: entry of %d bytes exceeds %d cap",
+				len(e), MaxPolicyEntryBytes)
+		}
 	}
 	return nil
 }

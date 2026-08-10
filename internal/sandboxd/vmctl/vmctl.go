@@ -43,6 +43,11 @@ type Op string
 const (
 	// OpSetPolicy replaces a running sandbox's egress allowlist (MGIT-72).
 	OpSetPolicy Op = "set-policy"
+	// OpGetPolicy reports the allowlist a running sandbox is enforcing right
+	// now. A mutable policy that cannot be READ is one a caller has to take on
+	// faith, because the launch-time policy stops being true the moment it is
+	// mutated. Refs: MGIT-72
+	OpGetPolicy Op = "get-policy"
 )
 
 // Request is one host→child command. One request per connection, matching the
@@ -67,6 +72,10 @@ type Response struct {
 	Rules int `json:"rules,omitempty"`
 	// Drained reports that established flows were left to finish.
 	Drained bool `json:"drained,omitempty"`
+	// Entries is the allowlist now in force (get-policy, and echoed by
+	// set-policy), so the caller sees the resulting state and not only the
+	// state it asked for.
+	Entries []string `json:"entries,omitempty"`
 }
 
 // dialTimeout bounds a control round trip. The child answers from memory, so
@@ -80,6 +89,8 @@ type Handler interface {
 	// SetPolicy replaces the running allowlist, killing established flows
 	// unless drain is set, and reports what it did.
 	SetPolicy(entries []string, drain bool) (Response, error)
+	// GetPolicy reports the allowlist currently in force.
+	GetPolicy() (Response, error)
 }
 
 // Serve accepts control connections until the listener closes, handling one
@@ -126,6 +137,13 @@ func dispatch(req Request, h Handler) Response {
 		}
 		resp.OK = true
 		return resp
+	case OpGetPolicy:
+		resp, err := h.GetPolicy()
+		if err != nil {
+			return Response{Error: err.Error()}
+		}
+		resp.OK = true
+		return resp
 	default:
 		return Response{Error: fmt.Sprintf("unknown control op %q", req.Op)}
 	}
@@ -147,6 +165,16 @@ type Client struct{ SocketPath string }
 // Refs: MGIT-74, MGIT-72
 func (c Client) SetPolicy(entries []string, drain bool) (Response, error) {
 	return c.do(Request{Op: OpSetPolicy, Entries: entries, Drain: drain})
+}
+
+// GetPolicy asks a running VM child what egress allowlist it is enforcing.
+//
+// It FAILS CLOSED like SetPolicy: an unreachable child is an error, never an
+// empty policy — an empty list would read as "nothing is allowed" when the
+// truth may be "nothing is enforcing", which are opposite facts.
+// Refs: MGIT-72
+func (c Client) GetPolicy() (Response, error) {
+	return c.do(Request{Op: OpGetPolicy})
 }
 
 // do performs one request/response round trip.

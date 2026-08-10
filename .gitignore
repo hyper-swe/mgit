@@ -38,5 +38,8 @@ import-to-mtix.py
 .mtix/data/*.db-wal
 .mtix/data/*.lock
 .mtix/data/*.sha256
+# mtix rotates timestamped snapshots here; they are machine-local runtime
+# state, not source, and a tracked one goes stale the moment it rotates.
+.mtix/data/backups/
 .mtix/logs/
 /mcpdrive

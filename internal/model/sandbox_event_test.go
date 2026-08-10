@@ -86,3 +86,34 @@ func TestSandboxEvent_Validate(t *testing.T) {
 		})
 	}
 }
+
+// TestSandboxEvent_PolicyChanged_IsValidAndAuditOnly verifies the live
+// egress-policy mutation event is in the closed vocabulary and carries NO
+// lifecycle state change.
+//
+// A runtime-mutable policy with no audit record is worse than one that cannot
+// change at all — a reviewer could no longer reconstruct what was being
+// enforced when. And it must not be state-bearing: a revoke does not suspend,
+// destroy or resume a sandbox, and deriving state from it would corrupt the
+// sandbox's status. Refs: MGIT-72, FR-17.18
+func TestSandboxEvent_PolicyChanged_IsValidAndAuditOnly(t *testing.T) {
+	ev := SandboxEvent{
+		SandboxID: "01JX", TaskID: "MGIT-72", EventType: EventPolicyChanged,
+		Detail: `{"entries":[],"killed":1}`,
+	}
+	if err := ev.Validate(); err != nil {
+		t.Fatalf("policy_changed must be a valid event type: %v", err)
+	}
+	if _, stateBearing := StateForEvent(EventPolicyChanged); stateBearing {
+		t.Error("policy_changed must not derive a sandbox state — a revoke is not a lifecycle transition")
+	}
+	var listed bool
+	for _, t := range NonStateEventTypes() {
+		if t == EventPolicyChanged {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Error("policy_changed must be listed as audit-only so state derivation skips past it")
+	}
+}

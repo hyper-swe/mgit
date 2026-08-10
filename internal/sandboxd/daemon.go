@@ -45,6 +45,12 @@ type Config struct {
 	// When nil those verbs report unserved (e.g. off Linux, where there is no
 	// host egress runner to widen). Refs: FR-17.12, SEC-05
 	Grants GrantCoordinator
+	// Policy serves the live egress-policy verbs (replace a running
+	// sandbox's allowlist without relaunching it; report the one in force).
+	// When nil those verbs report unserved — never a silent success, which
+	// for a revoke would leave the caller believing egress was closed.
+	// Refs: MGIT-72, SEC-04
+	Policy PolicyCoordinator
 	// MaxConns bounds concurrent in-flight connections; beyond it the
 	// daemon rejects fast (accept-then-close) rather than spawning an
 	// unbounded number of goroutines. Refs: MGIT-11.10.8 (security audit)

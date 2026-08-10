@@ -44,6 +44,13 @@ type Allowlist struct {
 	names []nameRule // immutable after Compile
 	nets  []netRule  // immutable after Compile
 
+	// source is the entry list these rules were compiled from, kept so the
+	// policy IN FORCE can be reported to a caller. Without it the only
+	// readable policy is the launch-time one, which after a live mutation
+	// (SetRules) is wrong — and a revoke a caller cannot confirm is a revoke
+	// taken on faith. Refs: MGIT-72
+	source []string
+
 	// grants holds host-approved live additions (scoped to the sandbox
 	// lifetime). Guarded by mu because AllowsIP runs concurrently per guest
 	// flow while a grant may be added/revoked. Each entry is one exact
@@ -111,7 +118,18 @@ func Compile(entries []string) (*Allowlist, error) {
 			return nil, fmt.Errorf("allowlist entry %q: %w", raw, err)
 		}
 	}
+	al.source = append([]string(nil), entries...)
 	return al, nil
+}
+
+// Rules reports the entries currently in force, as a copy so a caller cannot
+// reach into the running policy. It follows a live mutation, so it answers
+// "what is this sandbox enforcing right now" rather than "what was it
+// launched with". Refs: MGIT-72
+func (al *Allowlist) Rules() []string {
+	al.mu.RLock()
+	defer al.mu.RUnlock()
+	return append([]string(nil), al.source...)
 }
 
 // add classifies and appends one entry as an IP/CIDR rule or a name rule.

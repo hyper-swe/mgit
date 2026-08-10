@@ -97,6 +97,14 @@ func guestDial(t *testing.T, mgr *microvm.Manager, id, ip string, port int) stri
 // hermetically: an allowlisted name resolves to a public-looking address and
 // authorized flows are dialed to the local banner listener.
 func startEgressFor(t *testing.T, info *model.SandboxInfo, mode string, allowlist []string, target net.Listener) *recordingEgressAudit {
+	audit, _ := startEgressRunnerFor(t, info, mode, allowlist, target)
+	return audit
+}
+
+// startEgressRunnerFor is startEgressFor with the RUNNER returned as well, for
+// tests that mutate the running policy (MGIT-72) rather than only observing
+// what it decided.
+func startEgressRunnerFor(t *testing.T, info *model.SandboxInfo, mode string, allowlist []string, target net.Listener) (*recordingEgressAudit, *egress.Runner) {
 	t.Helper()
 	audit := &recordingEgressAudit{}
 	runner, err := egress.NewRunner(egress.RunnerConfig{
@@ -125,7 +133,7 @@ func startEgressFor(t *testing.T, info *model.SandboxInfo, mode string, allowlis
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = runner.Stop(info.ID) })
-	return audit
+	return audit, runner
 }
 
 // probe runs a shell script in the guest with NO network scaffolding and

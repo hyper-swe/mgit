@@ -22,7 +22,7 @@ import (
 // LIVE GRANTS ARE DROPPED. A capability grant (FR-17.12) widens the policy it
 // was approved under; carrying it across a policy change would leave a hole
 // that is invisible in the new policy. A caller who still wants it re-grants
-// it against the new rules. Refs: MGIT-72, SEC-04, SEC-05, ADR-011
+// it against the new rules. Refs: MGIT-72, SEC-04, SEC-05, ADR-012
 func (al *Allowlist) SetRules(entries []string) error {
 	next, err := Compile(entries)
 	if err != nil {
@@ -30,7 +30,9 @@ func (al *Allowlist) SetRules(entries []string) error {
 	}
 	al.mu.Lock()
 	defer al.mu.Unlock()
-	al.names, al.nets = next.names, next.nets
+	// source moves with the rules: a policy that reported the entries it was
+	// launched with after being mutated would be worse than reporting nothing.
+	al.names, al.nets, al.source = next.names, next.nets, next.source
 	al.grants = nil
 	return nil
 }
@@ -46,7 +48,7 @@ func (al *Allowlist) Entries() int {
 // FlowRegistry tracks the live spliced connections of one sandbox so a policy
 // revoke can KILL them.
 //
-// WHY KILL IS THE DEFAULT (ADR-011). A caller who revokes package-registry
+// WHY KILL IS THE DEFAULT (ADR-012). A caller who revokes package-registry
 // egress and then runs untrusted code expects the grant to be gone. A draining
 // connection is exactly the exfiltration channel they just revoked, and a
 // hostile guest can hold one open arbitrarily long — so "drain" can mean
@@ -142,10 +144,38 @@ type PolicyChange struct {
 	Drained   bool     // established flows were left to finish
 }
 
+// PolicyState is the egress policy a RUNNING sandbox is enforcing right now.
+// It is deliberately distinct from the launch-time policy on SandboxInfo: once
+// a live mutation has happened those two disagree, and reporting the launch
+// one would tell a caller egress is open when it is closed, or closed when it
+// is open. Refs: MGIT-72
+type PolicyState struct {
+	SandboxID string
+	Entries   []string
+	RuleCount int
+}
+
+// Policy reports what a RUNNING sandbox's egress stack is enforcing.
+//
+// It fails closed on an unknown sandbox rather than returning an empty policy:
+// "nothing is allowed" and "nothing is enforcing" look identical in an empty
+// list, and they are opposite facts. Refs: MGIT-72, SEC-04
+func (r *Runner) Policy(sandboxID string) (PolicyState, error) {
+	r.mu.Lock()
+	ae, ok := r.active[sandboxID]
+	r.mu.Unlock()
+	if !ok {
+		return PolicyState{}, fmt.Errorf(
+			"egress runner: policy: sandbox %q has no running egress stack", sandboxID)
+	}
+	al := ae.sup.Allowlist()
+	return PolicyState{SandboxID: sandboxID, Entries: al.Rules(), RuleCount: al.Entries()}, nil
+}
+
 // SetPolicy replaces a RUNNING sandbox's egress allowlist.
 //
 // ESTABLISHED FLOWS ARE KILLED unless drain is set. That is the decision
-// recorded in ADR-011 and it is deliberate: a caller who revokes
+// recorded in ADR-012 and it is deliberate: a caller who revokes
 // package-registry egress and then runs untrusted code expects the grant to be
 // GONE, and a draining connection is precisely the exfiltration channel they
 // just revoked — a hostile guest can hold one open arbitrarily long, so

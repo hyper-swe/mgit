@@ -29,6 +29,11 @@ type sandboxClient interface {
 	// its host-observed key (the deny->prompt->grant flow, FR-17.12).
 	Grants(ctx context.Context, taskID string) ([]controlproto.PendingGrant, error)
 	Grant(ctx context.Context, taskID, key string) (*controlproto.GrantResult, error)
+	// SetEgressPolicy replaces a RUNNING sandbox's egress allowlist without
+	// relaunching it (empty entries = full revoke); EgressPolicy reports the
+	// one in force. Refs: MGIT-72
+	SetEgressPolicy(ctx context.Context, taskID string, entries []string, drain bool) (*controlproto.PolicyResult, error)
+	EgressPolicy(ctx context.Context, taskID string) (*controlproto.PolicyResult, error)
 	// Shell attaches an interactive session to a task's sandbox (T2
 	// confined-agent, MGIT-11.11.4), proxying the supplied stdin/stdout/
 	// stderr and returning the session exit code.
@@ -76,6 +81,7 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 		sandboxRemoveCmd(connect),
 		sandboxGrantsCmd(connect), // list pending capability requests (deny->prompt, MGIT-11.9.4)
 		sandboxGrantCmd(connect),  // approve one pending capability request
+		sandboxPolicyCmd(connect), // live egress policy: set/revoke/show (MGIT-72)
 		sandboxShellCmd(connect),  // T2 confined-agent interactive attach (MGIT-11.11.4)
 		sandboxSyncCmd(connect),   // re-stage the host worktree into a running guest (MGIT-76)
 		sandboxImageCmd(),

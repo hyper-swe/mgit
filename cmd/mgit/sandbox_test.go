@@ -50,6 +50,28 @@ type fakeSandboxClient struct {
 	syncOpts   model.WorktreeSyncOptions
 	syncReport *model.WorktreeSyncReport
 	syncErr    error
+
+	policyTID     string
+	policyShowTID string
+	policyEntries []string
+	policyDrain   bool
+	policyResult  *controlproto.PolicyResult
+}
+
+func (f *fakeSandboxClient) SetEgressPolicy(_ context.Context, taskID string, entries []string, drain bool) (*controlproto.PolicyResult, error) {
+	if f.opErr != nil {
+		return nil, f.opErr
+	}
+	f.policyTID, f.policyEntries, f.policyDrain = taskID, entries, drain
+	return f.policyResult, nil
+}
+
+func (f *fakeSandboxClient) EgressPolicy(_ context.Context, taskID string) (*controlproto.PolicyResult, error) {
+	if f.opErr != nil {
+		return nil, f.opErr
+	}
+	f.policyShowTID = taskID
+	return f.policyResult, nil
 }
 
 func (f *fakeSandboxClient) Launch(_ context.Context, opts model.SandboxLaunchOptions) (*model.SandboxInfo, error) {

@@ -30,6 +30,16 @@ type RunnerConfig struct {
 	// TCP, and where the transparent proxy listens. It is what lets an
 	// unmodified guest program egress in allowlist mode at all. Refs: MGIT-69
 	TransparentPort int
+	// OriginalDst recovers the destination a redirected connection was
+	// heading to before the kernel rewrote it. nil selects the platform's
+	// real mechanism (Linux getsockopt SO_ORIGINAL_DST).
+	//
+	// It is a seam for the same reason Dial and Lookup are: the transparent
+	// path is the one a real guest takes, and without a substitute for the
+	// kernel's redirect it can only be exercised with root, a tap and
+	// iptables — which is how it went untested long enough for its flows to
+	// be silently untracked. Refs: MGIT-72, MGIT-69
+	OriginalDst OriginalDstFunc
 }
 
 // Binding describes one sandbox's egress: its identity, the host gateway IP
@@ -167,6 +177,14 @@ func (r *Runner) Start(ctx context.Context, b Binding) (Endpoints, error) {
 	// allowlist mode was unusable from inside. Refs: MGIT-69, SEC-04
 	transparent, err := NewTransparentProxy(TransparentProxyConfig{
 		Authorizer: sup.Authorizer(), Dial: r.cfg.Dial, Logger: r.cfg.Logger,
+		OriginalDst: r.cfg.OriginalDst,
+		// TRACKED, and this is the line whose absence made live revoke a
+		// half-truth on this backend: the CONNECT proxy above was registering
+		// its flows while THIS path — the only one an ordinary guest program
+		// takes — was not. A revoke therefore swapped the ruleset and
+		// reported killed=0 with the guest's connection still carrying data.
+		// Refs: MGIT-72, MGIT-69, ADR-012
+		Flows: sup.Flows(),
 	})
 	if err != nil {
 		ae.closeListeners()

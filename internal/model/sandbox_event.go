@@ -18,6 +18,13 @@ const (
 	EventResumed = "resumed"
 	// EventPolicyGranted records a capability grant (FR-17.12).
 	EventPolicyGranted = "policy_granted"
+	// EventPolicyChanged records a LIVE egress-policy mutation on a running
+	// sandbox — a grant or a revoke applied without relaunching it (MGIT-72).
+	// Audit-only: a policy change is not a lifecycle transition. Detail
+	// carries the resulting entries, the rule count, whether established
+	// flows were killed or drained, and how many were terminated — all
+	// host-observed (SEC-05). Refs: MGIT-72, FR-17.18
+	EventPolicyChanged = "policy_changed"
 	// EventCredentialsInjected records that per-session credentials were
 	// injected into a T2 confined-agent guest (MGIT-11.11.4). Audit-only
 	// (no state change); Detail carries credential NAMES only, never values.
@@ -37,7 +44,7 @@ const (
 // current state must skip past them to the latest state-bearing event.
 // Single source of truth for both vocabulary validation and DeriveState.
 // Refs: FR-17.18, F-01
-var nonStateEventTypes = []string{EventPolicyGranted, EventCredentialsInjected}
+var nonStateEventTypes = []string{EventPolicyGranted, EventCredentialsInjected, EventPolicyChanged}
 
 // NonStateEventTypes returns the audit-only event types (no state change),
 // so the store's latest-state query can exclude all of them in one place —

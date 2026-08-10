@@ -22,6 +22,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/sandboxd"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/libkrun"
+	"github.com/hyper-swe/mgit/internal/service"
 )
 
 // slogBackendAuditor records backend selections in the daemon's
@@ -167,8 +168,27 @@ func run(args []string, logSink io.Writer) int {
 		// the service starts/stops it across each allowlist sandbox's
 		// lifecycle, and capability escalation (deny->prompt->grant). No-op off
 		// Linux and for none/open sandboxes. Refs: FR-17.8, FR-17.12
-		if capSvc := wireEgress(svc, events, clock, logger); capSvc != nil {
-			dcfg.Grants = capSvc
+		egressWired := wireEgress(svc, events, clock, logger)
+		if egressWired.Grants != nil {
+			dcfg.Grants = egressWired.Grants
+		}
+
+		// Wire the LIVE egress-policy verbs (MGIT-72): change a RUNNING
+		// sandbox's allowlist without relaunching it. The enforcer differs by
+		// backend — the daemon's own runner on firecracker, a re-exec'd VM
+		// child over the control channel on libkrun — so the controller is
+		// selected per platform and the service depends on neither. With no
+		// controller the verbs report UNSERVED, never a silent success.
+		// Refs: MGIT-72, FR-17.18, SEC-04
+		if ctrl := selectPolicyController(
+			platformPolicyController(opts.workDir, logger), egressWired); ctrl != nil {
+			policySvc, policyErr := service.NewEgressPolicyService(ctrl, events, clock)
+			if policyErr != nil {
+				logger.Error("live egress policy wiring failed; policy verbs will not be served",
+					"error", policyErr.Error())
+			} else {
+				dcfg.Policy = policySvc
+			}
 		}
 
 		// Wire one-way guest->host port publishing (SEC-09): the service then

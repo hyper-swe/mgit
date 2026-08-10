@@ -184,6 +184,38 @@ func (c *Client) Grant(ctx context.Context, taskID, key string) (*controlproto.G
 	return resp.Granted, nil
 }
 
+// SetEgressPolicy replaces a RUNNING sandbox's egress allowlist without
+// relaunching it. An EMPTY entries list is a full revoke.
+//
+// drain leaves ESTABLISHED flows to finish; the default terminates them,
+// because a draining connection is exactly the exfiltration channel the caller
+// just revoked (ADR-012). The reply states what was actually enforced and how
+// many established flows were terminated — outcomes, not intentions.
+// Refs: MGIT-72, SEC-04
+func (c *Client) SetEgressPolicy(ctx context.Context, taskID string, entries []string, drain bool) (*controlproto.PolicyResult, error) {
+	resp, err := c.roundTrip(ctx, &controlproto.Request{
+		Kind:      controlproto.KindPolicySet,
+		PolicySet: &controlproto.PolicyArgs{TaskID: taskID, Entries: entries, Drain: drain},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Policy, nil
+}
+
+// EgressPolicy reports the allowlist a task's RUNNING sandbox is enforcing
+// right now, which after a live mutation is not its launch-time policy.
+// Refs: MGIT-72
+func (c *Client) EgressPolicy(ctx context.Context, taskID string) (*controlproto.PolicyResult, error) {
+	resp, err := c.roundTrip(ctx, &controlproto.Request{
+		Kind: controlproto.KindPolicyShow, PolicyShow: &controlproto.TaskRef{TaskID: taskID},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Policy, nil
+}
+
 // Exec runs one command in a task's sandbox, copying stdout/stderr to the
 // supplied writers as frames arrive and returning the guest exit code. A
 // supervisor-level failure (the guest could not start the command) is
