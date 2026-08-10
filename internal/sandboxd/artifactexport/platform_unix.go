@@ -20,5 +20,10 @@ func linkIdentity(info fs.FileInfo) (id, links uint64, ok bool) {
 	if !isStat {
 		return 0, 0, false
 	}
+	// Stat_t.Nlink is already uint64 on linux/amd64 — the only platform the
+	// linter runs on — but uint16 on darwin and uint32 on linux/arm64, so the
+	// conversion is required for this file to compile everywhere it is built.
+	// Refs: MGIT-73, MGIT-78
+	//nolint:unconvert // portability: Nlink is narrower than uint64 on darwin and linux/arm64
 	return st.Ino, uint64(st.Nlink), true
 }
