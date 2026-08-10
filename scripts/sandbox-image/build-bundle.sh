@@ -12,8 +12,10 @@ DIR="${2:?usage: build-bundle.sh <platform> <bundle-dir>}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$DIR"; DIR="$(cd "$DIR" && pwd)"
 
-FC_CMDLINE="console=ttyS0 reboot=k panic=1 pci=off ipv6.disable=1 random.trust_cpu=on root=/dev/vda ro rootfstype=ext4 init=/sbin/mgit-guest"
-VZ_CMDLINE="console=hvc0 root=/dev/vda ro rootfstype=ext4 init=/sbin/mgit-guest"
+# FC_CMDLINE / VZ_CMDLINE come from pins.env, so the bundle and the live e2e
+# gate register images with the identical cmdline. Refs: MGIT-78
+# shellcheck source=pins.env
+. "$HERE/pins.env"
 
 case "$PLATFORM" in
 darwin/arm64)

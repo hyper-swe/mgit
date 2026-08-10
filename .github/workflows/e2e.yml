@@ -93,22 +93,139 @@ jobs:
       - name: Core-loop e2e against the installed binaries
         run: bash scripts/e2e/core_loop.sh "$BINDIR"
 
-  # Live sandbox posture. GitHub-hosted runners have no nested virtualization,
-  # so sandbox_posture.sh SKIPs here (exit 0) — its purpose in CI is to prove
-  # the gate logic and the skip message. A real per-platform live pass is
-  # mandated by docs/release/RELEASE-CHECKLIST.md and run on a KVM-capable
-  # Linux runner / an entitled macOS arm64 runner at release time.
-  sandbox-posture:
-    name: Sandbox posture (gated; skips without virtualization)
+  # LIVE Linux containment gate: real firecracker microVMs on real KVM.
+  #
+  # This job used to be "Sandbox posture (gated; skips without virtualization)"
+  # and asserted the opposite of what is true: it stated GitHub-hosted runners
+  # have no nested virtualization, built no mgit-sandboxd, and therefore only
+  # ever exercised sandbox_posture.sh's SKIP branch — a green check that proved
+  # nothing about containment. Measured 2026-08-10 on ubuntu-latest,
+  # ubuntu-24.04 and ubuntu-22.04: /dev/kvm is present (root:kvm 0660, so the
+  # udev rule below is what makes it usable by the `runner` user), KVM_CREATE_VM
+  # succeeds, and the full firecracker battery boots and passes here. The
+  # headline claim of the product is now gated by CI on every push, PR and
+  # release instead of by the availability of one physical box. Refs: MGIT-78
+  #
+  # It fails LOUD in both directions that matter: a runner that stops offering
+  # /dev/kvm fails the job rather than skipping, and a posture SKIP is treated
+  # as a failure — a skip that reads as a pass is the exact defect this repo
+  # keeps finding (the macOS libkrun gate, 2026-08-05).
+  sandbox-live-linux:
+    name: Sandbox LIVE (Linux/KVM firecracker)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
-      - name: Build mgit
+
+      - name: Require /dev/kvm (nested virtualization)
+        run: |
+          set -euo pipefail
+          # /dev/kvm ships root:kvm 0660 and `runner` is not in the kvm group;
+          # the static_node rule is what actually grants access.
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          ls -l /dev/kvm
+          # Assert, do not skip: if the hosted runner class ever loses nested
+          # virt, this gate must go red so the loss is noticed, not silently
+          # degrade back into an unrun manual checklist item.
+          [ -r /dev/kvm ] && [ -w /dev/kvm ] \
+            || { echo "FATAL: /dev/kvm not usable — the Linux live gate cannot run"; exit 1; }
+
+      - name: Install the pinned firecracker VMM
+        run: |
+          sudo bash scripts/sandbox-image/fetch-firecracker.sh amd64 /usr/local/bin/firecracker
+
+      - name: Host tooling (mke2fs for worktree delivery, iptables for egress)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq e2fsprogs iproute2 iptables
+
+      - name: Build mgit + mgit-sandboxd (no -tags libkrun — Linux links firecracker)
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
           CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/bin/mgit" ./cmd/mgit/
-      - name: Sandbox posture e2e (skips gracefully without a daemon/KVM)
-        run: bash scripts/e2e/sandbox_posture.sh "$RUNNER_TEMP/bin"
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/bin/mgit-sandboxd" ./cmd/mgit-sandboxd/
+
+      - name: Build the guest image (pinned kernel + reproducible rootfs)
+        run: |
+          mkdir -p "$RUNNER_TEMP/guest"
+          bash scripts/sandbox-image/fetch-kernel-fc.sh amd64 "$RUNNER_TEMP/guest/vmlinux"
+          bash scripts/sandbox-image/build-rootfs.sh   amd64 "$RUNNER_TEMP/guest/rootfs.ext4"
+
+      - name: Sandbox posture e2e — must PASS (live), a SKIP fails the job
+        run: |
+          set -uo pipefail
+          # shellcheck source=scripts/sandbox-image/pins.env
+          . scripts/sandbox-image/pins.env
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          export MGIT_GUEST_KERNEL="$RUNNER_TEMP/guest/vmlinux"
+          export MGIT_GUEST_ROOTFS="$RUNNER_TEMP/guest/rootfs.ext4"
+          # Without a cmdline the registered image boots a kernel with no root=
+          # and no init=, and the only symptom is "guest vsock not ready".
+          export MGIT_GUEST_CMDLINE="$FC_CMDLINE"
+          bash scripts/e2e/sandbox_posture.sh "$RUNNER_TEMP/bin" 2>&1 | tee "$RUNNER_TEMP/posture.log"
+          grep -q 'SANDBOX POSTURE E2E: PASS (live)' "$RUNNER_TEMP/posture.log" || {
+            echo "FATAL: the posture gate did not pass LIVE (a SKIP is a failure here)"; exit 1; }
+
+      - name: Firecracker e2e — unprivileged half
+        env:
+          MGIT_TEST_KERNEL: ${{ runner.temp }}/guest/vmlinux
+          MGIT_TEST_ROOTFS: ${{ runner.temp }}/guest/rootfs.ext4
+          MGIT_E2E_GUEST_ROOTFS: ${{ runner.temp }}/guest/rootfs.ext4
+        run: |
+          set -uo pipefail
+          go test ./internal/sandboxd/backend/firecracker/ -run 'TestE2E_' \
+            -v -count=1 -timeout 30m 2>&1 | tee "$RUNNER_TEMP/fc-user.log"
+          grep -q '^ok  ' "$RUNNER_TEMP/fc-user.log" || { echo "FATAL: firecracker e2e failed"; exit 1; }
+
+      # The root half is where containment is actually proven: tap + iptables
+      # REDIRECT (CAP_NET_ADMIN) is how this backend enforces egress, and the
+      # MGIT-78 live-policy pair lives here.
+      - name: Firecracker e2e — root-gated half (network, port publish, live policy)
+        run: |
+          set -uo pipefail
+          # The guest probe is cross-compiled OUTSIDE sudo and handed over, so
+          # the privileged run needs no toolchain of its own.
+          mkdir -p "$RUNNER_TEMP/probe"
+          (cd internal/sandboxd/backend/libkrun/testdata/netprobe &&
+            GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+              -o "$RUNNER_TEMP/probe/netprobe" .)
+          go test -c -o "$RUNNER_TEMP/fc.test" ./internal/sandboxd/backend/firecracker/
+          sudo -E env PATH="$PATH" \
+            MGIT_TEST_KERNEL="$RUNNER_TEMP/guest/vmlinux" \
+            MGIT_TEST_ROOTFS="$RUNNER_TEMP/guest/rootfs.ext4" \
+            MGIT_E2E_GUEST_ROOTFS="$RUNNER_TEMP/guest/rootfs.ext4" \
+            MGIT_E2E_NETPROBE="$RUNNER_TEMP/probe/netprobe" \
+            "$RUNNER_TEMP/fc.test" -test.run 'TestE2E_' -test.v -test.count=1 \
+            -test.timeout 30m 2>&1 | tee "$RUNNER_TEMP/fc-root.log"
+          grep -q '^PASS$' "$RUNNER_TEMP/fc-root.log" || { echo "FATAL: root-gated firecracker e2e failed"; exit 1; }
+
+      - name: Assert the root half SKIPPED nothing
+        run: |
+          set -uo pipefail
+          # With KVM + root + a guest image, every gate in this package is
+          # satisfied, so a SKIP means a prerequisite silently went missing and
+          # the suite quietly stopped proving anything.
+          if grep -n -- '--- SKIP' "$RUNNER_TEMP/fc-root.log"; then
+            echo "FATAL: a firecracker e2e skipped under root — the gate did not run"; exit 1
+          fi
+          echo "no skips in the root-gated battery"
+
+      - name: Assert the MGIT-78 live-policy pair RAN and passed
+        run: |
+          set -uo pipefail
+          # Named explicitly rather than trusted to the package result: these
+          # two are the whole reason MGIT-78 exists, and their gates
+          # (requireGuestImage + requireNetRoot) skip silently.
+          for t in TestE2E_Firecracker_Revoke_KillsEstablishedFlow \
+                   TestE2E_Firecracker_Revoke_DrainKeepsEstablishedFlow; do
+            grep -q -- "--- PASS: $t " "$RUNNER_TEMP/fc-root.log" \
+              || { echo "FATAL: $t did not PASS (skipped or failed)"; exit 1; }
+          done
+          echo "== MGIT-78 live-policy evidence =="
+          grep -E 'revoke applied|drained revoke applied|hold probe|post-revoke flow refused|REAL VM PASS' \
+            "$RUNNER_TEMP/fc-root.log" || true
