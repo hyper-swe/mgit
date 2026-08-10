@@ -17,10 +17,11 @@ import (
 // entry is one planned export item, resolved relative to the exported
 // subtree's root ("" is the root itself, for a single-file export).
 type entry struct {
-	rel     string
-	mode    fs.FileMode
-	isDir   bool
-	symlink string // link target text; non-empty only for symlinks
+	rel        string
+	mode       fs.FileMode
+	modeSource string // where mode was observed (ModeSourceHostStat/ShareRecord)
+	isDir      bool
+	symlink    string // link target text; non-empty only for symlinks
 }
 
 // plan is the fully validated description of what an export will write. It is
@@ -151,7 +152,8 @@ func planSingleFile(root string, info fs.FileInfo, limits Limits) (*plan, error)
 	if err := checkHardlinks(links); err != nil {
 		return nil, err
 	}
-	return &plan{root: root, entries: []entry{{mode: info.Mode()}}}, nil
+	mode, source := observedMode(root, info)
+	return &plan{root: root, entries: []entry{{mode: mode, modeSource: source}}}, nil
 }
 
 // planSubtree walks the exported directory, validating every entry and
@@ -222,7 +224,8 @@ func planEntry(root, path, rel string, d fs.DirEntry, links map[uint64]*linkRef)
 		if err := accountLink(links, path, info); err != nil {
 			return entry{}, 0, err
 		}
-		return entry{rel: rel, mode: info.Mode()}, info.Size(), nil
+		mode, source := observedMode(path, info)
+		return entry{rel: rel, mode: mode, modeSource: source}, info.Size(), nil
 	default:
 		return entry{}, 0, fmt.Errorf("%w: %q is a %s, which cannot be exported",
 			ErrUnsafePath, rel, d.Type().String())
@@ -311,11 +314,22 @@ func materialize(p *plan, payloadRoot string, limits Limits) ([]ManifestEntry, i
 			}
 			total += n
 			out = append(out, ManifestEntry{
-				Path: manifestPath(p, e), Mode: fmt.Sprintf("%04o", e.mode.Perm()), Size: n, SHA256: sum,
+				Path: manifestPath(p, e), Mode: fmt.Sprintf("%04o", e.mode.Perm()),
+				ModeSource: recordedSource(e.modeSource), Size: n, SHA256: sum,
 			})
 		}
 	}
 	return out, total, nil
+}
+
+// recordedSource is the mode provenance the sidecar records. A plain host stat
+// is the default and stays implicit (an absent field means it), so the sidecar
+// calls out only the case a reader would not otherwise expect. Refs: MGIT-81
+func recordedSource(source string) string {
+	if source == ModeSourceShareRecord {
+		return source
+	}
+	return ""
 }
 
 // manifestPath is the path an entry is recorded under: relative to the
@@ -334,6 +348,15 @@ func manifestPath(p *plan, e entry) string {
 // have replaced a planned regular file with a symlink, and following it would
 // read a host path outside the subtree. The destination is opened O_EXCL
 // inside the private temporary tree.
+//
+// The mode is applied by an explicit Chmod rather than left to O_CREATE, whose
+// mode argument the kernel masks with the exporting process's umask: under a
+// daemon running umask 0077 an observed 0755 would otherwise land as 0700
+// while the sidecar recorded 0755. Chmod is not umasked, so the file carries
+// exactly the mode that was observed — and only ever a mode that was observed.
+// The window between create and chmod is invisible: the file is inside this
+// export's private 0700 temporary directory until the whole tree is renamed
+// into place. Refs: MGIT-81
 func copyRegular(src, dst string, mode fs.FileMode, remaining int64) (string, int64, error) {
 	if remaining < 0 {
 		return "", 0, fmt.Errorf("%w: %s", ErrLimitExceeded, src)
@@ -355,6 +378,10 @@ func copyRegular(src, dst string, mode fs.FileMode, remaining int64) (string, in
 	if err != nil {
 		_ = out.Close()
 		return "", 0, fmt.Errorf("artifact export: copy %s: %w", src, err)
+	}
+	if err := out.Chmod(mode.Perm()); err != nil {
+		_ = out.Close()
+		return "", 0, fmt.Errorf("artifact export: set the observed mode on %s: %w", dst, err)
 	}
 	if err := out.Close(); err != nil {
 		return "", 0, fmt.Errorf("artifact export: close %s: %w", dst, err)

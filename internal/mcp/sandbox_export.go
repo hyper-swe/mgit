@@ -43,7 +43,11 @@ func (s *Server) registerSandboxExportTool() {
 			"sandbox to a host path. Both paths are host-named; the destination must not already exist "+
 			"(collisions are refused), escaping symlinks/hardlinks and traversing paths are rejected before "+
 			"any write, size and file-count limits apply, and every export lands with a provenance sidecar "+
-			"and an audit-trail record."),
+			"and an audit-trail record. Exported files keep the mode the guest set, so executables (a "+
+			"node_modules tree's .bin scripts) stay executable; where the sandbox's filesystem share cannot "+
+			"express that mode in the host file's own bits (libkrun on macOS), the mode is read from the "+
+			"record the share keeps and the sidecar marks that entry \"mode_source\": \"share-record\" — a "+
+			"mode is never guessed. Exported directories are created 0750 whatever the guest set."),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID whose sandbox holds the artifact")),
 		mcp.WithString("guest_path", mcp.Required(), mcp.Description("Path to export, relative to the sandbox worktree")),
 		mcp.WithString("host_path", mcp.Required(), mcp.Description("Absolute host destination; must not already exist")),

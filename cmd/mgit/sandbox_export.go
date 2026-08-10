@@ -40,7 +40,16 @@ func sandboxExportCmd(connect connectFunc) *cobra.Command {
 			"never overwritten), or if the transfer exceeds its size or file-count ceiling.\n\n" +
 			"Every export lands with a provenance sidecar (<host-path>.mgit-export.json)\n" +
 			"naming the sandbox, task, base image digest and per-file hashes, and is recorded\n" +
-			"in the append-only audit trail.",
+			"in the append-only audit trail.\n\n" +
+			"FILE MODES. Exported files carry the mode the guest set — an executable stays\n" +
+			"executable, so a cached node_modules tree's .bin scripts still run. Where the\n" +
+			"sandbox's filesystem share cannot express that mode in the host file's own\n" +
+			"permission bits (libkrun on macOS presents guest-created files as 0600), mgit\n" +
+			"reads the mode the share recorded for the file and notes\n" +
+			"\"mode_source\": \"share-record\" against that entry in the sidecar. A mode is\n" +
+			"never guessed: the export reproduces one it observed, and says which\n" +
+			"observation it used. Exported DIRECTORIES are created 0750 whatever the guest\n" +
+			"set — an export widens nothing on the host beyond the user who asked for it.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if task == "" {

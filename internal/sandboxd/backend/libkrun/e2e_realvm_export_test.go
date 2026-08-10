@@ -199,21 +199,32 @@ func TestE2E_Libkrun_RealVM_ArtifactExport_GuestBuiltTreeReachesTheHost(t *testi
 	if err != nil || string(got) != "module.exports = 1\n" {
 		t.Errorf("exported content = %q, err %v; want the bytes the guest wrote", got, err)
 	}
-	// The export must reproduce the mode the HOST observes on the share. That
-	// is the honest assertion: measured here, libkrun's virtiofs presents
-	// guest-created files to the host with its own permission mapping, so the
-	// guest's 0755 is not necessarily what the host sees — and an export that
-	// invented a mode instead of copying the observed one would be worse.
+	// The exported script must be EXECUTABLE. libkrun's macOS filesystem
+	// device gives guest-created files placeholder permission bits (the staged
+	// file's own mode is 0600) and records the real st_mode in the share's
+	// stat attribute, so the host can observe the guest's 0755 without the
+	// guest participating — measured by the mode-fidelity e2e, and the reason
+	// the export reads the record rather than the placeholder. Refs: MGIT-81
 	src, err := os.Lstat(filepath.Join(staged, "node_modules", "pkg", "bin", "run.sh"))
 	if err != nil {
 		t.Fatalf("stat the staged source: %v", err)
 	}
 	fi, err := os.Lstat(filepath.Join(dest, "pkg", "bin", "run.sh"))
-	if err != nil || fi.Mode().Perm() != src.Mode().Perm() {
-		t.Errorf("exported mode = %v, err %v; want the share's %v", fi.Mode().Perm(), err, src.Mode().Perm())
+	if err != nil || fi.Mode().Perm() != 0o755 {
+		t.Errorf("exported mode = %v, err %v; want the guest's 0755 (an exported .bin script "+
+			"that is not executable defeats the cache this verb exists for)", fi.Mode().Perm(), err)
 	}
-	t.Logf("mode fidelity: guest wrote 0755, the host share reports %v, the export reproduced %v",
+	t.Logf("mode fidelity: guest wrote 0755, the staged file's own bits are %v, the export produced %v",
 		src.Mode().Perm(), fi.Mode().Perm())
+	// And the sidecar must say WHERE that mode was observed, so a consumer is
+	// never left guessing whether an export invented it.
+	manifest, err := os.ReadFile(res.ManifestPath) //nolint:gosec // test-owned temp dir
+	if err != nil {
+		t.Fatalf("read the provenance sidecar: %v", err)
+	}
+	if !strings.Contains(string(manifest), `"mode_source": "share-record"`) {
+		t.Errorf("the sidecar must attribute the modes it reproduced; got:\n%s", manifest)
+	}
 	link, err := os.Readlink(filepath.Join(dest, ".bin", "run"))
 	if err != nil || link != "../pkg/bin/run.sh" {
 		t.Errorf("exported symlink = %q, err %v; want the guest's in-tree link", link, err)
