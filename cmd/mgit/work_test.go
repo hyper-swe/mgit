@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mgit/internal/model"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // fakeWorktreeAdder records the add it was asked to perform and materializes
@@ -49,11 +50,12 @@ func runWorkSetup(t *testing.T, adder *fakeWorktreeAdder, opts workOptions, conn
 	t.Helper()
 	var out bytes.Buffer
 	deps := workDeps{
-		addWorktree:    adder.add,
-		writeAdapters:  injectAgentAdapters,
-		upsertEnvDoc:   upsertWorktreeEnvDoc,
-		connect:        connect,
-		mgitBinForDocs: "mgit",
+		addWorktree:     adder.add,
+		writeAdapters:   injectAgentAdapters,
+		upsertEnvDoc:    upsertWorktreeEnvDoc,
+		recordGenerated: gitstore.RecordGeneratedPaths,
+		connect:         connect,
+		mgitBinForDocs:  "mgit",
 	}
 	wt, err := workSetup(context.Background(), &out, deps, opts)
 	return out.String(), wt, err

@@ -2,7 +2,6 @@ package agentadapter
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 )
 
@@ -64,7 +63,7 @@ func ContainmentStatusLine(c Containment) string {
 // (regeneration on policy change) and preserving all surrounding user
 // content. CLAUDE.md is created if absent. Refs: MGIT-11.11.2
 func UpsertClaudeMd(worktreePath string, env SandboxEnv) error {
-	path := filepath.Join(worktreePath, "CLAUDE.md")
+	path := worktreeFilePath(worktreePath, ClaudeMdFile)
 	return upsertMarkedFile(path, claudeMdBeginMarker, claudeMdEndMarker, RenderClaudeMdSection(env))
 }
 
@@ -157,7 +156,12 @@ func renderOpenBody() string {
 // `mgit commit -m ...` and never mentioned staging, so an agent following it
 // literally produced a branch of empty commits and a hunk-free land patch
 // (MGIT-77). It now names the one-command form, `mgit commit -a`.
-// Refs: MGIT-29, MGIT-28, MGIT-77
+//
+// It also states that `-a` skips mgit's OWN generated scaffolding and how to
+// override that by naming a path. That is a description of enforced behavior
+// (ADR-013), not an instruction the agent must remember: the exclusion is
+// implemented in the staging walk, so an agent that never reads this bullet
+// still cannot land mgit's files. Refs: MGIT-29, MGIT-28, MGIT-77, MGIT-80
 func renderWorkingDiscipline(c Containment) string {
 	return "\n### mgit working discipline\n\n" +
 		"This worktree is version-controlled by **mgit** and bound to one task. " +
@@ -175,6 +179,12 @@ func renderWorkingDiscipline(c Containment) string {
 		"with `nothing to commit` when your tree would be identical to the previous " +
 		"commit's — that means your edits were not staged, not that they were saved. " +
 		"Fix it by staging (`-a`), never by passing `--allow-empty`.\n" +
+		"- **mgit's own generated files are not your work.** `mgit work` wrote this " +
+		"worktree's agent scaffolding (this generated CLAUDE.md block, and the agent " +
+		"config under `.claude/`), and `mgit commit -a` deliberately SKIPS it, so it " +
+		"never lands in the project. You do not need to remember an exception. If you " +
+		"genuinely mean to change one of those files — a real project directive, not " +
+		"mgit's generated block — stage it by name: `mgit add CLAUDE.md`.\n" +
 		"- **Orient before you act.** `mgit status` (which files are staged vs. not), " +
 		"`mgit log --oneline` (your steps so far), and `mgit diff` / " +
 		"`mgit diff --task-id <ID>` (what changed) keep you grounded between steps.\n" +

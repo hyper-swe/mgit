@@ -7,6 +7,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/agentadapter"
 	"github.com/hyper-swe/mgit/internal/model"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // claudeHookCommand is the shell command Claude Code runs for the Bash
@@ -58,7 +59,12 @@ func currentMgitBin() string {
 // section to match a sandbox's current network posture. Called after
 // launch so the agent's knowledge layer regenerates on every policy
 // change. Best-effort: a write failure warns but never fails the launch.
-// Refs: MGIT-11.11.2
+//
+// Writing the block is also what makes CLAUDE.md mgit-generated in that
+// worktree, so the provenance is recorded here as well as in `mgit work`
+// (MGIT-80) — this path also fires for a worktree created by the plumbing
+// `mgit worktree add`, which generates nothing until a sandbox is launched.
+// Refs: MGIT-11.11.2, MGIT-80
 func writeSandboxEnvDoc(warn io.Writer, info *model.SandboxInfo) {
 	if info == nil || info.WorktreePath == "" {
 		return
@@ -70,5 +76,11 @@ func writeSandboxEnvDoc(warn io.Writer, info *model.SandboxInfo) {
 	}
 	if err := agentadapter.UpsertClaudeMd(info.WorktreePath, env); err != nil {
 		_, _ = fmt.Fprintf(warn, "warning: could not update CLAUDE.md sandbox section (%v)\n", err)
+		return
+	}
+	if err := gitstore.RecordGeneratedPaths(info.WorktreePath,
+		[]string{agentadapter.ClaudeMdFile}); err != nil {
+		_, _ = fmt.Fprintf(warn, "warning: could not record mgit's generated CLAUDE.md (%v); "+
+			"it may be swept into commits by `mgit commit -a`\n", err)
 	}
 }

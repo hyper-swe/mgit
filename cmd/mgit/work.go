@@ -42,11 +42,15 @@ type workOptions struct {
 // orchestration is unit-testable without a real repo, daemon, or KVM.
 // Refs: MGIT-34
 type workDeps struct {
-	addWorktree    func(ctx context.Context, opts model.WorktreeAddOptions) (*model.WorktreeInfo, error)
-	writeAdapters  func(warn io.Writer, worktreePath string, contained bool)
-	upsertEnvDoc   func(worktreePath string, c agentadapter.Containment) error
-	connect        connectFunc
-	mgitBinForDocs string
+	addWorktree   func(ctx context.Context, opts model.WorktreeAddOptions) (*model.WorktreeInfo, error)
+	writeAdapters func(warn io.Writer, worktreePath string, contained bool)
+	upsertEnvDoc  func(worktreePath string, c agentadapter.Containment) error
+	// recordGenerated records, under the worktree's own .mgit/, the files mgit
+	// generated into it, so a bulk stage cannot sweep mgit's scaffolding into
+	// the task branch and the landed patch. Refs: MGIT-80
+	recordGenerated func(worktreeRoot string, rels []string) error
+	connect         connectFunc
+	mgitBinForDocs  string
 }
 
 // newWorkCmd builds `mgit work` around an injected runner so the CLI parsing
@@ -105,11 +109,12 @@ func runWork(ctx context.Context, app *App, opts workOptions) error {
 		gitstore.NewWorktreeStore(app.Repo), func() time.Time { return time.Now().UTC() }).
 		WithSync(app.Sync, app.Repo, gitstore.NewCommitStore(app.Repo))
 	deps := workDeps{
-		addWorktree:    wtSvc.Add,
-		writeAdapters:  injectAgentAdapters,
-		upsertEnvDoc:   upsertWorktreeEnvDoc,
-		connect:        productionSandboxConnect,
-		mgitBinForDocs: currentMgitBin(),
+		addWorktree:     wtSvc.Add,
+		writeAdapters:   injectAgentAdapters,
+		upsertEnvDoc:    upsertWorktreeEnvDoc,
+		recordGenerated: gitstore.RecordGeneratedPaths,
+		connect:         productionSandboxConnect,
+		mgitBinForDocs:  currentMgitBin(),
 	}
 	_, err := workSetup(ctx, os.Stdout, deps, opts)
 	return err
@@ -146,6 +151,7 @@ func workSetup(ctx context.Context, out io.Writer, deps workDeps, opts workOptio
 	if envErr := deps.upsertEnvDoc(wt.Path, posture); envErr != nil {
 		_, _ = fmt.Fprintf(out, "warning: could not write CLAUDE.md sandbox section (%v)\n", envErr)
 	}
+	recordGeneratedScaffolding(out, deps, wt.Path, contained)
 	if contained {
 		_, _ = fmt.Fprintf(out, "Wired agent routing (CLAUDE.md + .claude/settings.json -> mgit run)\n")
 	}
@@ -159,6 +165,28 @@ func workSetup(ctx context.Context, out io.Writer, deps workDeps, opts workOptio
 			"--worktree %s --image <ref>` when ready, or pass --sandbox)\n", wt.TaskID, wt.Path)
 	}
 	return wt, nil
+}
+
+// recordGeneratedScaffolding records the agent files mgit just wrote into the
+// worktree as mgit-generated, so `mgit add -A` / `mgit commit -a` never sweep
+// them into the task branch and the patch that lands in the user's repository
+// (MGIT-80). Only files actually present on disk are claimed, so a failed
+// best-effort adapter write does not make a user's own later file of that name
+// invisible to bulk staging.
+//
+// A recording failure does not abort — the worktree exists and is usable — but
+// it is warned about WITH its consequence, because the exclusion is the whole
+// point: without the record, mgit's scaffolding lands. Refs: MGIT-80
+func recordGeneratedScaffolding(out io.Writer, deps workDeps, worktreePath string, contained bool) {
+	if deps.recordGenerated == nil {
+		return
+	}
+	generated := agentadapter.ExistingGeneratedFiles(worktreePath, contained)
+	if err := deps.recordGenerated(worktreePath, generated); err != nil {
+		_, _ = fmt.Fprintf(out, "warning: could not record mgit's generated agent files (%v); "+
+			"they may be swept into commits by `mgit commit -a` — stage your work with "+
+			"`mgit add <path>` instead until this is fixed\n", err)
+	}
 }
 
 // launchWorkSandbox runs the optional sandbox-launch leg. It degrades
