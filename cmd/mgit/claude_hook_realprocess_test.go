@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -28,12 +29,12 @@ import (
 // state (no `--sandbox` requested) and is exactly the "ask" fallback this
 // hook exists to make honest rather than silently permissive. Refs: MGIT-11.11.1
 func TestClaudeHook_RealProcess_StdinToStdoutContract(t *testing.T) {
-	bin := buildMgitHookTestBinary(t)
+	bin := buildMgitTestBinary(t)
 	repo := t.TempDir()
-	require.NoError(t, runMgitHookTest(t, bin, repo, "init"))
+	require.NoError(t, runMgitTest(t, bin, repo, "init"))
 
 	t.Run("bash_tool_no_sandbox_asks", func(t *testing.T) {
-		out, exitErr := runMgitHookTestStdin(t, bin, repo,
+		out, exitErr := runMgitTestStdin(t, bin, repo,
 			`{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"`+repo+`","tool_input":{"command":"echo hi"}}`,
 			"sandbox", "claude-hook")
 		assert.NoError(t, exitErr, "the hook contract exits 0 even when the decision is 'ask'")
@@ -46,7 +47,7 @@ func TestClaudeHook_RealProcess_StdinToStdoutContract(t *testing.T) {
 	})
 
 	t.Run("non_bash_tool_untouched", func(t *testing.T) {
-		out, exitErr := runMgitHookTestStdin(t, bin, repo,
+		out, exitErr := runMgitTestStdin(t, bin, repo,
 			`{"hook_event_name":"PreToolUse","tool_name":"Read","cwd":"`+repo+`"}`,
 			"sandbox", "claude-hook")
 		assert.NoError(t, exitErr)
@@ -54,7 +55,10 @@ func TestClaudeHook_RealProcess_StdinToStdoutContract(t *testing.T) {
 	})
 }
 
-func buildMgitHookTestBinary(t *testing.T) string {
+// buildMgitTestBinary compiles the real mgit binary into a temp dir. Tests use
+// it when the thing under test is a process-level contract (exit status,
+// stdin/stdout wiring) that an in-process cobra invocation cannot observe.
+func buildMgitTestBinary(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	require.True(t, ok, "locate this test file to find the module root")
@@ -74,7 +78,7 @@ func buildMgitHookTestBinary(t *testing.T) string {
 	return bin
 }
 
-func runMgitHookTest(t *testing.T, bin, dir string, args ...string) error {
+func runMgitTest(t *testing.T, bin, dir string, args ...string) error {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -87,7 +91,30 @@ func runMgitHookTest(t *testing.T, bin, dir string, args ...string) error {
 	return err
 }
 
-func runMgitHookTestStdin(t *testing.T, bin, dir, stdin string, args ...string) (string, error) {
+// runMgitTestExit executes one mgit command and returns its combined output
+// together with the process exit status — the value an agent's shell sees and
+// branches on. A command that could not be started at all yields -1.
+func runMgitTestExit(t *testing.T, bin, dir string, args ...string) (string, int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // fixed argv, test-only
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		} else {
+			code = -1
+		}
+	}
+	t.Logf("mgit %v -> exit %d\n%s", args, code, out)
+	return string(out), code
+}
+
+func runMgitTestStdin(t *testing.T, bin, dir, stdin string, args ...string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

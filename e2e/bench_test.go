@@ -25,9 +25,10 @@ func BenchmarkCommit(b *testing.B) {
 	b.ResetTimer()
 	for i := range b.N {
 		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  fmt.Sprintf("MGIT-%d.1", i+1),
-			AgentID: "bench-agent",
-			Message: fmt.Sprintf("benchmark commit %d", i),
+			AllowEmpty: true,
+			TaskID:     fmt.Sprintf("MGIT-%d.1", i+1),
+			AgentID:    "bench-agent",
+			Message:    fmt.Sprintf("benchmark commit %d", i),
 		})
 		if err != nil {
 			b.Fatal(err)
@@ -44,9 +45,10 @@ func BenchmarkLog(b *testing.B) {
 	// Seed 100 commits
 	for i := range 100 {
 		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  "MGIT-1.1",
-			AgentID: "bench-agent",
-			Message: fmt.Sprintf("seed commit %d", i),
+			AllowEmpty: true,
+			TaskID:     "MGIT-1.1",
+			AgentID:    "bench-agent",
+			Message:    fmt.Sprintf("seed commit %d", i),
 		})
 		require.NoError(b, err)
 	}
@@ -72,9 +74,10 @@ func BenchmarkSquash(b *testing.B) {
 		// Create 10 commits
 		for j := range 10 {
 			_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-				TaskID:  taskID,
-				AgentID: "bench-agent",
-				Message: fmt.Sprintf("commit %d", j),
+				AllowEmpty: true,
+				TaskID:     taskID,
+				AgentID:    "bench-agent",
+				Message:    fmt.Sprintf("commit %d", j),
 			})
 			require.NoError(b, err)
 		}
@@ -98,9 +101,10 @@ func BenchmarkVerify(b *testing.B) {
 	// Seed commits
 	for i := range 50 {
 		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  "MGIT-1.1",
-			AgentID: "bench-agent",
-			Message: fmt.Sprintf("verify commit %d", i),
+			AllowEmpty: true,
+			TaskID:     "MGIT-1.1",
+			AgentID:    "bench-agent",
+			Message:    fmt.Sprintf("verify commit %d", i),
 		})
 		require.NoError(b, err)
 	}
@@ -124,9 +128,10 @@ func TestE2E_StorageEfficiency(t *testing.T) {
 	for i := range 100 {
 		taskID := fmt.Sprintf("MGIT-%d.1", (i%10)+1)
 		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  taskID,
-			AgentID: "storage-test",
-			Message: fmt.Sprintf("storage test commit %d", i),
+			AllowEmpty: true,
+			TaskID:     taskID,
+			AgentID:    "storage-test",
+			Message:    fmt.Sprintf("storage test commit %d", i),
 		})
 		require.NoError(t, err)
 	}

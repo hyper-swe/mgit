@@ -27,11 +27,11 @@ func TestService_IndexFailure_Propagates(t *testing.T) {
 	}{
 		{"commit_create", func(t *testing.T, env *testEnv, ctx context.Context) error {
 			require.NoError(t, env.idx.Close())
-			_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{TaskID: "MGIT-1", AgentID: "a", Message: "m"})
+			_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{AllowEmpty: true, TaskID: "MGIT-1", AgentID: "a", Message: "m"})
 			return err
 		}},
 		{"commit_list", func(t *testing.T, env *testEnv, ctx context.Context) error {
-			_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{TaskID: "MGIT-1", AgentID: "a", Message: "m"})
+			_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{AllowEmpty: true, TaskID: "MGIT-1", AgentID: "a", Message: "m"})
 			require.NoError(t, err)
 			require.NoError(t, env.idx.Close())
 			_, err = env.commit.ListCommits(ctx) // enrichProvenance hits the closed index

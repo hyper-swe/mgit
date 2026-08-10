@@ -19,7 +19,8 @@ func TestSquashService_MergeDiffs_DuplicatePaths(t *testing.T) {
 
 	// Two commits modifying the same file
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-7.1", AgentID: "a",
+		AllowEmpty: true,
+		TaskID:     "MGIT-7.1", AgentID: "a",
 		FileDiffs: []model.FileDiff{
 			{Path: "main.go", Operation: model.DiffModified, OldHash: "a", NewHash: "b"},
 		},
@@ -27,7 +28,8 @@ func TestSquashService_MergeDiffs_DuplicatePaths(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-7.1", AgentID: "a",
+		AllowEmpty: true,
+		TaskID:     "MGIT-7.1", AgentID: "a",
 		FileDiffs: []model.FileDiff{
 			{Path: "main.go", Operation: model.DiffModified, OldHash: "b", NewHash: "c"},
 		},
@@ -105,7 +107,8 @@ func TestVerifyService_VerifyCommitChain_Single(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-8.1", AgentID: "a", Message: "single",
+		AllowEmpty: true,
+		TaskID:     "MGIT-8.1", AgentID: "a", Message: "single",
 	})
 	require.NoError(t, err)
 

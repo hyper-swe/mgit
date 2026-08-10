@@ -22,7 +22,8 @@ func TestDiffService_DiffCommits(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-1.1", AgentID: "agent-01", Message: "change",
+		AllowEmpty: true,
+		TaskID:     "MGIT-1.1", AgentID: "agent-01", Message: "change",
 	})
 	require.NoError(t, err)
 
@@ -42,12 +43,14 @@ func TestDiffService_DiffTask(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-2.1", AgentID: "agent-01", Message: "first",
+		AllowEmpty: true,
+		TaskID:     "MGIT-2.1", AgentID: "agent-01", Message: "first",
 	})
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-2.1", AgentID: "agent-01", Message: "second",
+		AllowEmpty: true,
+		TaskID:     "MGIT-2.1", AgentID: "agent-01", Message: "second",
 	})
 	require.NoError(t, err)
 
@@ -93,12 +96,14 @@ func TestVerifyService_VerifyCommitChain(t *testing.T) {
 	ctx := context.Background()
 
 	c1, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-3.1", AgentID: "agent-01", Message: "first",
+		AllowEmpty: true,
+		TaskID:     "MGIT-3.1", AgentID: "agent-01", Message: "first",
 	})
 	require.NoError(t, err)
 
 	c2, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-3.1", AgentID: "agent-01", Message: "second",
+		AllowEmpty: true,
+		TaskID:     "MGIT-3.1", AgentID: "agent-01", Message: "second",
 	})
 	require.NoError(t, err)
 
@@ -121,7 +126,8 @@ func TestVerifyService_VerifyTaskCommits(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-4.1", AgentID: "agent-01", Message: "commit",
+		AllowEmpty: true,
+		TaskID:     "MGIT-4.1", AgentID: "agent-01", Message: "commit",
 	})
 	require.NoError(t, err)
 
@@ -148,7 +154,8 @@ func TestVerifyService_VerifyIndexIntegrity_IndexedCommits_NoIssues(t *testing.T
 	ctx := context.Background()
 
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-4.1", AgentID: "agent-01", Message: "commit",
+		AllowEmpty: true,
+		TaskID:     "MGIT-4.1", AgentID: "agent-01", Message: "commit",
 	})
 	require.NoError(t, err)
 

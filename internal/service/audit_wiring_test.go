@@ -30,9 +30,10 @@ func TestCommitService_CreateCommit_AppendsAuditEntry(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID:  "MGIT-20.1",
-		AgentID: "agent-audit",
-		Message: "wire audit",
+		AllowEmpty: true,
+		TaskID:     "MGIT-20.1",
+		AgentID:    "agent-audit",
+		Message:    "wire audit",
 	})
 	require.NoError(t, err)
 
@@ -51,9 +52,10 @@ func TestCommitService_CreateCommit_NoAudit_StillSucceeds(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID:  "MGIT-20.2",
-		AgentID: "agent-audit",
-		Message: "no audit",
+		AllowEmpty: true,
+		TaskID:     "MGIT-20.2",
+		AgentID:    "agent-audit",
+		Message:    "no audit",
 	})
 	require.NoError(t, err)
 }
@@ -64,9 +66,10 @@ func TestSquashService_SquashTask_AppendsAuditEntry(t *testing.T) {
 
 	for i := range 2 {
 		_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-			TaskID:  "MGIT-20.3",
-			AgentID: "agent-audit",
-			Message: "c" + string(rune('A'+i)),
+			AllowEmpty: true,
+			TaskID:     "MGIT-20.3",
+			AgentID:    "agent-audit",
+			Message:    "c" + string(rune('A'+i)),
 		})
 		require.NoError(t, err)
 	}
@@ -87,7 +90,8 @@ func TestSquashService_SquashTask_DryRun_NoAuditEntry(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-20.4", AgentID: "agent-audit", Message: "c",
+		AllowEmpty: true,
+		TaskID:     "MGIT-20.4", AgentID: "agent-audit", Message: "c",
 	})
 	require.NoError(t, err)
 

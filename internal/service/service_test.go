@@ -72,9 +72,10 @@ func TestCommitService_CreateCommit(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID:  "MGIT-1.2.3",
-		AgentID: "agent-01",
-		Message: "implement feature X",
+		AllowEmpty: true,
+		TaskID:     "MGIT-1.2.3",
+		AgentID:    "agent-01",
+		Message:    "implement feature X",
 	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, c.CommitID)
@@ -86,8 +87,9 @@ func TestCommitService_CreateCommit_AutoMessage(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID:  "MGIT-2.1",
-		AgentID: "agent-01",
+		AllowEmpty: true,
+		TaskID:     "MGIT-2.1",
+		AgentID:    "agent-01",
 		FileDiffs: []model.FileDiff{
 			{Path: "main.go", Operation: model.DiffAdded, NewHash: "abc"},
 		},
@@ -101,9 +103,10 @@ func TestCommitService_CreateCommit_StoredInBoth(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID:  "MGIT-3.1",
-		AgentID: "agent-01",
-		Message: "test dual storage",
+		AllowEmpty: true,
+		TaskID:     "MGIT-3.1",
+		AgentID:    "agent-01",
+		Message:    "test dual storage",
 	})
 	require.NoError(t, err)
 
@@ -124,8 +127,9 @@ func TestCommitService_CreateCommit_InvalidTaskID(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID:  "invalid",
-		AgentID: "agent-01",
+		AllowEmpty: true,
+		TaskID:     "invalid",
+		AgentID:    "agent-01",
 	})
 	assert.Error(t, err)
 }
@@ -136,9 +140,10 @@ func TestCommitService_GetTaskCommits(t *testing.T) {
 
 	for i := range 3 {
 		_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-			TaskID:  "MGIT-4.1",
-			AgentID: "agent-01",
-			Message: "commit " + string(rune('A'+i)),
+			AllowEmpty: true,
+			TaskID:     "MGIT-4.1",
+			AgentID:    "agent-01",
+			Message:    "commit " + string(rune('A'+i)),
 		})
 		require.NoError(t, err)
 	}
@@ -157,9 +162,10 @@ func TestSquashService_SquashTask(t *testing.T) {
 	// Create commits to squash
 	for i := range 3 {
 		_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-			TaskID:  "MGIT-5.1",
-			AgentID: "agent-01",
-			Message: "micro commit " + string(rune('A'+i)),
+			AllowEmpty: true,
+			TaskID:     "MGIT-5.1",
+			AgentID:    "agent-01",
+			Message:    "micro commit " + string(rune('A'+i)),
 		})
 		require.NoError(t, err)
 	}
@@ -175,7 +181,8 @@ func TestSquashService_SquashTask_DryRun(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-5.2", AgentID: "agent-01", Message: "commit",
+		AllowEmpty: true,
+		TaskID:     "MGIT-5.2", AgentID: "agent-01", Message: "commit",
 	})
 	require.NoError(t, err)
 
@@ -205,7 +212,8 @@ func TestSquashService_SquashTask_MergesDiffs(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-5.3", AgentID: "agent-01",
+		AllowEmpty: true,
+		TaskID:     "MGIT-5.3", AgentID: "agent-01",
 		FileDiffs: []model.FileDiff{
 			{Path: "a.go", Operation: model.DiffAdded, NewHash: "h1"},
 		},
@@ -213,7 +221,8 @@ func TestSquashService_SquashTask_MergesDiffs(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-5.3", AgentID: "agent-01",
+		AllowEmpty: true,
+		TaskID:     "MGIT-5.3", AgentID: "agent-01",
 		FileDiffs: []model.FileDiff{
 			{Path: "b.go", Operation: model.DiffAdded, NewHash: "h2"},
 		},

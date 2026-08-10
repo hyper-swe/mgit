@@ -5,6 +5,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/oklog/ulid/v2"
 
+	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/service"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 	"github.com/hyper-swe/mgit/internal/store/index"
@@ -190,7 +192,9 @@ func (s *Server) healthHandler(c echo.Context) error {
 }
 
 // createCommitHandler handles POST /api/v1/commits.
-// Refs: FR-9.2
+// A commit that would record nothing is refused with 409 Conflict: the request
+// is well formed, but the repository state makes it a no-op. Reporting 201 for
+// it is the MGIT-77 defect at this surface. Refs: FR-9.2, MGIT-77
 func (s *Server) createCommitHandler(c echo.Context) error {
 	var req service.CreateCommitRequest
 	if err := c.Bind(&req); err != nil {
@@ -198,6 +202,9 @@ func (s *Server) createCommitHandler(c echo.Context) error {
 	}
 
 	commit, err := s.commit.CreateCommit(c.Request().Context(), req)
+	if errors.Is(err, model.ErrNothingToCommit) {
+		return c.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+	}
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}

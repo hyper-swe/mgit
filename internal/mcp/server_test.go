@@ -66,16 +66,44 @@ func TestMCP_Server_Init(t *testing.T) {
 	assert.NotNil(t, srv.MCPServer())
 }
 
+// TestMCP_CommitTool pins the MCP surface's staging contract: this server
+// exposes no staging tool, so mgit_commit stages the working tree by default
+// and the resulting commit must actually carry the file. Without that default
+// every MCP commit would record an empty tree (MGIT-77). Refs: FR-10, MGIT-77
 func TestMCP_CommitTool(t *testing.T) {
-	srv := setupTestMCP(t)
+	srv, repo := setupTestMCPWithRepo(t)
 	ctx := context.Background()
+
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Root(), "via-mcp.txt"),
+		[]byte("committed through MCP\n"), 0o600))
 
 	result, err := srv.commitTool(ctx, makeToolReq(map[string]any{
 		"task_id": "MGIT-1.2.3",
 		"message": "test commit via MCP",
 	}))
 	require.NoError(t, err)
-	assert.False(t, result.IsError)
+	require.False(t, result.IsError, resultText(t, result))
+
+	commits, err := srv.commit.ListCommits(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, commits)
+	content, err := gitstore.NewCommitStore(repo).GetFileFromCommit(ctx, commits[0].CommitID, "via-mcp.txt")
+	require.NoError(t, err, "the MCP commit must contain the working-tree file")
+	assert.Equal(t, "committed through MCP\n", string(content))
+}
+
+// An MCP commit that would record nothing is refused, like every other surface.
+// Refs: MGIT-77
+func TestMCP_CommitTool_NothingToCommit_ReturnsError(t *testing.T) {
+	srv := setupTestMCP(t)
+
+	result, err := srv.commitTool(context.Background(), makeToolReq(map[string]any{
+		"task_id": "MGIT-1.2.3",
+		"message": "records nothing",
+	}))
+	require.NoError(t, err)
+	require.True(t, result.IsError, "an empty commit must not report success")
+	assert.Contains(t, resultText(t, result), "nothing to commit")
 }
 
 func TestMCP_LogTool(t *testing.T) {
@@ -113,7 +141,7 @@ func TestMCP_SquashTool(t *testing.T) {
 
 	// First create a commit
 	_, err := srv.commitTool(ctx, makeToolReq(map[string]any{
-		"task_id": "MGIT-3.1", "message": "pre-squash",
+		"task_id": "MGIT-3.1", "message": "pre-squash", "allow_empty": true,
 	}))
 	require.NoError(t, err)
 
@@ -133,7 +161,7 @@ func TestMCP_RollbackTool(t *testing.T) {
 	require.NoError(t, gitstore.NewWorktreeStore(repo).Add(ctx, "rb.txt"))
 
 	_, err := srv.commitTool(ctx, makeToolReq(map[string]any{
-		"task_id": "MGIT-4.1", "message": "to rollback",
+		"task_id": "MGIT-4.1", "message": "to rollback", "allow_empty": true,
 	}))
 	require.NoError(t, err)
 

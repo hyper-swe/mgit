@@ -87,6 +87,8 @@ func TestConcurrent_10Agents_SameRepo_DifferentTasks(t *testing.T) {
 					"--task-id="+res.taskID,
 					"--agent-id="+res.agentID,
 					"--message="+msg,
+					// Fixture: this test races the ref/index writes, not content.
+					"--allow-empty",
 				)
 				if err != nil {
 					res.errors = append(res.errors, fmt.Sprintf("[%d] %s: %s", j, err, out))
@@ -164,7 +166,8 @@ func TestConcurrent_10Agents_SeparateRepos(t *testing.T) {
 			for j := range 3 {
 				msg := fmt.Sprintf("commit %d", j+1)
 				out, err := runMgit(t, bin, repoDir,
-					"commit", "--task-id="+taskID, "--agent-id="+agentID, "--message="+msg)
+					"commit", "--task-id="+taskID, "--agent-id="+agentID, "--message="+msg,
+					"--allow-empty")
 				if err != nil {
 					errors <- fmt.Errorf("%s commit %d: %w: %s", agentID, j, err, out)
 					return
@@ -214,6 +217,7 @@ func TestConcurrent_SameTask_Race(t *testing.T) {
 				"--task-id=PROJ-1.1",
 				"--agent-id="+agentID,
 				"--message="+msg,
+				"--allow-empty",
 			)
 			if err == nil {
 				mu.Lock()

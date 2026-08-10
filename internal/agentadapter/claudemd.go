@@ -152,18 +152,32 @@ func renderOpenBody() string {
 // subsection injected into every sandboxed agent's CLAUDE.md. It is a static,
 // secret-free string (no ambient state read) describing only mgit's own CLI,
 // so it cannot leak host secrets and is stable across regenerations.
-// Refs: MGIT-29, MGIT-28
+//
+// The commit instruction MUST stage. An earlier version said plain
+// `mgit commit -m ...` and never mentioned staging, so an agent following it
+// literally produced a branch of empty commits and a hunk-free land patch
+// (MGIT-77). It now names the one-command form, `mgit commit -a`.
+// Refs: MGIT-29, MGIT-28, MGIT-77
 func renderWorkingDiscipline(c Containment) string {
 	return "\n### mgit working discipline\n\n" +
 		"This worktree is version-controlled by **mgit** and bound to one task. " +
 		disciplineRoutingSentence(c) + "\n\n" +
-		"- **Commit after every coherent step.** Run `mgit commit -m \"<what changed>\"` " +
-		"once a step compiles/passes — the task ID is auto-inherited from this worktree, " +
-		"so no `--task-id` is needed. Micro-commits are cheap and expected; they are " +
-		"collapsed into one commit at land via `mgit squash`, so do not hesitate or batch.\n" +
-		"- **Orient before you act.** `mgit status` (working tree), `mgit log --oneline` " +
-		"(your steps so far), and `mgit diff` / `mgit diff --task-id <ID>` (what changed) " +
-		"keep you grounded between steps.\n" +
+		"- **Commit after every coherent step, and stage as you commit.** Run " +
+		"`mgit commit -a -m \"<what changed>\"` once a step compiles/passes. The `-a` " +
+		"is not optional bookkeeping: mgit records only STAGED changes, so a plain " +
+		"`mgit commit` after editing files records NOTHING. `-a` stages every change " +
+		"(including new files) and commits in one step; use `mgit add <path>` first " +
+		"and plain `mgit commit` only when you deliberately want part of your work. " +
+		"The task ID is auto-inherited from this worktree, so no `--task-id` is needed. " +
+		"Micro-commits are cheap and expected; they are collapsed into one commit at " +
+		"land via `mgit squash`, so do not hesitate or batch.\n" +
+		"- **A commit that records nothing is refused.** `mgit commit` exits non-zero " +
+		"with `nothing to commit` when your tree would be identical to the previous " +
+		"commit's — that means your edits were not staged, not that they were saved. " +
+		"Fix it by staging (`-a`), never by passing `--allow-empty`.\n" +
+		"- **Orient before you act.** `mgit status` (which files are staged vs. not), " +
+		"`mgit log --oneline` (your steps so far), and `mgit diff` / " +
+		"`mgit diff --task-id <ID>` (what changed) keep you grounded between steps.\n" +
 		"- **Course-correct, don't restart.** When a prior decision proves wrong, return to " +
 		"that point instead of rewriting from scratch: `mgit rollback --commit <hash>` " +
 		"(append-only revert) or `mgit checkout -b <branch>` to fork a new line from a good " +

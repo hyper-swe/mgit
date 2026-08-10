@@ -21,7 +21,8 @@ func TestCommitService_GetCommit(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-1.1", AgentID: "a", Message: "test",
+		AllowEmpty: true,
+		TaskID:     "MGIT-1.1", AgentID: "a", Message: "test",
 	})
 	require.NoError(t, err)
 
@@ -40,9 +41,10 @@ func TestCommitService_GetCommit_PopulatesProvenance(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID:  "MGIT-3.2",
-		AgentID: "agent-01",
-		Message: "implement provenance",
+		AllowEmpty: true,
+		TaskID:     "MGIT-3.2",
+		AgentID:    "agent-01",
+		Message:    "implement provenance",
 		FileDiffs: []model.FileDiff{
 			{Path: "main.go", Operation: model.DiffAdded, NewHash: "abc"},
 		},
@@ -65,7 +67,8 @@ func TestCommitService_GetCommit_AbbreviatedHash(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-3.3", AgentID: "a", Message: "abbrev",
+		AllowEmpty: true,
+		TaskID:     "MGIT-3.3", AgentID: "a", Message: "abbrev",
 	})
 	require.NoError(t, err)
 
@@ -82,7 +85,8 @@ func TestCommitService_ListCommits_PopulatesContentHash(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-3.4", AgentID: "a", Message: "listed",
+		AllowEmpty: true,
+		TaskID:     "MGIT-3.4", AgentID: "a", Message: "listed",
 	})
 	require.NoError(t, err)
 
@@ -119,7 +123,8 @@ func TestCommitService_GetCommit_IndexFailurePropagates(t *testing.T) {
 	ctx := context.Background()
 
 	created, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-3.5", AgentID: "a", Message: "will fail enrich",
+		AllowEmpty: true,
+		TaskID:     "MGIT-3.5", AgentID: "a", Message: "will fail enrich",
 	})
 	require.NoError(t, err)
 
@@ -136,7 +141,8 @@ func TestCommitService_ListCommits(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-1.1", AgentID: "a", Message: "one",
+		AllowEmpty: true,
+		TaskID:     "MGIT-1.1", AgentID: "a", Message: "one",
 	})
 	require.NoError(t, err)
 
@@ -150,7 +156,8 @@ func TestCommitService_AutoMessage_Empty(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-1.2", AgentID: "a",
+		AllowEmpty: true,
+		TaskID:     "MGIT-1.2", AgentID: "a",
 	})
 	require.NoError(t, err)
 	assert.Contains(t, c.Message, "empty commit")
@@ -161,7 +168,8 @@ func TestCommitService_AutoMessage_MultipleDiffs(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-1.3", AgentID: "a",
+		AllowEmpty: true,
+		TaskID:     "MGIT-1.3", AgentID: "a",
 		FileDiffs: []model.FileDiff{
 			{Path: "a.go", Operation: model.DiffAdded},
 			{Path: "b.go", Operation: model.DiffAdded},
@@ -182,7 +190,8 @@ func TestDiffService_DiffRange(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-2.1", AgentID: "a", Message: "change",
+		AllowEmpty: true,
+		TaskID:     "MGIT-2.1", AgentID: "a", Message: "change",
 	})
 	require.NoError(t, err)
 	head2, err := env.repo.Head()
@@ -488,7 +497,8 @@ func TestSquashService_CustomMessage(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-5.4", AgentID: "a", Message: "c1",
+		AllowEmpty: true,
+		TaskID:     "MGIT-5.4", AgentID: "a", Message: "c1",
 	})
 	require.NoError(t, err)
 

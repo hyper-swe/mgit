@@ -76,6 +76,18 @@ func squashCmd() *cobra.Command {
 				if perr != nil {
 					return fmt.Errorf("squash --to-git: %w", perr)
 				}
+				// A hunk-free patch is well formed and `git apply` accepts it, so
+				// the land step would report success and land nothing. Say so on
+				// stderr — stdout stays a clean patch when piped. Refs: MGIT-77
+				if !service.PatchHasHunks(patch) {
+					_, _ = fmt.Fprintf(os.Stderr,
+						"warning: the patch for task %s contains NO diff hunks — "+
+							"applying it will change nothing.\n"+
+							"  Its commits recorded no content. Check `mgit log --oneline` and "+
+							"`mgit diff --task-id %s`; work is recorded only when staged "+
+							"(`mgit add <path>`, or `mgit commit -a`).\n",
+						taskID, taskID)
+				}
 				if toGitOutput != "" {
 					if err := os.WriteFile(toGitOutput, []byte(patch), 0o600); err != nil {
 						return fmt.Errorf("squash --to-git: write patch: %w", err)

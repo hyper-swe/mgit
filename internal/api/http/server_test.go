@@ -63,7 +63,7 @@ func TestHealth_Endpoint(t *testing.T) {
 
 func TestCommit_PostCreate(t *testing.T) {
 	srv := setupTestServer(t)
-	body := `{"task_id":"MGIT-1.2.3","agent_id":"test","message":"test commit"}`
+	body := `{"task_id":"MGIT-1.2.3","agent_id":"test","message":"test commit","allow_empty":true}`
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/commits", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -74,6 +74,23 @@ func TestCommit_PostCreate(t *testing.T) {
 	var result map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
 	assert.NotEmpty(t, result["commit_id"])
+}
+
+// A commit that would record nothing must not come back 201 with a hash — the
+// REST surface's form of the MGIT-77 false success signal. Refs: MGIT-77
+func TestCommit_PostCreate_NothingToCommit_Conflicts(t *testing.T) {
+	srv := setupTestServer(t)
+	body := `{"task_id":"MGIT-1.2.3","agent_id":"test","message":"records nothing"}`
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/commits", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	srv.Echo().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	var result map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
+	assert.Contains(t, result["error"], "nothing to commit")
 }
 
 func TestCommit_GetList(t *testing.T) {
@@ -145,7 +162,7 @@ func TestSquash_Endpoint(t *testing.T) {
 	srv := setupTestServer(t)
 
 	// First create a commit
-	body := `{"task_id":"MGIT-3.1","agent_id":"test","message":"pre-squash"}`
+	body := `{"task_id":"MGIT-3.1","agent_id":"test","message":"pre-squash","allow_empty":true}`
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/commits", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -80,13 +81,13 @@ func statusCmd() *cobra.Command {
 				return nil
 			}
 
-			for _, f := range files {
-				if short {
+			if short {
+				for _, f := range files {
 					_, _ = fmt.Fprintf(os.Stdout, "%s%s %s\n", f.Staging, f.Worktree, f.Path)
-				} else {
-					_, _ = fmt.Fprintf(os.Stdout, "\t%s %s %s\n", f.Staging, f.Worktree, f.Path)
 				}
+				return nil
 			}
+			printGroupedStatus(os.Stdout, files)
 			return nil
 		},
 	}
@@ -96,4 +97,73 @@ func statusCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&short, "short", false, "Compact status output")
 	cmd.Flags().BoolVar(&porcelain, "porcelain", false, "Machine-readable output")
 	return cmd
+}
+
+// printGroupedStatus renders the human status: staged, unstaged and untracked
+// paths under headings that SAY which group will be recorded by the next
+// commit. Previously the only difference between "will be committed" and "will
+// be silently dropped" was which column the letter sat in — unreadable to a
+// person and invisible to an agent (MGIT-77). The machine-readable modes
+// (--short/--porcelain/--json) keep the two-column form and are unaffected.
+// Refs: FR-8.6, MGIT-77
+func printGroupedStatus(w io.Writer, files []gitstore.FileStatus) {
+	var staged, unstaged, untracked []gitstore.FileStatus
+	for _, f := range files {
+		switch {
+		case f.Staging != gitstore.StatusUnmodified:
+			staged = append(staged, f)
+		case f.Worktree == gitstore.StatusUntracked:
+			untracked = append(untracked, f)
+		default:
+			unstaged = append(unstaged, f)
+		}
+	}
+
+	printStatusGroup(w, "Changes to be committed (these WILL be recorded):", staged, true)
+	printStatusGroup(w, "Changes not staged for commit (these will NOT be recorded):", unstaged, false)
+	printStatusGroup(w, "Untracked files (these will NOT be recorded):", untracked, false)
+
+	if len(staged) == 0 {
+		_, _ = fmt.Fprintf(w, "\n%d change(s) present but nothing staged — `mgit commit` would record "+
+			"nothing and will refuse.\n", len(unstaged)+len(untracked))
+	} else {
+		_, _ = fmt.Fprintf(w, "\n%d staged, %d not staged.\n", len(staged), len(unstaged)+len(untracked))
+	}
+	if len(unstaged)+len(untracked) > 0 {
+		_, _ = fmt.Fprintln(w, "  Stage with `mgit add <path>`, or commit everything with `mgit commit -a -m \"...\"`.")
+	}
+}
+
+// printStatusGroup prints one titled group, or nothing when it is empty. The
+// staged group's worktree column is always unmodified, so each entry is
+// labeled from whichever column carries its code.
+func printStatusGroup(w io.Writer, title string, files []gitstore.FileStatus, staged bool) {
+	if len(files) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "\n%s\n", title)
+	for _, f := range files {
+		code := f.Worktree
+		if staged {
+			code = f.Staging
+		}
+		_, _ = fmt.Fprintf(w, "\t%s%s\n", statusLabel(code), f.Path)
+	}
+}
+
+// statusLabel turns a status code into a padded word. An unrecognized code
+// falls back to the raw character rather than silently claiming a change type.
+func statusLabel(code string) string {
+	switch code {
+	case gitstore.StatusAdded:
+		return "new file:   "
+	case gitstore.StatusDeleted:
+		return "deleted:    "
+	case gitstore.StatusUntracked:
+		return ""
+	case gitstore.StatusModified:
+		return "modified:   "
+	default:
+		return code + ":          "
+	}
 }

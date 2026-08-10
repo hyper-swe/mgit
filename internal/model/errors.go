@@ -29,6 +29,13 @@ var (
 	// ErrInvalidCommit indicates a commit fails validation.
 	ErrInvalidCommit = errors.New("invalid commit")
 
+	// ErrNothingToCommit indicates a commit was requested that would record no
+	// change: the tree it would produce is byte-identical to its parent's. mgit
+	// refuses it unless emptiness is requested explicitly, because a hash
+	// returned for unrecorded work is a false success signal to an agent.
+	// Refs: FR-2, MGIT-77
+	ErrNothingToCommit = errors.New("nothing to commit")
+
 	// ErrBranchAlreadyExists indicates a branch name is already in use.
 	ErrBranchAlreadyExists = errors.New("branch already exists")
 

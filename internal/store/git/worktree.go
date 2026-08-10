@@ -14,13 +14,29 @@ import (
 
 // Single-character git-style status codes used in FileStatus.Staging and
 // FileStatus.Worktree. Centralized so status semantics live in one place.
-// Refs: FR-8, MGIT-2.2.6
+// Exported so presentation layers can classify a FileStatus (staged vs. not)
+// against the same definitions the store writes, instead of re-declaring
+// magic characters. Refs: FR-8, MGIT-2.2.6, MGIT-77
 const (
-	statusUnmodified = " "
-	statusUntracked  = "?"
-	statusAdded      = "A"
-	statusModified   = "M"
-	statusDeleted    = "D"
+	// StatusUnmodified marks a column with no change.
+	StatusUnmodified = " "
+	// StatusUntracked marks a path not present in HEAD and not staged.
+	StatusUntracked = "?"
+	// StatusAdded marks a staged path that is new relative to HEAD.
+	StatusAdded = "A"
+	// StatusModified marks a changed path.
+	StatusModified = "M"
+	// StatusDeleted marks a path removed relative to HEAD.
+	StatusDeleted = "D"
+)
+
+// Unexported aliases keep this package's existing call sites unchanged.
+const (
+	statusUnmodified = StatusUnmodified
+	statusUntracked  = StatusUntracked
+	statusAdded      = StatusAdded
+	statusModified   = StatusModified
+	statusDeleted    = StatusDeleted
 )
 
 // FileStatus represents the status of a file in the worktree.
