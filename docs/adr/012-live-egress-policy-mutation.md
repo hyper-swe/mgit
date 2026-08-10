@@ -161,21 +161,52 @@ can never be a mutation that silently did nothing. The drain case is the
 positive control that makes the kill case a decision rather than a coincidence.
 
 On **firecracker** the same two assertions exist as
-`TestE2E_Firecracker_Revoke_{Kills,DrainKeeps}EstablishedFlow`, but they have
-**not been run on hardware yet**: they require a Linux KVM host with a guest
-image and net-root, and skip everywhere else. This is stated rather than left
-to inference, because the two backends enforce by different mechanisms — a
-userspace netstack in a re-exec'd VM child vs. tap + iptables REDIRECT into a
-host-side proxy — so the libkrun pass above is *not* evidence for firecracker.
+`TestE2E_Firecracker_Revoke_{Kills,DrainKeeps}EstablishedFlow`, and as of
+**2026-08-10 (MGIT-78) they are proven on real KVM hardware too**. This section
+previously read "not been run on hardware yet … *implemented and reviewed, not
+proven*", because the pair needs a Linux KVM host with a guest image and
+net-root and skipped everywhere else. That is no longer the state: they now run
+on every push, PR and release, under `sudo -E`, against a real firecracker
+microVM — `e2e.yml`'s `sandbox-live-linux` job, on a hosted `ubuntu-latest`
+runner, which does expose `/dev/kvm`. The job names both tests explicitly and
+fails if either merely skips, because a skip is what would otherwise turn this
+paragraph back into a claim nobody checked.
 
-What is true on firecracker by construction, and unit-tested: its transparent
-proxy splices through `SpliceTracked`, so established flows land in the same
-`FlowRegistry` the revoke closes, and `Runner.SetPolicy` fails closed on a
-sandbox with no running egress stack. The verb therefore either enforces or
+Recorded output (GitHub Actions run 31381085771, `--- PASS` for both):
+
+- kill (default): host reports
+  `revoke applied: rules=0 killed=1 drained=false`; the guest probe reports
+  `PROBE-HOLD ESTABLISHED bytes=40 head="REAL-BYTES-FROM-ALLOWLISTED-DESTINATION"`
+  then `PROBE-RESULT HOLD = DIED after=0s reason="EOF"` —
+  *"REAL VM PASS (firecracker kill): an established, data-carrying flow was
+  TERMINATED by the revoke (host killed=1) and the next flow was refused"*.
+- drain (`--drain`): host reports
+  `drained revoke applied: rules=0 killed=0 drained=true`; the same probe
+  reports `PROBE-RESULT HOLD = SURVIVED after=20.042s` —
+  *"REAL VM PASS (firecracker drain control): the SAME held flow survived the
+  SAME revoke under drain (killed=0) while the next flow was refused"*.
+- In both cases the next flow is refused **by policy**:
+  `post-revoke flow refused (backend observable: "PROBE-RESULT DIAL =
+  CONNECTED-NO-DATA reason=\"read tcp …->140.82.112.3:443: read: connection
+  reset by peer\"")`. That is the connect-then-reset this design predicted for
+  this backend, and it is materially different from libkrun's connect-refused:
+  the guest's SYN is REDIRECTed to the host proxy, so the handshake completes
+  and the proxy then resets. The assertion is on the *class* of outcome —
+  reached the enforcement point, carried no bytes — and explicitly fails on
+  "network is unreachable"/"no route to host", so a revoke that broke the stack
+  could never pass as a revoke that refused the flow.
+
+The two backends still enforce by different mechanisms — a userspace netstack in
+a re-exec'd VM child vs. tap + iptables REDIRECT into a host-side proxy — so
+neither result was ever evidence for the other. Both are now measured
+separately, which is exactly what that split demanded.
+
+What was already true on firecracker by construction, and unit-tested: its
+transparent proxy splices through `SpliceTracked`, so established flows land in
+the same `FlowRegistry` the revoke closes, and `Runner.SetPolicy` fails closed on
+a sandbox with no running egress stack. The verb therefore either enforces or
 errors — the behavior ruled out on every backend is answering a revoke with
-success while the old policy stays in force. Until the live run happens,
-firecracker's kill path is *implemented and reviewed, not proven*, and only
-libkrun should be described as validated.
+success while the old policy stays in force.
 
 ## Alternatives considered
 

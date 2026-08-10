@@ -87,6 +87,28 @@ func (a *realVMAdapter) Shell(context.Context, string, io.Reader, io.Writer, io.
 	panic("unused by this test")
 }
 
+// Three later features widened sandboxClient — artifact export (MGIT-73),
+// worktree sync (MGIT-76) and the live-policy verbs (MGIT-72) — but this
+// Linux-only adapter was never extended with them, so `GOOS=linux go vet
+// ./cmd/mgit/`, and any `go test ./...` on a Linux runner, failed to COMPILE.
+// Nothing caught it because nothing was building this package for Linux.
+// Found by MGIT-78, when the Linux gate started running for real.
+// Refs: MGIT-72, MGIT-73, MGIT-76, MGIT-78
+func (a *realVMAdapter) SetEgressPolicy(context.Context, string, []string, bool) (*controlproto.PolicyResult, error) {
+	panic("unused by this test")
+}
+func (a *realVMAdapter) EgressPolicy(context.Context, string) (*controlproto.PolicyResult, error) {
+	panic("unused by this test")
+}
+func (a *realVMAdapter) ExportArtifact(context.Context, string,
+	model.ArtifactExportRequest) (*model.ArtifactExportResult, error) {
+	panic("unused by this test")
+}
+func (a *realVMAdapter) SyncWorktree(context.Context, string,
+	model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error) {
+	panic("unused by this test")
+}
+
 // TestSandboxPublished_RealVM_ReportsActualPublishedPort boots a real
 // firecracker microVM with a published port and drives the actual `mgit
 // sandbox published` cobra command (not the service layer directly) against
