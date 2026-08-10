@@ -225,6 +225,22 @@ func TestE2E_VZF_HostileGuest_EscapingSymlinkRejected(t *testing.T) {
 // TestE2E_VZF_HostileGuest_LandIsOnlyBridge proves land is the only
 // private->shared path: a booted guest that never lands leaves the host shared
 // store's task branch unchanged.
+//
+// RE-STATED for MGIT-73 (artifact export), deliberately rather than deleted.
+// What this test asserts is precise and still true: no guest activity changes
+// the host's SHARED GIT STORE without land. Land remains the only bridge for
+// COMMITTED OBJECTS, and it verifies them host-side before importing.
+//
+// Artifact export (MGIT-73) is a second, narrower bridge — for FILES into a
+// destination the HOST names — and it does not weaken this one:
+//   - it is host-initiated; the guest cannot invoke it or choose either path;
+//   - it never touches the git store, and it REFUSES to export the sandbox's
+//     private .mgit at all, so committed objects still cross only via land;
+//   - it fails closed on escaping symlinks/hardlinks, traversal, collisions
+//     and size/file ceilings, with nothing written on refusal.
+//
+// Its own hostile-guest coverage lives beside it (the libkrun real-VM export
+// suite and internal/sandboxd/artifactexport). Refs: MGIT-73, ADR-011
 func TestE2E_VZF_HostileGuest_LandIsOnlyBridge(t *testing.T) {
 	kernel, rootfs := requireVZFImages(t)
 	fx := setupVZFHostileFixture(t)

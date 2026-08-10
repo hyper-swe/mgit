@@ -1,5 +1,6 @@
 // Package mcp implements the MCP (Model Context Protocol) server for mgit.
 // Provides 16 core tools for LLM agent integration via stdio transport.
+// Provides 16 tools for LLM agent integration via stdio transport.
 // Refs: FR-10, MGIT-5.2.1
 package mcp
 
@@ -30,6 +31,9 @@ type config struct {
 	// sandboxPolicy resolves the sandbox daemon for the live egress-policy
 	// tool. Nil leaves the tool registered but failing closed (MGIT-72).
 	sandboxPolicy SandboxPolicyConnector
+	// sandboxExport resolves the sandbox daemon for mgit_sandbox_export
+	// (MGIT-73). Nil leaves the tool registered but failing closed.
+	sandboxExport SandboxExportConnector
 }
 
 // WithLocker makes every tool call acquire the repo process lock for the
@@ -63,6 +67,9 @@ type Server struct {
 	// sandboxPolicy is the daemon connector for the live egress-policy tool
 	// (FR-17 containment surface, MGIT-72).
 	sandboxPolicy SandboxPolicyConnector
+	// sandboxExport is the daemon connector behind mgit_sandbox_export; nil
+	// when this server was built without one. Refs: MGIT-73
+	sandboxExport SandboxExportConnector
 }
 
 // NewServer creates an MCP server with all mgit tools registered.
@@ -122,6 +129,7 @@ func NewServer(
 
 		sandboxConnect: cfg.sandboxConnect,
 		sandboxPolicy:  cfg.sandboxPolicy,
+		sandboxExport:  cfg.sandboxExport,
 	}
 
 	s.registerTools()
@@ -194,6 +202,7 @@ func (s *Server) ToolDocs() []ToolDoc {
 }
 
 // registerTools registers all 16 core MCP tools.
+// registerTools registers all 16 MCP tools.
 // Refs: FR-10.2, FR-10.3
 func (s *Server) registerTools() {
 	// Core tools (5)
@@ -323,6 +332,10 @@ func (s *Server) registerTools() {
 		mcp.WithBoolean("force", mcp.Description("Overwrite paths the guest changed since delivery (each is reported)")),
 		mcp.WithBoolean("dry_run", mcp.Description("Classify only; deliver nothing")),
 	), s.sandboxSyncTool)
+	// Sandbox tool (1) — guest->host artifact export (MGIT-73). Registered
+	// unconditionally so an agent can discover it; it fails closed with the
+	// reason when no sandbox daemon is wired.
+	s.registerSandboxExportTool()
 }
 
 // --- Tool Handlers ---

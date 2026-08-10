@@ -29,6 +29,11 @@ const (
 	// injected into a T2 confined-agent guest (MGIT-11.11.4). Audit-only
 	// (no state change); Detail carries credential NAMES only, never values.
 	EventCredentialsInjected = "credentials_injected"
+	// EventArtifactExported records a guest->host artifact export (MGIT-73).
+	// Audit-only (no state change); Detail carries the host-named guest path,
+	// destination, file/byte counts and the exported tree's SHA-256, so a file
+	// never crosses the boundary without a record. Refs: MGIT-73, ADR-011
+	EventArtifactExported = "artifact_exported"
 	// EventLanded records a verified land import (FR-17.5).
 	EventLanded = "landed"
 	// EventDestroyed records teardown.
@@ -44,7 +49,9 @@ const (
 // current state must skip past them to the latest state-bearing event.
 // Single source of truth for both vocabulary validation and DeriveState.
 // Refs: FR-17.18, F-01
-var nonStateEventTypes = []string{EventPolicyGranted, EventCredentialsInjected, EventPolicyChanged}
+var nonStateEventTypes = []string{
+	EventPolicyGranted, EventCredentialsInjected, EventPolicyChanged, EventArtifactExported,
+}
 
 // NonStateEventTypes returns the audit-only event types (no state change),
 // so the store's latest-state query can exclude all of them in one place —

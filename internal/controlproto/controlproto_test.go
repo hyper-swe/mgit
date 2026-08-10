@@ -290,6 +290,47 @@ func TestRequest_Policy_RoundTripsAndValidates(t *testing.T) {
 	}
 }
 
+// TestExport_RoundTripsAndValidates covers the artifact-export verb's wire
+// contract: a well-formed request survives the round trip, and every malformed
+// shape fails closed at the boundary rather than reaching the export engine.
+// Refs: MGIT-73
+func TestExport_RoundTripsAndValidates(t *testing.T) {
+	var buf bytes.Buffer
+	req := &Request{Kind: KindExport, Export: &ExportArgs{
+		TaskID: "MGIT-73",
+		Export: model.ArtifactExportRequest{GuestPath: "node_modules", HostPath: "/host/cache/nm"},
+	}}
+	require.NoError(t, WriteRequest(&buf, req))
+	got, err := ReadRequest(&buf)
+	require.NoError(t, err)
+	assert.Equal(t, KindExport, got.Kind)
+	require.NotNil(t, got.Export)
+	assert.Equal(t, "MGIT-73", got.Export.TaskID)
+	assert.Equal(t, "node_modules", got.Export.Export.GuestPath)
+	assert.Equal(t, "/host/cache/nm", got.Export.Export.HostPath)
+
+	tests := []struct {
+		name string
+		args *ExportArgs
+	}{
+		{name: "missing_payload", args: nil},
+		{name: "missing_task", args: &ExportArgs{
+			Export: model.ArtifactExportRequest{GuestPath: "out", HostPath: "/host/x"}}},
+		{name: "absolute_guest_path", args: &ExportArgs{TaskID: "MGIT-73",
+			Export: model.ArtifactExportRequest{GuestPath: "/etc/passwd", HostPath: "/host/x"}}},
+		{name: "relative_host_path", args: &ExportArgs{TaskID: "MGIT-73",
+			Export: model.ArtifactExportRequest{GuestPath: "out", HostPath: "relative"}}},
+		{name: "oversized_guest_path", args: &ExportArgs{TaskID: "MGIT-73",
+			Export: model.ArtifactExportRequest{
+				GuestPath: strings.Repeat("a", MaxPathBytes+1), HostPath: "/host/x"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Error(t, (&Request{Kind: KindExport, Export: tt.args}).Validate())
+		})
+	}
+}
+
 // TestRequest_PolicySet_TooManyEntries_FailsClosed bounds the replacement
 // allowlist before it can drive an allocation or a pathological compile in the
 // single daemon that supervises every VM. Refs: MGIT-72, MGIT-11.10.7
@@ -322,4 +363,12 @@ func TestResponse_Policy_RoundTrips(t *testing.T) {
 	require.NotNil(t, got.Policy)
 	assert.Equal(t, []string{"registry.npmjs.org:443"}, got.Policy.Entries)
 	assert.Equal(t, 2, got.Policy.Killed)
+}
+
+// TestExport_KindMismatch_IsRejected proves a request cannot smuggle an export
+// payload under another kind's tag (or vice versa). Refs: MGIT-73, MGIT-11.10.7
+func TestExport_KindMismatch_IsRejected(t *testing.T) {
+	mismatched := &Request{Kind: KindList, Export: &ExportArgs{TaskID: "MGIT-73",
+		Export: model.ArtifactExportRequest{GuestPath: "out", HostPath: "/host/x"}}}
+	assert.Error(t, mismatched.Validate())
 }

@@ -1,6 +1,6 @@
 # ADR-011: Worktree sync, live policy revoke, and artifact export
 
-**Status:** accepted (design), implementation in progress
+**Status:** accepted; MGIT-71 (sync) and MGIT-73 (export) implemented, MGIT-72 (revoke) implemented, MGIT-76 (explicit sync verb) outstanding
 **Date:** 2026-08-09
 **Refs:** MGIT-71, MGIT-72, MGIT-73, MGIT-76, SEC-03, SEC-04, SEC-05, SEC-10, ADR-005, ADR-010
 
@@ -168,6 +168,51 @@ host-initiated verb, and it never touches the git store. The tests are
 re-stated to say exactly that rather than deleted, and export gets its own
 hostile-guest coverage proving the guest cannot write outside the destination
 the host named.
+
+### What shipped (2026-08-10, MGIT-73)
+
+The design above is implemented in `internal/sandboxd/artifactexport` (the
+host-side engine), `microvm.Manager.ExportArtifact` (the backend seam),
+`SandboxService.ExportArtifact` (task resolution + audit), the `KindExport`
+control verb, `mgit sandbox export --task <id> <guest-path> <host-path>`, and
+the `mgit_sandbox_export` MCP tool. The decisions the ticket asked to be
+recorded, as built:
+
+- **No control-plane hop, per the backend-asymmetry finding.** libkrun and vzf
+  export by READING the staged host directory; the guest is never asked and
+  cannot interpose. `vmctl` is untouched.
+- **firecracker fails CLOSED** with `model.ErrArtifactExportUnsupported`,
+  naming the limitation (a launch-time ext4 image has no host directory to read
+  from). The guest-mediated stream it would need is deliberately **not** in v1 —
+  the same call MGIT-71 made in the opposite direction. Shipping libkrun/vzf
+  first is the scope cut; the refusal, not a silent downgrade, is the contract.
+- **Collision policy: REFUSE.** The destination and its sidecar must both be
+  absent; an export never overwrites, merges into or deletes host state, and the
+  destination's parent directory must already exist. Documented in the verb's
+  `--help`, the MCP tool description, and this ADR.
+- **Limits: 4 GiB and 200,000 entries by default** (`artifactexport.Limits`),
+  enforced during planning — before any write — and re-enforced against the
+  bytes actually read, so a file that grows between plan and copy is refused
+  rather than admitted.
+- **Whole-worktree and private-store exports are refused.** `.` and
+  `<worktree>/.mgit` are rejected by name: committed objects cross only through
+  land, so export cannot become a second, unverified route for them.
+- **Provenance: yes, as a sidecar.** `<host-path>.mgit-export.json` carries the
+  schema version, sandbox ID, task, backend, pinned base-image digest, per-file
+  SHA-256 + mode, and a tree hash over the canonical manifest. A sidecar rather
+  than a file inside the tree, so the exported artifact is byte-for-byte what
+  the guest built.
+- **Audit: `artifact_exported`**, an audit-only sandbox event (no state change)
+  carrying task binding, both paths, file and byte counts and the tree hash. An
+  export that cannot be audited is **undone** — a file on the host with no
+  record defeats the trail.
+
+**Measured limitation (macOS/libkrun).** virtio-fs presents guest-created files
+to the host with its own permission mapping: a file the guest writes `0755`
+reads as `0600` on the share. The export reproduces the modes the HOST observes
+— inventing the guest's intended mode would be worse — so an exported tree's
+executable bits may not survive on this backend. Found by the real-VM e2e; it is
+a property of the share, not of the export.
 
 ## The test rule, applied
 

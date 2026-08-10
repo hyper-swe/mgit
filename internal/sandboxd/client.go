@@ -281,3 +281,21 @@ func relayFrames(conn net.Conn, stdout, stderr io.Writer) (int, error) {
 		}
 	}
 }
+
+// ExportArtifact copies a guest-built path out of a task's sandbox to a
+// host-named destination, returning what crossed the boundary.
+//
+// Both paths travel host-side only: the client names them, the daemon resolves
+// the task to its sandbox, and the backend reads the staged worktree
+// host-side — the guest is never asked and never participates.
+// Refs: MGIT-73, ADR-011
+func (c *Client) ExportArtifact(ctx context.Context, taskID string,
+	req model.ArtifactExportRequest) (*model.ArtifactExportResult, error) {
+	resp, err := c.roundTrip(ctx, &controlproto.Request{
+		Kind: controlproto.KindExport, Export: &controlproto.ExportArgs{TaskID: taskID, Export: req},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Exported, nil
+}

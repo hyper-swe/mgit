@@ -49,6 +49,11 @@ var documentedTools = []string{
 	"mgit_show", "mgit_branch", "mgit_verify", "mgit_diff", "mgit_export",
 	"mgit_audit", "mgit_config",
 	"mgit_worktree_add", "mgit_worktree_list", "mgit_worktree_remove",
+	// Sandbox artifact export (MGIT-73). Registered on every server; without a
+	// daemon wired it fails closed with that reason, which is why the e2e
+	// asserts its PRESENCE here and drives the real transfer in the backend
+	// suites where a sandbox exists.
+	"mgit_sandbox_export",
 }
 
 func main() {

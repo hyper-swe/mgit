@@ -51,6 +51,10 @@ type Config struct {
 	// for a revoke would leave the caller believing egress was closed.
 	// Refs: MGIT-72, SEC-04
 	Policy PolicyCoordinator
+	// Exporter serves the guest->host artifact export verb (MGIT-73). When
+	// nil the verb reports itself unserved — the honest answer for a backend
+	// that cannot export rather than a silently weaker transfer. Refs: MGIT-73, ADR-011
+	Exporter ArtifactExporter
 	// MaxConns bounds concurrent in-flight connections; beyond it the
 	// daemon rejects fast (accept-then-close) rather than spawning an
 	// unbounded number of goroutines. Refs: MGIT-11.10.8 (security audit)

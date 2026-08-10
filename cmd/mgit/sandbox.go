@@ -25,6 +25,10 @@ type sandboxClient interface {
 	Status(ctx context.Context, taskID string) (*model.SandboxInfo, error)
 	Remove(ctx context.Context, taskID string, force bool) error
 	Land(ctx context.Context, taskID string) (*controlproto.LandResult, error)
+	// ExportArtifact brings a guest-built artifact out of a task's sandbox to
+	// a HOST-NAMED destination (MGIT-73). Both paths are host-supplied.
+	ExportArtifact(ctx context.Context, taskID string,
+		req model.ArtifactExportRequest) (*model.ArtifactExportResult, error)
 	// Grants lists a task's pending capability requests; Grant approves one by
 	// its host-observed key (the deny->prompt->grant flow, FR-17.12).
 	Grants(ctx context.Context, taskID string) ([]controlproto.PendingGrant, error)
@@ -75,6 +79,7 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 		sandboxLaunchCmd(connect),
 		sandboxExecCmd(connect),
 		sandboxLandCmd(connect),
+		sandboxExportCmd(connect), // guest->host artifact export (MGIT-73)
 		sandboxListCmd(connect),
 		sandboxStatusCmd(connect),
 		sandboxPublishedCmd(connect), // list a task's one-way published ports (SEC-09)

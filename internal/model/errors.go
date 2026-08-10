@@ -204,6 +204,14 @@ var (
 	// refused unconditionally so private keys never enter the guest.
 	// Refs: FR-17.12, SEC-01
 	ErrSSHKeyExtraction = errors.New("ssh-agent forward exposes signing only; key material never crosses to the guest")
+
+	// ErrArtifactExportUnsupported indicates this sandbox backend cannot
+	// export a guest-built artifact to the host. It is a real limitation
+	// reported rather than papered over: firecracker delivers the worktree as
+	// a launch-time ext4 image the guest has mounted, so there is no host
+	// directory to read the artifact out of, and the guest-mediated stream
+	// that would be needed is not shipped in v1. Refs: MGIT-73, ADR-011
+	ErrArtifactExportUnsupported = errors.New("this sandbox backend cannot export guest artifacts to the host")
 )
 
 // ValidationError provides structured context for validation failures.

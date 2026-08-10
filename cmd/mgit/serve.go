@@ -111,6 +111,9 @@ func serveCmd() *cobra.Command {
 				mcpapp.WithSandboxPolicy(func(ctx context.Context) (mcpapp.SandboxPolicyClient, error) {
 					return mcpSandboxPolicyConnectorFor(ctx, repoRoot)
 				}),
+				mcpapp.WithSandboxExport(func(ctx context.Context) (mcpapp.SandboxExportClient, error) {
+					return sandboxConnectFor(ctx, repoRoot)
+				}),
 			).MCPServer()}
 			return runServe(ctx, api, mcp, serveOptions{
 				port: port, startAPI: startAPI, startMCP: startMCP, asJSON: asJSON,

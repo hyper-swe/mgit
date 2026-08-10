@@ -56,6 +56,10 @@ type fakeSandboxClient struct {
 	policyEntries []string
 	policyDrain   bool
 	policyResult  *controlproto.PolicyResult
+
+	exportTID    string
+	exportReq    model.ArtifactExportRequest
+	exportResult *model.ArtifactExportResult
 }
 
 func (f *fakeSandboxClient) SetEgressPolicy(_ context.Context, taskID string, entries []string, drain bool) (*controlproto.PolicyResult, error) {
@@ -155,6 +159,21 @@ func (f *fakeSandboxClient) Grant(_ context.Context, taskID, key string) (*contr
 func (f *fakeSandboxClient) SyncWorktree(_ context.Context, taskID string, opts model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error) {
 	f.syncTask, f.syncOpts = taskID, opts
 	return f.syncReport, f.syncErr
+}
+
+func (f *fakeSandboxClient) ExportArtifact(_ context.Context, taskID string,
+	req model.ArtifactExportRequest) (*model.ArtifactExportResult, error) {
+	f.exportTID, f.exportReq = taskID, req
+	if f.opErr != nil {
+		return nil, f.opErr
+	}
+	if f.exportResult != nil {
+		return f.exportResult, nil
+	}
+	return &model.ArtifactExportResult{
+		SandboxID: "01JSB", TaskID: taskID, GuestPath: req.GuestPath, HostPath: req.HostPath,
+		ManifestPath: req.HostPath + ".mgit-export.json", Files: 3, Bytes: 4096, TreeHash: "abc123",
+	}, nil
 }
 
 // runSandbox executes the sandbox command tree with the given args and a
