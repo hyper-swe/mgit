@@ -72,6 +72,21 @@ func TestGenDoc_StatesWorkingDiscipline(t *testing.T) {
 	assert.Contains(t, s, "mgit run")
 }
 
+// TestGenDoc_DisciplineStatesScaffoldingIsExcluded verifies the block tells the
+// agent that `mgit commit -a` skips mgit's own generated files and names the
+// explicit-path override. The exclusion is enforced in the staging walk
+// (ADR-013), so this is a description, not a rule the agent must remember —
+// but describing it stops an agent from "fixing" a missing CLAUDE.md diff by
+// force-staging mgit's block. Refs: MGIT-80
+func TestGenDoc_DisciplineStatesScaffoldingIsExcluded(t *testing.T) {
+	s := RenderClaudeMdSection(SandboxEnv{WorktreePath: "/repo/wt", NetworkMode: "none"})
+
+	assert.Contains(t, s, "generated files are not your work",
+		"the block must say mgit's own scaffolding is not the task's work")
+	assert.Contains(t, s, "mgit add CLAUDE.md",
+		"the block must name the explicit-path override for a deliberate edit")
+}
+
 // TestGenDoc_DisciplineUsesRealFlags verifies the documented micro-commit uses
 // the real --task-id flag, never the nonexistent --task flag on commit.
 // Refs: MGIT-29

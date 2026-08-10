@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — mgit's own generated scaffolding no longer lands in your repository
+
+- **`mgit commit -a` no longer sweeps mgit's agent scaffolding into the task branch.** `mgit work` writes worktree-specific, host-specific files of its own — the generated `CLAUDE.md` block, `.claude/settings.json`, and under containment `AGENTS.md`, `.envrc` and the Cursor rule. None of it was ignored, so once MGIT-77 correctly made `mgit commit -a` *the* agent loop, the instruction mgit itself generates guaranteed that mgit's files reached the patch landed in the user's repository — where the content is not merely noise but wrong, describing one worktree's task binding and this host's sandbox availability. (MGIT-80)
+
+- **The fix is in the tool, not in the instructions.** `mgit work` now records what it generated, per worktree, under `.mgit/generated` (already excluded from staging), and the bulk-staging walk behind `mgit add -A` / `mgit add .` / `mgit commit -a` skips those paths. Because the rule is recorded *provenance* rather than a filename blocklist, a project that tracks its own `CLAUDE.md` is unaffected — and both shapes of the bug fall out of one rule: scaffolding that is a brand-new untracked file, and scaffolding that is an **edit to a file the project already tracks**. Worktrees created before this change have no manifest and behave exactly as before. (MGIT-80, ADR-013)
+
+- **A deliberate edit still commits: name the path.** `mgit add CLAUDE.md` stages it, and a later `mgit commit -a` does not retract that selection — a named pathspec is an unambiguous statement of intent, mirroring `git add -f` beating `.gitignore`. `mgit status` keeps telling the truth about the file being modified; mgit hides no real working-tree change from the reviewer. The generated block now says so, but the guarantee does not depend on an agent reading it. (MGIT-80)
+
 ### Added — `mgit sandbox sync`, the verb ADR-011 already promised
 
 - **The explicit worktree-sync verb now exists.** ADR-011 described host→guest worktree sync as running "automatically before an exec ... plus an explicit `mgit sandbox sync` for control." Only the automatic half shipped in 0.4.2; the verb did not exist, which the integrating lane found by reading the ADR and then `mgit sandbox --help`. Their workaround was a probing no-op `exec` every round to force a re-stage — which is this verb spelled awkwardly, at the cost of a guest process per round. `mgit sandbox sync --task <id>` now re-stages on demand and reports what it did: counts and paths per collision class. (MGIT-76)

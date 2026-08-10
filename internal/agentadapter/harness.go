@@ -61,7 +61,7 @@ func WriteCodexAdapter(worktreePath, mgitBin string) error {
 	if err := InstallShims(ShimDir(worktreePath), mgitBin, DefaultShimCommands()); err != nil {
 		return err
 	}
-	path := filepath.Join(worktreePath, "AGENTS.md")
+	path := worktreeFilePath(worktreePath, AgentsMdFile)
 	return upsertMarkedFile(path, claudeMdBeginMarker, claudeMdEndMarker, RenderCodexDirective(ShimDir(worktreePath)))
 }
 
@@ -72,11 +72,10 @@ func WriteCursorAdapter(worktreePath, mgitBin string) error {
 	if err := InstallShims(ShimDir(worktreePath), mgitBin, DefaultShimCommands()); err != nil {
 		return err
 	}
-	dir := filepath.Join(worktreePath, ".cursor", "rules")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	path := worktreeFilePath(worktreePath, CursorRuleFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create cursor rules dir: %w", err)
 	}
-	path := filepath.Join(dir, "mgit-sandbox.mdc")
 	if err := os.WriteFile(path, []byte(RenderCursorRule(ShimDir(worktreePath))), 0o600); err != nil { //nolint:gosec // worktree-owned generated file
 		return fmt.Errorf("write cursor rule: %w", err)
 	}
@@ -89,7 +88,7 @@ func WriteGenericAdapter(worktreePath, mgitBin string) error {
 	if err := InstallShims(ShimDir(worktreePath), mgitBin, DefaultShimCommands()); err != nil {
 		return err
 	}
-	path := filepath.Join(worktreePath, ".envrc")
+	path := worktreeFilePath(worktreePath, EnvrcFile)
 	return upsertMarkedFile(path, envrcBeginMarker, envrcEndMarker, RenderEnvrc(ShimDir(worktreePath)))
 }
 

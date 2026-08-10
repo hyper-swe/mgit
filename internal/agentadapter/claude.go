@@ -90,11 +90,10 @@ func RewriteCommand(command string) string {
 // Bash commands through hookCommand. Existing user settings are preserved.
 // Refs: MGIT-11.11.1
 func WriteClaudeSettings(worktreePath, hookCommand string) error {
-	dir := filepath.Join(worktreePath, ".claude")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	path := worktreeFilePath(worktreePath, ClaudeSettingsFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create .claude dir: %w", err)
 	}
-	path := filepath.Join(dir, "settings.json")
 	existing, err := os.ReadFile(path) //nolint:gosec // worktree-owned settings path
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read settings: %w", err)

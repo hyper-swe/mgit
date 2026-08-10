@@ -233,14 +233,31 @@ func (ws *WorktreeStore) assertStageable(rel string) error {
 
 // addAll stages every file that differs from HEAD (changed, untracked, or
 // deleted), mirroring `git add -A`.
+//
+// It skips paths mgit itself GENERATED into this worktree (MGIT-80). A bulk
+// stage means "everything I touched", and the agent did not touch mgit's
+// scaffolding — mgit did; sweeping it in puts one worktree's task binding and
+// this host's sandbox posture into the patch that lands in the user's repo. The
+// skip is by recorded provenance, not by filename, so a project that tracks its
+// own CLAUDE.md is unaffected, and it applies whether the generated path is new
+// or an edit to a tracked file. An explicit `mgit add <path>` is never filtered
+// (see Add), so a deliberate edit to one of these files still commits.
+// Refs: MGIT-80, MGIT-77, FR-16
 func (ws *WorktreeStore) addAll(ctx context.Context) error {
 	files, err := ws.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("add all: %w", err)
+	}
+	generated, err := ws.repo.generatedSet()
 	if err != nil {
 		return fmt.Errorf("add all: %w", err)
 	}
 	paths := make([]string, 0, len(files))
 	for _, f := range files {
 		if strings.HasPrefix(f.Path, mgitDirName+"/") || f.Path == mgitDirName {
+			continue
+		}
+		if generated[f.Path] {
 			continue
 		}
 		paths = append(paths, f.Path)
