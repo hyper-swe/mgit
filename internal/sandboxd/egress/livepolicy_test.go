@@ -305,7 +305,7 @@ func TestRunner_SetPolicy_AllowThenRevoke_ThroughTheRealProxy(t *testing.T) {
 // assertion fails — which is exactly how this test flaked on CI while passing
 // hundreds of local runs.
 //
-// The reply is the wrong signal, so the fix is to synchronise on the real
+// The reply is the wrong signal, so the fix is to synchronize on the real
 // condition rather than to sleep. A sleep would only narrow the window; this
 // closes it, and it fails with a diagnosis rather than a bare count mismatch.
 // Refs: MGIT-72
