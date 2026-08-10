@@ -7,110 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- **The Linux/firecracker live sandbox pass is now a CI gate, not a manual
-  step (MGIT-78).** `e2e.yml` gained `sandbox-live-linux`: it builds `mgit`
-  *and* `mgit-sandboxd` (no `-tags libkrun`, so the daemon links firecracker),
-  installs a sha256-pinned firecracker VMM, builds the pinned guest kernel and
-  the reproducible rootfs, then runs `scripts/e2e/sandbox_posture.sh` and the
-  whole `internal/sandboxd/backend/firecracker` `TestE2E_*` battery — once
-  unprivileged, then again under `sudo -E` for the tap/iptables half. Because
-  `release.yml` already gates on `e2e.yml`, this gates every release.
-  - The premise it replaces was simply stale: the checklist and the old job
-    both asserted that GitHub-hosted runners have no nested virtualization.
-    Measured on 2026-08-10, `ubuntu-latest`, `ubuntu-24.04` and `ubuntu-22.04`
-    all expose `/dev/kvm` (`KVM_CREATE_VM` succeeds once the `static_node=kvm`
-    udev rule grants the runner access), and real firecracker microVMs boot
-    there. The old job never even built `mgit-sandboxd`, so it could only ever
-    run the SKIP branch.
-  - The gate refuses to pass on a skip: it asserts `/dev/kvm` is usable, greps
-    for the literal `SANDBOX POSTURE E2E: PASS (live)`, fails on any `--- SKIP`
-    in the privileged run, and names the two MGIT-78 live-policy tests
-    explicitly.
-- `scripts/sandbox-image/fetch-firecracker.sh` — fetch and sha256-verify the
-  pinned firecracker VMM, mirroring `fetch-kernel-fc.sh`. Nothing in the repo
-  installed the VMM before; the Linux pass assumed a hand-provisioned host that
-  already had it, which is part of why that gate could not run anywhere else.
-- `FC_CMDLINE`/`VZ_CMDLINE` moved into `scripts/sandbox-image/pins.env` so the
-  bundle builder, CI and a human following the release checklist register guest
-  images with the same kernel command line. An image registered *without* one
-  boots a kernel with no `root=` and no `init=`, and the only symptom is
-  `guest vsock not ready within 15s`.
-- `e2e.yml` accepts `workflow_dispatch`, so the live gate can be re-run on
-  demand against any branch.
-
-### Fixed
-
-- **`mgit sandbox policy` revoke is now hardware-proven on firecracker too**
-  (MGIT-78, closing a 0.4.3 known limitation). Both halves pass on real KVM:
-  the held, data-carrying flow dies by default (`killed=1`,
-  `PROBE-RESULT HOLD = DIED`), survives under `--drain` (`killed=0`,
-  `HOLD = SURVIVED after=20.042s`), and in both cases the next flow is refused
-  by policy — connect-then-reset here, as this backend's REDIRECT-to-proxy
-  design predicts, not libkrun's connect-refused. Recorded in
-  `docs/adr/012-live-egress-policy-mutation.md`.
-- A latent flake in `TestE2E_PortPublish_GuestServiceReachableOnHost`, exposed
-  the first time the battery ran in CI: the host publisher listener accepts
-  unconditionally, so a single dial could succeed in the window where the
-  guest's `nc -ll -w 1` had timed out, and read nothing. The assertion now
-  polls for the guest's bytes, which were always the actual evidence.
-
 ## [0.4.3] - 2026-08-10
 
-Three verbs the integrating lane asked for, and two defects found by using
-mgit on mgit. The commit defect is the one to read first: `mgit commit`
-reported success for work it never recorded, which is the failure mode this
-whole substrate exists to prevent.
+Three verbs the integrating lane asked for, two defects found by using mgit on
+mgit, and the Linux live gate that had been manual since the sandbox shipped.
+The commit defect is the one to read first: `mgit commit` reported success for
+work it never recorded, which is the failure mode this whole substrate exists
+to prevent.
 
-**Live validation.** macOS/libkrun on Apple Silicon: the full real-VM e2e
-suite plus the release posture pass (compose a guest base from `debian:12`
--> launch a task sandbox -> exec inside it -> land round-trip) are green on
-this release's tree. **Linux/firecracker was NOT re-validated on hardware
-for this release** — see Known limitations.
+**Live validation — both GA platforms, on real hardware.**
+
+- **Linux / firecracker (KVM):** the posture pass (launch → exec inside the
+  guest → land round-trip) plus the full `TestE2E_*` battery — exec/land,
+  hostile-guest (SEC-03) ×3, notify auto-land, overlay-root writability,
+  provenance, the guest-resolver egress allow/deny pair with real bytes, NAT,
+  port publishing, and the live-policy kill/drain pair — all pass, none
+  skipped. This now runs **in CI on every release** rather than on a hand-held
+  box (MGIT-78, below).
+- **macOS / libkrun (Apple Silicon):** the full real-VM e2e suite plus the
+  release posture pass, composing a guest base from `debian:12` → launching a
+  task sandbox → exec inside it → land round-trip. Still a manual pass; the
+  hosted-runner fleet has no Apple Silicon virtualization.
+
+Standing gaps are listed under Known limitations — there is no undisclosed
+"validated" claim in this release.
 
 ### Known limitations (0.4.3)
 
-- **The Linux firecracker live pass did not run for this release.** 0.4.3
-  changes `internal/sandboxd/backend/microvm`, which firecracker shares with
-  libkrun, and the release checklist asks for the fuller firecracker battery
-  whenever that package changes. The KVM host was unavailable. Nothing here
-  is known broken on firecracker and its unit and cross-build coverage is
-  green, but "not known broken" is not "proven"; Linux users of the sandbox
-  should treat 0.4.3's backend changes as unvalidated on their platform.
-- **`mgit sandbox policy` revoke is hardware-proven on libkrun only.** The
-  firecracker implementation is complete and reviewed and fails closed
-  rather than no-opping, but the two backends enforce egress by different
-  mechanisms, so the libkrun pass is not evidence for it. Tracked as
-  MGIT-78.
-- **Artifact export ships for the virtiofs backends** (libkrun, vzf).
-  firecracker fails closed naming the limitation: it delivers the worktree
-  as a launch-time ext4 image, so there is no host directory to read.
-- **Exported artifacts can arrive non-executable on macOS.** libkrun's
-  virtio-fs presents guest-created files to the host with its own permission
-  mapping — a file the guest writes `0755` reads as `0600` on the share. The
-  export reproduces the mode the host observes rather than inventing the
-  guest's intent, so exported `node_modules/.bin` scripts need their
-  executable bit restored. Tracked as MGIT-81.
-
-### Fixed — a restrictive daemon umask no longer strips modes in EITHER direction
-
-- **The inbound twin of the export defect below, found by looking for it.** Worktree staging copied with `O_CREATE`, whose mode argument the kernel masks with the calling process's umask. `mgit-sandboxd` is a long-lived daemon and does not control the umask it inherits, so under `0077` a host `0755` build script was delivered into the guest at `0700` — an executable the agent then cannot run, with nothing anywhere reporting that the mode changed. Both directions now apply the mode with an explicit `chmod`. Nothing had ever asserted a delivered mode, which is why the same defect sat in both halves. (MGIT-81)
-
-### Fixed — exported artifacts keep the mode the guest set (macOS/libkrun)
-
-- **An exported `node_modules` tree's `.bin` scripts arrived non-executable**, which blunts exactly the provisioning-cache reuse `mgit sandbox export` exists to enable. It was first recorded as a measured limitation of the share; measuring again, further in, showed it was recoverable. (MGIT-81)
-- **What the measurement showed.** Inside a real libkrun microVM the guest's umask is `0022` and a control arm on a guest-private tmpfs kept every mode, so neither the guest nor the workload loses anything: libkrun's macOS filesystem device gives guest-created inodes *placeholder* permission bits (`0600` files, `0700` directories) and records the real `st_mode` in the `user.containers.override_stat` extended attribute (`0:0:0100755` for a guest `0755`). Virtualization.framework's virtio-fs — measured the same way, with a probe binary executed inside a real vzf guest — carries modes in the permission bits and writes no record.
-- **The export now reproduces the mode the guest set**, reading the share's record where the permission bits are a placeholder and the bits themselves everywhere else, and applying it with an explicit `chmod` (an `O_CREATE` mode is masked by the exporting process's umask, which would have shaved an observed `0755` to `0700` under a `0077` daemon). **No mode is invented** — the change was which of two real host-side observations to trust, and the guest still does not participate in an export.
-- **The sidecar says which observation it used.** An entry whose mode came from the share record is marked `"mode_source": "share-record"`; a plain host stat stays implicit. It is excluded from the tree hash, so the same tree exported from libkrun and from vzf hashes identically. Exported directories are still created `0750` whatever the guest set. Documented in `mgit sandbox export --help`, the `mgit_sandbox_export` MCP tool description, and ADR-011 (with the measurement table).
-
-### Fixed — mgit's own generated scaffolding no longer lands in your repository
-
-- **`mgit commit -a` no longer sweeps mgit's agent scaffolding into the task branch.** `mgit work` writes worktree-specific, host-specific files of its own — the generated `CLAUDE.md` block, `.claude/settings.json`, and under containment `AGENTS.md`, `.envrc` and the Cursor rule. None of it was ignored, so once MGIT-77 correctly made `mgit commit -a` *the* agent loop, the instruction mgit itself generates guaranteed that mgit's files reached the patch landed in the user's repository — where the content is not merely noise but wrong, describing one worktree's task binding and this host's sandbox availability. (MGIT-80)
-
-- **The fix is in the tool, not in the instructions.** `mgit work` now records what it generated, per worktree, under `.mgit/generated` (already excluded from staging), and the bulk-staging walk behind `mgit add -A` / `mgit add .` / `mgit commit -a` skips those paths. Because the rule is recorded *provenance* rather than a filename blocklist, a project that tracks its own `CLAUDE.md` is unaffected — and both shapes of the bug fall out of one rule: scaffolding that is a brand-new untracked file, and scaffolding that is an **edit to a file the project already tracks**. Worktrees created before this change have no manifest and behave exactly as before. (MGIT-80, ADR-013)
-
-- **A deliberate edit still commits: name the path.** `mgit add CLAUDE.md` stages it, and a later `mgit commit -a` does not retract that selection — a named pathspec is an unambiguous statement of intent, mirroring `git add -f` beating `.gitignore`. `mgit status` keeps telling the truth about the file being modified; mgit hides no real working-tree change from the reviewer. The generated block now says so, but the guarantee does not depend on an agent reading it. (MGIT-80)
+- **`mgit sandbox sync` (MGIT-76) is live-validated on libkrun only.** It is
+  refused, by design and with the backend named, on firecracker — that backend
+  delivers the worktree as a launch-time ext4 image the host cannot write into
+  — so there is no firecracker behaviour to validate beyond the refusal.
+- **Artifact export (MGIT-73) ships for the virtiofs backends** (libkrun, vzf).
+  firecracker fails closed naming the same limitation. The guest-mediated
+  stream that would lift it is not built.
+- **Exported directories are created `0750`** whatever mode the guest set —
+  the one exported mode that is not a mode someone observed. Called out in
+  `mgit sandbox export --help` rather than left implicit.
+- **Linux libkrun (`-tags libkrun`) is still not a validated path.** It is not
+  the Linux default; CI build+vets it so a compile regression is caught, which
+  says nothing about whether it boots. Unchanged from 0.4.2.
+- **The container fallback backend was not measured** for the file-mode work
+  below; it degrades to a plain host stat, which is correct but unproven.
 
 ### Added — `mgit sandbox sync`, the verb ADR-011 already promised
 
@@ -160,6 +98,39 @@ for this release** — see Known limitations.
 - **`land is the only bridge` still holds, and is restated rather than deleted.** The hostile-guest tests assert something precise: no guest activity changes the host's *shared git store* without land. Export is a second, narrower bridge — for files, into a host-named destination — and it never touches the store. Its own hostile-guest coverage runs on a **real libkrun microVM**: a real guest builds a tree and plants escapes through virtio-fs, the host exports the good tree intact and refuses the escapes, the private store and a colliding destination.
 - **Known limitations.** firecracker fails **closed** (`ErrArtifactExportUnsupported`): it delivers the worktree as a launch-time ext4 image the guest has mounted, so there is no host directory to read from, and the guest-mediated stream that would be needed is not shipped in v1 — the same call MGIT-71 made for sync. Separately, measured on macOS/libkrun: virtio-fs presents guest-created files to the host with its own permission mapping (a guest's `0755` reads as `0600`), so an exported tree reproduces the modes the **host observes on the share**, not the modes the guest set.
 
+### Added — the Linux live sandbox gate runs in CI, so it can no longer be skipped
+
+- **The Linux/firecracker live sandbox pass is now a CI gate, not a manual
+  step (MGIT-78).** `e2e.yml` gained `sandbox-live-linux`: it builds `mgit`
+  *and* `mgit-sandboxd` (no `-tags libkrun`, so the daemon links firecracker),
+  installs a sha256-pinned firecracker VMM, builds the pinned guest kernel and
+  the reproducible rootfs, then runs `scripts/e2e/sandbox_posture.sh` and the
+  whole `internal/sandboxd/backend/firecracker` `TestE2E_*` battery — once
+  unprivileged, then again under `sudo -E` for the tap/iptables half. Because
+  `release.yml` already gates on `e2e.yml`, this gates every release.
+  - The premise it replaces was simply stale: the checklist and the old job
+    both asserted that GitHub-hosted runners have no nested virtualization.
+    Measured on 2026-08-10, `ubuntu-latest`, `ubuntu-24.04` and `ubuntu-22.04`
+    all expose `/dev/kvm` (`KVM_CREATE_VM` succeeds once the `static_node=kvm`
+    udev rule grants the runner access), and real firecracker microVMs boot
+    there. The old job never even built `mgit-sandboxd`, so it could only ever
+    run the SKIP branch.
+  - The gate refuses to pass on a skip: it asserts `/dev/kvm` is usable, greps
+    for the literal `SANDBOX POSTURE E2E: PASS (live)`, fails on any `--- SKIP`
+    in the privileged run, and names the two MGIT-78 live-policy tests
+    explicitly.
+- `scripts/sandbox-image/fetch-firecracker.sh` — fetch and sha256-verify the
+  pinned firecracker VMM, mirroring `fetch-kernel-fc.sh`. Nothing in the repo
+  installed the VMM before; the Linux pass assumed a hand-provisioned host that
+  already had it, which is part of why that gate could not run anywhere else.
+- `FC_CMDLINE`/`VZ_CMDLINE` moved into `scripts/sandbox-image/pins.env` so the
+  bundle builder, CI and a human following the release checklist register guest
+  images with the same kernel command line. An image registered *without* one
+  boots a kernel with no `root=` and no `init=`, and the only symptom is
+  `guest vsock not ready within 15s`.
+- `e2e.yml` accepts `workflow_dispatch`, so the live gate can be re-run on
+  demand against any branch.
+
 ### Fixed — `mgit commit` reported success for work it never recorded
 
 - **A commit with nothing staged printed a hash and exited 0, and its tree was byte-identical to its parent.** The agent received the success signal for a checkpoint that does not exist; only reading the `.mgit` store directly revealed it. `mgit commit --help` documented `--allow-empty` as "Allow commit with no staged changes" — a flag that only means something if the default refuses — but the flag was bound to a variable read *only* by the `--dry-run` printf, so it never reached the service, and the service never compared the tree it was about to write against its parent's. **`mgit commit` now refuses**, exits non-zero, and names the remedy (`mgit add <path>`, `mgit commit -a`, or `--allow-empty` for a deliberate empty commit). `--allow-empty` now does what its help always said. (MGIT-77)
@@ -167,6 +138,41 @@ for this release** — see Known limitations.
 - **The same failure one layer down: the land step landed nothing, quietly.** `mgit squash --to-git` on such a branch emits a well-formed mbox with no diff hunks, and `git apply` accepts it happily. The export now **warns on stderr** when the patch carries no hunks (stdout stays a clean patch when piped), naming the task and how work gets recorded. (MGIT-77)
 - **`mgit status` distinguished "will be committed" from "will be silently dropped" by column position alone** (`M   path` vs. `  M path`). The default output now groups paths under "Changes to be committed", "Changes not staged for commit" and "Untracked files", labels each entry in words, and says outright when nothing is staged. `--short`, `--porcelain` and `--json` are unchanged. (MGIT-77)
 - **Behavioural note — this is a deliberate breaking change to a success path.** Anything that relied on `mgit commit` succeeding with an empty staging area (scripts, fixtures, an agent loop that never staged) now fails and must either stage, pass `-a`, or ask for `--allow-empty`. The REST surface returns **409 Conflict** instead of 201 for a no-op commit. The MCP `mgit_commit` tool, which exposes no separate staging tool, now **stages the working tree by default** (`stage_all`, default true) — without it every MCP commit could only ever have recorded an empty tree. (MGIT-77)
+
+### Fixed — mgit's own generated scaffolding no longer lands in your repository
+
+- **`mgit commit -a` no longer sweeps mgit's agent scaffolding into the task branch.** `mgit work` writes worktree-specific, host-specific files of its own — the generated `CLAUDE.md` block, `.claude/settings.json`, and under containment `AGENTS.md`, `.envrc` and the Cursor rule. None of it was ignored, so once MGIT-77 correctly made `mgit commit -a` *the* agent loop, the instruction mgit itself generates guaranteed that mgit's files reached the patch landed in the user's repository — where the content is not merely noise but wrong, describing one worktree's task binding and this host's sandbox availability. (MGIT-80)
+
+- **The fix is in the tool, not in the instructions.** `mgit work` now records what it generated, per worktree, under `.mgit/generated` (already excluded from staging), and the bulk-staging walk behind `mgit add -A` / `mgit add .` / `mgit commit -a` skips those paths. Because the rule is recorded *provenance* rather than a filename blocklist, a project that tracks its own `CLAUDE.md` is unaffected — and both shapes of the bug fall out of one rule: scaffolding that is a brand-new untracked file, and scaffolding that is an **edit to a file the project already tracks**. Worktrees created before this change have no manifest and behave exactly as before. (MGIT-80, ADR-013)
+
+- **A deliberate edit still commits: name the path.** `mgit add CLAUDE.md` stages it, and a later `mgit commit -a` does not retract that selection — a named pathspec is an unambiguous statement of intent, mirroring `git add -f` beating `.gitignore`. `mgit status` keeps telling the truth about the file being modified; mgit hides no real working-tree change from the reviewer. The generated block now says so, but the guarantee does not depend on an agent reading it. (MGIT-80)
+
+### Fixed — exported artifacts keep the mode the guest set (macOS/libkrun)
+
+- **An exported `node_modules` tree's `.bin` scripts arrived non-executable**, which blunts exactly the provisioning-cache reuse `mgit sandbox export` exists to enable. It was first recorded as a measured limitation of the share; measuring again, further in, showed it was recoverable. (MGIT-81)
+- **What the measurement showed.** Inside a real libkrun microVM the guest's umask is `0022` and a control arm on a guest-private tmpfs kept every mode, so neither the guest nor the workload loses anything: libkrun's macOS filesystem device gives guest-created inodes *placeholder* permission bits (`0600` files, `0700` directories) and records the real `st_mode` in the `user.containers.override_stat` extended attribute (`0:0:0100755` for a guest `0755`). Virtualization.framework's virtio-fs — measured the same way, with a probe binary executed inside a real vzf guest — carries modes in the permission bits and writes no record.
+- **The export now reproduces the mode the guest set**, reading the share's record where the permission bits are a placeholder and the bits themselves everywhere else, and applying it with an explicit `chmod` (an `O_CREATE` mode is masked by the exporting process's umask, which would have shaved an observed `0755` to `0700` under a `0077` daemon). **No mode is invented** — the change was which of two real host-side observations to trust, and the guest still does not participate in an export.
+- **The sidecar says which observation it used.** An entry whose mode came from the share record is marked `"mode_source": "share-record"`; a plain host stat stays implicit. It is excluded from the tree hash, so the same tree exported from libkrun and from vzf hashes identically. Exported directories are still created `0750` whatever the guest set. Documented in `mgit sandbox export --help`, the `mgit_sandbox_export` MCP tool description, and ADR-011 (with the measurement table).
+
+### Fixed — a restrictive daemon umask no longer strips modes in EITHER direction
+
+- **The inbound twin of the export defect below, found by looking for it.** Worktree staging copied with `O_CREATE`, whose mode argument the kernel masks with the calling process's umask. `mgit-sandboxd` is a long-lived daemon and does not control the umask it inherits, so under `0077` a host `0755` build script was delivered into the guest at `0700` — an executable the agent then cannot run, with nothing anywhere reporting that the mode changed. Both directions now apply the mode with an explicit `chmod`. Nothing had ever asserted a delivered mode, which is why the same defect sat in both halves. (MGIT-81)
+
+### Fixed — firecracker revoke, proven on hardware
+
+- **`mgit sandbox policy` revoke is now hardware-proven on firecracker too**
+  (MGIT-78, closing a 0.4.3 known limitation). Both halves pass on real KVM:
+  the held, data-carrying flow dies by default (`killed=1`,
+  `PROBE-RESULT HOLD = DIED`), survives under `--drain` (`killed=0`,
+  `HOLD = SURVIVED after=20.042s`), and in both cases the next flow is refused
+  by policy — connect-then-reset here, as this backend's REDIRECT-to-proxy
+  design predicts, not libkrun's connect-refused. Recorded in
+  `docs/adr/012-live-egress-policy-mutation.md`.
+- A latent flake in `TestE2E_PortPublish_GuestServiceReachableOnHost`, exposed
+  the first time the battery ran in CI: the host publisher listener accepts
+  unconditionally, so a single dial could succeed in the window where the
+  guest's `nc -ll -w 1` had timed out, and read nothing. The assertion now
+  polls for the guest's bytes, which were always the actual evidence.
 
 ### Fixed — `brew install` was broken for every macOS user without libkrun
 
