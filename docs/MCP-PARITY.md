@@ -28,6 +28,7 @@ Legend: ✓ full · ~ partial (see notes) · ✗ not offered.
 | gc / restore / import / bundle | ✓ | ✗ | ✗ | maintenance verbs, CLI-only |
 | sandbox sync (FR-17.40) | ✓ | ✓ | ✗ | `mgit_sandbox_sync` — re-stage the host worktree into a running guest; `dry_run` returns the conflict classification (MGIT-76) |
 | sandbox egress policy (FR-17.8) | ✓ | ✓ | ✗ | `mgit sandbox policy set/revoke/show` / `mgit_sandbox_policy` (MGIT-72) |
+| sandbox artifact export | ✓  | ✓  | ✗   | `mgit sandbox export` / `mgit_sandbox_export` (MGIT-73) |
 | run / sandbox lifecycle (FR-17) | ✓ | ✗ | ✗ | launch/exec/shell/land/grants/image: CLI-only (see **Documented gaps**) |
 
 ## Documented MCP gaps
@@ -90,6 +91,15 @@ Every mutation is written to the append-only sandbox audit trail with the task
 binding, the resulting policy, and how many established flows it terminated.
 `action: "show"` reports the policy **in force**, which after a mutation is not
 the launch-time policy on `mgit sandbox status`.
+
+- **`mgit_sandbox_export` is on MCP for the same reason as the other two** (MGIT-73):
+  the caller is the agent that just built the artifact. It is registered on every
+  server so an agent can discover it; where no sandbox daemon is wired it fails
+  closed naming that reason, never a fake success. Both paths are host-named and
+  validated at the boundary before the daemon sees them; the containment checks
+  (symlink/hardlink escapes, traversal, collision, size and file-count ceilings)
+  and the append-only audit record live host-side in the daemon, so the MCP and
+  CLI routes have identical semantics.
 
 ## REST scope (decision record, MGIT-52)
 

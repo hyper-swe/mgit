@@ -163,6 +163,11 @@ func run(args []string, logSink io.Writer) int {
 		}
 		defer func() { _ = closeAudit() }()
 		dcfg.Service = svc
+		// The same service serves the guest->host artifact export verb: it
+		// resolves task->sandbox, delegates the host-side copy to the backend's
+		// export engine, and records the crossing in the append-only trail. A
+		// backend that cannot export reports that per call (MGIT-73).
+		dcfg.Exporter = svc
 
 		// Wire host egress enforcement (allowlist proxy + restricted DNS) so
 		// the service starts/stops it across each allowlist sandbox's

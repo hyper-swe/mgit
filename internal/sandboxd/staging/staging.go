@@ -102,7 +102,7 @@ func copyStagingEntry(root, path, rel, dst string, d os.DirEntry) error {
 	case d.IsDir():
 		return os.MkdirAll(dst, 0o750)
 	case d.Type()&os.ModeSymlink != 0:
-		if err := assertSymlinkWithin(root, path); err != nil {
+		if err := AssertSymlinkWithin(root, path); err != nil {
 			return err
 		}
 		target, err := os.Readlink(path)
@@ -115,12 +115,17 @@ func copyStagingEntry(root, path, rel, dst string, d os.DirEntry) error {
 	}
 }
 
-// assertSymlinkWithin rejects a symlink whose RESOLVED target escapes the
-// worktree root. The target is resolved relative to the link's directory and
-// fully evaluated (EvalSymlinks where it exists) so a chain of links cannot
-// step outside. A link to a not-yet-existing in-worktree path is allowed; one
-// pointing outside the worktree (absolute or via ..) is rejected. Refs: SEC-03, F-A/NEW-2
-func assertSymlinkWithin(root, linkPath string) error {
+// AssertSymlinkWithin rejects a symlink whose RESOLVED target escapes root.
+// The target is resolved relative to the link's directory and fully evaluated
+// (EvalSymlinks where it exists) so a chain of links cannot step outside. A
+// link to a not-yet-existing in-root path is allowed; one pointing outside
+// root (absolute or via ..) is rejected.
+//
+// It is EXPORTED because both directions of the boundary need exactly this
+// check and the guarantee must keep ONE implementation: delivery inbound
+// passes the worktree root, and internal/sandboxd/artifactexport passes the
+// exported subtree root outbound. Refs: SEC-03, F-A/NEW-2, MGIT-73
+func AssertSymlinkWithin(root, linkPath string) error {
 	target, err := os.Readlink(linkPath)
 	if err != nil {
 		return fmt.Errorf("read symlink %s: %w", linkPath, err)

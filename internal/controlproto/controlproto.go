@@ -30,6 +30,12 @@ import (
 )
 
 // Request kinds carried in the 1-byte frame tag.
+//
+// EVERY VALUE HERE MUST BE UNIQUE, and the compiler is the only thing that
+// says so — a duplicate tag makes two verbs indistinguishable on the wire, so
+// the daemon would dispatch one request as the other. MGIT-72 and MGIT-73 were
+// developed in parallel and both reached for 'P'; it surfaced only when the two
+// branches met. Adding a kind means reading this whole list first.
 const (
 	KindLaunch byte = 'L'
 	KindExec   byte = 'X'
@@ -46,6 +52,9 @@ const (
 	// KindPolicyShow reports the allowlist a running sandbox is enforcing
 	// right now, which after a mutation is NOT its launch-time policy.
 	KindPolicyShow byte = 'Q'
+	// KindExport brings a guest-built artifact out to a host-named path
+	// (MGIT-73). 'F' for file, because 'P' and 'E' are already spoken for.
+	KindExport byte = 'F'
 )
 
 // Ceilings enforced before allocation (the daemon supervises all VMs; a
@@ -68,6 +77,11 @@ const (
 	MaxPolicyEntries = 1024
 	// MaxPolicyEntryBytes caps one allowlist entry.
 	MaxPolicyEntryBytes = 512
+	// MaxPathBytes caps one filesystem path carried in a request (both the
+	// guest source and the host destination of an artifact export). Well above
+	// any real path, and bounded so a crafted message cannot drive a large
+	// allocation or a pathological path walk. Refs: MGIT-73
+	MaxPathBytes = 4096
 )
 
 // DefaultRequestTimeout is the recommended per-request read deadline the
@@ -156,6 +170,15 @@ type GrantResult struct {
 	DestPort   int    `json:"dest_port,omitempty"`
 }
 
+// ExportArgs names one guest->host artifact export. BOTH paths are supplied by
+// the host-side caller — the guest names neither, which is what keeps this from
+// being a guest-controlled write primitive against the host filesystem.
+// Refs: MGIT-73, ADR-011
+type ExportArgs struct {
+	TaskID string                      `json:"task_id"`
+	Export model.ArtifactExportRequest `json:"export"`
+}
+
 // Request is one control-plane request: a kind tag plus exactly the one
 // payload that matches the kind (List carries none). The kind is the
 // frame tag, not a JSON field.
@@ -173,6 +196,7 @@ type Request struct {
 	// reads the one in force (MGIT-72).
 	PolicySet  *PolicyArgs `json:"policy_set,omitempty"`
 	PolicyShow *TaskRef    `json:"policy_show,omitempty"`
+	Export     *ExportArgs `json:"export,omitempty"`
 }
 
 // LandResult summarizes a completed land.
@@ -198,13 +222,15 @@ type Response struct {
 	// a tree that may have moved. Refs: MGIT-76
 	Synced *model.WorktreeSyncReport `json:"synced,omitempty"` // sync
 	Policy *PolicyResult             `json:"policy,omitempty"` // policy set/show
+	// Exported reports one completed artifact export (MGIT-73).
+	Exported *model.ArtifactExportResult `json:"exported,omitempty"`
 }
 
 // validKind reports whether k is a known request kind.
 func validKind(k byte) bool {
 	switch k {
 	case KindLaunch, KindExec, KindLand, KindList, KindRemove, KindStatus, KindGrants, KindGrant,
-		KindSync, KindPolicySet, KindPolicyShow:
+		KindSync, KindPolicySet, KindPolicyShow, KindExport:
 		return true
 	default:
 		return false
@@ -264,6 +290,7 @@ func (req *Request) Validate() error {
 
 		KindPolicySet:  req.PolicySet != nil,
 		KindPolicyShow: req.PolicyShow != nil,
+		KindExport:     req.Export != nil,
 	}
 	for k, present := range set {
 		if present && k != req.Kind {
@@ -303,6 +330,8 @@ func (req *Request) Validate() error {
 		return validatePolicySet(req.PolicySet)
 	case KindPolicyShow:
 		return requireTask(req.PolicyShow)
+	case KindExport:
+		return validateExport(req.Export)
 	case KindList:
 		return nil // no payload
 	default:
@@ -358,6 +387,22 @@ func validateExec(e *ExecArgs) error {
 		}
 	}
 	return e.Exec.Validate()
+}
+
+// validateExport bounds an artifact-export request at the protocol boundary:
+// the task must be named and both paths must be present, sane and bounded,
+// before anything reaches the export engine's own containment checks.
+// Refs: MGIT-73, SEC-03
+func validateExport(e *ExportArgs) error {
+	if e == nil || e.TaskID == "" {
+		return fmt.Errorf("controlproto: export request missing task_id")
+	}
+	for name, path := range map[string]string{"guest_path": e.Export.GuestPath, "host_path": e.Export.HostPath} {
+		if len(path) > MaxPathBytes {
+			return fmt.Errorf("controlproto: export %s %d bytes exceeds %d", name, len(path), MaxPathBytes)
+		}
+	}
+	return e.Export.Validate()
 }
 
 // WriteResponse frames and writes a response.

@@ -174,3 +174,20 @@ func (c *CeilingManager) SyncWorktree(ctx context.Context, id string, opts model
 	}
 	return syncer.SyncWorktree(ctx, id, opts)
 }
+
+// ExportArtifact forwards the OPTIONAL guest->host artifact export capability
+// to the inner backend when it has one, and reports the limitation when it
+// does not.
+//
+// The ceiling wraps EVERY manager, so without this passthrough the capability
+// would be invisible to the service no matter which backend is running. It is
+// a pure delegation: an export consumes no VM resources, so there is nothing
+// for the ceiling itself to admit. Refs: MGIT-73, FR-17.26, ADR-011
+func (c *CeilingManager) ExportArtifact(ctx context.Context, id string,
+	req model.ArtifactExportRequest) (*model.ArtifactExportResult, error) {
+	exporter, ok := c.inner.(model.ArtifactExporter)
+	if !ok {
+		return nil, fmt.Errorf("%w: this backend has no artifact export path", model.ErrArtifactExportUnsupported)
+	}
+	return exporter.ExportArtifact(ctx, id, req)
+}

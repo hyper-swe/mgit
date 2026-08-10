@@ -68,6 +68,20 @@ type PolicyCoordinator interface {
 	Show(ctx context.Context, info model.SandboxInfo) (*model.EgressPolicyState, error)
 }
 
+// ArtifactExporter serves the guest->host artifact export verb (MGIT-73):
+// "export this host-named path out of this task's sandbox to this host-named
+// destination". *service.SandboxService satisfies it.
+//
+// It is a SEPARATE seam from SandboxDispatcher, like SandboxLander, because
+// the capability is optional: a daemon whose backend delivers the worktree as
+// a launch-time image has no host directory to export from and leaves this
+// unwired, and the verb then reports itself unserved rather than pretending.
+// Refs: MGIT-73, ADR-011
+type ArtifactExporter interface {
+	ExportArtifact(ctx context.Context, taskID string,
+		req model.ArtifactExportRequest) (*model.ArtifactExportResult, error)
+}
+
 // execRelayChunkBytes bounds one exec output frame relayed to the client.
 // Output is forwarded in chunks no larger than this so a single frame can
 // never approach the execwire ceiling and the client sees output
@@ -132,6 +146,8 @@ func (d *Daemon) dispatch(ctx context.Context, conn net.Conn, req *controlproto.
 		d.servePolicySet(ctx, conn, req.PolicySet)
 	case controlproto.KindPolicyShow:
 		d.servePolicyShow(ctx, conn, req.PolicyShow)
+	case controlproto.KindExport:
+		d.serveExport(ctx, conn, req.Export)
 	default:
 		d.reply(conn, &controlproto.Response{},
 			fmt.Errorf("controlproto kind %#x not served by this daemon", req.Kind))
@@ -273,6 +289,21 @@ func (d *Daemon) servePolicyShow(ctx context.Context, conn net.Conn, ref *contro
 	d.reply(conn, &controlproto.Response{Policy: &controlproto.PolicyResult{
 		Entries: state.Entries, RuleCount: state.RuleCount,
 	}}, nil)
+}
+
+// serveExport routes one artifact export through the service, which resolves
+// the task to its sandbox, applies the host-side containment checks in the
+// backend and records the crossing in the append-only audit trail. The daemon
+// itself touches no filesystem here. An unwired exporter is reported, not
+// crashed. Refs: MGIT-73, FR-17.18, ADR-011
+func (d *Daemon) serveExport(ctx context.Context, conn net.Conn, args *controlproto.ExportArgs) {
+	if d.cfg.Exporter == nil {
+		d.reply(conn, &controlproto.Response{},
+			fmt.Errorf("controlproto kind %#x not served by this daemon", controlproto.KindExport))
+		return
+	}
+	res, err := d.cfg.Exporter.ExportArtifact(ctx, args.TaskID, args.Export)
+	d.reply(conn, &controlproto.Response{Exported: res}, err)
 }
 
 // reply writes a success response, or an error response carrying a
