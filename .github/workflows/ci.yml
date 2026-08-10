@@ -83,6 +83,38 @@ jobs:
           export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix libkrunfw)/lib:$(brew --prefix libkrun)/lib"
           make test-libkrun   # includes check-libkrun-net (MGIT-61.14)
 
+  # Proves `brew install` of the formula works for a user who does NOT have
+  # libkrun -- the first-hour macOS install (MGIT-75).
+  #
+  # This job must never be merged into the `libkrun` job above, and nothing in
+  # it may install libkrun. That job's very first step is `brew install
+  # libkrun`, and a satisfied dependency is never loaded, so the failure this
+  # job exists to catch is invisible there. That is exactly how the bug
+  # shipped: `brew install --dry-run hyper-swe/tap/mgit` passed on the
+  # developer machine that later found the breakage, because libkrun was
+  # already installed on it. A separate runner with nothing on it is the
+  # point, not an inefficiency.
+  #
+  # The check itself lives in a script rather than inline so that a developer
+  # can run the runner's exact code against a scratch Homebrew prefix
+  # (`BREW=... scripts/brew-install-no-libkrun.sh`) instead of against their
+  # own libkrun-bearing machine. The script asserts libkrun's absence before
+  # it concludes anything, so it fails loudly rather than passing vacuously if
+  # this runner image ever starts shipping libkrun.
+  # Refs: MGIT-75, MGIT-69, MGIT-70
+  brew-install-no-libkrun:
+    name: brew install without libkrun (first-hour macOS install)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install mgit from the repo formula on a libkrun-free runner
+        run: scripts/brew-install-no-libkrun.sh
+
   # The macOS job above is the ONLY thing that compiled the libkrun cgo
   # binding until 2026-07-29, when a Linux-only build+link failure
   # (RTLD_DEFAULT needing _GNU_SOURCE on glibc; dlsym needing -ldl on

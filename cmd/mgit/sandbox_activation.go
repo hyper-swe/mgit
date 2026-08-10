@@ -92,24 +92,46 @@ func missingLibrary(log string) string {
 	return path.Base(m[1])
 }
 
-// missingLibraryRemedy names the one command that fixes a missing library.
+// missingLibraryRemedy names the commands that fix a missing library.
 //
 // It is phrased around what the user has to DO. "Library not loaded" is
 // accurate and useless: nothing in it says the sandbox needs a VMM, that the
-// VMM is a separate package, or that one command installs it.
+// VMM is a separate package, or how to install it.
 //
 // The libkrun install hint lives here rather than beside the backend that
 // links it because the backend package is CGO- and build-tag-gated: on a host
 // where this diagnosis matters, that package is exactly what failed to load.
+//
+// This hint is now the ONLY thing standing between a macOS user and a
+// sandbox: the brew formula deliberately no longer declares libkrun as a
+// dependency, because a third-party-tap dependency aborts the whole install
+// for everyone who does not already have it (MGIT-75). That makes getting
+// these commands right load-bearing, and the obvious ones do not work:
+//
+//   - `brew install libkrun` fails. Homebrew refuses to load a formula from
+//     an untrusted third-party tap, and the bare name `libkrun` does not
+//     match the formula's full name for its explicit-request escape hatch.
+//   - `brew install libkrun/krun/libkrun` fails too, one step later, on
+//     libkrunfw — libkrun's own dependency from the same tap. A transitive
+//     dependency cannot be named on the command line at all.
+//
+// Whole-tap `brew trust` is the only step that clears both, so it comes
+// first. All of this was established on a Homebrew prefix where libkrun was
+// genuinely absent; on a machine that already has it, none of these commands
+// has to load anything and they all appear to work.
+// Refs: MGIT-75, MGIT-61.15
 func missingLibraryRemedy(lib string) string {
 	detail := fmt.Sprintf(
 		"%s is missing. mgit-sandboxd links it, so no sandbox can start; core mgit\n"+
 			"is unaffected.\n", lib)
-	// libkrunfw ships as a dependency of the libkrun formula, so one command
+	// libkrunfw ships as a dependency of the libkrun formula, so one sequence
 	// covers either name.
 	if strings.HasPrefix(lib, "libkrun") {
-		detail += "Install the microVM hypervisor that runs your sandboxes:\n" +
-			"  brew tap libkrun/krun && brew install libkrun\n"
+		detail += "Install the microVM hypervisor that runs your sandboxes (mgit does not\n" +
+			"install it for you — it is a third-party tap you have to trust first):\n" +
+			"  brew tap libkrun/krun\n" +
+			"  brew trust libkrun/krun\n" +
+			"  brew install libkrun\n"
 	}
 	return detail + "Full prerequisites: docs/INSTALL-SANDBOX.md"
 }

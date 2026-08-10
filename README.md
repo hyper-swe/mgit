@@ -165,6 +165,8 @@ That turns incident forensics from archaeology into a query: trace a landed comm
 brew install hyper-swe/tap/mgit
 ```
 
+One command, no other taps and no `brew trust` — the [sandbox](#enable-the-sandbox) layer has its own prerequisites, and none of them are needed to install or use core mgit.
+
 **Go**:
 
 ```bash
@@ -187,9 +189,19 @@ Everything above installs the `mgit` binary, which is all you need for the versi
 
 The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`.
 
-- **macOS** requires Apple Silicon (arm64), macOS 14+; the release/brew daemon links libkrun and is code-signed with the hypervisor entitlement (a `go install`-ed daemon is unsigned and must be signed locally).
+- **macOS** requires Apple Silicon (arm64), macOS 14+, and the **libkrun** hypervisor, which is *not* installed with mgit — it lives in a third-party Homebrew tap, and Homebrew will not load a formula from a tap you have not trusted. All three commands are needed, in this order:
+
+  ```bash
+  brew tap libkrun/krun
+  brew trust libkrun/krun
+  brew install libkrun
+  ```
+
+  `brew install libkrun` on its own fails, and so does the fully-qualified name — see [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#installing-libkrun-on-macos) for why, and for why mgit no longer tries to install it for you. The release/brew daemon links libkrun and is code-signed with the hypervisor entitlement (a `go install`-ed daemon is unsigned and must be signed locally).
 - **Linux** requires KVM (`/dev/kvm`) and the `firecracker` binary on `PATH`.
 - **Windows and Intel macOS** have no sandbox backend yet; core mgit runs without it.
+
+Skipping the hypervisor step degrades nothing silently: the daemon refuses to start, and `mgit` reports the missing library together with the commands that fix it.
 
 Then compose the Linux userspace the VM boots — from any public OCI image, pulled straight from its registry with no Docker and no container runtime:
 

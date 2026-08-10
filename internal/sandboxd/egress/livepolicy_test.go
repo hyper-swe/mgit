@@ -296,6 +296,50 @@ func TestRunner_SetPolicy_AllowThenRevoke_ThroughTheRealProxy(t *testing.T) {
 		"re-granting must work, proving the earlier denial was policy and not breakage")
 }
 
+// awaitTrackedFlows blocks until a sandbox has exactly want flows registered.
+//
+// WHY THIS IS NECESSARY. A client that has read the CONNECT reply has NOT
+// observed the flow being tracked: the proxy writes the reply (proxy.go) and
+// only then calls SpliceTracked, so between those two statements the registry
+// is legitimately empty. A revoke issued in that window kills nothing and the
+// assertion fails — which is exactly how this test flaked on CI while passing
+// hundreds of local runs.
+//
+// The reply is the wrong signal, so the fix is to synchronize on the real
+// condition rather than to sleep. A sleep would only narrow the window; this
+// closes it, and it fails with a diagnosis rather than a bare count mismatch.
+// Refs: MGIT-72
+func trackedFlows(t *testing.T, r *Runner, sandboxID string) int {
+	t.Helper()
+	r.mu.Lock()
+	ae, ok := r.active[sandboxID]
+	r.mu.Unlock()
+	if !ok {
+		t.Fatalf("sandbox %q is not running", sandboxID)
+	}
+	return ae.sup.Flows().Len()
+}
+
+func awaitTrackedFlows(t *testing.T, r *Runner, sandboxID string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var got int
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		ae, ok := r.active[sandboxID]
+		r.mu.Unlock()
+		if ok {
+			if got = ae.sup.Flows().Len(); got == want {
+				return
+			}
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("sandbox %q tracked %d flows, want %d, after 5s — the proxy "+
+		"registers a flow only after replying, so a revoke asserted on the "+
+		"reply alone would race this", sandboxID, got, want)
+}
+
 // TestRunner_SetPolicy_KillsEstablishedFlows verifies the documented default:
 // revoke terminates in-flight connections. Refs: MGIT-72, ADR-011
 func TestRunner_SetPolicy_KillsEstablishedFlows(t *testing.T) {
@@ -317,6 +361,9 @@ func TestRunner_SetPolicy_KillsEstablishedFlows(t *testing.T) {
 	allow, _, err := DecodeConnectReply(conn)
 	require.NoError(t, err)
 	require.True(t, allow, "the flow is established before the revoke")
+	// The reply does not mean the flow is tracked yet — wait for the state the
+	// revoke actually acts on, or this races (see awaitTrackedFlows).
+	awaitTrackedFlows(t, r, "sbx-kill", 1)
 
 	change, err := r.SetPolicy("sbx-kill", nil, false)
 
@@ -337,13 +384,31 @@ func TestRunner_SetPolicy_Drain_LeavesEstablishedFlowsAlone(t *testing.T) {
 	})
 	require.NoError(t, err)
 	defer func() { _ = r.Stop("sbx-drain") }()
-	require.True(t, connectThroughProxy(t, eps.ProxyAddr, "registry.npmjs.org", 443))
+	// HOLD the connection open across the revoke. This test used to use
+	// connectThroughProxy, which CLOSES the connection before returning — so
+	// there was never an established flow and Killed==0 passed vacuously,
+	// exactly as it would against a registry that tracked nothing at all. The
+	// awaitTrackedFlows below is what makes this assertion mean anything.
+	// Refs: MGIT-72
+	conn, err := net.Dial("tcp", eps.ProxyAddr)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	require.NoError(t, EncodeConnectRequest(conn, ConnectRequest{
+		Protocol: "tcp", Host: "registry.npmjs.org", Port: 443}))
+	allow, _, err := DecodeConnectReply(conn)
+	require.NoError(t, err)
+	require.True(t, allow, "the flow is established before the drain")
+	awaitTrackedFlows(t, r, "sbx-drain", 1)
 
 	change, err := r.SetPolicy("sbx-drain", nil, true)
 
 	require.NoError(t, err)
 	assert.Zero(t, change.Killed, "draining kills nothing")
 	assert.True(t, change.Drained, "the weaker behavior is reported, not silent")
+	// The flow is not merely uncounted — it is still REGISTERED, i.e. alive.
+	// Without this, "killed 0" and "killed everything and forgot" look alike.
+	assert.Equal(t, 1, trackedFlows(t, r, "sbx-drain"),
+		"a drained flow must survive the revoke, not merely go uncounted")
 }
 
 // TestRunner_SetPolicy_UnknownSandbox_FailsClosed verifies "revoke succeeded"

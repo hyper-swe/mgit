@@ -5,6 +5,14 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed — `brew install` was broken for every macOS user without libkrun
+
+- **`brew install hyper-swe/tap/mgit` installed nothing at all on a fresh Mac.** The formula declared `depends_on "libkrun/krun/libkrun"`, and Homebrew resolves dependencies *before* it fetches anything and refuses to load a formula from an untrusted third-party tap. The install aborted with exit 1 and no binaries — not even core mgit, which is CGO-free and never links libkrun. A user who wanted only the commit substrate was blocked by a VMM they would never run, contradicting the formula's own caveats ("Core mgit … is ready to use"). **libkrun is no longer a formula dependency**; core mgit installs with one command, no second tap and no `brew trust`. The sandbox is a documented second step and still fails closed: the daemon cannot load without libkrun, and `mgit` surfaces the dynamic loader's error together with the commands that fix it. (MGIT-75)
+- **The libkrun install commands we published did not work either.** `brew install libkrun` fails on the untrusted-tap gate — the bare name does not match the formula's full name for Homebrew's explicit-request escape hatch — and the fully-qualified `brew install libkrun/krun/libkrun` fails one step later on `libkrunfw`, libkrun's own dependency from the same tap, which no command-line argument can whitelist. The remedy message, formula caveats, README, install guide and release checklist now all give the sequence that actually runs: `brew tap libkrun/krun`, `brew trust libkrun/krun`, `brew install libkrun`. (MGIT-75)
+- **Why this was invisible.** `brew install --dry-run` *passed* on the machine that later hit the failure, because libkrun was already installed there and a satisfied dependency is never loaded — the same species as 0.4.2's MGIT-69/70, where the state that makes the check pass is the state a first-hour user does not have. CI now installs the repo formula on a macOS runner with **no** libkrun (`scripts/brew-install-no-libkrun.sh`), and that check asserts libkrun's absence before drawing any conclusion from its own result, so it fails loudly rather than passing vacuously. (MGIT-75)
+
 ## [0.4.2] - 2026-08-09
 
 Three defects of the same shape as 0.4.1's, all found by asking what a guest can actually *do* rather than what the host can demonstrate. Two of them were in the shipped Linux backend; one was in the 0.4.1 fix itself.
