@@ -40,7 +40,8 @@ func TestGCService_Run_Aggressive(t *testing.T) {
 	// Create some commits to generate loose objects.
 	for i := range 5 {
 		_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-			TaskID: "MGIT-11.1", AgentID: "a", Message: string(rune('A' + i)),
+			AllowEmpty: true,
+			TaskID:     "MGIT-11.1", AgentID: "a", Message: string(rune('A' + i)),
 		})
 		require.NoError(t, err)
 	}
@@ -59,7 +60,8 @@ func TestGCService_Run_CustomThreshold(t *testing.T) {
 	// Create a few commits to generate loose objects.
 	for i := range 3 {
 		_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-			TaskID: "MGIT-11.2", AgentID: "a", Message: string(rune('A' + i)),
+			AllowEmpty: true,
+			TaskID:     "MGIT-11.2", AgentID: "a", Message: string(rune('A' + i)),
 		})
 		require.NoError(t, err)
 	}
@@ -78,7 +80,8 @@ func TestGCService_Run_AutoTriggered(t *testing.T) {
 	// Create commits for loose objects.
 	for i := range 3 {
 		_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-			TaskID: "MGIT-11.3", AgentID: "a", Message: string(rune('A' + i)),
+			AllowEmpty: true,
+			TaskID:     "MGIT-11.3", AgentID: "a", Message: string(rune('A' + i)),
 		})
 		require.NoError(t, err)
 	}

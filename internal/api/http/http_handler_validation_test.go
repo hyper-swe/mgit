@@ -15,7 +15,7 @@ func TestTaskCommits_Endpoint(t *testing.T) {
 	srv := setupTestServer(t)
 
 	// Create commit first
-	body := `{"task_id":"MGIT-1.1","agent_id":"test","message":"for task query"}`
+	body := `{"task_id":"MGIT-1.1","agent_id":"test","message":"for task query","allow_empty":true}`
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/commits", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

@@ -23,9 +23,10 @@ func seedTaskCommits(t *testing.T, env *serviceEnv, taskID string, n int) {
 	ctx := context.Background()
 	for i := 0; i < n; i++ {
 		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  taskID,
-			AgentID: "export-test",
-			Message: "step",
+			AllowEmpty: true,
+			TaskID:     taskID,
+			AgentID:    "export-test",
+			Message:    "step",
 		})
 		require.NoError(t, err)
 	}

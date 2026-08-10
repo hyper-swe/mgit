@@ -24,6 +24,15 @@ type CreateCommitRequest struct {
 	Message   string           `json:"message,omitempty"`
 	FileDiffs []model.FileDiff `json:"file_diffs,omitempty"`
 	Branch    string           `json:"branch,omitempty"`
+
+	// StageAll stages every working-tree change (including new files) before
+	// committing, collapsing the stage-then-commit loop into one call. Refs: MGIT-77
+	StageAll bool `json:"stage_all,omitempty"`
+
+	// AllowEmpty permits a commit whose tree is identical to its parent's.
+	// Off by default: a commit that records nothing but returns a hash is a
+	// false success signal (MGIT-77). Refs: FR-2, MGIT-77
+	AllowEmpty bool `json:"allow_empty,omitempty"`
 }
 
 // CommitService orchestrates commit creation across go-git and SQLite.
@@ -55,12 +64,28 @@ func (s *CommitService) WithAudit(a *AuditService) *CommitService {
 
 // CreateCommit creates a new micro-commit, storing it in both go-git
 // and the SQLite index. Auto-generates a message if none provided.
-// Refs: FR-2, FR-3, ADR-002
+//
+// With req.StageAll the working tree is staged first, so one call records a
+// step. A commit that would record no change (its tree identical to its
+// parent's) is REFUSED with model.ErrNothingToCommit unless req.AllowEmpty is
+// set. That refusal is the point of MGIT-77: returning a commit hash for work
+// that was never captured hands an agent the success signal for a lost
+// checkpoint. Refs: FR-2, FR-3, ADR-002, MGIT-77
 func (s *CommitService) CreateCommit(ctx context.Context, req CreateCommitRequest) (*model.Commit, error) {
 	// Validate task ID
 	taskID, err := model.ParseTaskID(req.TaskID)
 	if err != nil {
 		return nil, fmt.Errorf("create commit: %w", err)
+	}
+
+	if req.StageAll {
+		if err := gitstore.NewWorktreeStore(s.repo).Add(ctx, "."); err != nil {
+			return nil, fmt.Errorf("create commit: stage all changes: %w", err)
+		}
+	}
+
+	if err := s.rejectEmptyCommit(req); err != nil {
+		return nil, err
 	}
 
 	// Auto-generate message if not provided
@@ -110,6 +135,29 @@ func (s *CommitService) CreateCommit(ctx context.Context, req CreateCommitReques
 	}
 
 	return commit, nil
+}
+
+// rejectEmptyCommit returns model.ErrNothingToCommit when the staging set would
+// produce a tree identical to the current branch tip's — i.e. the commit would
+// record nothing — unless the caller asked for an empty commit explicitly.
+//
+// The tree comparison itself is the store's StagedTreeMatchesHead (the same
+// primitive the ADR-008 resync already uses to avoid appending a no-op base
+// commit); the POLICY of refusing lives here, in the service, so every surface
+// (CLI, MCP, REST) inherits it. Refs: FR-2, MGIT-77, MGIT-35
+func (s *CommitService) rejectEmptyCommit(req CreateCommitRequest) error {
+	if req.AllowEmpty {
+		return nil
+	}
+	unchanged, err := s.commitStore.StagedTreeMatchesHead()
+	if err != nil {
+		return fmt.Errorf("create commit: check staged changes: %w", err)
+	}
+	if unchanged {
+		return fmt.Errorf("%w: no staged changes (the commit tree would be identical to its parent)",
+			model.ErrNothingToCommit)
+	}
+	return nil
 }
 
 // logAudit appends a CREATE_COMMIT entry to the audit trail. No-op when no

@@ -21,7 +21,7 @@ func TestMCP_ShowTool(t *testing.T) {
 
 	// Create a commit first
 	commitResult, err := srv.commitTool(ctx, makeToolReq(map[string]any{
-		"task_id": "MGIT-1.1", "message": "for show",
+		"task_id": "MGIT-1.1", "message": "for show", "allow_empty": true,
 	}))
 	require.NoError(t, err)
 	assert.False(t, commitResult.IsError)
@@ -128,7 +128,7 @@ func TestMCP_VerifyTool_WithTaskID(t *testing.T) {
 func TestMCP_CommitTool_DefaultAgentID(t *testing.T) {
 	srv := setupTestMCP(t)
 	result, err := srv.commitTool(context.Background(), makeToolReq(map[string]any{
-		"task_id": "MGIT-5.1",
+		"task_id": "MGIT-5.1", "allow_empty": true,
 	}))
 	require.NoError(t, err)
 	assert.False(t, result.IsError)

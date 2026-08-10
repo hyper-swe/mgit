@@ -36,9 +36,10 @@ func TestSquash_CreatesSquash(t *testing.T) {
 
 	for i := 0; i < 4; i++ {
 		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  taskID,
-			AgentID: "squash-test",
-			Message: "step",
+			AllowEmpty: true,
+			TaskID:     taskID,
+			AgentID:    "squash-test",
+			Message:    "step",
 		})
 		require.NoError(t, err)
 	}
@@ -66,11 +67,13 @@ func TestSquash_CustomMessage(t *testing.T) {
 	taskID := "MGIT-4.2.2"
 
 	_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-		TaskID: taskID, AgentID: "squash-test", Message: "first",
+		AllowEmpty: true,
+		TaskID:     taskID, AgentID: "squash-test", Message: "first",
 	})
 	require.NoError(t, err)
 	_, err = env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-		TaskID: taskID, AgentID: "squash-test", Message: "second",
+		AllowEmpty: true,
+		TaskID:     taskID, AgentID: "squash-test", Message: "second",
 	})
 	require.NoError(t, err)
 
@@ -96,7 +99,8 @@ func TestSquash_ToGit(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID: taskID, AgentID: "squash-test", Message: "change",
+			AllowEmpty: true,
+			TaskID:     taskID, AgentID: "squash-test", Message: "change",
 		})
 		require.NoError(t, err)
 	}

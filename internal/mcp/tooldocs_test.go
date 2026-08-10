@@ -18,7 +18,7 @@ func TestToolDocs_CoversRegisteredSurface(t *testing.T) {
 	docs := srv.ToolDocs()
 
 	want := map[string][]string{
-		"mgit_commit":          {"agent_id", "message", "task_id"},
+		"mgit_commit":          {"agent_id", "allow_empty", "message", "stage_all", "task_id"},
 		"mgit_rollback":        {"dry_run", "reason", "task_id"},
 		"mgit_squash":          {"dry_run", "message", "task_id"},
 		"mgit_status":          {},

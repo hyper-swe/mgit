@@ -278,6 +278,20 @@ func (s *SquashService) GitFormatPatch(ctx context.Context, c *model.Commit) (st
 	return s.mboxHeader(c) + body + "-- \nmgit\n", nil
 }
 
+// PatchHasHunks reports whether a git format-patch carries at least one file
+// diff. A squash of empty commits still renders a well-formed mbox that
+// `git apply` accepts, so the land step reports success and lands nothing —
+// the MGIT-77 failure one layer below commit. Callers exporting a patch use
+// this to warn instead of silently succeeding.
+//
+// It looks for the `diff --git` header go-git's unified encoder emits for every
+// changed path. The check is deliberately conservative: a commit message that
+// merely mentions the string reads as "has hunks", which at worst suppresses a
+// warning — never the reverse. Refs: FR-7, MGIT-77
+func PatchHasHunks(patch string) bool {
+	return strings.Contains(patch, "diff --git ")
+}
+
 // splitMessage splits a commit message into its first-line subject and body.
 func splitMessage(msg string) (subject, body string) {
 	idx := strings.Index(msg, "\n")

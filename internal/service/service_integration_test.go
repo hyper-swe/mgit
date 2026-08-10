@@ -152,7 +152,8 @@ func TestMergeService_Merge_AutoWithDivergedBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-16.1", AgentID: "a", Message: "branch work",
+		AllowEmpty: true,
+		TaskID:     "MGIT-16.1", AgentID: "a", Message: "branch work",
 	})
 	require.NoError(t, err)
 
@@ -161,7 +162,8 @@ func TestMergeService_Merge_AutoWithDivergedBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-16.2", AgentID: "a", Message: "main work",
+		AllowEmpty: true,
+		TaskID:     "MGIT-16.2", AgentID: "a", Message: "main work",
 	})
 	require.NoError(t, err)
 

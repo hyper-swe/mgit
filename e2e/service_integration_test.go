@@ -89,7 +89,8 @@ func stageFileCommit(t *testing.T, env *serviceEnv, taskID, rel, content string)
 	require.NoError(t, os.WriteFile(filepath.Join(env.repo.Root(), rel), []byte(content), 0o600))
 	require.NoError(t, env.worktree.Add(ctx, rel))
 	c, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-		TaskID: taskID, AgentID: "e2e-agent", Message: "edit " + rel,
+		AllowEmpty: true,
+		TaskID:     taskID, AgentID: "e2e-agent", Message: "edit " + rel,
 	})
 	require.NoError(t, err)
 	return c
@@ -105,9 +106,10 @@ func TestIntegration_CommitAndSquash_Successful(t *testing.T) {
 	commitHashes := make([]string, 5)
 	for i := range 5 {
 		c, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  "MGIT-1.2.3",
-			AgentID: "agent-01",
-			Message: fmt.Sprintf("micro commit %d", i+1),
+			AllowEmpty: true,
+			TaskID:     "MGIT-1.2.3",
+			AgentID:    "agent-01",
+			Message:    fmt.Sprintf("micro commit %d", i+1),
 		})
 		require.NoError(t, err)
 		commitHashes[i] = c.CommitID
@@ -201,10 +203,11 @@ func TestIntegration_BranchAndCommit_Successful(t *testing.T) {
 	// 4. Create commits on branch
 	for i := range 2 {
 		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  "MGIT-3.1",
-			AgentID: "agent-01",
-			Message: fmt.Sprintf("branch commit %d", i+1),
-			Branch:  "task/MGIT-3.1",
+			AllowEmpty: true,
+			TaskID:     "MGIT-3.1",
+			AgentID:    "agent-01",
+			Message:    fmt.Sprintf("branch commit %d", i+1),
+			Branch:     "task/MGIT-3.1",
 		})
 		require.NoError(t, err)
 	}
@@ -252,10 +255,11 @@ func TestIntegration_FullWorkflow_EndToEnd(t *testing.T) {
 	// 4. Make 5 commits
 	for i := range 5 {
 		c, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  "MGIT-4.1",
-			AgentID: "agent-01",
-			Message: fmt.Sprintf("implement step %d", i+1),
-			Branch:  "task/MGIT-4.1",
+			AllowEmpty: true,
+			TaskID:     "MGIT-4.1",
+			AgentID:    "agent-01",
+			Message:    fmt.Sprintf("implement step %d", i+1),
+			Branch:     "task/MGIT-4.1",
 		})
 		require.NoError(t, err)
 

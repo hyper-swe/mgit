@@ -75,7 +75,8 @@ func TestMergeService_Merge_FastForward(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-10.1", AgentID: "a", Message: "feature commit",
+		AllowEmpty: true,
+		TaskID:     "MGIT-10.1", AgentID: "a", Message: "feature commit",
 	})
 	require.NoError(t, err)
 
@@ -105,7 +106,8 @@ func TestMergeService_Merge_NoFF(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-10.2", AgentID: "a", Message: "branch commit",
+		AllowEmpty: true,
+		TaskID:     "MGIT-10.2", AgentID: "a", Message: "branch commit",
 	})
 	require.NoError(t, err)
 
@@ -135,7 +137,8 @@ func TestMergeService_Merge_Squash(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-10.3", AgentID: "a", Message: "squash me",
+		AllowEmpty: true,
+		TaskID:     "MGIT-10.3", AgentID: "a", Message: "squash me",
 	})
 	require.NoError(t, err)
 
@@ -178,7 +181,8 @@ func TestMergeService_Merge_DefaultStrategy(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-10.5", AgentID: "a", Message: "auto",
+		AllowEmpty: true,
+		TaskID:     "MGIT-10.5", AgentID: "a", Message: "auto",
 	})
 	require.NoError(t, err)
 	err = env.branch.SwitchBranch(ctx, "main")
@@ -201,7 +205,8 @@ func TestMergeService_Merge_CustomMessage(t *testing.T) {
 	err = env.branch.SwitchBranch(ctx, "task/MGIT-10.6")
 	require.NoError(t, err)
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-10.6", AgentID: "a", Message: "work",
+		AllowEmpty: true,
+		TaskID:     "MGIT-10.6", AgentID: "a", Message: "work",
 	})
 	require.NoError(t, err)
 	err = env.branch.SwitchBranch(ctx, "main")
@@ -226,7 +231,8 @@ func TestMergeService_Merge_SquashCustomMessage(t *testing.T) {
 	err = env.branch.SwitchBranch(ctx, "task/MGIT-10.7")
 	require.NoError(t, err)
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-10.7", AgentID: "a", Message: "squash work",
+		AllowEmpty: true,
+		TaskID:     "MGIT-10.7", AgentID: "a", Message: "squash work",
 	})
 	require.NoError(t, err)
 	err = env.branch.SwitchBranch(ctx, "main")
@@ -259,7 +265,8 @@ func TestMergeService_Merge_NoFF_IncorporatesSourceContent(t *testing.T) {
 	require.NoError(t, os.WriteFile(srcFile, []byte("from source\n"), 0o600))
 	require.NoError(t, env.wt.Add(ctx, "src_only.txt"))
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-15.1", AgentID: "a", Message: "add source file",
+		AllowEmpty: true,
+		TaskID:     "MGIT-15.1", AgentID: "a", Message: "add source file",
 	})
 	require.NoError(t, err)
 
@@ -270,7 +277,8 @@ func TestMergeService_Merge_NoFF_IncorporatesSourceContent(t *testing.T) {
 	require.NoError(t, os.WriteFile(mainFile, []byte("from main\n"), 0o600))
 	require.NoError(t, env.wt.Add(ctx, "main_only.txt"))
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-15.2", AgentID: "a", Message: "add main file",
+		AllowEmpty: true,
+		TaskID:     "MGIT-15.2", AgentID: "a", Message: "add main file",
 	})
 	require.NoError(t, err)
 

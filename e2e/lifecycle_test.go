@@ -24,9 +24,10 @@ func TestE2E_CommitLifecycle(t *testing.T) {
 
 	// 1. Create commit
 	c, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-		TaskID:  "MGIT-1.2.3",
-		AgentID: "e2e-agent",
-		Message: "lifecycle test commit",
+		AllowEmpty: true,
+		TaskID:     "MGIT-1.2.3",
+		AgentID:    "e2e-agent",
+		Message:    "lifecycle test commit",
 	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, c.CommitID)
@@ -59,9 +60,10 @@ func TestE2E_SquashWorkflow(t *testing.T) {
 	// 1. Create 5 commits
 	for i := range 5 {
 		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  "MGIT-2.1",
-			AgentID: "e2e-agent",
-			Message: fmt.Sprintf("step %d", i+1),
+			AllowEmpty: true,
+			TaskID:     "MGIT-2.1",
+			AgentID:    "e2e-agent",
+			Message:    fmt.Sprintf("step %d", i+1),
 		})
 		require.NoError(t, err)
 	}
@@ -138,10 +140,11 @@ func TestE2E_BranchLifecycle(t *testing.T) {
 	// 3. Create commits on branch
 	for i := range 3 {
 		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  "MGIT-4.1",
-			AgentID: "e2e-agent",
-			Message: fmt.Sprintf("branch commit %d", i+1),
-			Branch:  "task/MGIT-4.1",
+			AllowEmpty: true,
+			TaskID:     "MGIT-4.1",
+			AgentID:    "e2e-agent",
+			Message:    fmt.Sprintf("branch commit %d", i+1),
+			Branch:     "task/MGIT-4.1",
 		})
 		require.NoError(t, err)
 	}

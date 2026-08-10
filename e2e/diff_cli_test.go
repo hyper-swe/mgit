@@ -36,16 +36,18 @@ func TestDiff_BetweenCommits(t *testing.T) {
 
 	// Create two commits on the same task.
 	_, err = env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-		TaskID:  "MGIT-4.1.4",
-		AgentID: "diff-test",
-		Message: "first change",
+		AllowEmpty: true,
+		TaskID:     "MGIT-4.1.4",
+		AgentID:    "diff-test",
+		Message:    "first change",
 	})
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-		TaskID:  "MGIT-4.1.4",
-		AgentID: "diff-test",
-		Message: "second change",
+		AllowEmpty: true,
+		TaskID:     "MGIT-4.1.4",
+		AgentID:    "diff-test",
+		Message:    "second change",
 	})
 	require.NoError(t, err)
 
@@ -75,9 +77,10 @@ func TestDiff_Task(t *testing.T) {
 	taskID := "MGIT-4.1.4"
 	for i := 0; i < 3; i++ {
 		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  taskID,
-			AgentID: "diff-test",
-			Message: "step",
+			AllowEmpty: true,
+			TaskID:     taskID,
+			AgentID:    "diff-test",
+			Message:    "step",
 		})
 		require.NoError(t, err)
 	}
@@ -109,9 +112,10 @@ func TestDiff_Statistics(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-		TaskID:  "MGIT-4.1.4",
-		AgentID: "diff-test",
-		Message: "stat test",
+		AllowEmpty: true,
+		TaskID:     "MGIT-4.1.4",
+		AgentID:    "diff-test",
+		Message:    "stat test",
 	})
 	require.NoError(t, err)
 

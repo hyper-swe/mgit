@@ -22,9 +22,10 @@ func seedAndExport(t *testing.T, env *serviceEnv, taskID string, n int) []byte {
 	ctx := context.Background()
 	for i := 0; i < n; i++ {
 		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID:  taskID,
-			AgentID: "import-test",
-			Message: "seed",
+			AllowEmpty: true,
+			TaskID:     taskID,
+			AgentID:    "import-test",
+			Message:    "seed",
 		})
 		require.NoError(t, err)
 	}
@@ -95,7 +96,8 @@ func TestImport_MergeMode_AddsToExisting(t *testing.T) {
 	dst := setupServiceEnv(t)
 	// Pre-seed the destination with one commit on a different task.
 	_, err := dst.commit.CreateCommit(ctx, service.CreateCommitRequest{
-		TaskID: "MGIT-4.2.99", AgentID: "import-test", Message: "pre-existing",
+		AllowEmpty: true,
+		TaskID:     "MGIT-4.2.99", AgentID: "import-test", Message: "pre-existing",
 	})
 	require.NoError(t, err)
 
@@ -148,7 +150,8 @@ func TestImport_ReplaceMode_OverwritesRepo(t *testing.T) {
 	// because task_commits is append-only and cannot be deleted.
 	dirtyDst := setupServiceEnv(t)
 	_, err = dirtyDst.commit.CreateCommit(ctx, service.CreateCommitRequest{
-		TaskID: taskID, AgentID: "import-test", Message: "pre-existing",
+		AllowEmpty: true,
+		TaskID:     taskID, AgentID: "import-test", Message: "pre-existing",
 	})
 	require.NoError(t, err)
 

@@ -123,7 +123,7 @@ func TestMCP_ConfigTool_GetSetAll(t *testing.T) {
 func TestMCP_AuditTool_ReturnsEntries(t *testing.T) {
 	srv := setupTestMCP(t)
 	ctx := context.Background()
-	_, err := srv.commitTool(ctx, makeToolReq(map[string]any{"task_id": "MGIT-7.1", "message": "step"}))
+	_, err := srv.commitTool(ctx, makeToolReq(map[string]any{"task_id": "MGIT-7.1", "message": "step", "allow_empty": true}))
 	require.NoError(t, err)
 
 	all, err := srv.auditTool(ctx, makeToolReq(map[string]any{}))
@@ -152,9 +152,9 @@ func TestMCP_StatusTool_ReturnsJSON(t *testing.T) {
 func TestMCP_DiffTool_CommitPair(t *testing.T) {
 	srv := setupTestMCP(t)
 	ctx := context.Background()
-	_, err := srv.commitTool(ctx, makeToolReq(map[string]any{"task_id": "MGIT-7.1", "message": "one"}))
+	_, err := srv.commitTool(ctx, makeToolReq(map[string]any{"task_id": "MGIT-7.1", "message": "one", "allow_empty": true}))
 	require.NoError(t, err)
-	_, err = srv.commitTool(ctx, makeToolReq(map[string]any{"task_id": "MGIT-7.2", "message": "two"}))
+	_, err = srv.commitTool(ctx, makeToolReq(map[string]any{"task_id": "MGIT-7.2", "message": "two", "allow_empty": true}))
 	require.NoError(t, err)
 
 	commits, err := srv.commit.ListCommits(ctx)
@@ -178,7 +178,7 @@ func TestMCP_SquashRollbackBranch_SuccessPaths(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Root(), "sq.txt"), []byte("v1\n"), 0o600))
 	require.NoError(t, gitstore.NewWorktreeStore(repo).Add(ctx, "sq.txt"))
 
-	_, err := srv.commitTool(ctx, makeToolReq(map[string]any{"task_id": "MGIT-8.1", "message": "s1"}))
+	_, err := srv.commitTool(ctx, makeToolReq(map[string]any{"task_id": "MGIT-8.1", "message": "s1", "allow_empty": true}))
 	require.NoError(t, err)
 
 	sq, err := srv.squashTool(ctx, makeToolReq(map[string]any{"task_id": "MGIT-8.1", "message": "squashed"}))
@@ -200,7 +200,7 @@ func TestMCP_SquashRollbackBranch_SuccessPaths(t *testing.T) {
 func TestMCP_VerifyTool_TaskPath(t *testing.T) {
 	srv := setupTestMCP(t)
 	ctx := context.Background()
-	_, err := srv.commitTool(ctx, makeToolReq(map[string]any{"task_id": "MGIT-7.1", "message": "s"}))
+	_, err := srv.commitTool(ctx, makeToolReq(map[string]any{"task_id": "MGIT-7.1", "message": "s", "allow_empty": true}))
 	require.NoError(t, err)
 
 	res, err := srv.verifyTool(ctx, makeToolReq(map[string]any{"task_id": "MGIT-7.1"}))

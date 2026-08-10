@@ -53,7 +53,8 @@ func TestWorktreeIntegration_FullLifecycle(t *testing.T) {
 	// Commit through the regular CommitService (worktree binding is
 	// metadata-only at this layer).
 	_, err = env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-		TaskID: taskID, AgentID: "wt-test", Message: "wt commit",
+		AllowEmpty: true,
+		TaskID:     taskID, AgentID: "wt-test", Message: "wt commit",
 	})
 	require.NoError(t, err)
 
@@ -95,11 +96,13 @@ func TestWorktreeIntegration_ConcurrentWorktrees(t *testing.T) {
 	// Interleave commits across the two task IDs.
 	for i := 0; i < 3; i++ {
 		_, err = env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID: "MGIT-8.2.21", AgentID: "agent-a", Message: fmt.Sprintf("a-%d", i),
+			AllowEmpty: true,
+			TaskID:     "MGIT-8.2.21", AgentID: "agent-a", Message: fmt.Sprintf("a-%d", i),
 		})
 		require.NoError(t, err)
 		_, err = env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			TaskID: "MGIT-8.2.22", AgentID: "agent-b", Message: fmt.Sprintf("b-%d", i),
+			AllowEmpty: true,
+			TaskID:     "MGIT-8.2.22", AgentID: "agent-b", Message: fmt.Sprintf("b-%d", i),
 		})
 		require.NoError(t, err)
 	}

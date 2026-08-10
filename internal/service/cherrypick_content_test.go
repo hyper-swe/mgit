@@ -114,7 +114,8 @@ func TestCherryPick_NoNetChange_Error(t *testing.T) {
 	stageAndCommitFiles(t, env, "MGIT-7.1", "base", map[string]string{"a.txt": "a\n"})
 	// A message-only commit (nothing staged) has an unchanged tree.
 	empty, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-7.6", AgentID: "agent-cc", Message: "note only",
+		AllowEmpty: true,
+		TaskID:     "MGIT-7.6", AgentID: "agent-cc", Message: "note only",
 	})
 	require.NoError(t, err)
 

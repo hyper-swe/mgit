@@ -19,11 +19,13 @@ func TestBundleService_Export_SingleTask(t *testing.T) {
 
 	// Create commits to export.
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-12.1", AgentID: "a", Message: "first",
+		AllowEmpty: true,
+		TaskID:     "MGIT-12.1", AgentID: "a", Message: "first",
 	})
 	require.NoError(t, err)
 	_, err = env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-12.1", AgentID: "a", Message: "second",
+		AllowEmpty: true,
+		TaskID:     "MGIT-12.1", AgentID: "a", Message: "second",
 	})
 	require.NoError(t, err)
 
@@ -62,7 +64,8 @@ func TestBundleService_ImportMerge_RoundTrip(t *testing.T) {
 
 	// Create commits, export, then import into same index (merge mode skips dupes).
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-12.2", AgentID: "a", Message: "commit",
+		AllowEmpty: true,
+		TaskID:     "MGIT-12.2", AgentID: "a", Message: "commit",
 	})
 	require.NoError(t, err)
 
@@ -87,7 +90,8 @@ func TestBundleService_ImportReplace_ExistingTask(t *testing.T) {
 	clock := fixedClock()
 
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-12.3", AgentID: "a", Message: "commit",
+		AllowEmpty: true,
+		TaskID:     "MGIT-12.3", AgentID: "a", Message: "commit",
 	})
 	require.NoError(t, err)
 
@@ -148,7 +152,8 @@ func TestBundleService_Import_ChecksumMismatch(t *testing.T) {
 	clock := fixedClock()
 
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-12.4", AgentID: "a", Message: "commit",
+		AllowEmpty: true,
+		TaskID:     "MGIT-12.4", AgentID: "a", Message: "commit",
 	})
 	require.NoError(t, err)
 
@@ -173,7 +178,8 @@ func TestBundleService_Import_CommitCountMismatch(t *testing.T) {
 	clock := fixedClock()
 
 	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
-		TaskID: "MGIT-12.5", AgentID: "a", Message: "commit",
+		AllowEmpty: true,
+		TaskID:     "MGIT-12.5", AgentID: "a", Message: "commit",
 	})
 	require.NoError(t, err)
 

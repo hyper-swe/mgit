@@ -198,10 +198,16 @@ func (s *Server) ToolDocs() []ToolDoc {
 func (s *Server) registerTools() {
 	// Core tools (5)
 	s.mcpServer.AddTool(mcp.NewTool("mgit_commit",
-		mcp.WithDescription("Create a task-tagged micro-commit"),
+		mcp.WithDescription("Create a task-tagged micro-commit. Stages every working-tree "+
+			"change by default (this surface exposes no separate staging tool); a commit "+
+			"that would record nothing is refused unless allow_empty is set."),
 		mcp.WithString("task_id", mcp.Required(), mcp.Description("Task ID")),
 		mcp.WithString("message", mcp.Description("Commit message")),
 		mcp.WithString("agent_id", mcp.Description("Agent ID")),
+		mcp.WithBoolean("stage_all", mcp.Description(
+			"Stage all working-tree changes before committing (default true)")),
+		mcp.WithBoolean("allow_empty", mcp.Description(
+			"Permit a commit whose tree is identical to its parent's (default false)")),
 	), s.commitTool)
 
 	s.mcpServer.AddTool(mcp.NewTool("mgit_rollback",
@@ -349,10 +355,21 @@ func (s *Server) commitTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		agentID = "mcp-agent"
 	}
 
+	// This surface has no staging tool, so stage-all is the default: without it
+	// mgit_commit could only ever record an empty tree (MGIT-77). Callers may
+	// opt out explicitly to commit a selection staged elsewhere.
+	allowEmpty, _ := req.GetArguments()["allow_empty"].(bool)
+	stageAll := true
+	if v, ok := req.GetArguments()["stage_all"].(bool); ok {
+		stageAll = v
+	}
+
 	c, err := s.commit.CreateCommit(ctx, service.CreateCommitRequest{
-		TaskID:  taskID,
-		AgentID: agentID,
-		Message: message,
+		TaskID:     taskID,
+		AgentID:    agentID,
+		Message:    message,
+		StageAll:   stageAll,
+		AllowEmpty: allowEmpty,
 	})
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil

@@ -126,6 +126,7 @@ func TestIntegration_OnTaskDone_AutoSquash(t *testing.T) {
 	for i := range 3 {
 		_, err := commitSvc.CreateCommit(ctx, service.CreateCommitRequest{
 			TaskID: "MGIT-4.1", AgentID: "test", Message: string(rune('A' + i)),
+			AllowEmpty: true, // fixture: this test asserts on squash, not on content
 		})
 		require.NoError(t, err)
 	}
