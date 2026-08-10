@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The Linux/firecracker live sandbox pass is now a CI gate, not a manual
+  step (MGIT-78).** `e2e.yml` gained `sandbox-live-linux`: it builds `mgit`
+  *and* `mgit-sandboxd` (no `-tags libkrun`, so the daemon links firecracker),
+  installs a sha256-pinned firecracker VMM, builds the pinned guest kernel and
+  the reproducible rootfs, then runs `scripts/e2e/sandbox_posture.sh` and the
+  whole `internal/sandboxd/backend/firecracker` `TestE2E_*` battery — once
+  unprivileged, then again under `sudo -E` for the tap/iptables half. Because
+  `release.yml` already gates on `e2e.yml`, this gates every release.
+  - The premise it replaces was simply stale: the checklist and the old job
+    both asserted that GitHub-hosted runners have no nested virtualization.
+    Measured on 2026-08-10, `ubuntu-latest`, `ubuntu-24.04` and `ubuntu-22.04`
+    all expose `/dev/kvm` (`KVM_CREATE_VM` succeeds once the `static_node=kvm`
+    udev rule grants the runner access), and real firecracker microVMs boot
+    there. The old job never even built `mgit-sandboxd`, so it could only ever
+    run the SKIP branch.
+  - The gate refuses to pass on a skip: it asserts `/dev/kvm` is usable, greps
+    for the literal `SANDBOX POSTURE E2E: PASS (live)`, fails on any `--- SKIP`
+    in the privileged run, and names the two MGIT-78 live-policy tests
+    explicitly.
+- `scripts/sandbox-image/fetch-firecracker.sh` — fetch and sha256-verify the
+  pinned firecracker VMM, mirroring `fetch-kernel-fc.sh`. Nothing in the repo
+  installed the VMM before; the Linux pass assumed a hand-provisioned host that
+  already had it, which is part of why that gate could not run anywhere else.
+- `FC_CMDLINE`/`VZ_CMDLINE` moved into `scripts/sandbox-image/pins.env` so the
+  bundle builder, CI and a human following the release checklist register guest
+  images with the same kernel command line. An image registered *without* one
+  boots a kernel with no `root=` and no `init=`, and the only symptom is
+  `guest vsock not ready within 15s`.
+- `e2e.yml` accepts `workflow_dispatch`, so the live gate can be re-run on
+  demand against any branch.
+
+### Fixed
+
+- **`mgit sandbox policy` revoke is now hardware-proven on firecracker too**
+  (MGIT-78, closing a 0.4.3 known limitation). Both halves pass on real KVM:
+  the held, data-carrying flow dies by default (`killed=1`,
+  `PROBE-RESULT HOLD = DIED`), survives under `--drain` (`killed=0`,
+  `HOLD = SURVIVED after=20.042s`), and in both cases the next flow is refused
+  by policy — connect-then-reset here, as this backend's REDIRECT-to-proxy
+  design predicts, not libkrun's connect-refused. Recorded in
+  `docs/adr/012-live-egress-policy-mutation.md`.
+- A latent flake in `TestE2E_PortPublish_GuestServiceReachableOnHost`, exposed
+  the first time the battery ran in CI: the host publisher listener accepts
+  unconditionally, so a single dial could succeed in the window where the
+  guest's `nc -ll -w 1` had timed out, and read nothing. The assertion now
+  polls for the guest's bytes, which were always the actual evidence.
+
+## [0.4.3] - 2026-08-10
+
+Three verbs the integrating lane asked for, and two defects found by using
+mgit on mgit. The commit defect is the one to read first: `mgit commit`
+reported success for work it never recorded, which is the failure mode this
+whole substrate exists to prevent.
+
+**Live validation.** macOS/libkrun on Apple Silicon: the full real-VM e2e
+suite plus the release posture pass (compose a guest base from `debian:12`
+-> launch a task sandbox -> exec inside it -> land round-trip) are green on
+this release's tree. **Linux/firecracker was NOT re-validated on hardware
+for this release** — see Known limitations.
+
+### Known limitations (0.4.3)
+
+- **The Linux firecracker live pass did not run for this release.** 0.4.3
+  changes `internal/sandboxd/backend/microvm`, which firecracker shares with
+  libkrun, and the release checklist asks for the fuller firecracker battery
+  whenever that package changes. The KVM host was unavailable. Nothing here
+  is known broken on firecracker and its unit and cross-build coverage is
+  green, but "not known broken" is not "proven"; Linux users of the sandbox
+  should treat 0.4.3's backend changes as unvalidated on their platform.
+- **`mgit sandbox policy` revoke is hardware-proven on libkrun only.** The
+  firecracker implementation is complete and reviewed and fails closed
+  rather than no-opping, but the two backends enforce egress by different
+  mechanisms, so the libkrun pass is not evidence for it. Tracked as
+  MGIT-78.
+- **Artifact export ships for the virtiofs backends** (libkrun, vzf).
+  firecracker fails closed naming the limitation: it delivers the worktree
+  as a launch-time ext4 image, so there is no host directory to read.
+- **Exported artifacts can arrive non-executable on macOS.** libkrun's
+  virtio-fs presents guest-created files to the host with its own permission
+  mapping — a file the guest writes `0755` reads as `0600` on the share. The
+  export reproduces the mode the host observes rather than inventing the
+  guest's intent, so exported `node_modules/.bin` scripts need their
+  executable bit restored. Tracked as MGIT-81.
+
 ### Fixed — a restrictive daemon umask no longer strips modes in EITHER direction
 
 - **The inbound twin of the export defect below, found by looking for it.** Worktree staging copied with `O_CREATE`, whose mode argument the kernel masks with the calling process's umask. `mgit-sandboxd` is a long-lived daemon and does not control the umask it inherits, so under `0077` a host `0755` build script was delivered into the guest at `0700` — an executable the agent then cannot run, with nothing anywhere reporting that the mode changed. Both directions now apply the mode with an explicit `chmod`. Nothing had ever asserted a delivered mode, which is why the same defect sat in both halves. (MGIT-81)

@@ -1,8 +1,20 @@
 # mgit release checklist
 
 Releases are **owner-triggered**. This is the gate list: what CI proves
-automatically, and what a human must verify live before publishing — because
-the sandbox path needs virtualization that hosted CI runners do not have.
+automatically, and what a human must verify live before publishing.
+
+**Changed 2026-08-10 (MGIT-78): the Linux live pass is now automated.** This
+document used to say the sandbox "cannot be exercised on a GitHub-hosted
+runner", and `e2e.yml` encoded that belief — its sandbox job did not even build
+`mgit-sandboxd`, so it only ever ran `sandbox_posture.sh`'s SKIP branch. The
+assumption was stale and had never been re-measured; the cost was that the
+Linux gate depended on one physical dual-boot box, and blocked releases whenever
+it was unavailable. It has now been measured: hosted `ubuntu-latest`,
+`ubuntu-24.04` and `ubuntu-22.04` all expose `/dev/kvm` (`KVM_GET_API_VERSION`
+= 12, `KVM_CREATE_VM` succeeds), and real firecracker microVMs boot there. The
+Linux (KVM/firecracker) pass is therefore a **CI gate on every push, PR and
+release**, not a manual step. **macOS/libkrun remains manual**, because there is
+no entitled Apple Silicon runner.
 
 ## Automated gates (must be green)
 
@@ -18,37 +30,77 @@ Run on the release tag via `.github/workflows/release.yml`:
     and working, no placeholders).
   - **install-channels** — `go install` of **both** binaries and a
     release-archive extraction, each running the core loop.
-  - **sandbox-posture** — the gate logic; SKIPs on hosted runners (no
-    virtualization).
+  - **sandbox-live-linux** — the **live Linux containment gate**: real
+    firecracker microVMs on real `/dev/kvm`. It builds `mgit` *and*
+    `mgit-sandboxd` (no `-tags libkrun`, so the daemon links firecracker),
+    installs the sha256-pinned firecracker VMM
+    (`scripts/sandbox-image/fetch-firecracker.sh`), builds the pinned guest
+    kernel + reproducible rootfs, then runs `scripts/e2e/sandbox_posture.sh`
+    and the whole `internal/sandboxd/backend/firecracker` `TestE2E_*` battery
+    twice — unprivileged, then under `sudo -E` for the tap/iptables
+    (CAP_NET_ADMIN) half. See "Reading the Linux live gate" below for how to
+    tell a real pass from a skip. Refs: MGIT-78
 
 A regression like "mgit-sandboxd missing from the archives" or "an MCP tool
 returns placeholder text" fails these gates before a user ever sees it.
 
-## Mandatory manual live passes (CI cannot run these)
+## Reading the Linux live gate (a skip is a failure, not a pass)
 
-The per-task microVM sandbox is the headline differentiator and cannot be
-exercised on a GitHub-hosted runner. **Before publishing, run at least one live
-sandbox pass per supported platform** and record the result on the release.
-Since the GA backend split (ADR-010, MGIT-61.13/.14), the two platforms
-validate **different VMMs by default** — this is not a symmetric check:
+The failure mode this repo keeps rediscovering is a gate that *skips* and reads
+as green — `sandbox_posture.sh` exits 0 on a missing prerequisite by design, and
+the firecracker `TestE2E_*` gates (`requireGuestImage`, `requireNetRoot`) call
+`t.Skip`, which Go reports as a passing package. `sandbox-live-linux` therefore
+asserts positively at four points, and any one of them turns the job red:
 
-- [ ] **Linux (KVM) — firecracker, the Linux GA default.** On a KVM-capable
-      host (the Linux runner or a nested-virt VM), with `mgit-sandboxd` from
-      the release artifact set (built without `-tags libkrun`, so it links
-      firecracker) and a provisioned guest image:
-      ```
-      MGIT_GUEST_IMAGE=<image> bash scripts/e2e/sandbox_posture.sh <bindir>
-      ```
-      must print `SANDBOX POSTURE E2E: PASS (live)`. Beyond the posture
-      script, the fuller firecracker suite (`internal/sandboxd/backend/
-      firecracker`'s `TestE2E_*`) is re-validated periodically on the Linux
-      runner with `MGIT_TEST_KERNEL`/`MGIT_E2E_GUEST_ROOTFS` set — exec/land
-      round-trip, hostile-guest (SEC-03), notify auto-land, overlay-root
-      writability, and (root-gated: `sudo -E`) the allowlist/open network
-      modes and port publishing. Confirm this full battery passed recently,
-      not just the posture script, before a release that touches
-      `internal/sandboxd/backend/firecracker` or `internal/sandboxd/backend/
-      microvm`.
+1. **`/dev/kvm` must be usable.** The runner user is not in the `kvm` group, so
+   the job installs the `static_node=kvm` udev rule and then *asserts* the node
+   is readable and writable. If the hosted runner class ever loses nested virt,
+   this fails loudly instead of quietly returning to an unrun manual step.
+2. **The posture script must print `SANDBOX POSTURE E2E: PASS (live)`.** The
+   job greps for that exact line; a SKIP fails the job.
+3. **The root-gated battery must skip nothing.** With KVM + root + a guest
+   image every gate in the package is satisfied, so a single `--- SKIP` means a
+   prerequisite silently vanished; the job greps for `--- SKIP` and fails on a
+   hit.
+4. **The MGIT-78 live-policy pair is named explicitly** — the job requires
+   `--- PASS:` lines for `TestE2E_Firecracker_Revoke_KillsEstablishedFlow` and
+   `TestE2E_Firecracker_Revoke_DrainKeepsEstablishedFlow`, then echoes their
+   `killed=`/`hold probe`/`post-revoke flow refused` evidence into the log.
+
+**Reproducing it locally or on any KVM host** (the same three lines the job
+runs — note `MGIT_GUEST_CMDLINE`, without which the image registers with no
+`root=`/`init=` and the only symptom is `guest vsock not ready within 15s`):
+
+```
+. scripts/sandbox-image/pins.env
+sudo scripts/sandbox-image/fetch-firecracker.sh amd64 /usr/local/bin/firecracker
+scripts/sandbox-image/fetch-kernel-fc.sh amd64 /tmp/guest/vmlinux
+scripts/sandbox-image/build-rootfs.sh   amd64 /tmp/guest/rootfs.ext4
+MGIT_GUEST_KERNEL=/tmp/guest/vmlinux MGIT_GUEST_ROOTFS=/tmp/guest/rootfs.ext4 \
+  MGIT_GUEST_CMDLINE="$FC_CMDLINE" bash scripts/e2e/sandbox_posture.sh <bindir>
+```
+
+`workflow_dispatch` is enabled on `e2e.yml`, so the whole gate can also be
+re-run on demand against any branch.
+
+## Mandatory manual live pass — macOS only
+
+The per-task microVM sandbox is the headline differentiator. Linux is covered by
+`sandbox-live-linux` above; **macOS still needs a human**, because there is no
+entitled Apple Silicon runner. Since the GA backend split (ADR-010,
+MGIT-61.13/.14) the two platforms validate **different VMMs by default**, so a
+green Linux gate is not evidence about macOS:
+
+- [x] **Linux (KVM) — firecracker, the Linux GA default: AUTOMATED, no longer a
+      manual step.** Confirm the `sandbox-live-linux` job is green on the
+      release commit. It covers everything this box used to ask a human to run
+      by hand — posture (launch → `mgit run` in the guest → verified `land`)
+      plus exec/land round-trip, hostile-guest (SEC-03 ×3), notify auto-land,
+      overlay-root writability, provenance/claim-to-land/remove-discard, and
+      the root-gated allowlist/open network modes, guest-resolver egress, port
+      publishing and live policy revoke. A separate hand-run on a physical KVM
+      box is no longer required, and its unavailability must never again block
+      a release.
 - [ ] **macOS (arm64) — libkrun, the macOS GA default.** libkrun needs
       NEITHER a kernel NOR a rootfs (libkrunfw supplies the kernel; the guest
       base is composed from an OCI image) — do **not** set `MGIT_GUEST_IMAGE`
@@ -82,13 +134,16 @@ validate **different VMMs by default** — this is not a symmetric check:
       `libkrun-linux` job (main pushes/PRs + `workflow_dispatch`, not
       `release.yml`) build+vets this tagged path on every change so a
       compile/link regression is caught early — that is a CI check, not a
-      release gate, and it never boots a real VM (no `/dev/kvm` on hosted
-      runners). A green `libkrun-linux` CI job says nothing about whether
-      Linux libkrun actually runs; only the macOS live pass above does that
-      for its own platform.
+      release gate, and it never boots a real VM. (Its comment that hosted
+      runners have no `/dev/kvm` is now false — see MGIT-78 — but booting
+      libkrun there is still unproven, so nothing about its status changes.)
+      A green `libkrun-linux` CI job says nothing about whether Linux libkrun
+      actually runs; only the macOS live pass above does that for its own
+      platform.
 
 > Never refer to the Linux KVM host by its LAN IP in the repo, CI logs, or the
-> release notes — call it "the Linux runner".
+> release notes — call it "the Linux runner". (Since MGIT-78 the Linux live
+> gate runs on hosted GitHub runners, so this should rarely come up.)
 
 ## Publish steps (owner)
 

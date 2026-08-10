@@ -165,6 +165,12 @@ mkdir -p "$CORE"
   echo hello > file.txt
   MGIT="$("$BREW" --prefix)/bin/mgit"
   "$MGIT" init
+  # Stage before committing: MGIT-77 made `mgit commit` REFUSE an empty commit
+  # rather than report success for work it never recorded, which turned this
+  # smoke test red — it had been relying on the old implicit behavior. Staging
+  # is also what the documented loop tells a first-hour user to do.
+  # Refs: MGIT-77, MGIT-78
+  "$MGIT" add file.txt
   "$MGIT" commit --task-id MGIT-75 -m "core commit without libkrun"
   "$MGIT" log --oneline
   "$MGIT" verify --task-id MGIT-75

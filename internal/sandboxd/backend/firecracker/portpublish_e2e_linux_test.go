@@ -31,6 +31,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -161,7 +162,22 @@ func TestE2E_PortPublish_GuestServiceReachableOnHost(t *testing.T) {
 		"the published port binds 127.0.0.1, never an external interface")
 
 	// From the HOST: connect to 127.0.0.1:<hostPort> and read the guest's reply.
-	body := dialAndRead(t, fmt.Sprintf("127.0.0.1:%d", hostPort))
+	//
+	// Retried, because CONNECT SUCCEEDING PROVES NOTHING HERE: the host-side
+	// publisher listener accepts unconditionally, so a dial lands even in the
+	// sub-second window where the guest's `nc -ll -w 1` has timed out and the
+	// shell loop has not yet respawned it — and the read then returns empty.
+	// A single attempt therefore fails intermittently on a real VM (observed in
+	// the MGIT-78 CI gate); only the BYTES are evidence, so poll for them.
+	// Refs: SEC-09, MGIT-78
+	var body string
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if body = dialAndRead(t, fmt.Sprintf("127.0.0.1:%d", hostPort)); strings.Contains(body, "hello-from-guest") {
+			break
+		}
+		time.Sleep(400 * time.Millisecond)
+	}
 	assert.Contains(t, body, "hello-from-guest",
 		"the host reaches the guest dev server through the published port")
 
