@@ -111,20 +111,26 @@ validate **different VMMs by default** — this is not a symmetric check:
    `Formula/mgit.rb` in `hyper-swe/homebrew-tap` and commit it there — that
    repo cannot be pushed to from this one, and nothing else does this sync.
    **Must not touch the `mtix` formula in that repo.**
-   - [ ] As of 2026-08-05, the LIVE tap formula does not install the
-         archive's `guest/` directory into `libexec` at all (verified by
-         reading `Formula/mgit.rb` in the tap directly) — `brew/mgit.rb`
-         here has had the `libexec.install "guest"` step since MGIT-65, but
-         it was never synced. A `brew install`-ed mgit **cannot currently
-         compose a guest base** (`mgit sandbox base from <ref>` fails with
-         "cannot find main module" the same way an archive missing `guest/`
-         did before MGIT-65). Sync `brew/mgit.rb`'s current body to the tap
-         before the next release closes this gap.
-   - [ ] The live formula's caveats also still say macOS 13 (should be 14)
-         and `mgit sandbox image install` for macOS (should be `mgit
-         sandbox base from <ref>` — libkrun composes from OCI, it does not
-         take a kernel/rootfs). `brew/mgit.rb` here already has the
-         corrected caveats; sync covers this too. MGIT-44, MGIT-64, MGIT-65.
+   - [x] **RESOLVED 2026-08-10, re-verified for v0.4.3.** The two gaps below
+         were recorded on 2026-08-05 and have since been closed by the
+         MGIT-75 tap sync. Re-check them the same way rather than trusting
+         this note: fetch the live formula and diff its body against
+         `brew/mgit.rb`, ignoring the generated `version`/`sha256` lines,
+         which the tap's own `update-formula.yml` rewrites per release:
+         ```
+         gh api repos/hyper-swe/homebrew-tap/contents/Formula/mgit.rb \
+           --jq '.content' | base64 -d > /tmp/tap-mgit.rb
+         diff <(grep -v 'sha256\|version "' /tmp/tap-mgit.rb) \
+              <(grep -v 'sha256\|version "' brew/mgit.rb)
+         ```
+         An empty diff means no manual sync is needed for this release. It
+         was empty on 2026-08-10.
+         - The formerly-missing `libexec.install "guest"` (MGIT-65) is
+           present in the live formula, so a `brew install`-ed mgit CAN
+           compose a guest base.
+         - The caveats now say macOS 14 and `mgit sandbox base from <ref>`
+           (not the Linux-only `mgit sandbox image install`). MGIT-44,
+           MGIT-64, MGIT-65.
 4. Complete the two live sandbox passes above and note them on the release.
 5. **Publish the guest-image bundle** — ⛔ **ON HOLD, DO NOT RUN (MGIT-61.12).**
    The owner decided 2026-07-29 to complete the libkrun path before publishing.
