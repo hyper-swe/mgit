@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a networked sandbox starts on Linux/libkrun, and the reason it did not is one errno
+
+**Every `--network allowlist` and `--network open` sandbox died at startup on
+Linux/libkrun.** mgit-guest writes the resolver into `/etc/resolv.conf` while
+configuring the guest NIC, and that write failed with `operation not
+supported` — so the guest exited before serving and the live `sandbox policy`
+verbs had nothing to act on. All nine network and live-policy real-VM tests now
+pass there, including the MGIT-72 kill/drain pair on an established flow, and
+they have moved from the CI gate's known-gap list into its validated column.
+(MGIT-89)
+
+**The cause was not what any of the standing theories predicted, and the
+measurement is worth keeping.** The overlay upper is tmpfs and takes
+`trusted.*` xattrs; the scratch mount happens exactly as intended; the lower
+reads fine. What fails is overlayfs's COPY-UP, and only copy-up:
+
+```
+create /newdir/x         (upper only)   -> ok
+create /mgit-probe       (root, upper)  -> ok
+create /etc/probe        (lower dir)    -> operation not supported
+chmod  /etc              (lower dir)    -> operation not supported
+open   /bin/cat O_WRONLY (lower file)   -> operation not supported
+```
+
+overlayfs calls `ovl_copy_fileattr()` on every regular-file and directory
+copy-up, which issues `FS_IOC_GETFLAGS` on the lower inode. It tolerates
+`ENOTTY` and `EINVAL` as "this filesystem has no file attributes" and
+propagates anything else. Measured on the same guest kernel (libkrunfw
+6.12.91), same guest, same overlay options:
+
+```
+libkrun macOS fs device : FS_IOC_GETFLAGS -> ENOTTY (25)      copy-up works
+libkrun Linux virtio-fs : FS_IOC_GETFLAGS -> EOPNOTSUPP (95)  copy-up fails
+```
+
+That is the entire macOS/Linux asymmetry. No overlay option set changes it —
+`userxattr`, `index=off`, `metacopy=off`, `redirect_dir=off` and `xino=off`
+were each mounted and re-tested.
+
+- **The repair is a capability probe, not a platform check.** mgit-guest tries
+  to create a file in `/etc`; only if that fails with the copy-up refusal does
+  it snapshot the directory, mount a tmpfs over it and restore the snapshot —
+  so the guest keeps the image's resolver config, CA bundle, `passwd` and
+  `nsswitch` rather than getting an empty `/etc`. firecracker, vzf and
+  macOS/libkrun take the no-op branch, and the day libkrun's virtio-fs answers
+  `ENOTTY` the probe passes and the workaround stops running by itself.
+- **What is still not writable, stated plainly:** everything under `/` except
+  `/tmp`, `/etc` and the mounted worktree. An agent can build and commit; it
+  cannot `apt install`. Lifting that needs the upstream errno fixed, not
+  another workaround here, and the capability tables say so.
+
 ### Linux libkrun is a validated path now — with two measured limits stated up front
 
 **The standing limitation carried since 0.4.2 — "Linux libkrun (`-tags libkrun`)

@@ -231,8 +231,8 @@ visible to an agent loop rather than an implementation detail:
 | compose a guest base, launch a sandbox | ✅ live-validated | ✅ live-validated (CI-gated) | ✅ live-validated (CI-gated) |
 | exec in the guest, and `land` behind it | ✅ | ✅ | ❌ **exec channel resets** (intermittently over vsock, always via `mgit run`) |
 | hostile-guest containment (SEC-03) | ✅ | ✅ | ✅ |
-| guest networking + live egress policy | ✅ | ✅ | ❌ **no networked guest at all** |
-| guest can write outside `/tmp` and its worktree | ✅ | ✅ | ❌ |
+| guest networking + live egress policy | ✅ | ✅ | ✅ live-validated (CI-gated) |
+| guest can write outside `/tmp`, `/etc` and its worktree | ✅ | ✅ | ❌ (upstream, MGIT-89) |
 | host edits reach a **running** guest (`sandbox sync`) | ✅ | ❌ refused | ⚠️ **content edits only** |
 | artifact export (`sandbox export`) | ✅ | ❌ refused | ✅ |
 
@@ -264,23 +264,25 @@ hardware:
   simply broken, and `mgit sandbox land` sits behind it. Tracked as MGIT-91.
   CI runs those tests and reports the outcome without gating on it — an
   intermittent capability is one the tables must not claim.
-- **The guest's root filesystem is effectively read-only**, so an agent can
-  build and commit in its worktree but cannot install packages or write
-  `/etc`. Creating a file under the root overlay fails with `operation not
-  supported`; `/tmp` and the mounted worktree are writable.
-- **A guest with a network therefore does not start at all.** mgit-guest writes
-  the resolver into `/etc/resolv.conf` during startup and dies on that same
-  refusal, so `--network allowlist` and `--network open` sandboxes exit before
-  they serve; only `--network none` works, and `sandbox policy` has nothing
-  live to act on. If the agent needs `npm install`, `pip` or `apt`, use
-  **firecracker**.
+- **The guest cannot write most of its image root.** `/tmp`, `/etc` and the
+  mounted worktree are writable; anything else under `/` fails with `operation
+  not supported`, so an agent can build and commit but cannot `apt install`.
+  The cause is upstream and precise: libkrun's Linux virtio-fs answers
+  `FS_IOC_GETFLAGS` with `EOPNOTSUPP`, and overlayfs propagates exactly that
+  errno out of every copy-up (it tolerates only `ENOTTY`/`EINVAL`). macOS
+  libkrun answers `ENOTTY` on the same call, which is the whole difference.
+  Tracked as MGIT-89; `/etc` is writable because mgit-guest detects the
+  refusal and shadows it with a seeded tmpfs, which is what lets a networked
+  guest start at all.
 - **`sandbox sync` delivers changed file CONTENT to a running guest, but not
   files created or deleted on the host.** The verb reports the delete as
   applied and the guest keeps reading the old file. Relaunch the sandbox after
   a change that adds or removes files.
 
-So: network → firecracker; re-stage and export into a long-lived guest →
-libkrun (offline); both at once → not available today, tracked as MGIT-86.
+So on Linux, **libkrun now does both**: guest egress with live policy AND
+re-staging/export into a long-lived guest. That combination had no backend at
+all before MGIT-89. firecracker remains the choice when the agent must write
+freely across the image root (`apt install`), which libkrun cannot do here.
 The capability set above is exactly what CI asserts on every push, named test
 by test in `scripts/e2e/libkrun_linux_column.sh`.
 

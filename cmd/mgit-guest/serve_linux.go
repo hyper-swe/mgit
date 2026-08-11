@@ -19,6 +19,10 @@ import (
 	"github.com/hyper-swe/mgit/internal/guestnet"
 )
 
+// guestEtcDir is the guest's /etc — the one directory mgit-guest itself must
+// write (the resolver) for a networked sandbox to come up at all. Refs: MGIT-89
+const guestEtcDir = "/etc"
+
 // procCmdline is the kernel command line the host appends the worktree
 // descriptor to; a var so tests can supply a fixture path.
 var procCmdline = "/proc/cmdline"
@@ -29,7 +33,7 @@ var procCmdline = "/proc/cmdline"
 // host dials, the guest streams the task branch's object pool, SEC-01). Both
 // listeners run until the context is canceled; the first that fails returns.
 func serveGuest(ctx context.Context, supervisor *guest.Supervisor, execPort, landPort, notifyPort uint32, logger *slog.Logger) error {
-	if err := mountGuestFilesystems(); err != nil {
+	if err := mountGuestFilesystems(logger); err != nil {
 		return err
 	}
 	// Address the NIC BEFORE serving anything: mgit-guest is PID 1, so if it
@@ -179,7 +183,7 @@ func publishPorts() []int {
 // (firecracker). A partial/invalid descriptor fails closed; a wholly
 // absent one mounts only /tmp (a no-worktree sandbox). Idempotent enough
 // for boot: an already-mounted target is tolerated.
-func mountGuestFilesystems() error {
+func mountGuestFilesystems(logger *slog.Logger) error {
 	// mgit-guest is PID 1, so it mounts the kernel's pseudo-filesystems
 	// itself. /proc first (the worktree descriptor is read from
 	// /proc/cmdline); /dev (devtmpfs) before the worktree so a block-device
@@ -202,7 +206,12 @@ func mountGuestFilesystems() error {
 	if err := mountWorktree(); err != nil {
 		return err
 	}
-	return nil
+	// The overlay above is SUPPOSED to have made the whole root writable. On
+	// a backend whose lower filesystem refuses copy-up it has not, and the
+	// first casualty is the resolver write during network setup — so repair
+	// /etc here, before anything depends on it. No-op where copy-up works.
+	// Refs: MGIT-89, MGIT-68
+	return ensureWritableDir(guestEtcDir, logger)
 }
 
 // overlayScratch is a baked empty dir the writable-root overlay's scratch
