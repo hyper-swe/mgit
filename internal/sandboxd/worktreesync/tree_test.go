@@ -1,6 +1,7 @@
 package worktreesync
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -159,4 +160,42 @@ func TestApply_PreservesModes(t *testing.T) {
 	info, err := os.Stat(filepath.Join(dst, "run.sh"))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+}
+
+// TestApply_Delete_LeavesNoOldContentBehind is the MGIT-90 property, expressed
+// where it can be tested without a VM: a deleted path must not still hold its
+// old bytes on the way out. The e2e that motivated it can only run on real
+// hardware, but the mechanism — empty it, then unlink it — is checkable here by
+// holding the file open across the delete, which is exactly what a guest with a
+// cached name lookup is doing.
+//
+// Without the truncate, this reads the old content back through the open
+// descriptor; with it, the reader gets nothing. Refs: MGIT-90, ADR-011
+func TestApply_Delete_LeavesNoOldContentBehind(t *testing.T) {
+	staged, guest := t.TempDir(), t.TempDir()
+	doomed := filepath.Join(guest, "secret.txt")
+	require.NoError(t, os.WriteFile(doomed, []byte("SECRET-OLD-CONTENT"), 0o600))
+
+	// A reader that resolved the name BEFORE the delete, like a guest whose
+	// kernel cached the lookup.
+	held, err := os.Open(doomed) //nolint:gosec // G304: a t.TempDir path this test just wrote
+	require.NoError(t, err)
+	defer func() { _ = held.Close() }()
+
+	require.NoError(t, Apply(staged, guest, Plan{Delete: []string{"secret.txt"}}))
+
+	got, err := io.ReadAll(held)
+	require.NoError(t, err, "the held descriptor must still be readable; the point is what it reads")
+	assert.Empty(t, string(got),
+		"a reader holding the path across a delete must not get the old content back")
+
+	_, err = os.Stat(doomed)
+	assert.True(t, os.IsNotExist(err), "and the path itself must be gone")
+}
+
+// TestApply_Delete_MissingPath_IsNotAnError keeps the delete idempotent: a
+// guest that already removed the file itself must not fail the sync.
+func TestApply_Delete_MissingPath_IsNotAnError(t *testing.T) {
+	staged, guest := t.TempDir(), t.TempDir()
+	assert.NoError(t, Apply(staged, guest, Plan{Delete: []string{"never-existed.txt"}}))
 }

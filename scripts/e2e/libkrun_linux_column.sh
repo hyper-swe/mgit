@@ -51,20 +51,19 @@ TestE2E_Libkrun_RealVM_LivePolicyRevoke
 TestE2E_Libkrun_RealVM_Revoke_KillsEstablishedFlow
 TestE2E_Libkrun_RealVM_Revoke_DrainKeepsEstablishedFlow
 TestE2E_Libkrun_RealVM_ControlChannelIsNotVisibleToTheGuest
-"
-
-# ONE measured gap remains, in libkrun's LINUX virtio-fs behaviour, reproduced
-# identically on a hosted runner and on bare metal: a sync's CREATES and DELETES
-# do not reach a running guest, although content updates do. The verb reports
-# the delete as applied and the guest still reads the file — the silent-
-# staleness failure MGIT-76's e2e exists to catch. Tracked as MGIT-90.
-#
-# The networked half of this list moved to VALIDATED when MGIT-89 was fixed:
-# the guest could not write /etc, so mgit-guest died configuring its resolver
-# and no allowlist/open sandbox started at all. Refs: MGIT-87, MGIT-89, MGIT-90
-KNOWN_GAP="
 TestE2E_Libkrun_RealVM_Sync_RefusesADeleteOfAPathTheGuestChanged
 "
+
+# NO known gaps remain in this package. The list is kept — not deleted — so
+# that the next one has an obvious home and the tripwire machinery below stays
+# exercised in review rather than being rebuilt from memory.
+#
+# What was here: the networked half went VALIDATED when MGIT-89 was fixed (the
+# guest could not write /etc, so mgit-guest died configuring its resolver), and
+# the sync-delete case went VALIDATED when MGIT-90 was fixed (a deleted path
+# kept serving its old CONTENT to a guest whose kernel had cached the name).
+# Refs: MGIT-87, MGIT-89, MGIT-90
+KNOWN_GAP=""
 
 # INTERMITTENT on this backend, so gated NEITHER way: asserting a pass would
 # make the gate flaky, and asserting a failure would entrench a defect that
@@ -85,12 +84,18 @@ TestE2E_Libkrun_RealVM_NpmTreePerf
 "
 
 # The subset the tripwire actually runs, one per gap mechanism.
-GAP_TRIPWIRE="
-TestE2E_Libkrun_RealVM_Sync_RefusesADeleteOfAPathTheGuestChanged
-"
+GAP_TRIPWIRE=""
 
 # runPattern prints a `go test -run` alternation for a list.
-runPattern() { echo "^($(echo "$1" | tr -s '[:space:]' '|' | sed 's/^|//; s/|$//'))\$"; }
+# runPattern prints a `go test -run` alternation for a list, or NOTHING for an
+# empty one — the caller must treat empty as "there is nothing to run" rather
+# than passing `^()$`, which matches every test name and would turn an empty
+# gap list into a full re-run asserted to fail.
+runPattern() {
+	set -- $1
+	[ "$#" -gt 0 ] || return 0
+	printf '^(%s)$\n' "$(echo "$*" | tr ' ' '|')"
+}
 
 case "${1:-}" in
 --validated-pattern)
@@ -130,6 +135,9 @@ if grep -- '--- SKIP' "$validated_log"; then
 fi
 
 # --- 2. every known gap is STILL a gap --------------------------------------
+if [ -z "$(echo "$GAP_TRIPWIRE" | tr -d '[:space:]')" ]; then
+	echo "known gaps: none — every measured Linux/libkrun gap has been closed"
+fi
 for t in $GAP_TRIPWIRE; do
 	if grep -q -- "--- PASS: $t " "$gap_log"; then
 		fail "$t now PASSES on Linux/libkrun. That is good news and a gate failure:

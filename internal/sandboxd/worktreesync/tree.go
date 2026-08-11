@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/hyper-swe/mgit/internal/model"
 )
@@ -141,9 +142,49 @@ func Apply(stagedTree, guestTree string, plan Plan) error {
 		if err != nil {
 			return err
 		}
-		if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+		if err := removeForGuest(dst); err != nil {
 			return fmt.Errorf("worktree sync: remove %s: %w", rel, err)
 		}
+	}
+	return nil
+}
+
+// removeForGuest deletes a delivered path so that a RUNNING guest cannot read
+// its old contents, even where the guest's view of the name outlives the
+// unlink.
+//
+// WHY IT TRUNCATES FIRST, measured on real KVM (MGIT-90). The share is a host
+// directory the guest has mounted, and the guest's kernel caches name lookups
+// for as long as the filesystem's entry timeout. On libkrun's Linux virtio-fs
+// that timeout is ~5 SECONDS: after a plain unlink the guest's directory
+// listing is correct immediately, but a process that had already looked the
+// name up keeps resolving it — and reads THE OLD CONTENT — for those seconds.
+// The verb meanwhile reported the delete as applied. That is the
+// silent-staleness failure ADR-011 exists to prevent: an agent that removes a
+// file and re-runs its tests would test the removed file and believe the
+// result. (On macOS/libkrun the same measurement shows a 0.00s timeout, which
+// is why this never surfaced there.)
+//
+// Emptying the file before unlinking closes the dangerous half. Truncation IS
+// observed immediately — measured on both platforms — so a guest holding the
+// stale name finds an EMPTY file rather than the old bytes: a build that reads
+// it fails loudly instead of silently succeeding against deleted code. The
+// name itself may linger briefly; that residual is documented rather than
+// papered over.
+//
+// It is unconditional because it costs one syscall and is correct everywhere:
+// on a backend with no entry cache the truncate is simply invisible.
+// Refs: MGIT-90, MGIT-76, ADR-011
+func removeForGuest(path string) error {
+	if err := os.Truncate(path, 0); err != nil && !os.IsNotExist(err) {
+		// A directory, or a path this process cannot truncate, is not a
+		// failure of the delete — the unlink below is what has to succeed.
+		if !errors.Is(err, syscall.EISDIR) {
+			return err
+		}
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }

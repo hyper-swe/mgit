@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a deleted file can no longer be read by a running guest
+
+**`mgit sandbox sync` reported a path deleted while a guest process could still
+read its old contents** on Linux/libkrun. That is the silent-staleness failure
+this verb exists to prevent: an agent that removes a file and re-runs its tests
+would test the removed file and believe the result. (MGIT-90)
+
+**What was actually wrong was narrower than the report, and the measurement is
+the useful part.** Creates were never broken — a host-created file is visible to
+the guest immediately, even on a name the guest had already looked up and found
+absent. Deletes were, and not because the write failed: the guest's own
+directory listing was correct the instant the host unlinked. What lingered was
+the guest kernel's cached NAME lookup, which on libkrun's Linux virtio-fs
+survives ~5 seconds:
+
+```
+host unlink -> guest ls        : gone immediately
+host unlink -> guest stat/read : still resolves, returns OLD CONTENT
+                                 ...for 5.01s, then vanishes on its own
+same measurement on macOS      : 0.00s — which is why this never surfaced there
+```
+
+- **The sync now empties a file before unlinking it.** Truncation IS observed
+  immediately on both platforms, so a guest holding the stale name finds an
+  empty file rather than the deleted bytes — a build that reads it fails loudly
+  instead of silently succeeding against code you removed. One extra syscall,
+  unconditional, and invisible on backends with no entry cache.
+- **The e2e now asks the GUEST, twice.** It asserts the deleted path is absent
+  from the guest's own directory listing and that nothing can be read from it —
+  the host's view of the share was never in doubt and was never the bug. A new
+  in-guest `fsprobe` fixture exists because these minimal guest bases carry no
+  shell to ask with.
+- **The residual is documented rather than papered over:** the NAME may resolve
+  for a few seconds after a delete on Linux/libkrun. The timeout belongs to
+  libkrun's filesystem server; nothing in mgit or in the guest mount can shorten
+  it, and libkrun's virtiofs API exposes no cache knob (only DAX window,
+  read-only and permission semantics).
+- **With this, every measured Linux/libkrun gap is closed.** The CI gate's
+  known-gap list is empty for the first time and its validated column stands at
+  24 capabilities; the tripwire machinery is kept, with its list empty, so the
+  next gap has an obvious home.
+
 ### Fixed — a networked sandbox starts on Linux/libkrun, and the reason it did not is one errno
 
 **Every `--network allowlist` and `--network open` sandbox died at startup on
