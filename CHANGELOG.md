@@ -7,7 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added — `install.sh`, and it is now the headline install
+## [0.4.4] - 2026-08-11
+
+An install and operability release: no change to how agents behave at runtime,
+so it is a safe upgrade from 0.4.3 for anything already running. What it fixes
+is everything *around* the binaries — how you get them, whether they will run
+once you do, and whether you can tell which build you have.
+
+**Backend capability matrix, stated plainly** because it decides what a
+deployment can rely on and it is not symmetric:
+
+| | macOS / libkrun | Linux / firecracker |
+|---|---|---|
+| launch, exec, land | live-validated | live-validated (CI-gated since 0.4.3) |
+| live egress policy (grant → revoke) | hardware-proven | hardware-proven |
+| host edits reach a **running** guest (`sandbox sync`) | yes | **refused** — launch-time ext4 image |
+| artifact export (`sandbox export`) | yes | **refused** — same reason |
+
+Both refusals are deliberate and fail closed with the backend named; neither is
+a regression. On firecracker every exec after launch runs against the
+launch-time copy, so a loop that edits the host worktree between rounds needs
+the libkrun/vzf backend today. Closing that gap is tracked as MGIT-86.
+
+### Added — the release smoke is a script, and runs on every publish
+
+- **`scripts/e2e/release_smoke.sh` replaces the hand-executed post-publish checklist steps**, and a `release-smoke` job runs it on a fresh macOS runner after every release — a runner that did not build the artifact, which is the condition the manual step always asked for. It checks the published archive's contents, the Gatekeeper quarantine behaviour in both directions, that the shipped binaries run, that `mgit` and `mgit-sandboxd` report the same build, libkrun's `NET=1` capability, and that the Homebrew tap is reachable **unauthenticated** — the check that would have caught MGIT-66, and which no authenticated tester could ever fail. (MGIT-84, MGIT-66)
+- **It probes capability instead of consulting a version table**, because a maintained list of "which release has what" is one more thing that drifts — which is the defect the ticket was filed about. A skip is reported loudly and never reads as a pass.
+
+### Added — `install.sh`, and it is now the headline install, and it is now the headline install
 
 - **`curl -fsSL .../install.sh | sh`** resolves the latest release, verifies the archive against the published `checksums.txt` **before installing anything**, and lays `mgit`, `mgit-sandboxd` and the guest pair out where mgit looks for them (`$PREFIX/bin` + `$PREFIX/libexec/guest`, so `mgit-guest` never lands on PATH). `MGIT_VERSION` pins a release; `MGIT_PREFIX` chooses where it goes. No sudo, ever — it picks `/usr/local` only when already writable, else `~/.local`.
 - **It fixes the macOS quarantine problem for real, without notarization.** `com.apple.quarantine` is written by the *downloading app on the user's machine*, so nothing done at build time can remove it — but only quarantine-aware apps (browsers, AirDrop, Mail) set it. curl does not. Measured: a browser-downloaded `.tar.gz` yields quarantined binaries even through command-line `tar`, and Gatekeeper SIGKILLs them; the same archive fetched by curl installs and runs clean. The README now states which channels are affected and which are not, instead of only offering the `xattr -d` remedy. (MGIT-64)
