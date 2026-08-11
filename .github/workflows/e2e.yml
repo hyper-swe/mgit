@@ -259,3 +259,231 @@ jobs:
           echo "== MGIT-78 live-policy evidence =="
           grep -E 'revoke applied|drained revoke applied|hold probe|post-revoke flow refused|REAL VM PASS' \
             "$RUNNER_TEMP/fc-root.log" || true
+
+  # LIVE Linux containment gate for the OTHER backend: real libkrun microVMs on
+  # real KVM.
+  #
+  # WHY IT EXISTS. Linux had exactly one validated backend, firecracker, and
+  # firecracker cannot re-stage into a running guest (`sandbox sync`) or read a
+  # tree out of one (`sandbox export`) — it delivers the worktree as a
+  # launch-time ext4 image. An agent loop that edits the host worktree between
+  # rounds therefore had NO validated option on Linux at all: the backend that
+  # can do it, libkrun, had never booted in validation on this platform. That
+  # gap would have been discovered at a deployment. This job is the answer, and
+  # it is a GATE rather than a one-time report precisely so a regression fails
+  # here instead of at someone's install. Refs: MGIT-87, MGIT-86, MGIT-78
+  #
+  # HOW IT DIFFERS FROM sandbox-live-linux ABOVE, in the two ways that matter:
+  #   - libkrun is LINKED, not exec'd, so the daemon is a cgo build carrying
+  #     `-tags libkrun` and the library must be built from source first. No
+  #     distro packages it and there is no Linux tap.
+  #   - it runs in a `container:` with /dev/kvm passed through. Measured
+  #     2026-08-11 (run 31482480288): inside `ubuntu:20.04` with
+  #     `options: --device /dev/kvm` the device is present and, because a job
+  #     container runs as root, already usable — KVM_GET_API_VERSION=12 and
+  #     KVM_CREATE_VM succeeds, with no udev rule involved. The MGIT-78 rule is
+  #     a HOST-side fix and cannot help a container, since host steps cannot run
+  #     before the job's own container starts. The pinned 20.04 toolchain is
+  #     what the libkrun build recipe was validated against.
+  sandbox-live-linux-libkrun:
+    name: Sandbox LIVE (Linux/KVM libkrun)
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:20.04
+      options: --device /dev/kvm
+    defaults:
+      run:
+        # The container's /bin/sh is dash, which has no `set -o pipefail` —
+        # and every assertion below depends on a pipeline's exit status.
+        shell: bash
+    steps:
+      - name: Install build prerequisites
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential flex bison libelf-dev python3-pyelftools bc \
+            pkg-config curl git ca-certificates patchelf \
+            libclang1-18 libclang-18-dev libclang-common-18-dev libllvm18
+
+      - uses: actions/checkout@v4
+
+      - name: Install Go
+        run: |
+          curl -fsSL https://go.dev/dl/go1.26.5.linux-amd64.tar.gz -o /tmp/go.tgz
+          tar -C /usr/local -xzf /tmp/go.tgz
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+
+      - name: Install Rust (distro rustc is far too old for libkrun)
+        # The musl target is required, not decorative: krun-init-blob's build.rs
+        # links krun-init as a static musl binary and panics without it.
+        run: |
+          curl -sSf https://sh.rustup.rs -o /tmp/rustup.sh
+          sh /tmp/rustup.sh -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustup" target add "$(uname -m)-unknown-linux-musl"
+
+      - name: Require /dev/kvm (passed into this container, not granted by udev)
+        run: |
+          set -euo pipefail
+          ls -l /dev/kvm
+          # Assert, never skip: if the runner class or the `--device` passthrough
+          # ever stops working, this gate must go red so the loss is noticed
+          # rather than silently degrading into an unrun checklist item.
+          [ -r /dev/kvm ] && [ -w /dev/kvm ] \
+            || { echo "FATAL: /dev/kvm not usable — the Linux libkrun gate cannot run"; exit 1; }
+
+      - name: Build the PINNED libkrunfw + libkrun (NET=1)
+        run: bash scripts/sandbox-image/build-libkrun.sh /usr/local
+
+      - name: Build mgit + the libkrun-linked mgit-sandboxd
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib64/pkgconfig
+          LIBRARY_PATH: /usr/local/lib64
+          LD_LIBRARY_PATH: /usr/local/lib64
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
+          mkdir -p "$RUNNER_TEMP/bin"
+          CGO_ENABLED=0 go build -buildvcs=false -trimpath -o "$RUNNER_TEMP/bin/mgit" ./cmd/mgit/
+          # The daemon is the half that links libkrun: cgo ON, tag ON.
+          CGO_ENABLED=1 go build -buildvcs=false -trimpath -tags libkrun \
+            -o "$RUNNER_TEMP/bin/mgit-sandboxd" ./cmd/mgit-sandboxd/
+          # The guest pair goes where a RELEASE INSTALL puts it — beside the
+          # binary in guest/ — rather than being left to `sandbox base from`'s
+          # source-checkout fallback. That fallback cannot work here anyway
+          # (the posture script runs in a scratch dir, so `go build ./cmd/...`
+          # has no module), and using the install layout means this gate
+          # exercises the lookup a user actually gets. Refs: MGIT-65
+          mkdir -p "$RUNNER_TEMP/bin/guest"
+          CGO_ENABLED=0 go build -buildvcs=false -trimpath -o "$RUNNER_TEMP/bin/guest/mgit" ./cmd/mgit/
+          CGO_ENABLED=0 go build -buildvcs=false -trimpath -o "$RUNNER_TEMP/bin/guest/mgit-guest" ./cmd/mgit-guest/
+
+      - name: Daemon path — compose and launch must WORK; exec is a tripwire
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib64/pkgconfig
+          LIBRARY_PATH: /usr/local/lib64
+          LD_LIBRARY_PATH: /usr/local/lib64
+        # SPLIT DELIBERATELY, because the two halves have different truth
+        # values on this backend and one status for both would misreport
+        # whichever it merged into:
+        #   compose an OCI base + `mgit work --sandbox` — REQUIRED to succeed;
+        #   `mgit run` into that guest — a TRIPWIRE that must still fail.
+        # Guest exec itself is fine here: the real-VM battery below drives
+        # microvm.Manager.Exec over vsock and passes. What resets is the
+        # daemon/CLI route (MGIT-91), and it resets on a hosted runner even for
+        # an absolute-path command, where a bare-metal KVM host only reset on
+        # the PATH-resolved form. So `mgit run` is NOT asserted working here,
+        # and neither is `land` behind it — the capability tables say so.
+        # NOTE the deliberate absence of `set -e`. Under it, a failing command
+        # inside `out="$(...)"` aborts the step with the reason still trapped
+        # in the unassigned variable and NOTHING in the log — the exact defect
+        # that made the first Linux posture run unreadable, and which this file
+        # then reproduced once on its own. Every step below reports before it
+        # decides.
+        run: |
+          # `set +e` is REQUIRED, not redundant: the runner invokes this shell as
+          # `bash --noprofile --norc -e -o pipefail`, so errexit is on before the
+          # first line and `set -u` alone would not turn it off. That is the
+          # mechanism behind the silent exit-1 twice over in this job's history.
+          set +e -uo pipefail
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          die() { echo "FATAL: $*"; exit 1; }
+          work="$(mktemp -d)" || die "mktemp"
+          cd "$work" || die "cd $work"
+          git init -q . || die "git init"
+          git -c user.email=e2e@mgit.local -c user.name=e2e commit -q --allow-empty -m init \
+            || die "seed git commit"
+          mgit init || die "mgit init"
+          # libkrun needs no kernel or rootfs of its own: libkrunfw supplies the
+          # kernel and the guest base is a DIRECTORY composed from an OCI image.
+          base_out="$(mgit sandbox base from debian:12 --json 2>&1)"; rc=$?
+          echo "$base_out"
+          [ "$rc" -eq 0 ] || die "sandbox base from exited $rc"
+          img="$(printf '%s' "$base_out" | sed -n 's/.*"image_ref":"\([^"]*\)".*/\1/p')"
+          [ -n "$img" ] || die "sandbox base from produced no image reference"
+          work_out="$(mgit work wt --task-id SB-1 --sandbox --image "$img" 2>&1)"; rc=$?
+          echo "$work_out"
+          [ "$rc" -eq 0 ] || die "mgit work --sandbox exited $rc"
+          echo "compose + launch through the daemon: OK"
+
+          # TRIPWIRE from here down. `mgit run` is expected to fail with the
+          # documented reset; if it starts working, MGIT-91 has closed and the
+          # capability tables now understate the backend — which must fail this
+          # job rather than pass quietly.
+          exec_out="$(cd wt && mgit run -- /bin/echo contained 2>&1)"; rc=$?
+          echo "$exec_out"
+          if [ "$rc" -eq 0 ]; then
+            echo "FATAL: mgit run into a Linux/libkrun guest now SUCCEEDS. Good news, and a"
+            echo "  gate failure by design: MGIT-91 has closed. Promote this half back to a"
+            echo "  requirement (exec, then commit, then \`mgit sandbox land\`) and update the"
+            echo "  capability tables in README.md, docs/INSTALL-SANDBOX.md and the CHANGELOG"
+            echo "  in the same commit."
+            exit 1
+          fi
+          case "$exec_out" in
+            *"connection reset by peer"*)
+              echo "mgit run still blocked by the documented MGIT-91 reset, as expected" ;;
+            *)
+              die "mgit run failed for a DIFFERENT reason than the documented MGIT-91 reset — investigate before trusting this gate" ;;
+          esac
+
+      - name: The VALIDATED column — boot, exec, sync, export, SEC-03 containment
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib64/pkgconfig
+          LIBRARY_PATH: /usr/local/lib64
+          LD_LIBRARY_PATH: /usr/local/lib64
+          MGIT_E2E_LIBKRUN: "1"
+        run: |
+          set -uo pipefail
+          # The set is named in scripts/e2e/libkrun_linux_column.sh, which is
+          # also what the capability tables in README.md and
+          # docs/INSTALL-SANDBOX.md are written from.
+          go test -buildvcs=false -tags libkrun ./internal/sandboxd/backend/libkrun/ \
+            -run "$(bash scripts/e2e/libkrun_linux_column.sh --validated-pattern)" \
+            -v -count=1 -timeout 30m 2>&1 | tee "$RUNNER_TEMP/libkrun-validated.log"
+          grep -q '^ok  ' "$RUNNER_TEMP/libkrun-validated.log" \
+            || { echo "FATAL: the validated Linux/libkrun column did not pass"; exit 1; }
+
+      - name: The INTERMITTENT set — run and report, gated neither way
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib64/pkgconfig
+          LIBRARY_PATH: /usr/local/lib64
+          LD_LIBRARY_PATH: /usr/local/lib64
+          MGIT_E2E_LIBKRUN: "1"
+        run: |
+          set +e -uo pipefail
+          # The guest exec channel resets sometimes on this backend and not
+          # others (MGIT-91) — the same test passed in three environments and
+          # then failed here with no code change. Gating on a pass would make
+          # this job flaky; gating on a failure would entrench a defect that
+          # usually does not fire. So it RUNS, its outcome is printed for the
+          # flake record, and nothing depends on it — which is also why the
+          # capability tables do not claim guest exec on Linux/libkrun.
+          go test -buildvcs=false -tags libkrun ./internal/sandboxd/backend/libkrun/ \
+            -run "$(bash scripts/e2e/libkrun_linux_column.sh --flaky-pattern)" \
+            -v -count=1 -timeout 15m 2>&1 | tee "$RUNNER_TEMP/libkrun-flaky.log"
+          echo "== intermittent-set outcome (informational, MGIT-91) =="
+          grep -E -- '^--- (PASS|FAIL|SKIP)' "$RUNNER_TEMP/libkrun-flaky.log" || true
+
+      - name: The KNOWN-GAP tripwire — these must still fail, and say why
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib64/pkgconfig
+          LIBRARY_PATH: /usr/local/lib64
+          LD_LIBRARY_PATH: /usr/local/lib64
+          MGIT_E2E_LIBKRUN: "1"
+        run: |
+          set -uo pipefail
+          # Deliberately NOT `|| exit 1`: these are expected to fail today, and
+          # the assertion below is that they still do. A gap that closes without
+          # anyone noticing leaves the shipped tables understating the backend,
+          # which is how a deployment ends up relying on something unvalidated.
+          go test -buildvcs=false -tags libkrun ./internal/sandboxd/backend/libkrun/ \
+            -run "$(bash scripts/e2e/libkrun_linux_column.sh --gap-pattern)" \
+            -v -count=1 -timeout 15m 2>&1 | tee "$RUNNER_TEMP/libkrun-gap.log" || true
+
+      - name: Assert the declared column — every capability, every gap
+        run: |
+          bash scripts/e2e/libkrun_linux_column.sh \
+            "$RUNNER_TEMP/libkrun-validated.log" "$RUNNER_TEMP/libkrun-gap.log"
+          echo "== Linux/libkrun live evidence =="
+          grep -E 'REAL VM PASS' "$RUNNER_TEMP/libkrun-validated.log" || true

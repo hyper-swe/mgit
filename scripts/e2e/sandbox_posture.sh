@@ -3,18 +3,22 @@
 #
 # With mgit-sandboxd present AND host virtualization available, runs the real
 # containment path: launch a task sandbox and `mgit run -- echo ok` inside it,
-# then a land round-trip. The two GA backends (ADR-010) provision their guest
-# differently, so this branches by platform rather than sharing one flow:
+# then a land round-trip. The GA backends (ADR-010) provision their guest
+# differently, so the guest is provisioned from WHAT THE CALLER SUPPLIED:
 #
-#   Linux (firecracker) needs a kernel + rootfs image, same as before.
-#   macOS (libkrun) needs NEITHER — libkrunfw supplies the kernel, and the
-#     guest base is composed from an OCI image (`mgit sandbox base from`).
-#     An earlier version of this script required MGIT_GUEST_IMAGE/KERNEL/
-#     ROOTFS unconditionally, which do not apply to libkrun at all — so on a
-#     fully working, entitlement-signed macOS host it SKIPPED regardless,
-#     and the mandatory macOS live release pass (docs/release/
-#     RELEASE-CHECKLIST.md) never actually exercised the shipped path.
-#     Fixed 2026-08-05 (MGIT-64/65 follow-up).
+#   kernel + rootfs  -> registered as an image (firecracker, vzf).
+#   an OCI ref       -> composed into a directory base (libkrun, which needs no
+#                       kernel of its own — libkrunfw supplies it).
+#
+# It used to branch on the OPERATING SYSTEM instead, which silently equated
+# "Linux" with "firecracker". That was true while it was the only Linux
+# backend and stopped being true when Linux libkrun was validated (MGIT-87):
+# an entirely working Linux/libkrun daemon was sent down the firecracker branch
+# and skipped for want of a kernel it does not use. The macOS half had the
+# mirror-image bug until 2026-08-05 (MGIT-64/65 follow-up), where a fully
+# working entitled Mac SKIPPED because kernel/rootfs vars were demanded
+# unconditionally — so the mandatory macOS live release pass never exercised
+# the shipped path. Dispatching on the inputs is what stops that recurring.
 #
 # This needs a KVM-capable Linux host or an entitled macOS arm64 host, so it
 # GATES GRACEFULLY: when a prerequisite is missing it prints SKIP and exits 0
@@ -26,18 +30,20 @@
 # a printed "SANDBOX POSTURE E2E: PASS (live)" counts.
 #
 # Usage: sandbox_posture.sh [bindir]
-#   Linux env (either form provisions the live path; with neither, it skips):
+#   Guest inputs (supply the ONE your backend needs; on Linux, with none of
+#   them, it skips — macOS defaults to the OCI form its GA backend uses):
 #     MGIT_GUEST_IMAGE    a digest-pinned image ref ALREADY registered in the
 #                         scratch repo's image set (rarely what you have), or
 #     MGIT_GUEST_KERNEL + MGIT_GUEST_ROOTFS [+ MGIT_GUEST_CMDLINE]
-#                         raw artifact paths; the script registers them inside
-#                         its scratch repo (`sandbox image init` + `add`) and
-#                         uses the resulting ref. This is the release-checklist
-#                         form: image registration is PER-REPO (.mgit/sandbox),
-#                         so a ref from another repo cannot resolve here.
-#   macOS env (optional):
-#     MGIT_GUEST_OCI_REF  the OCI image to compose the guest base from
-#                         (default: debian:12). No kernel/rootfs vars needed.
+#                         raw artifact paths for a kernel+rootfs backend;
+#                         the script registers them inside its scratch repo
+#                         (`sandbox image init` + `add`) and uses the resulting
+#                         ref. This is the release-checklist form: image
+#                         registration is PER-REPO (.mgit/sandbox), so a ref
+#                         from another repo cannot resolve here. Or
+#     MGIT_GUEST_OCI_REF  the OCI image to compose a directory guest base from,
+#                         for the libkrun backend on either platform
+#                         (macOS default: debian:12).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
@@ -62,8 +68,9 @@ case "$os" in
 Linux)
 	[ -e /dev/kvm ] || skip "no /dev/kvm (host lacks KVM / nested virt)"
 	[ -r /dev/kvm ] && [ -w /dev/kvm ] || skip "/dev/kvm not accessible to this user"
-	if [ -z "${MGIT_GUEST_IMAGE:-}" ] && { [ -z "${MGIT_GUEST_KERNEL:-}" ] || [ -z "${MGIT_GUEST_ROOTFS:-}" ]; }; then
-		skip "no guest image (set MGIT_GUEST_IMAGE, or MGIT_GUEST_KERNEL + MGIT_GUEST_ROOTFS) — firecracker (the Linux GA backend) needs a kernel+rootfs, it does not compose from OCI"
+	if [ -z "${MGIT_GUEST_IMAGE:-}" ] && [ -z "${MGIT_GUEST_OCI_REF:-}" ] &&
+		{ [ -z "${MGIT_GUEST_KERNEL:-}" ] || [ -z "${MGIT_GUEST_ROOTFS:-}" ]; }; then
+		skip "no guest input (set MGIT_GUEST_IMAGE, or MGIT_GUEST_KERNEL + MGIT_GUEST_ROOTFS for firecracker, or MGIT_GUEST_OCI_REF for a libkrun-linked daemon) — Linux has two backends and they take different guests"
 	fi
 	;;
 Darwin)
@@ -90,34 +97,42 @@ git init -q
 git -c user.email=e2e@mgit.local -c user.name=e2e commit -q --allow-empty -m init
 mgit init >/dev/null
 
-# Provision the guest the way THIS platform's backend actually needs (the
-# image/base set is per-repo; a ref from elsewhere cannot resolve here).
-case "$os" in
-Linux)
-	if [ -z "${MGIT_GUEST_IMAGE:-}" ]; then
-		echo "== register guest image (kernel + rootfs, firecracker) in the scratch repo =="
-		mgit sandbox image init >/dev/null
-		MGIT_GUEST_IMAGE="$(mgit sandbox image add --name base \
-			--kernel "$MGIT_GUEST_KERNEL" --rootfs "$MGIT_GUEST_ROOTFS" \
-			${MGIT_GUEST_CMDLINE:+--cmdline "$MGIT_GUEST_CMDLINE"} --json |
-			sed -n 's/.*"image_ref":"\([^"]*\)".*/\1/p')"
-		[ -n "$MGIT_GUEST_IMAGE" ] || _e2e_fail "image add produced no reference"
-		pass "registered $MGIT_GUEST_IMAGE"
-	fi
-	;;
-Darwin)
+# Provision the guest from whichever input the caller supplied — NOT from the
+# operating system's name (the image/base set is per-repo, so a ref from
+# elsewhere cannot resolve here). On macOS the OCI form is the default because
+# its GA backend takes no kernel of its own.
+if [ -n "${MGIT_GUEST_IMAGE:-}" ]; then
+	pass "using the pre-registered $MGIT_GUEST_IMAGE"
+elif [ -n "${MGIT_GUEST_KERNEL:-}" ] && [ -n "${MGIT_GUEST_ROOTFS:-}" ]; then
+	echo "== register guest image (kernel + rootfs) in the scratch repo =="
+	mgit sandbox image init >/dev/null
+	MGIT_GUEST_IMAGE="$(mgit sandbox image add --name base \
+		--kernel "$MGIT_GUEST_KERNEL" --rootfs "$MGIT_GUEST_ROOTFS" \
+		${MGIT_GUEST_CMDLINE:+--cmdline "$MGIT_GUEST_CMDLINE"} --json |
+		sed -n 's/.*"image_ref":"\([^"]*\)".*/\1/p')"
+	[ -n "$MGIT_GUEST_IMAGE" ] || _e2e_fail "image add produced no reference"
+	pass "registered $MGIT_GUEST_IMAGE"
+else
 	oci_ref="${MGIT_GUEST_OCI_REF:-debian:12}"
 	echo "== compose guest base from $oci_ref (libkrun, OCI) in the scratch repo =="
 	MGIT_GUEST_IMAGE="$(mgit sandbox base from "$oci_ref" --json |
 		sed -n 's/.*"image_ref":"\([^"]*\)".*/\1/p')"
 	[ -n "$MGIT_GUEST_IMAGE" ] || _e2e_fail "sandbox base from produced no reference"
 	pass "composed $MGIT_GUEST_IMAGE from $oci_ref"
-	;;
-esac
+fi
 
 echo "== launch a task sandbox and exec inside it =="
 mgit work wt --task-id SB-1 --sandbox --image "$MGIT_GUEST_IMAGE" >/dev/null
-runout="$(cd wt && mgit run -- echo ok 2>&1)"
+# `set -e` + a command substitution is a diagnosability trap: a failing
+# `mgit run` aborts the script with its output still inside the unassigned
+# variable, so the log ends at the heading above and says NOTHING about why.
+# That is exactly what a first Linux/libkrun run looked like (MGIT-87). Capture
+# the status, then print what the command actually said before failing.
+runout="$(cd wt && mgit run -- echo ok 2>&1)" && runrc=0 || runrc=$?
+if [ "$runrc" -ne 0 ]; then
+	echo "$runout"
+	_e2e_fail "mgit run -- echo ok exited $runrc inside the sandbox (output above)"
+fi
 assert_contains "$runout" "ok" "mgit run -- echo ok executed inside the sandbox"
 
 echo "== land round-trip =="

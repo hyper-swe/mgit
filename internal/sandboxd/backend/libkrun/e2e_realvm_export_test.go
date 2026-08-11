@@ -199,12 +199,20 @@ func TestE2E_Libkrun_RealVM_ArtifactExport_GuestBuiltTreeReachesTheHost(t *testi
 	if err != nil || string(got) != "module.exports = 1\n" {
 		t.Errorf("exported content = %q, err %v; want the bytes the guest wrote", got, err)
 	}
-	// The exported script must be EXECUTABLE. libkrun's macOS filesystem
-	// device gives guest-created files placeholder permission bits (the staged
-	// file's own mode is 0600) and records the real st_mode in the share's
-	// stat attribute, so the host can observe the guest's 0755 without the
-	// guest participating — measured by the mode-fidelity e2e, and the reason
-	// the export reads the record rather than the placeholder. Refs: MGIT-81
+	// The exported script must be EXECUTABLE, whichever honest route the host
+	// had to the guest's mode. The two backends differ here and the difference
+	// is real, not a bug in either: libkrun's macOS filesystem device gives
+	// guest-created files PLACEHOLDER permission bits (the staged file's own
+	// mode is 0600) and records the true st_mode in the share's stat attribute,
+	// so the export must read the record; libkrun on LINUX presents the guest's
+	// mode in the file's own bits, so a plain host stat is already the truth
+	// and there is no record to read (measured on real KVM, MGIT-87).
+	//
+	// The assertion is therefore about the OUTCOME plus the ATTRIBUTION being
+	// consistent with it, rather than about one platform's mechanism: pinning
+	// "share-record" made this test assert a macOS implementation detail, and
+	// it failed on Linux for a tree that had exported perfectly.
+	// Refs: MGIT-81, MGIT-87
 	src, err := os.Lstat(filepath.Join(staged, "node_modules", "pkg", "bin", "run.sh"))
 	if err != nil {
 		t.Fatalf("stat the staged source: %v", err)
@@ -217,13 +225,21 @@ func TestE2E_Libkrun_RealVM_ArtifactExport_GuestBuiltTreeReachesTheHost(t *testi
 	t.Logf("mode fidelity: guest wrote 0755, the staged file's own bits are %v, the export produced %v",
 		src.Mode().Perm(), fi.Mode().Perm())
 	// And the sidecar must say WHERE that mode was observed, so a consumer is
-	// never left guessing whether an export invented it.
+	// never left guessing whether an export invented it. An absent mode_source
+	// means "a plain host stat" (ModeSourceHostStat), which is only an honest
+	// answer when the staged file really does carry the mode that was exported.
 	manifest, err := os.ReadFile(res.ManifestPath) //nolint:gosec // test-owned temp dir
 	if err != nil {
 		t.Fatalf("read the provenance sidecar: %v", err)
 	}
-	if !strings.Contains(string(manifest), `"mode_source": "share-record"`) {
-		t.Errorf("the sidecar must attribute the modes it reproduced; got:\n%s", manifest)
+	claimsRecord := strings.Contains(string(manifest), `"mode_source": "share-record"`)
+	switch {
+	case src.Mode().Perm() == 0o755 && claimsRecord:
+		t.Errorf("the staged file already carries 0755, so the export must attribute "+
+			"the mode to a host stat, not to a share record; got:\n%s", manifest)
+	case src.Mode().Perm() != 0o755 && !claimsRecord:
+		t.Errorf("the staged file's own bits are %v, so 0755 can only have come from "+
+			"the share record — the sidecar must say so; got:\n%s", src.Mode().Perm(), manifest)
 	}
 	link, err := os.Readlink(filepath.Join(dest, ".bin", "run"))
 	if err != nil || link != "../pkg/bin/run.sh" {

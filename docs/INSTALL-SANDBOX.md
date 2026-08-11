@@ -26,12 +26,15 @@ every channel below does — is what makes `mgit run` find the daemon.
 Pick this before the prerequisites, because it decides what your agent loop can
 do — the backends are not interchangeable:
 
-| | macOS / libkrun | Linux / firecracker |
-|---|---|---|
-| launch, exec, land | live-validated | live-validated (CI-gated) |
-| live egress policy (`sandbox policy`) | yes | yes |
-| host edits reach a **running** guest (`sandbox sync`) | yes | **refused** |
-| artifact export (`sandbox export`) | yes | **refused** |
+| | macOS / libkrun | Linux / firecracker | Linux / libkrun (`-tags libkrun`) |
+|---|---|---|---|
+| compose a guest base, launch a sandbox | live-validated | live-validated (CI-gated) | live-validated (CI-gated) |
+| exec in the guest, and `land` behind it | yes | yes | **exec channel resets** — intermittently over vsock, always via `mgit run` (MGIT-91) |
+| hostile-guest containment (SEC-03) | yes | yes | yes |
+| guest networking + live egress policy | yes | yes | **no networked guest at all** (MGIT-89) |
+| host edits reach a **running** guest (`sandbox sync`) | yes | **refused** | **content edits only** (MGIT-90) |
+| artifact export (`sandbox export`) | yes | **refused** | yes |
+| guest can write outside `/tmp` and its worktree | yes | yes | **no** (MGIT-89) |
 
 libkrun and vzf share the worktree as a host **directory** over virtio-fs, so
 the host can re-stage into it and read out of it. firecracker packs it into an
@@ -46,10 +49,58 @@ relaunching destroys the provisioned environment that `sandbox policy` exists to
 preserve. Use libkrun for that shape of loop. If each round gets a fresh
 sandbox, or work only returns via `land`, firecracker is fine.
 
-One caveat on "use libkrun": it is validated on **macOS/Apple Silicon**. Linux
-libkrun (`-tags libkrun`) is not the Linux default and its real-VM boot has
-never been validated end to end, so on Linux the validated backend today is
-firecracker, with the two gaps above.
+### Linux libkrun: what it does and does not do
+
+Linux libkrun (`-tags libkrun`, not the Linux default) was live-validated on
+real KVM and is now gated in CI on every push — the boot that had "never
+completed" on Linux does complete, and guest exec over vsock, `sandbox sync` of
+file content, artifact export and the SEC-03 hostile-guest battery all hold
+there exactly as on macOS (MGIT-87). Four things do NOT carry over, all
+measured on real hardware:
+
+- **The guest exec channel resets**, and `mgit sandbox land` sits behind it.
+  Every failure carries the same signature — "connection reset by peer" on the
+  guest's vsock exec socket. Through `mgit run` it failed on every attempt (on
+  bare metal only for the everyday `mgit run -- echo hi`, while `/bin/echo`
+  worked; on a hosted runner for the absolute path too). Through the library
+  path it passed in three environments and then failed in a fourth run with no
+  code change. The VM survives either way. So exec here is intermittent rather
+  than simply broken; CI runs those tests and prints the outcome without gating
+  on it, because a capability that comes and goes is not one to claim. Tracked
+  as MGIT-91; it is also why the shared posture script cannot pass here.
+- **The guest's root filesystem is effectively read-only.** Creating a file
+  anywhere under the writable-root overlay fails with `operation not
+  supported`; `/tmp` (tmpfs) and the mounted worktree are writable and behave
+  normally. Measured through the production path on a real `debian:12` base:
+
+  ```
+  echo hi > /etc/probe        -> cannot create: Operation not supported
+  echo hi > /tmp/probe        -> ok
+  echo hi > ./probe (worktree)-> ok
+  ```
+
+  So an agent can build and commit in its worktree, but cannot install
+  packages, write `/etc`, or otherwise mutate the image.
+- **Consequently, a guest with a network does not start at all.** mgit-guest
+  writes the resolver to `/etc/resolv.conf` during startup and dies on the same
+  refusal, so every `--network allowlist` and `--network open` sandbox exits
+  before it serves. `--network none` is the only working mode. The daemon does
+  select the right enforcer for `sandbox policy` (its log says
+  `policy_wired backend=libkrun`), but with no live guest there is nothing for
+  those verbs to act on.
+- **`sandbox sync` carries content, not the namespace.** A host edit to an
+  existing file reaches the running guest; a file the host CREATES or DELETES
+  does not — the guest keeps reading the old file even though the verb reports
+  the delete as applied. Relaunch after a change that adds or removes files.
+
+Use firecracker when the agent needs egress; use libkrun (offline) when it
+needs re-staging into a long-lived guest or artifact export. A loop needing
+both is not served on Linux today; that is MGIT-86.
+
+The exact capability set the CI gate asserts — and the tests that stand for
+each gap — is `scripts/e2e/libkrun_linux_column.sh`. Building libkrun itself on
+Linux is a from-source step with pinned versions:
+`scripts/sandbox-image/build-libkrun.sh`.
 
 ## Platform prerequisites
 

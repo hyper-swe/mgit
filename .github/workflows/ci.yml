@@ -121,21 +121,23 @@ jobs:
   # pre-2.34 glibc) went undetected because nothing in CI ever built the
   # Linux tagged path. This job closes that gap.
   #
-  # Scope is deliberately build+vet ONLY, not `make test-libkrun`'s test run:
-  # several of that package's tests construct a real libkrun context and
-  # need /dev/kvm, which hosted GitHub runners do not expose (the same
-  # reason sandbox-posture e2e skips there). Catching a compile/link
-  # regression does not need a VM to boot.
+  # Scope is deliberately build+vet ONLY: catching a compile/link regression
+  # does not need a VM to boot, and this job is on the fast PR path. Whether a
+  # libkrun VM actually boots on Linux is proven by the `sandbox-live-linux-
+  # libkrun` job in e2e.yml, which does boot one on real KVM (MGIT-87). This
+  # comment used to say hosted runners expose no /dev/kvm; that was measured to
+  # be false (MGIT-78 on the host, MGIT-87 inside a container with the device
+  # passed through), and the live gate exists because of it.
   #
   # Pinned to a `ubuntu:20.04` container image (not the job's own
-  # `ubuntu-latest` host OS) because that is the exact toolchain this build
-  # recipe was validated against: Ubuntu 20.04's own clang (10) lacks the
-  # libclang API bindgen needs, so libclang-18 from `focal-updates` is
-  # installed explicitly; a from-source libkrunfw build on Ubuntu 24.04 was
-  # separately found to fail reproducibly (unrelated toolchain issue, not
-  # this job's concern). Building from source costs ~4-5 minutes; there is
-  # no Ubuntu package for libkrun or libkrunfw on any release yet (see
-  # docs/adr/010, kept local/untracked).
+  # `ubuntu-latest` host OS) because that is the toolchain this build recipe
+  # was validated against: Ubuntu 20.04's own clang (10) lacks the libclang API
+  # bindgen needs, so libclang-18 from `focal-updates` is installed explicitly.
+  # (A from-source libkrunfw build was once reported to fail on Ubuntu 24.04;
+  # re-measured 2026-08-11 it succeeds there, so 20.04 is now a consistency
+  # choice with the live gate rather than a workaround.) Building from source
+  # costs ~4-5 minutes; there is no Ubuntu package for libkrun or libkrunfw on
+  # any release yet (see docs/adr/010, kept local/untracked).
   libkrun-linux:
     name: libkrun backend (tagged build+vet, Linux)
     runs-on: ubuntu-latest
@@ -169,28 +171,15 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           "$HOME/.cargo/bin/rustup" target add "$(uname -m)-unknown-linux-musl"
 
-      - name: Build libkrunfw (compiles a kernel; the slow step, ~3-4 min)
-        # `cd dir && make`, NOT `make -C dir`: libkrunfw's own Makefile
-        # recurses into the kernel build with `$(MAKE) $(MAKEFLAGS) ...`,
-        # and with -C, GNU make's propagated MAKEFLAGS made that recursive
-        # call literally invoke `make w -j... ` ("No rule to make target
-        # 'w'") -- confirmed by reproducing both invocation styles in a
-        # real ubuntu:20.04 container. cd-first avoids it.
-        run: |
-          git clone --depth 1 https://github.com/containers/libkrunfw.git /tmp/libkrunfw
-          (cd /tmp/libkrunfw && make -j"$(nproc)")
-          (cd /tmp/libkrunfw && make PREFIX=/usr/local install)
-          ldconfig
-
-      - name: Build libkrun with networking (make NET=1, ~1 min)
-        env:
-          LIBCLANG_PATH: /usr/lib/llvm-18/lib
-          BINDGEN_EXTRA_CLANG_ARGS: -resource-dir=/usr/lib/llvm-18/lib/clang/18
-        run: |
-          git clone --depth 1 https://github.com/containers/libkrun.git /tmp/libkrun
-          (cd /tmp/libkrun && make NET=1 -j"$(nproc)")
-          (cd /tmp/libkrun && make PREFIX=/usr/local install)
-          ldconfig
+      - name: Build the PINNED libkrunfw + libkrun (NET=1; ~4-5 min)
+        # The recipe moved into a script so a developer can run the runner's
+        # exact build, and so the versions are PINNED in one place. It used to
+        # clone `main` of both repos inline, which is how the first real Linux
+        # boot attempt ended up on an upstream that had stubbed out
+        # krun_set_workdir (MGIT-87). A build job that compiles against a
+        # different library from the one the live gate boots proves less than
+        # it appears to.
+        run: bash scripts/sandbox-image/build-libkrun.sh /usr/local
 
       - name: Build and vet the tagged path
         env:

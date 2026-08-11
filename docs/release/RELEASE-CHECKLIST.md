@@ -126,20 +126,23 @@ green Linux gate is not evidence about macOS:
       **not** run, not that it is optional — do not proceed to publish on a
       skip. Also confirm `make test-libkrun`'s full suite passes on this
       host, and that libkrun's own real-VM e2e (`make e2e-libkrun`) is green.
-- [ ] **Linux libkrun (`-tags libkrun`) is NOT part of the release gate.**
-      It is not the Linux default and its real-VM boot is not yet fully
-      validated end to end on KVM (MGIT-61.13 P4, "Known limitations" in the
-      CHANGELOG). Do not treat a green firecracker pass as implying libkrun
-      also works on Linux — they are different code paths. `ci.yml`'s
-      `libkrun-linux` job (main pushes/PRs + `workflow_dispatch`, not
-      `release.yml`) build+vets this tagged path on every change so a
-      compile/link regression is caught early — that is a CI check, not a
-      release gate, and it never boots a real VM. (Its comment that hosted
-      runners have no `/dev/kvm` is now false — see MGIT-78 — but booting
-      libkrun there is still unproven, so nothing about its status changes.)
-      A green `libkrun-linux` CI job says nothing about whether Linux libkrun
-      actually runs; only the macOS live pass above does that for its own
-      platform.
+- [ ] **Linux libkrun (`-tags libkrun`) is now a LIVE gate, and it is
+      automatic.** `e2e.yml`'s `sandbox-live-linux-libkrun` job boots real
+      libkrun microVMs on real KVM — inside an `ubuntu:20.04` container with
+      `options: --device /dev/kvm` — and asserts the capability column named
+      in `scripts/e2e/libkrun_linux_column.sh` test by test, on every push, PR
+      and release. Nothing to run by hand. The older statement here, that its
+      real-VM boot was unproven end to end, is superseded (MGIT-87).
+      **What that gate does NOT cover, and must not be read as covering:** on
+      Linux/libkrun a guest cannot write outside `/tmp` and its worktree, so
+      networked sandboxes do not start (MGIT-89), and a sync's creates and
+      deletes do not reach a running guest (MGIT-90). Both are asserted to
+      STILL FAIL by the same script, so if either is fixed the gate turns red
+      until the capability tables in README.md, docs/INSTALL-SANDBOX.md and
+      the CHANGELOG are updated with it. Do not silently re-green it.
+      `ci.yml`'s `libkrun-linux` job remains the fast build+vet check on the
+      PR path; it never boots a VM, so a green result there still says nothing
+      on its own about whether Linux libkrun runs.
 
 > Never refer to the Linux KVM host by its LAN IP in the repo, CI logs, or the
 > release notes — call it "the Linux runner". (Since MGIT-78 the Linux live
