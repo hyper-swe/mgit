@@ -174,6 +174,33 @@ jobs:
           grep -q 'SANDBOX POSTURE E2E: PASS (live)' "$RUNNER_TEMP/posture.log" || {
             echo "FATAL: the posture gate did not pass LIVE (a SKIP is a failure here)"; exit 1; }
 
+      # The sandbox CLI verbs an operator actually types. They were unit-only
+      # until MGIT-88: unit tests exercise the service BENEATH the CLI, and this
+      # project's defects keep landing in the gap between the two (MGIT-77,
+      # MGIT-83, MGIT-65 were each green at the unit layer and broken for a
+      # user). `status`, `list` and `remove` are what someone reaches for first
+      # when a sandbox misbehaves, so a defect there surfaces at the worst
+      # possible moment. Refs: MGIT-88
+      - name: Sandbox CLI surface e2e (list/status/exec/shell/grants/remove)
+        env:
+          MGIT_GUEST_KERNEL: ${{ runner.temp }}/guest/vmlinux
+          MGIT_GUEST_ROOTFS: ${{ runner.temp }}/guest/rootfs.ext4
+        run: |
+          set -uo pipefail
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          export MGIT_GUEST_CMDLINE="$FC_CMDLINE"
+          bash scripts/e2e/sandbox_cli_surface.sh "$RUNNER_TEMP/bin" 2>&1 | tee "$RUNNER_TEMP/cli.log"
+          grep -q 'SANDBOX CLI SURFACE E2E: PASS (live)' "$RUNNER_TEMP/cli.log" || {
+            echo "FATAL: the CLI surface gate did not pass LIVE (a SKIP is a failure here)"; exit 1; }
+          # shell and grants are refused OFF Linux by documented platform gates
+          # (KVM PTY transport; the Linux-only egress escalation stack). This IS
+          # Linux with KVM, so both must have RUN -- if they report NOT SERVED
+          # here, the capability regressed rather than being unavailable.
+          if grep -q 'NOT SERVED on this backend' "$RUNNER_TEMP/cli.log"; then
+            echo "FATAL: a verb reported NOT SERVED on the Linux/KVM gate, where both are expected to run"
+            exit 1
+          fi
+
       - name: Firecracker e2e — unprivileged half
         env:
           MGIT_TEST_KERNEL: ${{ runner.temp }}/guest/vmlinux
