@@ -205,55 +205,73 @@ green Linux gate is not evidence about macOS:
    The install default resolves to the latest release's assets. Then verify on a
    clean host: `mgit sandbox image install` → `mgit run --sandbox -- echo ok`.
    (The vz kernel build needs docker; run `publish.sh` on a machine with it.)
-6. Post-publish smoke: `brew install hyper-swe/tap/mgit` on a clean machine and
-   confirm `command -v mgit && command -v mgit-sandboxd`.
-7. **Downloaded-archive smoke (macOS Gatekeeper quarantine, MGIT-64).** A
-   locally built or `scp`'d artifact does **not** reproduce this — a build
-   directory and an `scp` transfer never carry the `com.apple.quarantine`
-   extended attribute, so testing either one is "verified" wrongly, which is
-   exactly how this shipped broken once already. Only a real download
-   (browser, `gh release download`, AirDrop) or an explicitly set quarantine
-   attribute reproduces it. On a Mac that did **not** build this release:
+6. **Post-publish smoke — run the script, do not hand-execute the steps.**
    ```
-   gh release download <tag> -p 'mgit_*_darwin_arm64.tar.gz' -D /tmp/mgit-smoke
-   cd /tmp/mgit-smoke && tar -xzf mgit_*_darwin_arm64.tar.gz
-   xattr -l mgit mgit-sandboxd        # must show com.apple.quarantine
-   ./mgit --version && ./mgit-sandboxd --help >/dev/null 2>&1 && echo "BOTH RAN"
+   scripts/e2e/release_smoke.sh <tag>
    ```
-   Both must run without the `xattr -d com.apple.quarantine mgit
-   mgit-sandboxd` remedy (docs/INSTALL-SANDBOX.md) — if either is killed, the
-   archive shipped broken again.
-   - **The liveness probe deliberately uses `--help`, not `--version`.** This
-     check asks exactly one question — did the binary execute, or did
-     Gatekeeper SIGKILL it — and *any* command that runs answers it. Binding
-     it to a feature flag makes a missing feature indistinguishable from the
-     kill: `mgit-sandboxd` gained `--version` only in MGIT-83, and against
-     v0.4.3 or earlier the same line exits 2 with `flag provided but not
-     defined: -version`, which reads as "the archive shipped broken". A
-     post-publish step verifies the artifact you JUST published, so it must
-     not assume a feature that artifact may predate. `--help` exits 0 on every
-     version ever shipped.
-   - **Additionally, from v0.4.4 on**, compare the builds — this is a
-     different question from liveness and is allowed to depend on the feature:
-     ```
-     ./mgit --version && ./mgit-sandboxd --version   # v0.4.4+ only
-     ```
-     Both strings must name the SAME version, commit and date. They are
-     stamped from one `internal/buildinfo` package by one set of `-X` flags,
-     so a mismatch means the archive was assembled from two different builds.
-   - While a machine without a source checkout is
-   already set up for this, also run the full sandbox first-run funnel from
-   the extracted archive (`mgit sandbox base from <image>` → `mgit work
-   --sandbox` → `mgit run`) — this is the same "installed archive, no Go
-   toolchain" precondition MGIT-65 requires, and it is cheap to cover both in
-   one pass rather than two.
-8. **libkrun networking capability check** (clean machine, sandbox builds only).
-   libkrun gates its net-device API behind an opt-in build flag, and mgit
-   requires an explicit NIC in every mode — without one libkrun falls back to
-   TSI and the guest gets full host egress, so a libkrun built without
-   networking cannot host a sandbox at all. The `libkrun/krun` tap passes
-   `NET=1` explicitly today, but that is a THIRD-PARTY build flag: if the
-   formula ever drops it, every Mac install breaks. Verify per release:
+   It must print `RELEASE SMOKE: PASS`. A `SKIP` line is **not** a pass: each
+   one names what could not be verified and on what host it could be. The
+   script covers, against the PUBLISHED archive rather than a build tree:
+   archive contents (both binaries + `guest/`, MGIT-65), the Gatekeeper
+   quarantine behaviour in both directions (MGIT-64), that the shipped binaries
+   run, that `mgit` and `mgit-sandboxd` report the SAME build, the libkrun
+   `NET=1` capability (MGIT-61.14), and the Homebrew channel.
+   - **Why a script.** These were prose, and prose drifted from the binaries
+     four times in the 0.4.3 cycle (MGIT-84): a daemon flag that did not exist,
+     the same flag reinstated against a release predating it, a missing
+     `MGIT_GUEST_CMDLINE` that booted a guest with no `root=`/`init=`, and a
+     "CI cannot run these" claim that had been false since hosted runners
+     gained `/dev/kvm`. The scripted parts of this gate have never drifted,
+     because CI runs them. It also runs automatically on every release — see
+     the `release-smoke` job in `release.yml`.
+   - **It probes capability, never a version table.** `mgit-sandboxd --version`
+     exists only from MGIT-83 on, so the script asks the binary whether it
+     supports the flag rather than consulting a list of which release has what.
+     A maintained list is one more thing that drifts.
+   - **The quarantine kill-path check is OFF by default locally.** Exercising
+     it means executing a deliberately-quarantined binary, which makes macOS
+     raise a real "cannot verify ... free of malware" alert — and firing those
+     at an operator during a routine release check teaches them to dismiss
+     malware alerts, which is a worse outcome than skipping one check on a
+     laptop. `release.yml` sets `MGIT_SMOKE_QUARANTINE=1` so it runs unattended
+     in CI. Set it yourself only if you want the alerts.
+   - **What it deliberately does NOT prove.** That a *browser* download
+     quarantines identically. The script synthesises the attribute so the kill
+     path is deterministic rather than hoped for; only a real download onto a
+     Mac that did not build the release exercises the genuine article. Do that
+     once, by hand, below.
+
+7. **Manual, and only this part is manual: a real downloaded archive.** On a
+   Mac that did **not** build this release, download through a browser (or
+   `gh release download`), extract, and confirm the behaviour matches what the
+   script asserted synthetically. A locally built or `scp`'d artifact does
+   **not** reproduce it — neither ever carries `com.apple.quarantine`, which
+   is exactly how this shipped broken once (MGIT-64).
+   ```
+   MGIT_SMOKE_ARCHIVE=/path/to/downloaded/mgit_<v>_darwin_arm64.tar.gz \
+     scripts/e2e/release_smoke.sh <tag>
+   ```
+   **Expected today: a quarantined binary IS killed** (`Killed: 9`), and runs
+   after `xattr -d com.apple.quarantine mgit mgit-sandboxd`. The binaries are
+   ad-hoc signed with no notarization, so this is the documented state, not a
+   regression — see docs/INSTALL-SANDBOX.md. This step used to demand that both
+   binaries "run without the remedy", which is a property the project knowingly
+   does not have; a gate that cannot pass teaches an operator to ignore it.
+   If a quarantined binary ever DOES run, notarization or a policy change has
+   landed — update MGIT-64, INSTALL-SANDBOX.md and the script.
+   While on that machine, also run the archive-only first-run funnel
+   (`mgit sandbox base from <image>` → `mgit work --sandbox` → `mgit run`):
+   same "installed archive, no Go toolchain" precondition MGIT-65 requires,
+   and cheap to cover in the same pass.
+
+8. **Reference: the libkrun networking capability, which step 6's script
+   automates.** libkrun gates its net-device API behind an opt-in build flag,
+   and mgit requires an explicit NIC in every mode — without one libkrun falls
+   back to TSI and the guest gets full host egress, so `mgit-sandboxd` refuses
+   to start. The `libkrun/krun` tap passes `NET=1` today, but that is a
+   THIRD-PARTY build flag: if the formula ever drops it, every Mac install
+   breaks. The script checks this; the manual equivalent, and what to run when
+   a user reports the capability refusal, is:
    ```
    brew tap libkrun/krun
    brew trust libkrun/krun   # required: Homebrew refuses to load an untrusted tap

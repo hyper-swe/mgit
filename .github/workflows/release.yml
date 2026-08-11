@@ -131,6 +131,35 @@ jobs:
         with:
           files: dist/BUILD-ENVIRONMENT.json
 
+  release-smoke:
+    name: Post-publish smoke (published archive)
+    needs: release
+    # A FRESH macOS runner: this job must not be the machine that built the
+    # release, because the whole point is exercising what a user who downloads
+    # the archive gets. Each job gets its own runner, so `needs: release` gives
+    # us exactly that. Refs: MGIT-84, MGIT-64, MGIT-65
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      # The script downloads the just-published archive itself, so nothing here
+      # can accidentally test a locally built binary -- the mistake that let the
+      # quarantine defect ship once already.
+      - name: Release smoke against the published archive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          export MGIT_SMOKE_QUARANTINE=1
+          out="$(bash scripts/e2e/release_smoke.sh "${{ github.ref_name }}" 2>&1)"
+          echo "$out"
+          # A skip must never read as a pass -- the recurring failure this whole
+          # gate exists to prevent. Assert the PASS line, then fail on any SKIP
+          # that a hosted runner should not have produced.
+          echo "$out" | grep -q 'RELEASE SMOKE: PASS' || {
+            echo "::error::release smoke did not report PASS"; exit 1; }
+          if echo "$out" | grep -q 'SKIP: not macOS'; then
+            echo "::error::ran on a non-macOS runner; the darwin checks did not run"; exit 1
+          fi
+
   homebrew:
     name: Update Homebrew Tap
     needs: release
