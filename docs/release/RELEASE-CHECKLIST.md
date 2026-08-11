@@ -218,17 +218,30 @@ green Linux gate is not evidence about macOS:
    gh release download <tag> -p 'mgit_*_darwin_arm64.tar.gz' -D /tmp/mgit-smoke
    cd /tmp/mgit-smoke && tar -xzf mgit_*_darwin_arm64.tar.gz
    xattr -l mgit mgit-sandboxd        # must show com.apple.quarantine
-   ./mgit --version && ./mgit-sandboxd --version
+   ./mgit --version && ./mgit-sandboxd --help >/dev/null 2>&1 && echo "BOTH RAN"
    ```
    Both must run without the `xattr -d com.apple.quarantine mgit
    mgit-sandboxd` remedy (docs/INSTALL-SANDBOX.md) — if either is killed, the
    archive shipped broken again.
-   - The two version strings must name the SAME build. They are stamped from
-     one `internal/buildinfo` package by one set of `-X` flags, so a mismatch
-     means the archive was assembled from two different builds. Before MGIT-83
-     the daemon had no `--version` at all and answered `flag provided but not
-     defined: -version`, exiting 2 — which broke the `&&` chain and reads
-     exactly like the Gatekeeper kill this step exists to detect. While a machine without a source checkout is
+   - **The liveness probe deliberately uses `--help`, not `--version`.** This
+     check asks exactly one question — did the binary execute, or did
+     Gatekeeper SIGKILL it — and *any* command that runs answers it. Binding
+     it to a feature flag makes a missing feature indistinguishable from the
+     kill: `mgit-sandboxd` gained `--version` only in MGIT-83, and against
+     v0.4.3 or earlier the same line exits 2 with `flag provided but not
+     defined: -version`, which reads as "the archive shipped broken". A
+     post-publish step verifies the artifact you JUST published, so it must
+     not assume a feature that artifact may predate. `--help` exits 0 on every
+     version ever shipped.
+   - **Additionally, from v0.4.4 on**, compare the builds — this is a
+     different question from liveness and is allowed to depend on the feature:
+     ```
+     ./mgit --version && ./mgit-sandboxd --version   # v0.4.4+ only
+     ```
+     Both strings must name the SAME version, commit and date. They are
+     stamped from one `internal/buildinfo` package by one set of `-X` flags,
+     so a mismatch means the archive was assembled from two different builds.
+   - While a machine without a source checkout is
    already set up for this, also run the full sandbox first-run funnel from
    the extracted archive (`mgit sandbox base from <image>` → `mgit work
    --sandbox` → `mgit run`) — this is the same "installed archive, no Go
