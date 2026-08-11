@@ -192,12 +192,16 @@ elif [ "${MGIT_SMOKE_QUARANTINE:-0}" != "1" ]; then
 	# Off by default on a human's machine: exercising this raises a real
 	# "cannot verify ... free of malware" alert, and desensitising a developer
 	# to malware alerts is a worse outcome than skipping one check on a laptop.
-	skip_note "quarantine kill-path check is opt-in (set MGIT_SMOKE_QUARANTINE=1);"
-	echo "        it fires real macOS malware alerts on an enforcing host"
-elif ! spctl --status 2>/dev/null | grep -q 'assessments enabled'; then
-	skip_note "this host reports '$(spctl --status 2>&1)' — it cannot demonstrate a"
-	echo "        Gatekeeper kill, so any result here would be meaningless. This is the"
-	echo "        state on hosted CI runners: the check is real-Mac-only. See step 7."
+	skip_note "quarantine kill-path check is opt-in (set MGIT_SMOKE_QUARANTINE=1) and"
+	echo "        real-Mac only; it fires genuine macOS malware alerts, so it is never"
+	echo "        run unattended and never run in CI. This is checklist step 7."
+elif [ -n "${CI:-}" ]; then
+	# Belt and braces: the workflow does not opt in, and if some future job
+	# does, this refuses anyway. `spctl --status` is NOT a sufficient gate —
+	# measured: a hosted macOS runner reports "assessments enabled" and still
+	# runs a quarantined ad-hoc-signed binary.
+	skip_note "refusing to draw a Gatekeeper conclusion in CI — a hosted runner reports"
+	echo "        'assessments enabled' and runs quarantined binaries anyway. Real-Mac only."
 else
 	echo "  note: this EXECUTES a quarantined binary; macOS will raise a malware alert."
 	# Only binaries proven runnable above: a daemon that cannot load libkrun
@@ -210,9 +214,16 @@ else
 			_quarantined="$_quarantined $ext/$b"
 		fi
 		if run_bounded 60 "$ext/$b" --help; then
-			echo "  NOTE: quarantined $b RAN on a host with assessments ENABLED. The"
-			echo "        documented kill no longer reproduces — notarization or a policy"
-			echo "        change has landed. Update MGIT-64, INSTALL-SANDBOX.md and this check."
+			# Do NOT announce that notarization has landed. Measured: a GitHub
+			# macOS runner reports "assessments enabled" and runs a quarantined
+			# ad-hoc-signed binary anyway, so this outcome does not distinguish
+			# "Gatekeeper stopped killing it" from "this host never would have".
+			# Either way a human has to look, so it is counted as a skip rather
+			# than passed over with a confident-sounding note.
+			skip_note "quarantined $b RAN — INCONCLUSIVE. Either this host does not"
+			echo "        enforce the kill (hosted runners do not, despite spctl saying"
+			echo "        'enabled'), or notarization landed and MGIT-64 + INSTALL-SANDBOX.md"
+			echo "        need updating. Re-run on a real, interactive Mac to tell which."
 		else
 			pass "quarantined $b did not run (killed or blocked), as MGIT-64 documents"
 		fi

@@ -231,9 +231,13 @@ green Linux gate is not evidence about macOS:
    - **The quarantine kill-path check cannot run in CI, and is off by default
      locally.** A hosted runner reports `spctl --status: assessments disabled`
      and has no logged-in user session, so it cannot demonstrate a Gatekeeper
-     kill — proven the hard way: on this job's first run a quarantined binary
-     RAN there, and the check duly announced that notarization had landed. The
-     script now gates on the assessment state and skips with that reason. It is
+     kill — proven the hard way twice: a quarantined binary RAN there and the
+     check announced that notarization had landed, and gating on
+     `spctl --status` did not help, because a hosted runner reports
+     "assessments enabled" and runs the binary anyway. The workflow therefore
+     does not opt in at all, and the script refuses to draw the conclusion
+     under `CI`. A quarantined binary that RUNS is now reported as
+     INCONCLUSIVE rather than as evidence of notarization. It is
      off by default on a developer machine too, because executing a quarantined
      binary raises a real "cannot verify ... free of malware" alert and
      desensitising an operator to malware alerts is worse than skipping one

@@ -161,7 +161,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          export MGIT_SMOKE_QUARANTINE=1
+          # MGIT_SMOKE_QUARANTINE is deliberately NOT set. The Gatekeeper
+          # kill-path cannot be exercised on a hosted runner: it reports
+          # `spctl --status: assessments enabled` and still RUNS a quarantined
+          # ad-hoc-signed binary, so the check concluded twice that notarization
+          # had landed when it had not. Two different gates failed to make it
+          # meaningful here. It is a real-Mac step (checklist step 7), and a
+          # check that cannot be trusted is worse than one that is absent.
           # STREAM the output, do not capture it. `out="$(...)"` under `bash -e`
           # exits AT THE ASSIGNMENT when the script fails, so the echo never runs
           # and the log shows nothing but "exit code 1" -- which is what happened
