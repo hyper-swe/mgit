@@ -214,13 +214,50 @@ func TestE2E_Libkrun_RealVM_Sync_RefusesADeleteOfAPathTheGuestChanged(t *testing
 	if len(res.Deleted) != 1 || res.Deleted[0] != "seed.txt" {
 		t.Fatalf("the applied sync must report the delete it performed, got %+v", res)
 	}
-	// THE ASSERTION: the guest, not the host, no longer has the file. A
-	// host-side stat would pass even if the guest still held the old inode.
-	out, code := guestReadStatus(t, sb, appPath)
-	if code == 0 {
-		t.Fatalf("the guest can still read %s (%q) after a delete the sync reported "+
-			"as applied — the host tree is right and the guest is stale", appPath, out)
+	// THE ASSERTION, in the two halves that are true on every backend. A
+	// host-side stat would pass even if the guest still held the old inode, so
+	// both halves ask the GUEST.
+	//
+	// Why not simply "the guest's open fails": on libkrun's LINUX virtio-fs the
+	// guest's kernel caches name lookups for ~5s, so a process that had already
+	// resolved this path can still resolve it for a moment after the unlink —
+	// measured, and upstream (macOS/libkrun measures 0.00s). What must never
+	// happen, and what this pins, is that the guest gets the deleted CONTENT
+	// back: the sync empties a file before unlinking it precisely so the
+	// lingering name yields nothing usable. Refs: MGIT-90, ADR-011
+	entries := guestList(t, sb, sb.worktree)
+	if strings.Contains(entries, "ENTRY seed.txt") {
+		t.Fatalf("the guest still LISTS the deleted path after a sync reported it "+
+			"deleted; listing:\n%s", entries)
 	}
-	t.Logf("REAL VM PASS: delete over a guest edit refused, then applied once resolved; "+
-		"the guest's reader now exits %d for the removed path", code)
+	out, _ := guestReadStatus(t, sb, appPath)
+	if out != "" {
+		t.Fatalf("the guest read %q from a path the sync reported as deleted — the "+
+			"host tree is right and the guest is serving deleted content, which is "+
+			"the silent-staleness failure this verb exists to prevent", out)
+	}
+	t.Logf("REAL VM PASS: delete over a guest edit refused, then applied once resolved; " +
+		"the guest neither lists the path nor can read anything from it")
+}
+
+// guestList asks the guest to enumerate a directory. The guest's listing and
+// the host's can disagree — that disagreement is the subject of MGIT-90 — so a
+// test about what the guest observes has to ask the guest. Refs: MGIT-90
+func guestList(t *testing.T, s syncSandbox, dir string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	conn, err := newGuestDialer(s.workDir).DialGuest(ctx, s.id)
+	if err != nil {
+		t.Fatalf("host could not reach the guest exec channel: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	var out, errBuf bytes.Buffer
+	if _, err := guestexec.Run(conn, model.ExecRequest{
+		Command: []string{"/bin/fsprobe", "ls", dir},
+	}, &out, &errBuf); err != nil {
+		t.Fatalf("guest ls %s: %v (stderr=%q)", dir, err, errBuf.String())
+	}
+	return out.String()
 }

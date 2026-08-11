@@ -85,6 +85,7 @@ func buildGuestSupervisor(t *testing.T) string {
 		t.Fatalf("build mgit-guest: %v\n%s", err, out)
 	}
 	buildGuestCat(t, guestRoot)
+	buildGuestFSProbe(t, guestRoot)
 	return guestRoot
 }
 
@@ -125,6 +126,23 @@ func main() {
 	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
 	if o, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build guest cat: %v\n%s", err, o)
+	}
+}
+
+// buildGuestFSProbe installs the in-guest filesystem probe, which is how these
+// tests ask the GUEST what it sees rather than asking the host about a
+// directory the host already knows the answer for. Refs: MGIT-90
+func buildGuestFSProbe(t *testing.T, guestRoot string) {
+	t.Helper()
+	_, thisFile, _, _ := runtime.Caller(0)
+	src := filepath.Join(filepath.Dir(thisFile), "testdata", "fsprobe")
+	out := filepath.Join(guestRoot, "bin", "fsprobe")
+	//nolint:gosec // G204: fixed argv
+	build := exec.Command("go", "build", "-trimpath", "-o", out, ".")
+	build.Dir = src
+	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+	if o, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fsprobe: %v\n%s", err, o)
 	}
 }
 

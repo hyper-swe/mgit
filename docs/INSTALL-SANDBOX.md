@@ -32,7 +32,7 @@ do — the backends are not interchangeable:
 | exec in the guest, and `land` behind it | yes | yes | **exec channel resets** — intermittently over vsock, always via `mgit run` (MGIT-91) |
 | hostile-guest containment (SEC-03) | yes | yes | yes |
 | guest networking + live egress policy | yes | yes | live-validated (CI-gated) |
-| host edits reach a **running** guest (`sandbox sync`) | yes | **refused** | **content edits only** (MGIT-90) |
+| host edits reach a **running** guest (`sandbox sync`) | yes | **refused** | live-validated (CI-gated) |
 | artifact export (`sandbox export`) | yes | **refused** | yes |
 | guest can write outside `/tmp`, `/etc` and its worktree | yes | yes | **no** (upstream, MGIT-89) |
 
@@ -89,10 +89,14 @@ measured on real hardware:
   because mgit-guest probes for the refusal at boot and shadows that one
   directory with a tmpfs seeded from the image — which is what lets a networked
   guest start. Tracked as MGIT-89.
-- **`sandbox sync` carries content, not the namespace.** A host edit to an
-  existing file reaches the running guest; a file the host CREATES or DELETES
-  does not — the guest keeps reading the old file even though the verb reports
-  the delete as applied. Relaunch after a change that adds or removes files.
+- **A deleted path can stay visible to the guest for a few seconds** — but
+  never readable. libkrun's Linux virtio-fs caches name lookups for ~5s (the
+  same measurement on macOS returns 0.00s), so a guest process that already
+  resolved a path may keep resolving it briefly after the sync removes it. The
+  sync empties a file before unlinking it, so the lingering name yields an
+  empty file rather than the deleted contents: a build that reads it fails
+  loudly instead of silently succeeding against code you removed. Creations and
+  content edits reach the guest immediately. Refs: MGIT-90
 
 Use libkrun when the loop needs host edits delivered into a running guest or
 artifacts read back out — it now has working egress and live policy too, so

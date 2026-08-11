@@ -233,7 +233,7 @@ visible to an agent loop rather than an implementation detail:
 | hostile-guest containment (SEC-03) | ✅ | ✅ | ✅ |
 | guest networking + live egress policy | ✅ | ✅ | ✅ live-validated (CI-gated) |
 | guest can write outside `/tmp`, `/etc` and its worktree | ✅ | ✅ | ❌ (upstream, MGIT-89) |
-| host edits reach a **running** guest (`sandbox sync`) | ✅ | ❌ refused | ⚠️ **content edits only** |
+| host edits reach a **running** guest (`sandbox sync`) | ✅ | ❌ refused | ✅ live-validated (CI-gated) |
 | artifact export (`sandbox export`) | ✅ | ❌ refused | ✅ |
 
 firecracker packs the worktree into an ext4 image at launch and the guest
@@ -274,14 +274,17 @@ hardware:
   Tracked as MGIT-89; `/etc` is writable because mgit-guest detects the
   refusal and shadows it with a seeded tmpfs, which is what lets a networked
   guest start at all.
-- **`sandbox sync` delivers changed file CONTENT to a running guest, but not
-  files created or deleted on the host.** The verb reports the delete as
-  applied and the guest keeps reading the old file. Relaunch the sandbox after
-  a change that adds or removes files.
+- **A deleted path can stay *visible* to the guest for a few seconds**, though
+  never *readable*: libkrun's Linux virtio-fs caches name lookups for ~5s
+  (macOS measures 0s), so a guest process that already resolved a path may keep
+  resolving it after the sync removes it. mgit empties a file before unlinking
+  it, so what lingers is an empty name, never deleted content — a build reading
+  it fails loudly instead of silently compiling code you deleted. Creations and
+  content edits are visible immediately.
 
-So on Linux, **libkrun now does both**: guest egress with live policy AND
-re-staging/export into a long-lived guest. That combination had no backend at
-all before MGIT-89. firecracker remains the choice when the agent must write
+So on Linux, **libkrun now does the whole loop**: guest egress with live
+policy, host edits re-staged into a long-lived guest, and artifacts read back
+out. That combination had no backend at all before MGIT-89. firecracker remains the choice when the agent must write
 freely across the image root (`apt install`), which libkrun cannot do here.
 The capability set above is exactly what CI asserts on every push, named test
 by test in `scripts/e2e/libkrun_linux_column.sh`.
