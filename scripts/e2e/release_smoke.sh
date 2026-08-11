@@ -66,6 +66,28 @@ skip_note() {
 	skipped=$((skipped + 1))
 }
 
+# run_bounded <seconds> <cmd...> — run a command with a hard time bound.
+#
+# Executing a QUARANTINED binary is not a fast, predictable failure. Gatekeeper
+# performs an assessment first, which can reach out to Apple, and for a binary
+# it has never seen it can block for a long time or wait on a UI prompt that
+# will never be answered on a runner. Measured: this hung past ten minutes
+# against a freshly published v0.4.4 while v0.4.3 (already assessed on that
+# host) was killed instantly. Unbounded, that turns a check into a stuck job.
+#
+# macOS ships no coreutils `timeout`, so this is the portable form.
+run_bounded() {
+	_secs="$1"
+	shift
+	"$@" >/dev/null 2>&1 &
+	_pid=$!
+	( sleep "$_secs"; kill -9 "$_pid" 2>/dev/null ) 2>/dev/null &
+	_killer=$!
+	if wait "$_pid" 2>/dev/null; then _rc=0; else _rc=$?; fi
+	kill "$_killer" 2>/dev/null || true
+	return "$_rc"
+}
+
 echo "== release smoke for $TAG =="
 
 # ---------------------------------------------------------------------------
@@ -137,12 +159,14 @@ else
 			xattr -w com.apple.quarantine "0081;00000000;release_smoke;" "$ext/$b"
 			_quarantined="$_quarantined $ext/$b"
 		fi
-		if "$ext/$b" --help >/dev/null 2>&1; then
+		if run_bounded 60 "$ext/$b" --help; then
 			echo "  NOTE: quarantined $b RAN. The documented Gatekeeper kill no longer"
 			echo "        reproduces — notarization or a policy change has landed."
 			echo "        Update MGIT-64, docs/INSTALL-SANDBOX.md and this check."
 		else
-			pass "quarantined $b is killed, as MGIT-64 documents"
+			# Killed outright, or blocked by an assessment that never resolved.
+			# Both mean the same thing to a user: the binary did not run.
+			pass "quarantined $b did not run (killed or blocked), as MGIT-64 documents"
 		fi
 		xattr -d com.apple.quarantine "$ext/$b" 2>/dev/null || true
 	done

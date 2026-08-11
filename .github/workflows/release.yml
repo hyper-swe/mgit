@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - "v*.*.*"
+  # Re-run the post-publish smoke against an ALREADY-PUBLISHED tag. Without
+  # this the only way to exercise it is to cut another release, which is how a
+  # broken gate stays broken. Refs: MGIT-84
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "published tag to smoke (e.g. v0.4.4); skips build+publish"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -12,6 +21,7 @@ permissions:
 jobs:
   preflight:
     name: Preflight Checks
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -133,6 +143,9 @@ jobs:
 
   release-smoke:
     name: Post-publish smoke (published archive)
+    # `always()` so a manual dispatch runs it with the build jobs skipped, while
+    # a tag push still waits for the release it is meant to verify.
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.release.result == 'success')
     needs: release
     # A FRESH macOS runner: this job must not be the machine that built the
     # release, because the whole point is exercising what a user who downloads
@@ -149,14 +162,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           export MGIT_SMOKE_QUARANTINE=1
-          out="$(bash scripts/e2e/release_smoke.sh "${{ github.ref_name }}" 2>&1)"
-          echo "$out"
+          # STREAM the output, do not capture it. `out="$(...)"` under `bash -e`
+          # exits AT THE ASSIGNMENT when the script fails, so the echo never runs
+          # and the log shows nothing but "exit code 1" -- which is what happened
+          # on this job's first real run. A diagnostic gate that hides its
+          # diagnostics is worse than no gate.
+          set -o pipefail
+          bash scripts/e2e/release_smoke.sh "${{ inputs.tag || github.ref_name }}" 2>&1 \
+            | tee "$RUNNER_TEMP/smoke.log" || true
           # A skip must never read as a pass -- the recurring failure this whole
           # gate exists to prevent. Assert the PASS line, then fail on any SKIP
           # that a hosted runner should not have produced.
-          echo "$out" | grep -q 'RELEASE SMOKE: PASS' || {
-            echo "::error::release smoke did not report PASS"; exit 1; }
-          if echo "$out" | grep -q 'SKIP: not macOS'; then
+          grep -q 'RELEASE SMOKE: PASS' "$RUNNER_TEMP/smoke.log" || {
+            echo "::error::release smoke did not report PASS (see the streamed output above)"; exit 1; }
+          if grep -q 'SKIP: not macOS' "$RUNNER_TEMP/smoke.log"; then
             echo "::error::ran on a non-macOS runner; the darwin checks did not run"; exit 1
           fi
 
