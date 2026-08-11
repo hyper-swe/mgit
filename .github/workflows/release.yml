@@ -154,6 +154,18 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      # Install libkrun so this gate can actually exercise the DAEMON. Without
+      # it mgit-sandboxd cannot load (it links libkrun by absolute path), so the
+      # daemon liveness check, the mgit/mgit-sandboxd build-agreement check and
+      # the NET=1 capability check all skip -- and a gate that skips its most
+      # important assertions is barely a gate. Same three steps release.yml's
+      # build job uses; `brew trust` is required for a third-party tap.
+      # Refs: MGIT-84, MGIT-75, MGIT-61.14
+      - name: Install libkrun (so the daemon is testable)
+        run: |
+          brew tap libkrun/krun
+          brew trust libkrun/krun
+          brew install libkrun
       # The script downloads the just-published archive itself, so nothing here
       # can accidentally test a locally built binary -- the mistake that let the
       # quarantine defect ship once already.
@@ -184,6 +196,13 @@ jobs:
           if grep -q 'SKIP: not macOS' "$RUNNER_TEMP/smoke.log"; then
             echo "::error::ran on a non-macOS runner; the darwin checks did not run"; exit 1
           fi
+          # libkrun is installed above, so these three MUST have run. Letting
+          # them skip silently is how a gate quietly stops checking anything.
+          for must in 'mgit-sandboxd ran' 'both binaries report one build' \
+                      'krun_add_net_unixgram'; do
+            grep -q "$must" "$RUNNER_TEMP/smoke.log" || {
+              echo "::error::expected check did not run: $must"; exit 1; }
+          done
 
   homebrew:
     name: Update Homebrew Tap
