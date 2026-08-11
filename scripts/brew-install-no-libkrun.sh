@@ -87,7 +87,7 @@ echo "    ok: the libkrun/krun tap is not present"
 # --------------------------------------------------------------------------
 WORK="$(mktemp -d)"
 echo "==> Building mgit"
-CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=${VERSION}" \
+CGO_ENABLED=0 go build -trimpath -ldflags "-X github.com/hyper-swe/mgit/internal/buildinfo.version=${VERSION}" \
   -o "$WORK/mgit" "$REPO_ROOT/cmd/mgit/"
 tar -czf "$WORK/mgit.tar.gz" -C "$WORK" mgit
 SHA="$(shasum -a 256 "$WORK/mgit.tar.gz" | cut -d' ' -f1)"
