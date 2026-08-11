@@ -112,6 +112,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		"controlproto": true, // host CLI<->daemon control-plane protocol (FR-17.34, MGIT-11.10.7)
 		"agentadapter": true, // cooperative agent-harness routing config (FR-17, MGIT-11.11.1)
 		"packaging":    true, // release/distribution config regression guards (MGIT-44)
+		"buildinfo":    true, // ldflags-stamped build metadata both shipped binaries report (MGIT-83)
 	}
 
 	entries, err := os.ReadDir(filepath.Join(root, "internal"))

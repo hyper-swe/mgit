@@ -218,19 +218,17 @@ green Linux gate is not evidence about macOS:
    gh release download <tag> -p 'mgit_*_darwin_arm64.tar.gz' -D /tmp/mgit-smoke
    cd /tmp/mgit-smoke && tar -xzf mgit_*_darwin_arm64.tar.gz
    xattr -l mgit mgit-sandboxd        # must show com.apple.quarantine
-   ./mgit --version && ./mgit-sandboxd --help >/dev/null
+   ./mgit --version && ./mgit-sandboxd --version
    ```
    Both must run without the `xattr -d com.apple.quarantine mgit
    mgit-sandboxd` remedy (docs/INSTALL-SANDBOX.md) — if either is killed, the
    archive shipped broken again.
-   - `mgit-sandboxd` has **no `--version` flag**; this step used to invoke one
-     and the daemon answered `flag provided but not defined: -version` and
-     exited 2, breaking the `&&` chain. That is the worst possible failure for
-     THIS check, whose entire job is to distinguish "the binary ran" from
-     "Gatekeeper SIGKILLed it" — a spurious non-zero exit reads as the latter.
-     `--help` exits 0 and proves execution just as well. Adding the flag is
-     MGIT-83; when it lands, this line can go back to `--version`. Found by
-     running this step against the real 0.4.3 tap install (2026-08-10). While a machine without a source checkout is
+   - The two version strings must name the SAME build. They are stamped from
+     one `internal/buildinfo` package by one set of `-X` flags, so a mismatch
+     means the archive was assembled from two different builds. Before MGIT-83
+     the daemon had no `--version` at all and answered `flag provided but not
+     defined: -version`, exiting 2 — which broke the `&&` chain and reads
+     exactly like the Gatekeeper kill this step exists to detect. While a machine without a source checkout is
    already set up for this, also run the full sandbox first-run funnel from
    the extracted archive (`mgit sandbox base from <image>` → `mgit work
    --sandbox` → `mgit run`) — this is the same "installed archive, no Go

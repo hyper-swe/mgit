@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hyper-swe/mgit/internal/buildinfo"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/libkrun"
 	"github.com/hyper-swe/mgit/internal/service"
@@ -40,7 +41,7 @@ func (a slogBackendAuditor) RecordBackendSelection(_ context.Context, detail str
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 // daemonOpts is the parsed command-line configuration.
@@ -57,6 +58,8 @@ type daemonOpts struct {
 	maxConcLands int
 	maxLandBytes int64
 	ackReduced   bool
+	// version prints the build and exits WITHOUT starting a daemon.
+	version bool
 }
 
 // parseFlags parses argv. It returns nil opts with an exit code when the
@@ -81,6 +84,8 @@ func parseFlags(args []string, logSink io.Writer) (*daemonOpts, int) {
 		"sandbox backend: auto (platform hypervisor) or container (REDUCED isolation; requires --acknowledge-reduced-isolation)")
 	flags.BoolVar(&o.ackReduced, "acknowledge-reduced-isolation", false,
 		"accept the container fallback's shared-kernel risk (recorded in the audit trail)")
+	flags.BoolVar(&o.version, "version", false,
+		"print the build (version, commit, date) and exit without starting the daemon")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil, 0
@@ -92,7 +97,7 @@ func parseFlags(args []string, logSink io.Writer) (*daemonOpts, int) {
 
 // run wires flags into the daemon and blocks until exit. Split from
 // main for testability (DI; no globals).
-func run(args []string, logSink io.Writer) int {
+func run(args []string, out, logSink io.Writer) int {
 	// The hidden re-exec subcommand: run ONE libkrun microVM and nothing
 	// else. Dispatched before flag parsing — it is not a flag-shaped verb,
 	// and the child must never wander into daemon startup. On success the
@@ -104,6 +109,21 @@ func run(args []string, logSink io.Writer) int {
 	opts, code := parseFlags(args, logSink)
 	if opts == nil {
 		return code
+	}
+	// Answer --version before anything else touches the host: no socket is
+	// bound, no host root is read, no backend is probed. It is the one flag
+	// that must work on a machine where the daemon itself cannot run, because
+	// "which build is this?" is the first question asked when it cannot.
+	// It prints to STDOUT — the version is data a caller may capture, unlike
+	// the daemon's structured log, which goes to stderr. Refs: MGIT-83
+	if opts.version {
+		// Self-identifying, like `mgit --version` — this string gets pasted
+		// into bug reports next to mgit's, and "which binary is this?" should
+		// not depend on the reader remembering the order.
+		if _, err := fmt.Fprintln(out, "mgit-sandboxd version "+buildinfo.String()); err != nil {
+			return 1
+		}
+		return 0
 	}
 	logger := slog.New(slog.NewJSONHandler(logSink, nil))
 	if opts.socket == "" {

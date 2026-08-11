@@ -12,18 +12,14 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-)
 
-// Build-time variables injected via ldflags.
-var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
+	"github.com/hyper-swe/mgit/internal/buildinfo"
 )
 
 // Version is the resolved version string (ldflags or module build info),
-// consumed by the docs generator. Refs: MGIT-40
-var Version = func() string { v, _, _ := resolveBuildInfo(); return v }()
+// consumed by the docs generator. The ldflags-injected vars themselves live in
+// internal/buildinfo, which mgit-sandboxd reports from too. Refs: MGIT-40, MGIT-83
+var Version = func() string { v, _, _ := buildinfo.Resolve(); return v }()
 
 func main() {
 	if err := rootCmd().Execute(); err != nil {

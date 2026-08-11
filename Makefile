@@ -11,7 +11,12 @@ COVER_OUT   := cover.out
 VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT   := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE     := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS  := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)"
+# -X targets internal/buildinfo (NOT main): both mgit and mgit-sandboxd
+# report the same build from one implementation. buildinfo.LDFlagPath is
+# asserted against this line by TestLDFlagPath_MatchesTheBuildConfigs, so a
+# package move cannot silently leave every binary reporting "dev". Refs: MGIT-83
+BUILDINFO := github.com/hyper-swe/mgit/internal/buildinfo
+LDFLAGS  := -ldflags "-X $(BUILDINFO).version=$(VERSION) -X $(BUILDINFO).commit=$(COMMIT) -X $(BUILDINFO).date=$(DATE)"
 
 # libkrun is the DEFAULT sandbox backend on macOS (ADR-010), so mgit-sandboxd
 # links it and cgo needs its pkg-config. Homebrew does not put that on the

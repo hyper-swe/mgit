@@ -24,9 +24,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.ShortCommit}}
-      - -X main.date={{.Date}}
+      - -X github.com/hyper-swe/mgit/internal/buildinfo.version={{.Version}}
+      - -X github.com/hyper-swe/mgit/internal/buildinfo.commit={{.ShortCommit}}
+      - -X github.com/hyper-swe/mgit/internal/buildinfo.date={{.Date}}
     goos:
       - linux
       - darwin
@@ -40,8 +40,10 @@ builds:
   # mgit-sandboxd (Linux): the per-task microVM daemon (FR-17.16). On Linux
   # it is PURE Go — firecracker is launched as a subprocess and the vzf
   # (macOS) backend compiles to its unavailable stub off darwin — so it
-  # cross-builds CGO-free on the same ubuntu runner as mgit. It has no
-  # version vars, so it takes only -s -w. Refs: MGIT-44, FR-17.16
+  # cross-builds CGO-free on the same ubuntu runner as mgit. It is stamped
+  # with the SAME internal/buildinfo -X flags as mgit: the two ship in one
+  # archive and `mgit --version` / `mgit-sandboxd --version` must not be able
+  # to disagree about the build. Refs: MGIT-44, FR-17.16, MGIT-83
   - id: mgit-sandboxd-linux
     main: ./cmd/mgit-sandboxd/
     binary: mgit-sandboxd
@@ -51,6 +53,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
+      - -X github.com/hyper-swe/mgit/internal/buildinfo.version={{.Version}}
+      - -X github.com/hyper-swe/mgit/internal/buildinfo.commit={{.ShortCommit}}
+      - -X github.com/hyper-swe/mgit/internal/buildinfo.date={{.Date}}
     goos:
       - linux
     goarch:
@@ -92,6 +97,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
+      - -X github.com/hyper-swe/mgit/internal/buildinfo.version={{.Version}}
+      - -X github.com/hyper-swe/mgit/internal/buildinfo.commit={{.ShortCommit}}
+      - -X github.com/hyper-swe/mgit/internal/buildinfo.date={{.Date}}
     goos:
       - darwin
     goarch:

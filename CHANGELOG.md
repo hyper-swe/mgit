@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `mgit-sandboxd --version`
+
+- **The daemon can now say which build it is.** It shipped in every archive and installed beside `mgit` via Homebrew, but had no `--version` flag at all: it answered `flag provided but not defined: -version` and exited 2. An operator debugging a sandbox that will not launch could not ask the binary what it was. (MGIT-83)
+- **It answers before touching the host** — no socket bound, no host root read, no backend probed — because the question is asked precisely when the daemon *cannot* start. The version goes to stdout, where a caller can capture it, rather than joining the structured log on stderr.
+- **Both binaries now report one build from one implementation.** Version resolution and formatting moved into `internal/buildinfo`, and the `-X` ldflags in the Makefile and GoReleaser target that package for `mgit` *and* both `mgit-sandboxd` builds — the daemon's builds previously carried no version stamp at all, so adding the flag alone would have made it report `dev` in every release. A guard test asserts the ldflags path in both build configs matches the package's real import path: moving the package would otherwise still compile, still link, and silently ship binaries reporting `dev (commit: none, built: unknown)`.
+- **This was found by running the release checklist rather than reading it.** The Gatekeeper smoke step chained `./mgit --version && ./mgit-sandboxd --version` to distinguish "the binary ran" from "Gatekeeper SIGKILLed it" — so the missing flag's exit 2 read as exactly the failure the step exists to catch. The step now also compares the two strings, since they are stamped together and a mismatch means the archive was assembled from two different builds. (MGIT-83, MGIT-64)
+
 ## [0.4.3] - 2026-08-10
 
 Three verbs the integrating lane asked for, two defects found by using mgit on
