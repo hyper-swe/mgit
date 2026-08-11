@@ -42,30 +42,6 @@ TestE2E_Libkrun_RealVM_ArtifactExport_GuestBuiltTreeReachesTheHost
 TestE2E_Libkrun_RealVM_ArtifactExport_HostileGuestIsRefused
 TestE2E_Libkrun_RealVM_ModeFidelity_HostCanObserveTheModeTheGuestSet
 TestE2E_Libkrun_RealVM_VirtiofsPerf
-"
-
-# Two measured gaps, both in libkrun's LINUX virtio-fs behaviour rather than in
-# mgit's own logic, and both reproduced identically on a hosted runner and on
-# bare metal:
-#
-#   (a) The guest's ROOT is effectively read-only: creating a file under the
-#       writable-root overlay fails EOPNOTSUPP (/tmp and the worktree share are
-#       fine). mgit-guest writes /etc/resolv.conf while configuring the
-#       network, so it dies there and every allowlist/open sandbox exits before
-#       it serves. That takes the live egress-policy verbs with it.
-#   (b) `mgit run -- <bare command>` drops the guest exec channel; only an
-#       absolute path works. That is a CLI/daemon-level gap rather than a test
-#       in this package, so its tripwire is the shared posture script, run by
-#       the workflow (see e2e.yml's posture tripwire step).
-#   (c) A sync's CREATES and DELETES do not reach a running guest, although
-#       content updates do. The verb reports the delete as applied and the
-#       guest still reads the file — the silent-staleness failure MGIT-76's
-#       e2e exists to catch.
-#
-# Only two representatives are RUN as the tripwire; the rest are listed so the
-# classification below is complete. Refs: MGIT-87
-KNOWN_GAP="
-TestE2E_Libkrun_RealVM_Sync_RefusesADeleteOfAPathTheGuestChanged
 TestE2E_Libkrun_RealVM_Allowlist_AllowedFlowSucceeds
 TestE2E_Libkrun_RealVM_Allowlist_DNSResolvesAllowlistedName
 TestE2E_Libkrun_RealVM_Allowlist_DenyIsAPolicyRefusal
@@ -75,6 +51,19 @@ TestE2E_Libkrun_RealVM_LivePolicyRevoke
 TestE2E_Libkrun_RealVM_Revoke_KillsEstablishedFlow
 TestE2E_Libkrun_RealVM_Revoke_DrainKeepsEstablishedFlow
 TestE2E_Libkrun_RealVM_ControlChannelIsNotVisibleToTheGuest
+"
+
+# ONE measured gap remains, in libkrun's LINUX virtio-fs behaviour, reproduced
+# identically on a hosted runner and on bare metal: a sync's CREATES and DELETES
+# do not reach a running guest, although content updates do. The verb reports
+# the delete as applied and the guest still reads the file — the silent-
+# staleness failure MGIT-76's e2e exists to catch. Tracked as MGIT-90.
+#
+# The networked half of this list moved to VALIDATED when MGIT-89 was fixed:
+# the guest could not write /etc, so mgit-guest died configuring its resolver
+# and no allowlist/open sandbox started at all. Refs: MGIT-87, MGIT-89, MGIT-90
+KNOWN_GAP="
+TestE2E_Libkrun_RealVM_Sync_RefusesADeleteOfAPathTheGuestChanged
 "
 
 # INTERMITTENT on this backend, so gated NEITHER way: asserting a pass would
@@ -98,7 +87,6 @@ TestE2E_Libkrun_RealVM_NpmTreePerf
 # The subset the tripwire actually runs, one per gap mechanism.
 GAP_TRIPWIRE="
 TestE2E_Libkrun_RealVM_Sync_RefusesADeleteOfAPathTheGuestChanged
-TestE2E_Libkrun_RealVM_Allowlist_AllowedFlowSucceeds
 "
 
 # runPattern prints a `go test -run` alternation for a list.

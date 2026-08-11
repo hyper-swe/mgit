@@ -31,10 +31,10 @@ do — the backends are not interchangeable:
 | compose a guest base, launch a sandbox | live-validated | live-validated (CI-gated) | live-validated (CI-gated) |
 | exec in the guest, and `land` behind it | yes | yes | **exec channel resets** — intermittently over vsock, always via `mgit run` (MGIT-91) |
 | hostile-guest containment (SEC-03) | yes | yes | yes |
-| guest networking + live egress policy | yes | yes | **no networked guest at all** (MGIT-89) |
+| guest networking + live egress policy | yes | yes | live-validated (CI-gated) |
 | host edits reach a **running** guest (`sandbox sync`) | yes | **refused** | **content edits only** (MGIT-90) |
 | artifact export (`sandbox export`) | yes | **refused** | yes |
-| guest can write outside `/tmp` and its worktree | yes | yes | **no** (MGIT-89) |
+| guest can write outside `/tmp`, `/etc` and its worktree | yes | yes | **no** (upstream, MGIT-89) |
 
 libkrun and vzf share the worktree as a host **directory** over virtio-fs, so
 the host can re-stage into it and read out of it. firecracker packs it into an
@@ -68,34 +68,37 @@ measured on real hardware:
   than simply broken; CI runs those tests and prints the outcome without gating
   on it, because a capability that comes and goes is not one to claim. Tracked
   as MGIT-91; it is also why the shared posture script cannot pass here.
-- **The guest's root filesystem is effectively read-only.** Creating a file
-  anywhere under the writable-root overlay fails with `operation not
-  supported`; `/tmp` (tmpfs) and the mounted worktree are writable and behave
-  normally. Measured through the production path on a real `debian:12` base:
+- **The guest cannot write most of its image root.** `/tmp`, `/etc` and the
+  mounted worktree are writable; anything else under `/` fails with `operation
+  not supported`, so an agent can build and commit but cannot `apt install`
+  or otherwise mutate the image.
+
+  The cause is upstream and one errno wide. overlayfs calls
+  `ovl_copy_fileattr()` on every file and directory copy-up, which issues
+  `FS_IOC_GETFLAGS` on the lower inode; it tolerates `ENOTTY` and `EINVAL` as
+  "this filesystem has no file attributes" and propagates anything else.
+  Measured on the same guest kernel, same overlay options:
 
   ```
-  echo hi > /etc/probe        -> cannot create: Operation not supported
-  echo hi > /tmp/probe        -> ok
-  echo hi > ./probe (worktree)-> ok
+  libkrun macOS fs device : FS_IOC_GETFLAGS -> ENOTTY (25)      copy-up works
+  libkrun Linux virtio-fs : FS_IOC_GETFLAGS -> EOPNOTSUPP (95)  copy-up fails
   ```
 
-  So an agent can build and commit in its worktree, but cannot install
-  packages, write `/etc`, or otherwise mutate the image.
-- **Consequently, a guest with a network does not start at all.** mgit-guest
-  writes the resolver to `/etc/resolv.conf` during startup and dies on the same
-  refusal, so every `--network allowlist` and `--network open` sandbox exits
-  before it serves. `--network none` is the only working mode. The daemon does
-  select the right enforcer for `sandbox policy` (its log says
-  `policy_wired backend=libkrun`), but with no live guest there is nothing for
-  those verbs to act on.
+  No overlay option set changes it (`userxattr`, `index=off`, `metacopy=off`,
+  `redirect_dir=off`, `xino=off` were all measured). `/etc` is writable anyway
+  because mgit-guest probes for the refusal at boot and shadows that one
+  directory with a tmpfs seeded from the image — which is what lets a networked
+  guest start. Tracked as MGIT-89.
 - **`sandbox sync` carries content, not the namespace.** A host edit to an
   existing file reaches the running guest; a file the host CREATES or DELETES
   does not — the guest keeps reading the old file even though the verb reports
   the delete as applied. Relaunch after a change that adds or removes files.
 
-Use firecracker when the agent needs egress; use libkrun (offline) when it
-needs re-staging into a long-lived guest or artifact export. A loop needing
-both is not served on Linux today; that is MGIT-86.
+Use libkrun when the loop needs host edits delivered into a running guest or
+artifacts read back out — it now has working egress and live policy too, so
+that combination is served on Linux (it was not before MGIT-89). Use
+firecracker when the agent must write across the image root, e.g. `apt
+install`.
 
 The exact capability set the CI gate asserts — and the tests that stand for
 each gap — is `scripts/e2e/libkrun_linux_column.sh`. Building libkrun itself on
