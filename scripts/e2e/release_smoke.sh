@@ -205,6 +205,29 @@ fi
 # Step 6: the Homebrew channel. Verified against whatever is installed, because
 # the install itself mutates the operator's machine and is the human's call.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# The tap must be reachable WITHOUT credentials. It was private once, and every
+# person who tested had credentials, so `brew tap` worked for them and failed
+# for every external user (MGIT-66). An authenticated check cannot see this;
+# only an anonymous fetch can.
+# ---------------------------------------------------------------------------
+echo "== homebrew tap is reachable unauthenticated (MGIT-66) =="
+if ! command -v curl >/dev/null 2>&1; then
+	skip_note "curl not present — cannot make an anonymous request"
+else
+	# -H bypasses any ambient credential helper; a 404 here means private.
+	code="$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization:' \
+		https://raw.githubusercontent.com/hyper-swe/homebrew-tap/main/Formula/mgit.rb || echo 000)"
+	if [ "$code" = "200" ]; then
+		pass "the tap formula is publicly fetchable (HTTP $code)"
+	else
+		_e2e_fail "the Homebrew tap is NOT publicly reachable (HTTP $code).
+      Every external user's \`brew install hyper-swe/tap/mgit\` fails, while it
+      keeps working for anyone with credentials — which is how this shipped
+      broken once. Make hyper-swe/homebrew-tap public."
+	fi
+fi
+
 echo "== homebrew channel =="
 if ! command -v brew >/dev/null 2>&1; then
 	skip_note "brew not present"
