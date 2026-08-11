@@ -540,8 +540,12 @@ func loaderPathVar() string {
 // preference order. They are the package managers' defaults: Homebrew on both
 // architectures, and the usual system prefixes on Linux where libkrun is
 // almost always built from source (no current Ubuntu release packages it).
+// /usr/local/lib64 is listed because it is where a from-source Linux install
+// actually lands — libkrunfw's Makefile puts a 64-bit build in $(PREFIX)/lib64
+// — and Ubuntu's ld.so.conf does not cover it, so nothing else would.
 var libkrunfwSearchDirs = []string{
 	"/opt/homebrew/lib",
+	"/usr/local/lib64",
 	"/usr/local/lib",
 	"/usr/lib",
 	"/usr/lib64",

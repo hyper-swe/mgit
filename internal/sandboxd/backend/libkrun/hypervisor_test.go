@@ -909,6 +909,31 @@ func TestChildEnv_OperatorsPathComesFirst(t *testing.T) {
 	}
 }
 
+// TestLibkrunfwSearchDirs_CoversTheLinuxFromSourcePrefix is the Linux twin of
+// the Homebrew case above, and it is not hypothetical: no Ubuntu release
+// packages libkrun or libkrunfw, so every Linux install is a from-source
+// `make PREFIX=/usr/local install` — and libkrunfw's own Makefile installs a
+// 64-bit build into $(PREFIX)/lib64, NOT $(PREFIX)/lib. That directory is also
+// absent from Ubuntu's ld.so.conf, so nothing else puts it on the loader's
+// path either. Without it in this list, a Linux VM child dies with
+// "Couldn't find or load libkrunfw.so.4" unless the operator happens to have
+// exported LD_LIBRARY_PATH themselves. Refs: MGIT-87, MGIT-61.15
+func TestLibkrunfwSearchDirs_CoversTheLinuxFromSourcePrefix(t *testing.T) {
+	for _, want := range []string{"/usr/local/lib64", "/usr/local/lib"} {
+		found := false
+		for _, dir := range libkrunfwSearchDirs {
+			if dir == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("libkrunfwSearchDirs = %v, missing %q — the prefix a from-source "+
+				"libkrunfw install actually lands in on Linux", libkrunfwSearchDirs, want)
+		}
+	}
+}
+
 // TestLibkrunfwDirs_OnlyReturnsDirectoriesThatHaveIt guards against padding
 // the loader path with directories that do not contain the library.
 func TestLibkrunfwDirs_OnlyReturnsDirectoriesThatHaveIt(t *testing.T) {

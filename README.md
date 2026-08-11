@@ -226,12 +226,15 @@ Everything above installs the `mgit` binary, which is all you need for the versi
 The two GA backends deliver the worktree differently, and the difference is
 visible to an agent loop rather than an implementation detail:
 
-| | macOS / libkrun | Linux / firecracker |
-|---|---|---|
-| launch, exec, land | ✅ live-validated | ✅ live-validated (CI-gated) |
-| live egress policy (`sandbox policy`) | ✅ | ✅ |
-| host edits reach a **running** guest (`sandbox sync`) | ✅ | ❌ refused |
-| artifact export (`sandbox export`) | ✅ | ❌ refused |
+| | macOS / libkrun | Linux / firecracker | Linux / libkrun (`-tags libkrun`) |
+|---|---|---|---|
+| compose a guest base, launch a sandbox | ✅ live-validated | ✅ live-validated (CI-gated) | ✅ live-validated (CI-gated) |
+| exec in the guest, and `land` behind it | ✅ | ✅ | ❌ **exec channel resets** (intermittently over vsock, always via `mgit run`) |
+| hostile-guest containment (SEC-03) | ✅ | ✅ | ✅ |
+| guest networking + live egress policy | ✅ | ✅ | ❌ **no networked guest at all** |
+| guest can write outside `/tmp` and its worktree | ✅ | ✅ | ❌ |
+| host edits reach a **running** guest (`sandbox sync`) | ✅ | ❌ refused | ⚠️ **content edits only** |
+| artifact export (`sandbox export`) | ✅ | ❌ refused | ✅ |
 
 firecracker packs the worktree into an ext4 image at launch and the guest
 mounts it, so there is no host directory to re-stage into or read out of. Both
@@ -245,10 +248,41 @@ is the cost `sandbox policy` exists to avoid. **Use libkrun for that loop.** If
 each round is a fresh sandbox, or work only crosses back via `land`, firecracker
 is fine.
 
-libkrun is validated on **macOS/Apple Silicon**. Linux libkrun (`-tags libkrun`)
-is not the Linux default and its real-VM boot has never been validated
-end to end — see the CHANGELOG's standing limitation. So on Linux today the
-validated backend is firecracker, with the two gaps above.
+**On Linux, no single backend does everything**, and which one you want is
+decided by the loop rather than by preference. Linux libkrun boots real microVMs
+and runs the containment, sync and export suites on real KVM — validated and
+CI-gated as of MGIT-87, superseding the older "never validated end to end"
+caveat — but four things do not carry over from macOS, all measured on real
+hardware:
+
+- **The guest exec channel resets.** Every failure carries the same signature,
+  "connection reset by peer" on the guest's vsock exec socket. Through
+  `mgit run` it failed every time it was tried (on bare metal only for the
+  everyday `mgit run -- echo hi`, on a hosted runner for `/bin/echo` too);
+  through the library path it passed in three environments and then failed in a
+  fourth run with no code change. So exec is intermittent here rather than
+  simply broken, and `mgit sandbox land` sits behind it. Tracked as MGIT-91.
+  CI runs those tests and reports the outcome without gating on it — an
+  intermittent capability is one the tables must not claim.
+- **The guest's root filesystem is effectively read-only**, so an agent can
+  build and commit in its worktree but cannot install packages or write
+  `/etc`. Creating a file under the root overlay fails with `operation not
+  supported`; `/tmp` and the mounted worktree are writable.
+- **A guest with a network therefore does not start at all.** mgit-guest writes
+  the resolver into `/etc/resolv.conf` during startup and dies on that same
+  refusal, so `--network allowlist` and `--network open` sandboxes exit before
+  they serve; only `--network none` works, and `sandbox policy` has nothing
+  live to act on. If the agent needs `npm install`, `pip` or `apt`, use
+  **firecracker**.
+- **`sandbox sync` delivers changed file CONTENT to a running guest, but not
+  files created or deleted on the host.** The verb reports the delete as
+  applied and the guest keeps reading the old file. Relaunch the sandbox after
+  a change that adds or removes files.
+
+So: network → firecracker; re-stage and export into a long-lived guest →
+libkrun (offline); both at once → not available today, tracked as MGIT-86.
+The capability set above is exactly what CI asserts on every push, named test
+by test in `scripts/e2e/libkrun_linux_column.sh`.
 
 The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`.
 

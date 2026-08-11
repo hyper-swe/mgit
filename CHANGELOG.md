@@ -7,6 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Linux libkrun is a validated path now — with two measured limits stated up front
+
+**The standing limitation carried since 0.4.2 — "Linux libkrun (`-tags libkrun`)
+is still not a validated path" — is retired.** A libkrun microVM boots on real
+Linux/KVM, and boot, guest exec over vsock, `sandbox sync` of file content,
+`sandbox export` and the SEC-03 hostile-guest battery all hold there. It runs as a **CI gate** (`sandbox-live-linux-libkrun`
+in `e2e.yml`) on every push, PR and release, alongside the firecracker one —
+not as a one-time report. (MGIT-87)
+
+The 2026-07-29 finding that the boot **hung at VM entry** does not reproduce,
+and the cause was not Linux: the build recipe cloned libkrun's `main`, and
+upstream after v1.19.4 replaced `krun_set_workdir` with a stub returning
+`-ENOTSUP`, so VM configuration failed before the guest ever ran. libkrun
+v1.19.4 and libkrunfw v5.5.0 — the pair Homebrew ships, so the same pair macOS
+is validated against — are now pinned in `scripts/sandbox-image/pins.env` and
+built by `scripts/sandbox-image/build-libkrun.sh`, which CI and a developer run
+identically.
+
+**Three things do NOT carry over from macOS.** All were measured on real KVM
+and reproduced in more than one environment (a hosted runner inside a container
+with `/dev/kvm` passed through, a hosted runner on the bare host as an
+unprivileged user, and a bare-metal KVM host), so none is an artifact of one
+setup:
+
+- **The guest exec channel resets**, and `mgit sandbox land` sits behind it, so
+  neither is claimed. Every failure carries the same signature: "connection
+  reset by peer" on the guest's vsock exec socket. Through `mgit run` it failed
+  on every attempt — on bare metal only for the everyday
+  `mgit run -- echo hi` while `/bin/echo` worked, on a hosted runner for the
+  absolute path as well — and through the library path it passed in three
+  environments and then failed in a fourth run with no code change. The VM
+  survives either way. Intermittent, in other words, rather than simply broken,
+  which is why the affected tests are RUN and reported by CI but gated neither
+  way: asserting a pass would make the gate flaky and asserting a failure would
+  entrench a defect that usually does not fire. Tracked as MGIT-91; it is also
+  why the shared posture script cannot pass on this backend.
+
+- **The guest's root filesystem is effectively read-only, and a guest with a
+  network therefore does not start at all.** Creating a file under the
+  writable-root overlay fails with `operation not supported`; `/tmp` and the
+  mounted worktree are writable and behave normally (measured through the
+  production path on a real `debian:12` base, not only in a test fixture). An
+  agent can build and commit in its worktree but cannot install packages or
+  write `/etc`. mgit-guest writes the resolver into `/etc/resolv.conf` during
+  startup, so it dies on that same refusal: every `--network allowlist` and
+  `--network open` sandbox exits before it serves, and the live `sandbox
+  policy` verbs have no running enforcer to act on. The daemon does select the
+  correct enforcer for them (`policy_wired backend=libkrun`, with the Linux
+  daemon-side runner correctly not winning) — there is simply nothing live to
+  address. `--network none` is unaffected, and is the mode the validated
+  column runs. Tracked as MGIT-89.
+- **`sandbox sync` carries content, not the namespace.** A host edit to an
+  existing file reaches the running guest, asserted through the guest itself.
+  A file the host CREATES or DELETES does not: the verb reports the delete as
+  applied and the guest keeps reading the old file. That is the silent-staleness
+  class this feature's e2e exists to catch, and it is why the tables say
+  "content edits only" rather than "yes". Tracked as MGIT-90.
+
+**The consequence for Linux deployments, stated plainly:** a loop that needs
+guest egress wants firecracker; a loop that needs host edits delivered into a
+long-lived guest, or artifacts read back out, wants libkrun and must run
+offline. A loop needing both is not served on Linux today — MGIT-86 remains
+open, and this result is what decides it is still needed rather than moot.
+
+- **The gate cannot pass by skipping, and cannot silently understate the
+  backend either.** `scripts/e2e/libkrun_linux_column.sh` holds the capability
+  column as data: it asserts every validated test PASSED by name, that a SKIP
+  anywhere in that run is a failure, that the two known-gap tripwires still
+  FAIL — a gap that closes turns the gate red until the tables here, in
+  README.md and in docs/INSTALL-SANDBOX.md are updated — and that every
+  `TestE2E_Libkrun_RealVM_*` in the package is classified in one of those
+  lists, so a new test cannot be added ungated.
+- **Hosted runners can boot microVMs from inside a job `container:`** when the
+  device is passed through (`options: --device /dev/kvm`). Measured: the device
+  is present, `KVM_CREATE_VM` succeeds, and no udev rule is involved because a
+  job container runs as root — MGIT-78's host-side rule cannot help a container,
+  since host steps cannot run before the job's own container starts.
+
+### Added — the remaining `sandbox sync` collision classes, on real hardware
+
+- **All three refusal classes in ADR-011's collision policy now have a real-VM
+  e2e**, not just the both-sides-changed one: a host ADD over a file the guest
+  created (refused as `created in the guest`, then delivered by `--force` with
+  the destroyed path reported), and a host DELETE of a path the guest changed
+  (refused, then applied once the guest's copy matches what was delivered).
+  Each pairs its refusal with a positive control on the same sandbox, because a
+  sync that is simply broken also refuses everything. The delete case is what
+  found the Linux namespace gap above. (MGIT-87, MGIT-76)
+- **The artifact-export e2e no longer asserts a macOS implementation detail.**
+  It required the provenance sidecar to say `"mode_source": "share-record"`,
+  which is true only where libkrun presents placeholder permission bits and
+  records the real mode in a share attribute. On Linux the guest's mode is in
+  the file's own bits, so a correct export was failing the test. It now asserts
+  the exported mode AND that the attribution matches how the mode was actually
+  observable — a stronger check on both platforms. (MGIT-87, MGIT-81)
+
+### Fixed
+
+- **The libkrun loader-path search missed `/usr/local/lib64`**, which is exactly
+  where a from-source `make PREFIX=/usr/local install` puts libkrunfw on 64-bit
+  Linux — and Ubuntu's `ld.so.conf` does not cover it either. Every Linux
+  install is from source (no distro package, no tap), so without it a VM child
+  can fail to find libkrunfw unless the operator exported `LD_LIBRARY_PATH`
+  themselves. (MGIT-87)
+- **`scripts/e2e/sandbox_posture.sh` branched on the operating system**, which
+  silently equated "Linux" with "firecracker": a working Linux/libkrun daemon
+  was sent down the kernel+rootfs branch and skipped for want of a kernel it
+  does not use. It now dispatches on the guest input it was given — kernel +
+  rootfs, or an OCI ref — the same shape of fix the macOS half needed in 0.4.3.
+  (MGIT-87)
+
 ## [0.4.4] - 2026-08-11
 
 An install and operability release: no change to how agents behave at runtime,
