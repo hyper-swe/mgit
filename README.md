@@ -221,6 +221,35 @@ Everything above installs the `mgit` binary, which is all you need for the versi
 
 ### Enable the sandbox
 
+#### Which backend — this decides what your agent loop can do
+
+The two GA backends deliver the worktree differently, and the difference is
+visible to an agent loop rather than an implementation detail:
+
+| | macOS / libkrun | Linux / firecracker |
+|---|---|---|
+| launch, exec, land | ✅ live-validated | ✅ live-validated (CI-gated) |
+| live egress policy (`sandbox policy`) | ✅ | ✅ |
+| host edits reach a **running** guest (`sandbox sync`) | ✅ | ❌ refused |
+| artifact export (`sandbox export`) | ✅ | ❌ refused |
+
+firecracker packs the worktree into an ext4 image at launch and the guest
+mounts it, so there is no host directory to re-stage into or read out of. Both
+refusals fail closed and name the backend — nothing silently no-ops.
+
+**What that means in practice.** If your loop edits the host worktree between
+rounds — the usual shape for an agent that reviews, fixes and re-tests — every
+exec after launch on firecracker runs against the launch-time copy. Relaunching
+per round restores correctness but destroys the provisioned environment, which
+is the cost `sandbox policy` exists to avoid. **Use libkrun for that loop.** If
+each round is a fresh sandbox, or work only crosses back via `land`, firecracker
+is fine.
+
+libkrun is validated on **macOS/Apple Silicon**. Linux libkrun (`-tags libkrun`)
+is not the Linux default and its real-VM boot has never been validated
+end to end — see the CHANGELOG's standing limitation. So on Linux today the
+validated backend is firecracker, with the two gaps above.
+
 The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`.
 
 - **macOS** requires Apple Silicon (arm64), macOS 14+, and the **libkrun** hypervisor, which is *not* installed with mgit — it lives in a third-party Homebrew tap, and Homebrew will not load a formula from a tap you have not trusted. All three commands are needed, in this order:

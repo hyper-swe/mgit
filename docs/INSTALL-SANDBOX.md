@@ -21,6 +21,36 @@ The sandbox has three distribution artifacts:
 (`cmd/mgit/sandbox_connect.go`). Installing both into the same directory — which
 every channel below does — is what makes `mgit run` find the daemon.
 
+## Which backend, and what it costs you
+
+Pick this before the prerequisites, because it decides what your agent loop can
+do — the backends are not interchangeable:
+
+| | macOS / libkrun | Linux / firecracker |
+|---|---|---|
+| launch, exec, land | live-validated | live-validated (CI-gated) |
+| live egress policy (`sandbox policy`) | yes | yes |
+| host edits reach a **running** guest (`sandbox sync`) | yes | **refused** |
+| artifact export (`sandbox export`) | yes | **refused** |
+
+libkrun and vzf share the worktree as a host **directory** over virtio-fs, so
+the host can re-stage into it and read out of it. firecracker packs it into an
+ext4 **image** at launch which the guest mounts; the host cannot write into a
+mounted image without corrupting it, and there is no directory to export from.
+Both refusals fail closed and name the backend.
+
+The consequence is concrete: on firecracker, **every exec after launch runs
+against the launch-time copy**. A loop that edits the host worktree between
+rounds — review, fix, re-test — will test stale code unless it relaunches, and
+relaunching destroys the provisioned environment that `sandbox policy` exists to
+preserve. Use libkrun for that shape of loop. If each round gets a fresh
+sandbox, or work only returns via `land`, firecracker is fine.
+
+One caveat on "use libkrun": it is validated on **macOS/Apple Silicon**. Linux
+libkrun (`-tags libkrun`) is not the Linux default and its real-VM boot has
+never been validated end to end, so on Linux the validated backend today is
+firecracker, with the two gaps above.
+
 ## Platform prerequisites
 
 - **Linux:** KVM (`/dev/kvm` present and accessible) and the `firecracker`
