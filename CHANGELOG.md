@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `install.sh`, and it is now the headline install
+
+- **`curl -fsSL .../install.sh | sh`** resolves the latest release, verifies the archive against the published `checksums.txt` **before installing anything**, and lays `mgit`, `mgit-sandboxd` and the guest pair out where mgit looks for them (`$PREFIX/bin` + `$PREFIX/libexec/guest`, so `mgit-guest` never lands on PATH). `MGIT_VERSION` pins a release; `MGIT_PREFIX` chooses where it goes. No sudo, ever — it picks `/usr/local` only when already writable, else `~/.local`.
+- **It fixes the macOS quarantine problem for real, without notarization.** `com.apple.quarantine` is written by the *downloading app on the user's machine*, so nothing done at build time can remove it — but only quarantine-aware apps (browsers, AirDrop, Mail) set it. curl does not. Measured: a browser-downloaded `.tar.gz` yields quarantined binaries even through command-line `tar`, and Gatekeeper SIGKILLs them; the same archive fetched by curl installs and runs clean. The README now states which channels are affected and which are not, instead of only offering the `xattr -d` remedy. (MGIT-64)
+
 ### Added — `mgit-sandboxd --version`
 
 - **The daemon can now say which build it is.** It shipped in every archive and installed beside `mgit` via Homebrew, but had no `--version` flag at all: it answered `flag provided but not defined: -version` and exited 2. An operator debugging a sandbox that will not launch could not ask the binary what it was. (MGIT-83)

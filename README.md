@@ -43,15 +43,16 @@ Coding agents increasingly run unattended, installing packages and executing bui
 
 Two minutes, on top of your existing repo. Nothing to migrate; your git is left untouched.
 
-Install with Homebrew (macOS / Linux):
+Install (macOS / Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hyper-swe/mgit/main/install.sh | sh
+```
+
+or with Homebrew, or Go:
 
 ```bash
 brew install hyper-swe/tap/mgit
-```
-
-or with Go:
-
-```bash
 go install github.com/hyper-swe/mgit/cmd/mgit@latest
 ```
 
@@ -159,6 +160,16 @@ That turns incident forensics from archaeology into a query: trace a landed comm
 
 ## Installation
 
+**Install script** (macOS / Linux) — the recommended path:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hyper-swe/mgit/main/install.sh | sh
+```
+
+It resolves the latest release, **verifies the download against the published `checksums.txt`** before installing anything, and places `mgit`, `mgit-sandboxd` and the guest pair in the layout mgit expects. Pin a version with `MGIT_VERSION=v0.4.3`, or choose where it lands with `MGIT_PREFIX=$HOME/.local` (the default is `/usr/local` when writable, otherwise `~/.local`).
+
+It also sidesteps a macOS trap that a browser download cannot: see [Why not just download the archive?](#why-not-just-download-the-archive) below.
+
 **Homebrew** (macOS / Linux):
 
 ```bash
@@ -179,9 +190,32 @@ go install github.com/hyper-swe/mgit/cmd/mgit@latest
 git clone https://github.com/hyper-swe/mgit.git && cd mgit && make build
 ```
 
-**Binary releases**: pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are on [GitHub Releases](https://github.com/hyper-swe/mgit/releases).
+**Binary releases**: pre-built binaries for Linux, macOS, and Windows (amd64 and arm64) are on [GitHub Releases](https://github.com/hyper-swe/mgit/releases). On macOS, read the next section first.
 
-> **macOS: a downloaded archive is quarantined and will not run until you clear it.** Any transfer that sets the `com.apple.quarantine` attribute (a browser download, AirDrop — not `scp` or a local build) causes Gatekeeper to kill the ad-hoc-signed binaries outright on Apple Silicon (`zsh: killed`, no dialog). Both `mgit` and `mgit-sandboxd` are affected. Fix: `xattr -d com.apple.quarantine mgit mgit-sandboxd`, verified to fully resolve it. Whether a Homebrew install has the same problem is not yet verified — see [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#release-archive).
+### Why not just download the archive?
+
+On macOS you can, but on Apple Silicon it will not run until you clear one attribute — and the reason is worth understanding, because it is not a bug in the binary.
+
+A **browser** download writes `com.apple.quarantine` onto the file, and Gatekeeper SIGKILLs a quarantined ad-hoc-signed binary outright: no dialog, just `zsh: killed`, or a "cannot verify this app is free of malware" alert. Both `mgit` and `mgit-sandboxd` are affected, and the attribute survives extraction — measured: a quarantined `.tar.gz` produces quarantined binaries even through command-line `tar`.
+
+The attribute is written by the **downloading app on your machine**, so nothing we do when building the release can remove it. Only Apple notarization (a paid Developer ID certificate) fixes the browser path, and mgit is ad-hoc signed today.
+
+What that means in practice:
+
+| How you get it | Quarantined? |
+|---|---|
+| `install.sh` (curl) | **No** — curl is not a quarantine-aware app |
+| Homebrew | **No** |
+| `go install` / from source | **No** |
+| Browser download from the Releases page | **Yes** — killed until you clear it |
+
+So prefer the install script or Homebrew. If you did download through a browser:
+
+```bash
+xattr -d com.apple.quarantine mgit mgit-sandboxd
+```
+
+That fully resolves it — the binaries themselves are fine. Refs: [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#release-archive), MGIT-64.
 
 Everything above installs the `mgit` binary, which is all you need for the version-control workflow: init, worktrees, commit, log, squash, and landing by patch. The microVM sandbox (`mgit run`, `mgit work --sandbox`) is a separate, optional layer with its own prerequisites.
 

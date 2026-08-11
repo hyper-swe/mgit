@@ -244,6 +244,10 @@ release:
     daemon next to it. Homebrew installs both.
 
     ```bash
+    # Install script (macOS/Linux) — verifies checksums, and avoids the macOS
+    # quarantine trap below because curl does not set the attribute
+    curl -fsSL https://raw.githubusercontent.com/hyper-swe/mgit/main/install.sh | sh
+
     # Homebrew (installs mgit + mgit-sandboxd)
     brew install hyper-swe/tap/mgit
 
@@ -258,20 +262,22 @@ release:
     # Binary — download the archive below for your platform (contains both)
     ```
 
-    **macOS: a downloaded archive will not run until you clear quarantine.**
-    Any transfer that sets `com.apple.quarantine` — a browser download,
-    AirDrop, anything but `scp` or a local build — triggers this. The
-    binaries are ad-hoc signed (no notarization yet), and on Apple Silicon
-    Gatekeeper kills a quarantined ad-hoc-signed binary outright: no dialog,
-    just `zsh: killed`. Both `mgit` and `mgit-sandboxd` are affected.
+    **macOS: a BROWSER-downloaded archive will not run until you clear
+    quarantine.** The install script above and Homebrew are unaffected — curl
+    and brew are not quarantine-aware apps, so the attribute is never set.
+    A browser download is: the binaries are ad-hoc signed (no notarization
+    yet), and on Apple Silicon Gatekeeper kills a quarantined ad-hoc-signed
+    binary outright — no dialog, just `zsh: killed` or a "cannot verify this
+    app is free of malware" alert. Both binaries are affected, and the
+    attribute survives extraction.
 
     ```bash
     xattr -d com.apple.quarantine mgit mgit-sandboxd
     ```
 
-    After that both run normally — the binaries are fine; this is purely a
-    distribution/signing gap. Whether a Homebrew install carries the same
-    problem is not yet verified. (MGIT-64)
+    After that both run normally — the binaries are fine. The attribute is
+    written by the downloading app on your machine, so nothing in this build
+    can remove it; only notarization fixes the browser path. (MGIT-64)
 
     The microVM sandbox also needs a guest image; see
     [docs/INSTALL-SANDBOX.md](https://github.com/hyper-swe/mgit/blob/main/docs/INSTALL-SANDBOX.md).
