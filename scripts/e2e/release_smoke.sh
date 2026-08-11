@@ -115,86 +115,43 @@ assert_file "$ext/guest/mgit" "archive ships guest/mgit"
 assert_file "$ext/guest/mgit-guest" "archive ships guest/mgit-guest"
 
 # ---------------------------------------------------------------------------
-# Step 7 (b+c): Gatekeeper quarantine, asserted in BOTH directions.
+# LIVENESS FIRST: what can run at all, unquarantined. Everything after this
+# depends on knowing that, and the first version of this script did not — it
+# asserted the daemon must run, then reported "the archive is broken" on a
+# runner that simply had no libkrun.
 #
-# What is true today, measured on the published v0.4.3 archive: a quarantined
-# ad-hoc-signed binary is SIGKILLed (exit 137, "Killed: 9"), and the same
-# binary runs normally once the attribute is removed. That is MGIT-64's
-# documented state — the remedy is `xattr -d com.apple.quarantine`, and the
-# real fix (Developer ID notarization) is an owner decision that has not been
-# taken.
-#
-# So this check asserts REALITY, not a wish. The checklist used to demand that
-# both binaries "run without the remedy", which is a property the project
-# knowingly does not have — a gate that cannot pass teaches an operator to
-# ignore it. Instead:
-#
-#   1. quarantined  -> expected to be killed. If it RUNS, that is good news,
-#      not a failure: notarization or a policy change landed, and MGIT-64,
-#      INSTALL-SANDBOX.md and this script all need updating. Reported loudly.
-#   2. after remedy -> MUST run. This is the assertion that actually protects
-#      users: it proves the archive shipped working binaries, so a real
-#      failure (bad signature, wrong arch, truncated upload) is distinguished
-#      from the quarantine everyone already knows about.
+# Only flags that have existed in every release are used. Binding liveness to a
+# newer flag is what made a missing feature indistinguishable from a Gatekeeper
+# kill (MGIT-83).
 # ---------------------------------------------------------------------------
-echo "== Gatekeeper quarantine, both directions (MGIT-64) =="
-if [ "$(uname -s)" != "Darwin" ]; then
-	skip_note "not macOS — Gatekeeper quarantine is darwin-only"
-elif [ "${MGIT_SMOKE_QUARANTINE:-0}" != "1" ]; then
-	# OFF BY DEFAULT ON A HUMAN'S MACHINE, deliberately. Executing a quarantined
-	# binary makes macOS raise a "cannot verify ... free of malware" alert, and
-	# there is no way to exercise the kill path without triggering it. Firing
-	# real malware alerts at an operator during a routine release check teaches
-	# them to dismiss malware alerts — a worse outcome than not running this one
-	# check locally. CI sets MGIT_SMOKE_QUARANTINE=1, where the alert has no one
-	# to desensitise. Refs: MGIT-84, MGIT-64
-	skip_note "quarantine kill-path check is opt-in locally (set MGIT_SMOKE_QUARANTINE=1);"
-	echo "        it fires real macOS malware alerts, so it runs unattended in CI instead"
-else
-	echo "  note: this check EXECUTES quarantined binaries, so macOS will raise a"
-	echo "        \"cannot verify ... free of malware\" alert for each one. That alert"
-	echo "        is this test working. The attribute is removed on every exit path."
-	for b in mgit mgit-sandboxd; do
-		if ! xattr -p com.apple.quarantine "$ext/$b" >/dev/null 2>&1; then
-			xattr -w com.apple.quarantine "0081;00000000;release_smoke;" "$ext/$b"
-			_quarantined="$_quarantined $ext/$b"
-		fi
-		if run_bounded 60 "$ext/$b" --help; then
-			echo "  NOTE: quarantined $b RAN. The documented Gatekeeper kill no longer"
-			echo "        reproduces — notarization or a policy change has landed."
-			echo "        Update MGIT-64, docs/INSTALL-SANDBOX.md and this check."
-		else
-			# Killed outright, or blocked by an assessment that never resolved.
-			# Both mean the same thing to a user: the binary did not run.
-			pass "quarantined $b did not run (killed or blocked), as MGIT-64 documents"
-		fi
-		xattr -d com.apple.quarantine "$ext/$b" 2>/dev/null || true
-	done
-fi
-
-# ---------------------------------------------------------------------------
-# Step 7 (c): the binaries themselves work. Every probe here must run on every
-# release ever shipped, so it uses only flags that have always existed —
-# binding liveness to a newer flag is what made a missing feature
-# indistinguishable from a Gatekeeper kill (MGIT-83).
-# ---------------------------------------------------------------------------
-echo "== the shipped binaries run (quarantine removed) =="
+echo "== the shipped binaries run =="
 if ! mgit_out="$("$ext/mgit" --version 2>&1)"; then
-	_e2e_fail "mgit does not run even unquarantined: $mgit_out — the archive is broken"
+	_e2e_fail "mgit does not run: $mgit_out — the archive is broken"
 fi
 pass "mgit ran: $mgit_out"
-if ! "$ext/mgit-sandboxd" --help >/dev/null 2>&1; then
-	_e2e_fail "mgit-sandboxd does not run even unquarantined — the archive is broken"
+
+# mgit-sandboxd LINKS libkrun by absolute path on macOS (verified with otool:
+# /opt/homebrew/opt/libkrun/lib/libkrun.1.dylib). On a host without it, dyld
+# aborts before main — "Abort trap: 6" with a Library-not-loaded message. That
+# is MGIT-75's deliberate fail-closed design, not a broken archive: core mgit is
+# CGO-free and links nothing. Distinguish the two by the loader's own words
+# rather than by guessing from the exit status.
+daemon_runs=0
+if sbx_err="$("$ext/mgit-sandboxd" --help 2>&1 >/dev/null)"; then
+	daemon_runs=1
+	pass "mgit-sandboxd ran"
+elif printf '%s' "$sbx_err" | grep -q 'Library not loaded'; then
+	skip_note "mgit-sandboxd cannot load libkrun on this host, by design (MGIT-75) —"
+	echo "        core mgit is unaffected. Install libkrun to cover the daemon here."
+else
+	_e2e_fail "mgit-sandboxd does not run, and not for a missing libkrun: $sbx_err"
 fi
-pass "mgit-sandboxd ran"
 
 # ---------------------------------------------------------------------------
-# Step 7 (d): BUILD AGREEMENT. A different question from liveness, and the only
-# one allowed to depend on a feature — so the capability is probed, not assumed
-# from the tag.
+# BUILD AGREEMENT. A different question from liveness, and the only one allowed
+# to depend on a feature — so the capability is probed, not assumed from the tag.
 # ---------------------------------------------------------------------------
-if sbx_out="$("$ext/mgit-sandboxd" --version 2>/dev/null)"; then
-	# Compare the build metadata, ignoring each binary's own name prefix.
+if [ "$daemon_runs" = "1" ] && sbx_out="$("$ext/mgit-sandboxd" --version 2>/dev/null)"; then
 	mgit_build="${mgit_out#mgit version }"
 	sbx_build="${sbx_out#mgit-sandboxd version }"
 	if [ "$mgit_build" != "$sbx_build" ]; then
@@ -203,8 +160,64 @@ if sbx_out="$("$ext/mgit-sandboxd" --version 2>/dev/null)"; then
       mgit-sandboxd: $sbx_build"
 	fi
 	pass "both binaries report one build: $mgit_build"
-else
+elif [ "$daemon_runs" = "1" ]; then
 	skip_note "this daemon predates --version (added in MGIT-83) — build agreement not checkable for $TAG"
+else
+	skip_note "build agreement needs a runnable daemon (see above)"
+fi
+
+# ---------------------------------------------------------------------------
+# Gatekeeper quarantine, asserted in BOTH directions — but ONLY on a host that
+# actually enforces it.
+#
+# THIS CANNOT BE VERIFIED IN CI, and pretending otherwise produced two false
+# conclusions on this job's first run: a quarantined binary RAN (so the check
+# announced that notarization had landed) and the daemon "did not run" (so the
+# check credited Gatekeeper for what was really a missing dylib). A hosted
+# runner has no logged-in user session and reports `spctl --status: assessments
+# disabled`, so it cannot demonstrate the kill. Gate on the assessment state
+# rather than on the environment being "CI", because that is the property that
+# actually matters.
+#
+# What is true on an enforcing host, measured on the published v0.4.3 archive:
+# a quarantined ad-hoc-signed binary is SIGKILLed, and the same binary runs once
+# the attribute is removed. That is MGIT-64's documented state pending
+# notarization — so this asserts reality, not a wish. A quarantined binary that
+# RUNS is reported as news worth acting on.
+# ---------------------------------------------------------------------------
+echo "== Gatekeeper quarantine (MGIT-64) =="
+if [ "$(uname -s)" != "Darwin" ]; then
+	skip_note "not macOS — Gatekeeper quarantine is darwin-only"
+elif [ "${MGIT_SMOKE_QUARANTINE:-0}" != "1" ]; then
+	# Off by default on a human's machine: exercising this raises a real
+	# "cannot verify ... free of malware" alert, and desensitising a developer
+	# to malware alerts is a worse outcome than skipping one check on a laptop.
+	skip_note "quarantine kill-path check is opt-in (set MGIT_SMOKE_QUARANTINE=1);"
+	echo "        it fires real macOS malware alerts on an enforcing host"
+elif ! spctl --status 2>/dev/null | grep -q 'assessments enabled'; then
+	skip_note "this host reports '$(spctl --status 2>&1)' — it cannot demonstrate a"
+	echo "        Gatekeeper kill, so any result here would be meaningless. This is the"
+	echo "        state on hosted CI runners: the check is real-Mac-only. See step 7."
+else
+	echo "  note: this EXECUTES a quarantined binary; macOS will raise a malware alert."
+	# Only binaries proven runnable above: a daemon that cannot load libkrun
+	# would "fail" this for a reason that has nothing to do with Gatekeeper.
+	qbins="mgit"
+	[ "$daemon_runs" = "1" ] && qbins="mgit mgit-sandboxd"
+	for b in $qbins; do
+		if ! xattr -p com.apple.quarantine "$ext/$b" >/dev/null 2>&1; then
+			xattr -w com.apple.quarantine "0081;00000000;release_smoke;" "$ext/$b"
+			_quarantined="$_quarantined $ext/$b"
+		fi
+		if run_bounded 60 "$ext/$b" --help; then
+			echo "  NOTE: quarantined $b RAN on a host with assessments ENABLED. The"
+			echo "        documented kill no longer reproduces — notarization or a policy"
+			echo "        change has landed. Update MGIT-64, INSTALL-SANDBOX.md and this check."
+		else
+			pass "quarantined $b did not run (killed or blocked), as MGIT-64 documents"
+		fi
+		xattr -d com.apple.quarantine "$ext/$b" 2>/dev/null || true
+	done
 fi
 
 # ---------------------------------------------------------------------------

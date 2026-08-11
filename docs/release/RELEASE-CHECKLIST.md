@@ -228,13 +228,24 @@ green Linux gate is not evidence about macOS:
      exists only from MGIT-83 on, so the script asks the binary whether it
      supports the flag rather than consulting a list of which release has what.
      A maintained list is one more thing that drifts.
-   - **The quarantine kill-path check is OFF by default locally.** Exercising
-     it means executing a deliberately-quarantined binary, which makes macOS
-     raise a real "cannot verify ... free of malware" alert — and firing those
-     at an operator during a routine release check teaches them to dismiss
-     malware alerts, which is a worse outcome than skipping one check on a
-     laptop. `release.yml` sets `MGIT_SMOKE_QUARANTINE=1` so it runs unattended
-     in CI. Set it yourself only if you want the alerts.
+   - **The quarantine kill-path check cannot run in CI, and is off by default
+     locally.** A hosted runner reports `spctl --status: assessments disabled`
+     and has no logged-in user session, so it cannot demonstrate a Gatekeeper
+     kill — proven the hard way: on this job's first run a quarantined binary
+     RAN there, and the check duly announced that notarization had landed. The
+     script now gates on the assessment state and skips with that reason. It is
+     off by default on a developer machine too, because executing a quarantined
+     binary raises a real "cannot verify ... free of malware" alert and
+     desensitising an operator to malware alerts is worse than skipping one
+     check. Set `MGIT_SMOKE_QUARANTINE=1` on a real Mac to run it — that is
+     step 7, and it is genuinely manual.
+   - **A missing libkrun is not a broken archive.** `mgit-sandboxd` links
+     libkrun by absolute path on macOS, so on a host without it dyld aborts
+     before `main` — MGIT-75's deliberate fail-closed design. Core `mgit` is
+     CGO-free and unaffected. The script tells the two apart by the loader's own
+     "Library not loaded" message and skips rather than failing; the first
+     version asserted the daemon must run and reported a perfectly good archive
+     as broken.
    - **What it deliberately does NOT prove.** That a *browser* download
      quarantines identically. The script synthesises the attribute so the kill
      path is deterministic rather than hoped for; only a real download onto a
