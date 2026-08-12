@@ -23,6 +23,7 @@ import (
 	"github.com/hyper-swe/mgit/internal/buildinfo"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/libkrun"
+	"github.com/hyper-swe/mgit/internal/sandboxd/hostmem"
 	"github.com/hyper-swe/mgit/internal/service"
 )
 
@@ -74,7 +75,9 @@ func parseFlags(args []string, logSink io.Writer) (*daemonOpts, int) {
 	flags.StringVar(&o.workDir, "work-dir", "", "sandbox-local state root (overlays, sockets); never a worktree")
 	flags.DurationVar(&o.idleGrace, "idle-grace", 30*time.Second, "zero-sandbox linger before exit")
 	flags.IntVar(&o.maxSandboxes, "max-sandboxes", 8, "global concurrent-sandbox ceiling (FR-17.26)")
-	flags.IntVar(&o.maxMemoryMB, "max-memory-mb", 0, "global sandbox memory ceiling in MB (0 until policy wiring resolves the FR-17.26 50% host default)")
+	flags.IntVar(&o.maxMemoryMB, "max-memory-mb", 0,
+		"explicit override of the FR-17.26 aggregate sandbox memory ceiling in MB "+
+			"(0 = resolve host policy max_total_memory_percent against host physical memory)")
 	flags.IntVar(&o.maxConns, "max-conns", 0, "max concurrent control connections (0 = daemon default)")
 	flags.IntVar(&o.maxConcLands, "max-concurrent-lands", 0,
 		"max concurrent in-flight lands; bounds buffered host RAM = cap x per-pool ceiling (0 = safe default)")
@@ -132,6 +135,16 @@ func run(args []string, out, logSink io.Writer) int {
 	}
 	clock := func() time.Time { return time.Now().UTC() }
 
+	// Resolve the FR-17.26 FLEET ceiling from host policy BEFORE anything
+	// expensive is wired: it depends on nothing but the policy file and the
+	// host's own memory, and an operator reading the log needs to see what is
+	// actually in force even on a boot that later fails at backend selection.
+	// The policy store opened here is the one the service is wired with below,
+	// so the ceiling and the launch path read the same policy. Refs: MGIT-98
+	policyStore := newPolicyStore(opts.hostRoot, clock, logger)
+	ceiling := resolveFleetCeiling(loadDaemonPolicy(policyStore, logger),
+		opts.maxMemoryMB, hostmem.TotalBytes, logger)
+
 	// One PeerBinder is shared: the backend Binds each launch / Invalidates
 	// each teardown to its host-observed peer identity, and the daemon owns
 	// it to authorize incoming guest->host channels against those bindings
@@ -163,8 +176,12 @@ func run(args []string, out, logSink io.Writer) int {
 	}
 
 	// The ceiling wraps whichever backend was selected: launches never
-	// reach a backend unadmitted (SEC-09).
-	manager := sandboxd.NewCeilingManager(selected, opts.maxSandboxes, opts.maxMemoryMB, 0)
+	// reach a backend unadmitted (SEC-09). Both dimensions are live in a
+	// default install — the memory one resolved from host policy above rather
+	// than from an off-by-default flag (MGIT-98) — and an undeclared launch is
+	// accounted at the policy default it will actually receive.
+	manager := sandboxd.NewCeilingManager(selected, opts.maxSandboxes,
+		ceiling.maxTotalMemoryMB, ceiling.defaultMemoryMB)
 
 	dcfg := sandboxd.Config{
 		SocketPath: opts.socket, Manager: manager,
@@ -176,7 +193,7 @@ func run(args []string, out, logSink io.Writer) int {
 	// service, never the manager). Without it the daemon greets only — a
 	// loud warning, never a silent half-serving daemon.
 	if opts.hostRoot != "" {
-		svc, events, policyStore, closeAudit, svcErr := buildSandboxService(manager, opts.hostRoot, clock, logger)
+		svc, events, closeAudit, svcErr := buildSandboxService(manager, opts.hostRoot, policyStore, clock)
 		if svcErr != nil {
 			logger.Error("sandbox service wiring failed", "error", svcErr.Error())
 			return 2

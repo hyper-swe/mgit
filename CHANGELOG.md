@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The fleet-wide memory ceiling was inert in a default install; it is now
+  resolved from host policy.** `mgit-sandboxd` wired the FR-17.26 aggregate
+  memory ceiling from `--max-memory-mb`, which defaults to `0` — and `0`
+  disables that dimension. The concurrency cap was live; the memory ceiling was
+  not, unless an operator passed the flag by hand. `SandboxPolicy`'s
+  `max_total_memory_percent` (default 50) existed and nothing read it. The
+  daemon now measures host physical memory at startup (`sysctl hw.memsize` on
+  macOS, `/proc/meminfo` on Linux), resolves the policy percentage against it,
+  and states the ceiling in force on its log; `--max-memory-mb` remains as an
+  explicit operator override. An unmeasurable host fails closed to a
+  conservative 4096 MB — never to "unlimited", and never by refusing to boot.
+  This mattered more after MGIT-95 made per-sandbox memory declarable up to
+  `max_memory_mb` (16384): eight sandboxes could legally ask for 128 GB with
+  nothing to refuse them. The per-sandbox bound is a *per-launch* bound; this is
+  the *fleet* bound, and the two refusals stay deliberately distinguishable.
+  (MGIT-98, FR-17.26, SEC-09)
+
+- **On a host too small for the memory policy in force, mgit now says so.**
+  Where the resolved ceiling lands below one default-sized sandbox, every launch
+  is refused; the refusal used to advise freeing capacity or waiting, which can
+  never help. It now reports that the launch "cannot be admitted even on a
+  completely idle host" and names `max_total_memory_percent`, and the daemon
+  warns about it at startup rather than leaving it to be discovered at the first
+  failed launch. The ceiling is not quietly raised to fit — silently
+  oversubscribing a host the operator sized on purpose is worse than an
+  explanation. (MGIT-98)
+
+- **The aggregate ceiling counted the wrong default.** A sandbox that declared
+  no memory was accounted at a hardcoded 2048 MB fallback rather than at the
+  host policy default it actually receives, so under any policy with a different
+  `memory_mb` the ceiling counted something other than what the host was handing
+  out. (MGIT-98)
+
 ### Added
 
 - **A sandbox's CPU/memory/disk are now declarable at launch and bounded by host
