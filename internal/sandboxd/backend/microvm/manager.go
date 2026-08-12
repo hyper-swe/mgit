@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -580,8 +581,8 @@ func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*
 // has never once answered, and only when the failure was an EOF with nothing
 // received — no output, no result frame. Under those two conditions the
 // command provably never reached a listener, so re-sending it cannot run
-// anything twice. Once the guest has answered, an EOF means something went
-// wrong mid-command and is reported as it happens.
+// anything twice. Once the guest has answered, a dropped connection means
+// something went wrong mid-command and is reported as it happens.
 // Refs: MGIT-61.15, MGIT-58, FR-17.11
 func (m *Manager) execUntilTheGuestAnswers(
 	ctx context.Context, id string, req model.ExecRequest,
@@ -593,7 +594,7 @@ func (m *Manager) execUntilTheGuestAnswers(
 			m.markGuestAnswered(id)
 			return &model.ExecResult{Stdout: stdout, Stderr: stderr, ExitCode: result.ExitCode}, nil
 		}
-		if !m.guestNeverAnswered(id) || !isSilentEOF(err, stdout, stderr) ||
+		if !m.guestNeverAnswered(id) || !isSilentDisconnect(err, stdout, stderr) ||
 			!time.Now().Add(guestReadyPollInterval).Before(deadline) {
 			return nil, fmt.Errorf("%s exec: %w", m.cfg.Backend, err)
 		}
@@ -624,10 +625,37 @@ func (m *Manager) execOnce(
 	return result, stdout.Bytes(), stderr.Bytes(), err
 }
 
-// isSilentEOF reports whether the guest closed the connection having sent
-// NOTHING at all — the signature of a command that never reached a listener.
-func isSilentEOF(err error, stdout, stderr []byte) bool {
-	return errors.Is(err, io.EOF) && len(stdout) == 0 && len(stderr) == 0
+// isSilentDisconnect reports whether the guest dropped the connection having
+// sent NOTHING at all — the signature of a command that never reached a
+// listener, and therefore one that can be re-sent without running anything
+// twice.
+//
+// IT MUST MATCH THE RESET, not just the clean EOF, and that omission was the
+// whole of MGIT-91. libkrun creates the host-side vsock socket as soon as the
+// VM is configured, so a dial in the window before mgit-guest binds its
+// listener CONNECTS successfully and is then reset by the VMM: the caller sees
+// ECONNRESET, never io.EOF. Matching only io.EOF meant the first-command retry
+// this function gates never fired for that backend — measured on real KVM,
+// where the guest's console proves it logged nothing at all for the failed
+// attempt and served the next one normally.
+//
+// EPIPE is the same event seen from the writing side (the request was reset
+// before it was fully sent), so it is included on the same reasoning: with no
+// output at all, nothing can have run.
+//
+// THE SAFETY ARGUMENT IS THE CALLER'S THREE GUARDS, not this predicate: a
+// retry happens only while the guest has NEVER answered, only with no output
+// whatsoever, and only inside the readiness deadline. Once the guest has
+// answered once, a reset means a real failure mid-command — an agent whose
+// long build dies mid-stream must see that, not have it silently retried.
+// Refs: MGIT-91, MGIT-58, MGIT-61.15, FR-17.11
+func isSilentDisconnect(err error, stdout, stderr []byte) bool {
+	if len(stdout) != 0 || len(stderr) != 0 {
+		return false
+	}
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EPIPE)
 }
 
 // guestNeverAnswered reports whether this sandbox's guest has yet to answer

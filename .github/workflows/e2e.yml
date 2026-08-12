@@ -358,74 +358,25 @@ jobs:
           CGO_ENABLED=0 go build -buildvcs=false -trimpath -o "$RUNNER_TEMP/bin/guest/mgit" ./cmd/mgit/
           CGO_ENABLED=0 go build -buildvcs=false -trimpath -o "$RUNNER_TEMP/bin/guest/mgit-guest" ./cmd/mgit-guest/
 
-      - name: Daemon path — compose and launch must WORK; exec is a tripwire
+      - name: Sandbox posture e2e — launch, exec, land — must PASS (live)
         env:
           PKG_CONFIG_PATH: /usr/local/lib64/pkgconfig
           LIBRARY_PATH: /usr/local/lib64
           LD_LIBRARY_PATH: /usr/local/lib64
-        # SPLIT DELIBERATELY, because the two halves have different truth
-        # values on this backend and one status for both would misreport
-        # whichever it merged into:
-        #   compose an OCI base + `mgit work --sandbox` — REQUIRED to succeed;
-        #   `mgit run` into that guest — a TRIPWIRE that must still fail.
-        # Guest exec itself is fine here: the real-VM battery below drives
-        # microvm.Manager.Exec over vsock and passes. What resets is the
-        # daemon/CLI route (MGIT-91), and it resets on a hosted runner even for
-        # an absolute-path command, where a bare-metal KVM host only reset on
-        # the PATH-resolved form. So `mgit run` is NOT asserted working here,
-        # and neither is `land` behind it — the capability tables say so.
-        # NOTE the deliberate absence of `set -e`. Under it, a failing command
-        # inside `out="$(...)"` aborts the step with the reason still trapped
-        # in the unassigned variable and NOTHING in the log — the exact defect
-        # that made the first Linux posture run unreadable, and which this file
-        # then reproduced once on its own. Every step below reports before it
-        # decides.
-        run: |
-          # `set +e` is REQUIRED, not redundant: the runner invokes this shell as
-          # `bash --noprofile --norc -e -o pipefail`, so errexit is on before the
-          # first line and `set -u` alone would not turn it off. That is the
-          # mechanism behind the silent exit-1 twice over in this job's history.
-          set +e -uo pipefail
-          export PATH="$RUNNER_TEMP/bin:$PATH"
-          die() { echo "FATAL: $*"; exit 1; }
-          work="$(mktemp -d)" || die "mktemp"
-          cd "$work" || die "cd $work"
-          git init -q . || die "git init"
-          git -c user.email=e2e@mgit.local -c user.name=e2e commit -q --allow-empty -m init \
-            || die "seed git commit"
-          mgit init || die "mgit init"
           # libkrun needs no kernel or rootfs of its own: libkrunfw supplies the
           # kernel and the guest base is a DIRECTORY composed from an OCI image.
-          base_out="$(mgit sandbox base from debian:12 --json 2>&1)"; rc=$?
-          echo "$base_out"
-          [ "$rc" -eq 0 ] || die "sandbox base from exited $rc"
-          img="$(printf '%s' "$base_out" | sed -n 's/.*"image_ref":"\([^"]*\)".*/\1/p')"
-          [ -n "$img" ] || die "sandbox base from produced no image reference"
-          work_out="$(mgit work wt --task-id SB-1 --sandbox --image "$img" 2>&1)"; rc=$?
-          echo "$work_out"
-          [ "$rc" -eq 0 ] || die "mgit work --sandbox exited $rc"
-          echo "compose + launch through the daemon: OK"
-
-          # TRIPWIRE from here down. `mgit run` is expected to fail with the
-          # documented reset; if it starts working, MGIT-91 has closed and the
-          # capability tables now understate the backend — which must fail this
-          # job rather than pass quietly.
-          exec_out="$(cd wt && mgit run -- /bin/echo contained 2>&1)"; rc=$?
-          echo "$exec_out"
-          if [ "$rc" -eq 0 ]; then
-            echo "FATAL: mgit run into a Linux/libkrun guest now SUCCEEDS. Good news, and a"
-            echo "  gate failure by design: MGIT-91 has closed. Promote this half back to a"
-            echo "  requirement (exec, then commit, then \`mgit sandbox land\`) and update the"
-            echo "  capability tables in README.md, docs/INSTALL-SANDBOX.md and the CHANGELOG"
-            echo "  in the same commit."
-            exit 1
-          fi
-          case "$exec_out" in
-            *"connection reset by peer"*)
-              echo "mgit run still blocked by the documented MGIT-91 reset, as expected" ;;
-            *)
-              die "mgit run failed for a DIFFERENT reason than the documented MGIT-91 reset — investigate before trusting this gate" ;;
-          esac
+          MGIT_GUEST_OCI_REF: debian:12
+        # This is the SAME shared script sandbox-live-linux requires of
+        # firecracker, and it is a requirement again rather than a tripwire:
+        # until MGIT-91 the first `mgit run` after a launch was reset by the
+        # VMM, so this could not pass here at all. A SKIP is a failure.
+        run: |
+          set +e -uo pipefail
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          bash scripts/e2e/sandbox_posture.sh "$RUNNER_TEMP/bin" 2>&1 \
+            | tee "$RUNNER_TEMP/posture-libkrun.log"
+          grep -q 'SANDBOX POSTURE E2E: PASS (live)' "$RUNNER_TEMP/posture-libkrun.log" || {
+            echo "FATAL: the libkrun posture gate did not pass LIVE (a SKIP is a failure here)"; exit 1; }
 
       - name: The VALIDATED column — boot, exec, sync, export, SEC-03 containment
         env:
@@ -459,10 +410,14 @@ jobs:
           # usually does not fire. So it RUNS, its outcome is printed for the
           # flake record, and nothing depends on it — which is also why the
           # capability tables do not claim guest exec on Linux/libkrun.
+          pattern="$(bash scripts/e2e/libkrun_linux_column.sh --flaky-pattern)"
+          if [ -z "$pattern" ]; then
+            echo "no intermittent tests: the list is empty (MGIT-91 closed the last one)"
+            exit 0
+          fi
           go test -buildvcs=false -tags libkrun ./internal/sandboxd/backend/libkrun/ \
-            -run "$(bash scripts/e2e/libkrun_linux_column.sh --flaky-pattern)" \
-            -v -count=1 -timeout 15m 2>&1 | tee "$RUNNER_TEMP/libkrun-flaky.log"
-          echo "== intermittent-set outcome (informational, MGIT-91) =="
+            -run "$pattern" -v -count=1 -timeout 15m 2>&1 | tee "$RUNNER_TEMP/libkrun-flaky.log"
+          echo "== intermittent-set outcome (informational) =="
           grep -E -- '^--- (PASS|FAIL|SKIP)' "$RUNNER_TEMP/libkrun-flaky.log" || true
 
       - name: The KNOWN-GAP tripwire — these must still fail, and say why
@@ -477,9 +432,14 @@ jobs:
           # the assertion below is that they still do. A gap that closes without
           # anyone noticing leaves the shipped tables understating the backend,
           # which is how a deployment ends up relying on something unvalidated.
+          pattern="$(bash scripts/e2e/libkrun_linux_column.sh --gap-pattern)"
+          if [ -z "$pattern" ]; then
+            echo "no known gaps remain: the tripwire list is empty"
+            : > "$RUNNER_TEMP/libkrun-gap.log"
+            exit 0
+          fi
           go test -buildvcs=false -tags libkrun ./internal/sandboxd/backend/libkrun/ \
-            -run "$(bash scripts/e2e/libkrun_linux_column.sh --gap-pattern)" \
-            -v -count=1 -timeout 15m 2>&1 | tee "$RUNNER_TEMP/libkrun-gap.log" || true
+            -run "$pattern" -v -count=1 -timeout 15m 2>&1 | tee "$RUNNER_TEMP/libkrun-gap.log" || true
 
       - name: Assert the declared column — every capability, every gap
         run: |

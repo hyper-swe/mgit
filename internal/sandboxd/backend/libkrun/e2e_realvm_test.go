@@ -774,7 +774,14 @@ func TestE2E_Libkrun_RealVM_MgitGuestControlPlane(t *testing.T) {
 	cfg.RootfsReadOnly = false
 	cfg.VsockEnabled = true // the whole point: wire exec/land/notify
 
-	vm, console := bootVMUntil(t, cfg, "mgit-guest")
+	// Wait for the marker that means THE EXEC LISTENER IS BOUND, not merely
+	// that mgit-guest has started logging. "mgit-guest" matches its very first
+	// line, which it emits before binding — so this test used to dial into the
+	// window where libkrun's host-side vsock socket exists and nothing is
+	// listening behind it, and got a connection reset roughly one run in ten.
+	// Every sibling test that drives this port already waits on this marker;
+	// this one was the outlier. Refs: MGIT-91
+	vm, console := bootVMUntil(t, cfg, `"vsock_port":1024`)
 	t.Logf("guest console:\n%s", console)
 	t.Cleanup(func() { _ = vm.Stop(context.Background(), true) })
 

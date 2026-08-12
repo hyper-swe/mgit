@@ -29,6 +29,7 @@ set -uo pipefail
 # artifact export all hold on Linux exactly as on macOS.
 VALIDATED="
 TestE2E_Libkrun_RealVM_Boots
+TestE2E_Libkrun_RealVM_MgitGuestControlPlane
 TestE2E_Libkrun_RealVM_AgentCommitsInTheSandbox
 TestE2E_Libkrun_RealVM_Litmus1_HostSSHsIntoTheGuest
 TestE2E_Libkrun_RealVM_ConcurrentLaunches_AreIsolated
@@ -65,17 +66,19 @@ TestE2E_Libkrun_RealVM_Sync_RefusesADeleteOfAPathTheGuestChanged
 # Refs: MGIT-87, MGIT-89, MGIT-90
 KNOWN_GAP=""
 
-# INTERMITTENT on this backend, so gated NEITHER way: asserting a pass would
-# make the gate flaky, and asserting a failure would entrench a defect that
-# usually does not fire. The guest exec channel resets ("connection reset by
-# peer") sometimes and not others — measured passing in three environments and
-# then failing on a hosted runner with no code change (MGIT-91). They are RUN
-# and their outcome is printed, so the flake rate stays visible; nothing hangs
-# on the result. A capability that reaches this list is one the tables must not
-# claim.
-FLAKY="
-TestE2E_Libkrun_RealVM_MgitGuestControlPlane
-"
+# INTERMITTENT tests are gated NEITHER way: asserting a pass would make the
+# gate flaky, and asserting a failure would entrench a defect that usually does
+# not fire. The list is EMPTY and kept so the next one has an obvious home.
+#
+# What was here: MgitGuestControlPlane, which reset roughly one run in ten
+# until MGIT-91. Two causes, one product and one test — the manager's
+# first-command retry never fired for a connection RESET (it matched only
+# io.EOF, and libkrun's host-side vsock socket exists before the guest binds,
+# so a too-early exec connects and is reset), and this particular test waited
+# on a console marker that mgit-guest prints BEFORE it binds its listener. It
+# passed 20 consecutive runs after both were fixed, which is what justified
+# moving it into VALIDATED rather than one green run. Refs: MGIT-91
+FLAKY=""
 
 # Measurements, not capabilities: they need an input CI does not supply and are
 # allowed to skip.
