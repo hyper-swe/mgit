@@ -206,6 +206,12 @@ func renderWorkingDiscipline(c Containment) string {
 		"with `nothing to commit` when your tree would be identical to the previous " +
 		"commit's — that means your edits were not staged, not that they were saved. " +
 		"Fix it by staging (`-a`), never by passing `--allow-empty`.\n" +
+		"- **A message with backticks, quotes or `$(...)` goes through `-F`, not the " +
+		"shell.** `mgit commit -a -F msg.txt` reads the message from a file verbatim, " +
+		"and `-F -` reads it from stdin, so nothing you write can be truncated or " +
+		"mangled on its way into the record. Do not reach for `-m \"$(cat msg.txt)\"`: " +
+		"that hands the shell responsibility for an audit artifact. `-m` and `-F` " +
+		"together are refused.\n" +
 		"- **mgit's own generated files are not your work.** `mgit work` wrote this " +
 		"worktree's agent scaffolding (this generated CLAUDE.md block, and the agent " +
 		"config under `.claude/`), and `mgit commit -a` deliberately SKIPS it, so it " +

@@ -159,6 +159,8 @@ where `task_title` is retrieved from mtix via MCP tool `mtix_show` if available,
 
 **FR-2.8** mgit MUST support `--allow-empty` flag to override FR-2.7 for system-generated commits (e.g., rollback markers, squash markers).
 
+**FR-2.9** `mgit commit` MUST accept the commit message from a file via `--file/-F <path>`, reading `-` as standard input, so a message never depends on shell quoting for its integrity. The file content MUST be recorded verbatim as bytes — no trimming, no normalization, no interpretation of the content — preserving trailing newlines and internal blank lines so the recorded message round-trips byte-identical to its source. `--file/-F` and `--message/-m` MUST be mutually exclusive, and passing both MUST be refused naming both flags rather than silently preferring one. A message file that is missing, unreadable or empty MUST be an error that creates no commit and stages nothing. (MGIT-105)
+
 ---
 
 ### FR-3: Commit Data Model
@@ -423,7 +425,7 @@ This shows the consolidated diff and generated commit message without performing
 |---------|-------------|-----------|
 | `mgit init` | Initialize mgit repository | `--link-mtix` (auto-link to .mtix/) |
 | `mgit add <files>` | Stage files for commit | `--task <ID>` (stage by task scope), `.` (all), `--all` |
-| `mgit commit` | Create micro-commit | `-m <msg>`, `--task <ID>` (required), `--allow-empty` |
+| `mgit commit` | Create micro-commit | `-m <msg>`, `-F <file>` (`-` = stdin; verbatim, exclusive with `-m`), `--task <ID>` (required), `--allow-empty` |
 | `mgit status` | Show repository status | `--task <ID>` (filter by task), `--short` |
 | `mgit log` | Show commit history | `--task <ID>`, `--oneline`, `--graph`, `-n <count>`, `--since`, `--until` |
 | `mgit show <commit>` | Show commit details | `--stat` (file stats only), `--format` |
