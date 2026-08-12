@@ -62,7 +62,16 @@ func ContainmentStatusLine(c Containment) string {
 	case ContainmentPending:
 		return "Containment: requested — the sandbox is not running yet; commands routed through `mgit run` fail closed until you launch it"
 	default: // ContainmentOpen
-		return "Containment: none — no sandbox on this host; commands run directly on the host (install mgit-sandboxd to enable containment)"
+		// States what was ESTABLISHED, not what was assumed. The Open posture
+		// is selected because `--sandbox` was not passed; nothing probes
+		// whether this host has a sandbox backend. The previous wording
+		// asserted "no sandbox on this host" and told the reader to install
+		// mgit-sandboxd — printed verbatim on a machine where mgit-sandboxd
+		// was installed and on PATH. Containment status has to be trustworthy
+		// in both directions, so this claims only the request that was (not)
+		// made, and names the flag that changes it. Refs: MGIT-47, MGIT-102
+		return "Containment: none — no sandbox was requested for this worktree; " +
+			"commands run directly on the host (start the task with `mgit work --sandbox` to contain them)"
 	}
 }
 
@@ -141,17 +150,26 @@ func renderPendingBody(env SandboxEnv) string {
 	return b.String()
 }
 
-// renderOpenBody is the honest-open posture: no sandbox exists and none was
-// requested, so commands run directly on the host. It must NOT claim routing or
-// a microVM — that false claim is exactly the MGIT-47 bug. Refs: MGIT-47
+// renderOpenBody is the honest-open posture: no sandbox was requested for this
+// worktree, so commands run directly on the host. It must NOT claim routing or
+// a microVM — that false claim is exactly the MGIT-47 bug.
+//
+// It must equally not claim the OPPOSITE without having checked. The earlier
+// wording said containment was "unavailable here until the sandbox daemon is
+// installed", which nothing establishes: the posture is chosen by the absence
+// of `--sandbox`, not by any probe of the host. It was printed verbatim on a
+// machine with mgit-sandboxd installed and on PATH, sending the reader to
+// install what they already had and implying containment was impossible when
+// it was one flag away. Refs: MGIT-47, MGIT-102
 func renderOpenBody() string {
 	var b strings.Builder
-	b.WriteString("**No sandbox is active on this machine, and none was requested.** ")
+	b.WriteString("**No sandbox was requested for this worktree.** ")
 	b.WriteString("Run build, install, and test commands **normally — they execute directly on the host**, ")
 	b.WriteString("not in a microVM. There is no command routing to worry about.\n\n")
-	b.WriteString("Per-task microVM **containment is unavailable** here until the sandbox daemon is installed. ")
-	b.WriteString("To enable it, install `mgit-sandboxd` and provision a guest image (see docs/INSTALL-SANDBOX.md), ")
-	b.WriteString("then start the task with `mgit work --sandbox`. Everything else — `mgit commit`, `mgit squash`, ")
+	b.WriteString("Per-task microVM containment is available on demand: start the task with ")
+	b.WriteString("`mgit work --sandbox`, or bring one up for this worktree with `mgit sandbox launch`. ")
+	b.WriteString("If `mgit-sandboxd` is not installed on this machine, install it and provision a guest ")
+	b.WriteString("image first (see docs/INSTALL-SANDBOX.md). Everything else — `mgit commit`, `mgit squash`, ")
 	b.WriteString("worktrees, land-by-patch — works without it.\n")
 	return b.String()
 }
@@ -214,7 +232,7 @@ func disciplineRoutingSentence(c Containment) string {
 	case ContainmentPending:
 		return "Once the requested sandbox is running your shell routes through `mgit run`; until then routed commands fail closed (see above)."
 	default: // ContainmentOpen
-		return "There is no sandbox on this machine, so run commands normally — they execute on the host."
+		return "No sandbox was requested for this worktree, so run commands normally — they execute on the host."
 	}
 }
 

@@ -199,6 +199,16 @@ func run(args []string, out, logSink io.Writer) int {
 			return 2
 		}
 		defer func() { _ = closeAudit() }()
+		// Bring back what the PREVIOUS daemon registered, before serving a
+		// single request. Registration is durable but supervision is not: this
+		// process must reconcile the roster against reality (a never-booted
+		// sandbox returns as `created`; one claiming a VM it cannot verify is
+		// discarded with a terminal audit event) rather than start empty and
+		// report a user's containment as "not found". Refs: MGIT-102
+		if rehErr := rehydrateRegistry(context.Background(), svc, logger); rehErr != nil {
+			logger.Error("sandbox registry rehydration failed", "error", rehErr.Error())
+			return 2
+		}
 		dcfg.Service = svc
 		// The same service serves the guest->host artifact export verb: it
 		// resolves task->sandbox, delegates the host-side copy to the backend's
