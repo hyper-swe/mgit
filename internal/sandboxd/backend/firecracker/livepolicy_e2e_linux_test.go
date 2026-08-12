@@ -26,7 +26,12 @@
 // and the proxy then resets, so the guest sees connect-then-reset, whereas
 // libkrun's in-stack forwarder refuses at connect. The assertions are on the
 // CLASS of outcome — reached-and-refused vs. never-reached — not on a string.
-// Refs: MGIT-72, MGIT-68, SEC-04, ADR-012
+//
+// THE PRECONDITION IS GUEST-SIDE, and that is not a detail: both halves wait
+// for the GUEST to report a flow carrying real bytes (heldflow_linux_test.go)
+// before the revoke, because the destination's accept happens before the
+// guest's first read and a revoke landing in that gap made the kill half fail
+// on a precondition it had never met. Refs: MGIT-96, MGIT-72, MGIT-68, SEC-04, ADR-012
 package firecracker
 
 import (
@@ -41,7 +46,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,16 +68,18 @@ const fcHoldSeconds = 20
 // pass without the revoke having done anything. Holding the connection makes
 // the host the only thing that can end it.
 //
-// accepted fires on the first connection — the HOST-side proof that a flow is
-// established, which is what the test waits for before revoking. A fixed sleep
-// would race the handshake, which is how killed=0 happened on libkrun.
-func holdingListener(t *testing.T) (net.Listener, <-chan struct{}) {
+// It deliberately reports NOTHING about acceptance. It used to signal the
+// first accept, and the suite waited on that before revoking — but an accepted
+// connection is not yet a connection carrying data, so a revoke landing in the
+// gap left the guest reporting CONNECTED-NO-DATA and failed the kill assertion
+// on an unmet precondition. The wait now belongs to the guest's own
+// establishment marker (heldFlow.awaitEstablished). Refs: MGIT-96
+func holdingListener(t *testing.T) net.Listener {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ln.Close() })
 
-	accepted := make(chan struct{}, 1)
 	done := make(chan struct{})
 	t.Cleanup(func() { close(done) })
 	go func() {
@@ -81,10 +87,6 @@ func holdingListener(t *testing.T) (net.Listener, <-chan struct{}) {
 			c, aerr := ln.Accept()
 			if aerr != nil {
 				return
-			}
-			select {
-			case accepted <- struct{}{}:
-			default:
 			}
 			go func(c net.Conn) {
 				defer func() { _ = c.Close() }()
@@ -95,29 +97,7 @@ func holdingListener(t *testing.T) (net.Listener, <-chan struct{}) {
 			}(c)
 		}
 	}()
-	return ln, accepted
-}
-
-// guestHold runs the netprobe `hold` verb INSIDE the guest: it opens a
-// connection, carries real bytes on it, and then keeps it open for the window,
-// reporting whether it DIED or SURVIVED.
-//
-// It is a real binary rather than a busybox shell pipeline for a reason worth
-// recording: the first version of this helper ran `sleep N | nc ...` and timed
-// the pipeline. A shell waits for EVERY member of a pipeline, so the elapsed
-// time was N whether the connection was killed at once or never touched — an
-// assertion that could not fail in the drain direction and could not pass in
-// the kill direction. A probe that reports its own observation has no such
-// ambiguity.
-//
-// It is the SAME probe the libkrun suite uses, so the two backends' proofs are
-// stated in identical terms and can be compared directly.
-func guestHold(t *testing.T, mgr *microvm.Manager, id, probePath, dest string) chan string {
-	t.Helper()
-	out := make(chan string, 1)
-	script := fmt.Sprintf("%s hold %s %d 2>&1", probePath, dest, fcHoldSeconds)
-	go func() { out <- probe(t, mgr, id, script) }()
-	return out
+	return ln
 }
 
 // buildNetProbe cross-compiles the guest probe into the worktree the sandbox
@@ -149,40 +129,17 @@ func buildNetProbe(t *testing.T, outPath string) {
 	require.NoError(t, err, "build the guest probe: %s", combined)
 }
 
-// awaitHeldFlow blocks until the DESTINATION reports a connection, and fails
-// if none arrives — an unestablished flow makes every assertion after it
-// vacuous, which is exactly the defect this file exists to close.
-func awaitHeldFlow(t *testing.T, accepted <-chan struct{}, info *model.SandboxInfo) {
-	t.Helper()
-	select {
-	case <-accepted:
-		t.Log("the destination reports an ESTABLISHED flow from the guest; revoking now")
-	case <-time.After(20 * time.Second):
-		t.Fatalf("the guest never reached the destination, so there is nothing for the "+
-			"revoke to kill — this is the killed=0 defect.\n%s", hostNetDiagnostics(t, info))
-	}
-}
-
-// heldOutcome returns the hold probe's full output once it finishes.
-func heldOutcome(t *testing.T, out chan string) string {
-	t.Helper()
-	select {
-	case got := <-out:
-		t.Logf("hold probe ->\n%s", got)
-		return got
-	case <-time.After(time.Duration(fcHoldSeconds+90) * time.Second):
-		t.Fatal("the hold probe never finished")
-		return ""
-	}
-}
-
 // livePolicyFixture is one launched sandbox ready for the live-policy
 // assertions.
+//
+// workDir is the manager's state root, which is what locates each sandbox's
+// per-VM vsock socket — the hold probe dials the guest through it directly so
+// its output can be watched while it is still running (see streamProbe).
 type livePolicyFixture struct {
 	mgr       *microvm.Manager
 	info      *model.SandboxInfo
 	runner    *egress.Runner
-	accepted  <-chan struct{}
+	workDir   string
 	probePath string
 	dest      string
 }
@@ -201,8 +158,8 @@ func livePolicySandbox(t *testing.T) *livePolicyFixture {
 	// proof independent of the guest image's resolver, so a failure here
 	// means the policy path and not DNS.
 	dest := allowedTestIP.String() + ":" + strconv.Itoa(fcDestPort)
-	target, accepted := holdingListener(t)
-	mgr, ref := registerGuestManager(t, kernel, rootfs, "")
+	target := holdingListener(t)
+	mgr, ref, workDir := registerGuestManagerAt(t, kernel, rootfs, "")
 
 	wtPath := filepath.Join(t.TempDir(), "repo", "wt")
 	require.NoError(t, os.MkdirAll(wtPath, 0o750))
@@ -222,29 +179,31 @@ func livePolicySandbox(t *testing.T) *livePolicyFixture {
 	_, runner := startEgressRunnerFor(t, info, model.NetworkModeAllowlist, []string{dest}, target)
 	requireGuestIsAddressed(t, mgr, info)
 	return &livePolicyFixture{
-		mgr: mgr, info: info, runner: runner, accepted: accepted,
+		mgr: mgr, info: info, runner: runner, workDir: workDir,
 		probePath: probePath, dest: dest,
 	}
 }
 
 // control asserts the destination is reachable at all, so a later refusal or
-// teardown is a decision rather than a broken sandbox — and then DRAINS the
-// accepted signal it just produced.
+// teardown is a decision rather than a broken sandbox.
 //
-// Draining is not bookkeeping: the accepted channel is buffered, so the
-// control connection's signal would otherwise satisfy the wait for the HELD
-// flow, and the revoke would fire before the held connection existed. That is
-// the killed=0 race in a different costume.
+// It runs through microvm.Manager.Exec deliberately: reaching the guest that
+// way is also what proves the guest is serving its control channel, which is
+// what lets the hold probe dial the exec channel directly afterwards without
+// the manager's first-command retry (streamProbe).
 func (f *livePolicyFixture) control(t *testing.T) {
 	t.Helper()
 	out := probe(t, f.mgr, f.info.ID, fmt.Sprintf("%s dial %s 2>&1", f.probePath, f.dest))
 	require.Contains(t, out, "PROBE-RESULT DIAL = ALLOWED",
 		"the allowlisted destination must be reachable BEFORE the revoke, or nothing "+
 			"below proves anything")
-	select {
-	case <-f.accepted:
-	default:
-	}
+}
+
+// startHold launches the netprobe `hold` verb inside the guest against this
+// fixture's destination. Refs: MGIT-96
+func (f *livePolicyFixture) startHold(t *testing.T) *heldFlow {
+	t.Helper()
+	return startHeldFlow(t, f.workDir, f.info.ID, f.probePath, f.dest)
 }
 
 // fcDestPort is the destination port the policy names.
@@ -258,13 +217,18 @@ const fcDestPort = 443
 // own observation that its connection ended early — because either alone can
 // lie: a count with no guest-side death would be bookkeeping, and an early
 // guest exit with no count could be the destination hanging up (which the
-// holding listener is there to rule out). Refs: MGIT-72, SEC-04, ADR-012
+// holding listener is there to rule out).
+//
+// The revoke fires only once the GUEST reports the flow established and
+// carrying real bytes, not merely accepted by the destination: revoking in
+// that gap left the guest reporting CONNECTED-NO-DATA and failed this
+// assertion on an unmet precondition. Refs: MGIT-96, MGIT-72, SEC-04, ADR-012
 func TestE2E_Firecracker_Revoke_KillsEstablishedFlow(t *testing.T) {
 	f := livePolicySandbox(t)
 	f.control(t)
 
-	held := guestHold(t, f.mgr, f.info.ID, f.probePath, f.dest)
-	awaitHeldFlow(t, f.accepted, f.info)
+	held := f.startHold(t)
+	held.awaitEstablished(t, f.info)
 
 	change, err := f.runner.SetPolicy(f.info.ID, nil, false)
 	require.NoError(t, err)
@@ -275,7 +239,7 @@ func TestE2E_Firecracker_Revoke_KillsEstablishedFlow(t *testing.T) {
 			"either the flow was never tracked or the kill did not happen", change.Killed)
 	assert.False(t, change.Drained, "a revoke without drain must not report drained")
 
-	out := heldOutcome(t, held)
+	out := held.await(t)
 	assert.Contains(t, out, "PROBE-RESULT HOLD = DIED",
 		"the host counted killed=%d but the GUEST's established connection did not die — "+
 			"the kill did not reach the flow that was carrying data", change.Killed)
@@ -292,13 +256,20 @@ func TestE2E_Firecracker_Revoke_KillsEstablishedFlow(t *testing.T) {
 //
 // The trailing new-flow assertion is what stops "survived" from being an
 // accidental no-op: the ruleset must have changed even though the sockets were
-// left alone. Refs: MGIT-72, SEC-04, ADR-012
+// left alone.
+//
+// It waits on the SAME guest-side establishment marker as the kill half. It
+// shared the weaker host-accept wait and merely got away with it — a drained
+// flow is left running, so it always had time to read its bytes afterwards and
+// still reported SURVIVED. A control that passes for a reason other than the
+// one under test is not a control, and the two halves must differ only in the
+// drain flag. Refs: MGIT-96, MGIT-72, SEC-04, ADR-012
 func TestE2E_Firecracker_Revoke_DrainKeepsEstablishedFlow(t *testing.T) {
 	f := livePolicySandbox(t)
 	f.control(t)
 
-	held := guestHold(t, f.mgr, f.info.ID, f.probePath, f.dest)
-	awaitHeldFlow(t, f.accepted, f.info)
+	held := f.startHold(t)
+	held.awaitEstablished(t, f.info)
 
 	change, err := f.runner.SetPolicy(f.info.ID, nil, true)
 	require.NoError(t, err)
@@ -308,7 +279,7 @@ func TestE2E_Firecracker_Revoke_DrainKeepsEstablishedFlow(t *testing.T) {
 	assert.Zero(t, change.Killed, "a drained revoke must terminate nothing")
 	assert.True(t, change.Drained)
 
-	out := heldOutcome(t, held)
+	out := held.await(t)
 	assert.Contains(t, out, "PROBE-RESULT HOLD = SURVIVED",
 		"with drain the established flow must be LEFT ALONE, but it did not survive")
 
