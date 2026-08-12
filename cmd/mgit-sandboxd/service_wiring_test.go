@@ -46,11 +46,13 @@ func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard,
 // host root, and returns a closer that releases it cleanly.
 func TestBuildSandboxService_WiresServiceAndCloser(t *testing.T) {
 	clock := func() time.Time { return time.Unix(0, 0).UTC() }
-	svc, events, policyStore, closeAudit, err := buildSandboxService(nopManager{}, t.TempDir(), clock, testLogger())
+	hostRoot := t.TempDir()
+	policyStore := newPolicyStore(hostRoot, clock, testLogger())
+	require.NotNil(t, policyStore)
+	svc, events, closeAudit, err := buildSandboxService(nopManager{}, hostRoot, policyStore, clock)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 	require.NotNil(t, events)
-	require.NotNil(t, policyStore)
 	require.NotNil(t, closeAudit)
 
 	// The service is live: a register records into the real audit index.
@@ -91,8 +93,17 @@ func TestBuildSandboxService_BadHostRoot(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "not-a-dir")
 	require.NoError(t, os.WriteFile(f, []byte("x"), 0o600))
 	clock := func() time.Time { return time.Unix(0, 0).UTC() }
-	_, _, _, _, err := buildSandboxService(nopManager{}, f, clock, testLogger())
+	_, _, _, err := buildSandboxService(nopManager{}, f, newPolicyStore(f, clock, testLogger()), clock)
 	require.Error(t, err)
+
+	t.Run("nil_policy_store_is_refused", func(t *testing.T) {
+		// A serving daemon without a policy reader would enforce nothing:
+		// no require_sandbox, no per-sandbox maxima, no network posture.
+		// Refs: SEC-02, FR-17.13, MGIT-98
+		_, _, _, err := buildSandboxService(nopManager{}, t.TempDir(), nil, clock)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "policy store")
+	})
 }
 
 // TestSlogPolicyRecorder_LogsChange covers the policy-change recorder the
@@ -128,7 +139,8 @@ func TestBuildSandboxService_CreatesTheHostRootItOwns(t *testing.T) {
 	hostRoot := filepath.Join(t.TempDir(), "repo", ".mgit", "sandbox")
 	clock := func() time.Time { return time.Unix(0, 0).UTC() }
 
-	_, _, _, closeAudit, err := buildSandboxService(nopManager{}, hostRoot, clock, testLogger())
+	_, _, closeAudit, err := buildSandboxService(nopManager{}, hostRoot,
+		newPolicyStore(hostRoot, clock, testLogger()), clock)
 
 	require.NoError(t, err, "the daemon must stand up the directory it owns")
 	t.Cleanup(func() { _ = closeAudit() })

@@ -25,7 +25,15 @@ const fallbackAccountedMemoryMB = 2048
 // once the sandbox is visible via List — racing launches can never
 // overshoot, and one cold boot never serializes other operations.
 // Backends MUST register a sandbox in List before Launch returns.
-// Refs: FR-17.26
+//
+// What the memory dimension counts, stated plainly because the distinction
+// matters to anyone reading a refusal: ADMITTED memory — the sum of what each
+// live sandbox DECLARED — not resident memory. libkrun and firecracker
+// allocate guest pages lazily, so a 4096 MB guest touching 300 MB still holds
+// its whole declared share here. That is the conservative direction (mgit
+// under-admits rather than over-commits the host), but this ceiling is an
+// admission budget and not a measurement of host memory pressure, and it
+// should never be described as one. Refs: FR-17.26, MGIT-98
 type CeilingManager struct {
 	inner            model.SandboxManager
 	maxConcurrent    int
@@ -85,25 +93,54 @@ func (c *CeilingManager) reserve(ctx context.Context, requestMB int) error {
 	count += c.reservedCount
 	usedMB += c.reservedMB
 
-	// Both refusals below say the FLEET is full — a different problem, with a
-	// different fix, from a single launch asking for more than the
-	// per-sandbox maximum (model.ErrSandboxResourceLimitExceeded, refused in
-	// the service before this decorator is reached). The wording names the
-	// host-wide cap and points at freeing capacity, never at shrinking the
-	// request. Refs: FR-17.26, R-H212
+	if err := c.admit(count, usedMB, requestMB); err != nil {
+		return err
+	}
+
+	c.reservedCount++
+	c.reservedMB += requestMB
+	return nil
+}
+
+// admit is the ceiling's whole decision, expressed as three refusals that must
+// stay tellable apart.
+//
+// Every one of them says something about the HOST, never about the request
+// being individually oversized — that is model.ErrSandboxResourceLimitExceeded,
+// raised in the service before this decorator is reached, and it has the
+// opposite fix ("ask for less"). None of these may borrow its language.
+//
+//  1. too many sandboxes  -> free one or wait
+//  2. bigger than the WHOLE ceiling -> nothing to wait for; the host is too
+//     small for the memory policy in force
+//  3. bigger than what is left -> free capacity or wait
+//
+// The second exists because of the small-host case: 50% of a modest host's
+// memory can land below the 2048 MB per-sandbox default, so every launch —
+// including one that declared nothing at all — is unfittable. Telling that
+// operator to "free capacity or wait" is advice that can never work.
+// Refs: FR-17.26, R-H212, MGIT-98
+func (c *CeilingManager) admit(count, usedMB, requestMB int) error {
 	if c.maxConcurrent > 0 && count >= c.maxConcurrent {
 		return fmt.Errorf("%w: the host is already running or admitting %d sandboxes (host-wide cap %d); "+
 			"this launch is not too big — free capacity with `mgit sandbox remove <task>` or wait for one to expire",
 			model.ErrSandboxCeilingExceeded, count, c.maxConcurrent)
 	}
-	if c.maxTotalMemoryMB > 0 && usedMB+requestMB > c.maxTotalMemoryMB {
+	if c.maxTotalMemoryMB <= 0 {
+		return nil
+	}
+	if requestMB > c.maxTotalMemoryMB {
+		return fmt.Errorf("%w: this launch needs %d MB but the host-wide sandbox memory ceiling is %d MB "+
+			"in total, so it cannot be admitted even on a completely idle host; this host is too small for "+
+			"the memory policy in force — raise `max_total_memory_percent` in host sandbox policy, start "+
+			"mgit-sandboxd with an explicit --max-memory-mb, or use a larger host",
+			model.ErrSandboxCeilingExceeded, requestMB, c.maxTotalMemoryMB)
+	}
+	if usedMB+requestMB > c.maxTotalMemoryMB {
 		return fmt.Errorf("%w: %d MB in use or admitted + %d MB requested exceeds the %d MB host-wide ceiling; "+
 			"free capacity with `mgit sandbox remove <task>` or wait for one to expire",
 			model.ErrSandboxCeilingExceeded, usedMB, requestMB, c.maxTotalMemoryMB)
 	}
-
-	c.reservedCount++
-	c.reservedMB += requestMB
 	return nil
 }
 

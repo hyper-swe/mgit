@@ -26,29 +26,34 @@ const sandboxIndexDB = "sandbox-index.db"
 // buildSandboxService constructs the lifecycle service the daemon
 // dispatches to: the supervised (ceiling-wrapped) manager, the append-only
 // sandbox_events audit store, the host policy reader, the injected clock,
-// and a host-owned ULID id generator. It returns the audit-event store and
-// policy reader (shared with the land path) and a closer for the audit
-// store. Handlers go through this service, never the manager directly
-// (architecture rule). Refs: FR-17.13, FR-17.18, MGIT-11.10.8
-func buildSandboxService(manager model.SandboxManager, hostRoot string, clock func() time.Time, logger *slog.Logger) (*service.SandboxService, *index.Store, *policy.Store, func() error, error) {
+// and a host-owned ULID id generator. It returns the audit-event store
+// (shared with the land path) and a closer for it. Handlers go through this
+// service, never the manager directly (architecture rule).
+//
+// The policy store is INJECTED rather than opened here: the daemon resolves
+// the FR-17.26 fleet ceiling from host policy before this point, and the
+// ceiling and the launch path must read one policy, not two independently
+// opened views of it. A nil store is refused — a serving daemon without a
+// policy reader would enforce nothing (SEC-02).
+// Refs: FR-17.13, FR-17.18, MGIT-11.10.8, MGIT-98
+func buildSandboxService(manager model.SandboxManager, hostRoot string, policyStore *policy.Store,
+	clock func() time.Time) (*service.SandboxService, *index.Store, func() error, error) {
+	if policyStore == nil {
+		return nil, nil, nil, fmt.Errorf("host policy store is required to serve sandbox operations")
+	}
 	// index.New creates the host root on the way to its own database, which
 	// is what makes the first `mgit sandbox …` in a fresh repo work — nothing
 	// else had created .mgit/sandbox by then. Refs: FR-17.13, MGIT-61.15
 	events, err := index.New(filepath.Join(hostRoot, sandboxIndexDB), clock)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("open sandbox audit index: %w", err)
-	}
-	policyStore, err := policy.NewStore(hostRoot, clock, slogPolicyRecorder{logger: logger})
-	if err != nil {
-		_ = events.Close()
-		return nil, nil, nil, nil, fmt.Errorf("open host policy store: %w", err)
+		return nil, nil, nil, fmt.Errorf("open sandbox audit index: %w", err)
 	}
 	svc, err := service.NewSandboxService(manager, events, policyStore, clock, newIDGen(clock))
 	if err != nil {
 		_ = events.Close()
-		return nil, nil, nil, nil, fmt.Errorf("wire sandbox service: %w", err)
+		return nil, nil, nil, fmt.Errorf("wire sandbox service: %w", err)
 	}
-	return svc, events, policyStore, events.Close, nil
+	return svc, events, events.Close, nil
 }
 
 // newIDGen returns a monotonic ULID generator for host-assigned sandbox
