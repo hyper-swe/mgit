@@ -851,8 +851,14 @@ go test ./... -race -count=1
 go test ./... -coverprofile=cover.out -count=1
 go tool cover -func=cover.out | tail -1
 
-# 4. Linter (zero warnings)
-golangci-lint run
+# 4. Linter (zero warnings) — CROSS-TARGET, not just your host.
+#    golangci-lint only sees files whose build tags match the HOST, so a green
+#    run on macOS never looks at *_linux.go while CI lints on ubuntu. That gap
+#    put five commits on main with a red CI lint nobody noticed. `make lint`
+#    runs the linux pass for you; run the native one too if you changed
+#    host-specific code.
+make lint          # GOOS=linux — what CI actually runs
+golangci-lint run  # your host
 
 # 5. Vulnerability check
 govulncheck ./...

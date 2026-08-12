@@ -139,8 +139,20 @@ test-cover:
 # passes with PKG_CONFIG_PATH unset beforehand, relying solely on that
 # export. Noted here so this isn't mistaken for the missing-pkg-config bug
 # it resembles at a glance.
+# CROSS-TARGET, deliberately. golangci-lint only sees files whose build tags
+# match the HOST, so a macOS developer's green `lint` never looks at
+# *_linux.go — and CI lints on ubuntu. That gap let five commits reach main
+# with a red CI lint nobody noticed (2026-08-12). Linting for linux here costs
+# seconds and closes it. Refs: MGIT-89
 .PHONY: lint
-lint:
+lint: lint-linux
+
+.PHONY: lint-linux
+lint-linux:
+	GOOS=linux golangci-lint run
+
+.PHONY: lint-native
+lint-native:
 	golangci-lint run ./...
 
 ## security-scan: Run vulnerability checker

@@ -39,6 +39,13 @@ func TestDirWritable_UnwritableDir_ReturnsError(t *testing.T) {
 // than the unwritable one it replaces: /etc/resolv.conf is frequently a
 // symlink, and a CA bundle or shadow file with the wrong mode is a security
 // change, not a copy. Refs: MGIT-89
+// The permissions below are the FIXTURE, not a choice: this test asserts that
+// copyTree preserves a base image's real modes, so a world-readable CA bundle
+// (0644) and a group-readable shadow (0640) have to be written as such. Reducing
+// them to satisfy gosec would delete the property under test. The reads are of
+// paths this test just created.
+//
+//nolint:gosec // G301,G306,G304: the modes and paths are the fixture.
 func TestCopyTree_PreservesKindsAndModes(t *testing.T) {
 	src, dst := t.TempDir(), filepath.Join(t.TempDir(), "seeded")
 	require.NoError(t, os.MkdirAll(filepath.Join(src, "ssl", "certs"), 0o755))
@@ -76,7 +83,7 @@ func TestCopyTree_PreservesKindsAndModes(t *testing.T) {
 // at. The rest of the tree must still arrive. Refs: MGIT-89
 func TestCopyTree_SkipsWhatItCannotFaithfullyReproduce(t *testing.T) {
 	src, dst := t.TempDir(), filepath.Join(t.TempDir(), "seeded")
-	require.NoError(t, os.WriteFile(filepath.Join(src, "keep.conf"), []byte("k\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "keep.conf"), []byte("k\n"), 0o600))
 	if err := mkfifoForTest(filepath.Join(src, "afifo")); err != nil {
 		t.Skipf("SKIP: cannot create a fifo here (%v); the skip branch is unexercised", err)
 	}
@@ -94,7 +101,7 @@ func TestCopyTree_SkipsWhatItCannotFaithfullyReproduce(t *testing.T) {
 // changed. Refs: MGIT-89
 func TestEnsureWritableDir_AlreadyWritable_IsANoOp(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "keep"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "keep"), []byte("x"), 0o600))
 
 	require.NoError(t, ensureWritableDir(dir, discardLogger()))
 

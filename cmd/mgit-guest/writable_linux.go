@@ -67,6 +67,12 @@ func ensureWritableDir(dir string, logger *slog.Logger) error {
 	// in the overlay's upper, where writes work even on a root that cannot copy
 	// up — which is exactly why this must come before the probe's verdict.
 	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		// 0755, not 0750: this recreates a directory the guest's own
+		// unprivileged processes must traverse and read — /etc holds
+		// resolv.conf, the CA bundle and nsswitch. Tightening it to satisfy
+		// gosec would break name resolution and TLS for every non-root
+		// process in the guest, which is the opposite of the fix.
+		//nolint:gosec // G301: world-traversable is the required mode here.
 		if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
 			return fmt.Errorf("mgit-guest: create %s: %w", dir, mkErr)
 		}
@@ -108,6 +114,11 @@ func ensureWritableDir(dir string, logger *slog.Logger) error {
 // check would reveal. Refs: MGIT-89
 func dirWritable(dir string) error {
 	probe := filepath.Join(dir, ".mgit-write-probe")
+	// The path is constructed here from a caller-fixed directory and a
+	// constant name; nothing guest-supplied reaches it, and the open is the
+	// probe's entire purpose — it must attempt a real create to learn whether
+	// the filesystem refuses one.
+	//nolint:gosec // G304: path is internally constructed, not attacker-influenced.
 	f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
