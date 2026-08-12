@@ -61,6 +61,21 @@ type connectFunc func(ctx context.Context) (sandboxClient, error)
 // the bare status never prints as an "Error:" line.
 type exitError struct{ code int }
 
+// launchMessage reports what actually happened, which under LAZY provisioning
+// is usually registration rather than a boot: `sandbox launch` and
+// `work --sandbox` record the sandbox and the microVM starts on first use
+// (FR-17.9, FR-17.10). Printing "Launched" over a sandbox in state `created`
+// invited precisely the reading MGIT-92 exists to kill — that containment was
+// already established — and it did so in the one line the operator reads.
+// A sandbox that really is running still says so. Refs: MGIT-92, FR-17.9
+func launchMessage(info *model.SandboxInfo) string {
+	if info.State == model.StateCreated {
+		return fmt.Sprintf("Registered sandbox %s for task %s (%s; the microVM boots on first use, "+
+			"and that boot fails closed if its guest does not come up)\n", info.ID, info.TaskID, info.State)
+	}
+	return fmt.Sprintf("Launched sandbox %s for task %s (%s)\n", info.ID, info.TaskID, info.State)
+}
+
 func (e *exitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
 
 // sandboxCmd is the production `mgit sandbox` command group.
@@ -181,8 +196,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 			// Regenerate the worktree's CLAUDE.md env section to match this
 			// sandbox's network posture (MGIT-11.11.2).
 			writeSandboxEnvDoc(cmd.ErrOrStderr(), info)
-			return writeSandbox(cmd.OutOrStdout(), info, asJSON,
-				fmt.Sprintf("Launched sandbox %s for task %s (%s)\n", info.ID, info.TaskID, info.State))
+			return writeSandbox(cmd.OutOrStdout(), info, asJSON, launchMessage(info))
 		},
 	}
 	bindTaskIDFlag(cmd, &task, "task ID to bind (required)")

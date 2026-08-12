@@ -246,6 +246,12 @@ type krunVM struct {
 	waitDone chan struct{} // closed once the child is reaped (watch goroutine)
 }
 
+// ConsoleTail returns the tail of this VM's captured guest console, which is
+// what a launch that fails closed quotes as its diagnosis. Refs: MGIT-92
+func (v *krunVM) ConsoleTail(maxBytes int) string {
+	return microvm.TailFile(v.consolePath, maxBytes)
+}
+
 // Start spawns the VM child and waits for its "configured, entering"
 // handshake. On any failure it reaps the child itself — Manager.Launch never
 // calls Stop after a failed Start, so the VM must self-clean (no orphan

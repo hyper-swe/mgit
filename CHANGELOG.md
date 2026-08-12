@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a launch whose guest never starts now fails, loudly, instead of reporting success
+
+**`mgit sandbox launch` and `mgit work --sandbox` reported a working sandbox
+whose guest had already died.** Launch waited for the VMM and nothing else, so
+the operator was told containment was established and the first command later
+failed with a socket path. That is how MGIT-89 hid a completely broken backend
+for weeks: every networked sandbox on Linux/libkrun was dead on arrival and the
+launch said nothing. (MGIT-92)
+
+A boot now CONFIRMS the guest is serving before it counts as a launch, and a
+guest that never answers is torn down and reported with **the tail of its own
+console** — the place its startup error was already being written:
+
+```
+mgit run: sandbox exec: sandbox ensure-running: libkrun launch: guest never
+answered on its control channel within 15s: ...
+guest console (tail):
+{"msg":"libkrun vm entering","event":"krun_vm_enter",...}
+mgit-guest: write /etc/resolv.conf: operation not supported
+```
+
+That last line is MGIT-89's actual cause, now delivered at the moment of
+failure instead of after a week of investigation.
+
+- **It costs the healthy path nothing.** Measured on real KVM, first exec after
+  a launch: 5679/5761/5741 ms before, 5755/5737/5746 ms after — identical
+  within noise, because the wait already existed inside the first exec and has
+  only moved earlier, to where the diagnosis is possible. The 15s bound is paid
+  only by a launch that was already broken, and a sandbox nobody can use is
+  worth far more than 15s to an agent that would otherwise walk into it.
+- **Which step fails closed: the BOOT, not the registration.** Provisioning
+  stays lazy (FR-17.9/17.10) — `work --sandbox` registers and the microVM starts
+  on first use — so confirming at registration would mean booting eagerly and
+  changing the lifecycle contract. What did change is the message: registering
+  now says **"Registered sandbox … (created; the microVM boots on first use, and
+  that boot fails closed if its guest does not come up)"** instead of
+  "Launched", which was the word that invited the wrong reading.
+- **All four backends, each confirming what it can actually prove.** The wait
+  lives once in the shared microVM manager (firecracker, libkrun, vzf, hyperv)
+  and asks the guest to answer on its control channel; the container fallback
+  has no guest and no vsock, so it confirms the container is RUNNING and quotes
+  `podman logs` on failure. A backend with no exec transport wired is skipped
+  rather than failed, because there is no control plane there to confirm.
+- **MGIT-91's first-command retry is untouched and still armed.** The readiness
+  probe deliberately does NOT mark the guest as having answered: it is answered
+  by a lookup failure on the read path, which is weaker evidence than a real
+  command round trip, so the retry window stays open for the caller's first real
+  command. A test pins exactly that.
+
 ### Fixed — the first command after a launch no longer dies on a connection reset
 
 **`mgit run` failed on the first command after every sandbox launch on

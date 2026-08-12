@@ -299,6 +299,16 @@ type fcVM struct {
 	vsockPath string          // per-VM firecracker vsock unix socket (host-private, unique per VM)
 }
 
+// ConsoleTail returns the tail of this VM's captured guest console, which is
+// what a launch that fails closed quotes as its diagnosis. The write handle
+// names the path the VMM's stdout/stderr are wired to. Refs: MGIT-92
+func (v *fcVM) ConsoleTail(maxBytes int) string {
+	if v.console == nil {
+		return ""
+	}
+	return microvm.TailFile(v.console.Name(), maxBytes)
+}
+
 // PeerIdentity reports the host-observed vsock peer identity. The guest's
 // in-VM context ID is the well-known guestVsockCID on EVERY Firecracker VM,
 // so it is NOT a per-VM discriminator (audit finding F-E / SEC-10): keying

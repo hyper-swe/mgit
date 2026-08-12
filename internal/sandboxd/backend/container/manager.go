@@ -30,6 +30,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -152,6 +153,20 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 		return nil, fmt.Errorf("container launch: %w", err)
 	}
 
+	// FAIL CLOSED: `podman run -d` succeeds the moment the container is
+	// created, so an image whose entrypoint exits immediately yields a
+	// "launched" sandbox that no exec can use — the same failure MGIT-92 fixes
+	// for the microVM backends, in the form this backend takes. The readiness
+	// signal differs (there is no mgit-guest here and no vsock to answer on),
+	// so what is confirmed is what this backend can actually prove: the
+	// container is RUNNING. Refs: MGIT-92, NFR-17.6
+	if err := m.confirmRunning(ctx, name); err != nil {
+		if stateDir != "" {
+			_ = os.RemoveAll(stateDir)
+		}
+		return nil, errors.Join(err, m.forceRemove(ctx, name))
+	}
+
 	info := m.newSandboxInfo(id, opts)
 
 	m.mu.Lock()
@@ -162,6 +177,41 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 		"event", "launched", "sandbox_id", id, "task_id", opts.TaskID,
 		"reduced_isolation", true)
 	return &info, nil
+}
+
+// confirmRunning verifies the container is actually running, and on failure
+// reports the container's OWN last output as the diagnosis — the counterpart
+// of the guest console tail on the microVM backends, and for the same reason:
+// the cause is already written down, and an operator should not have to go
+// looking for it after being told the launch succeeded. Refs: MGIT-92
+func (m *Manager) confirmRunning(ctx context.Context, name string) error {
+	out, err := m.cfg.Runner.run(ctx, "inspect", "--format", "{{.State.Running}}", name)
+	if err == nil && strings.TrimSpace(string(out)) == "true" {
+		return nil
+	}
+	detail := "container logs: unavailable"
+	if logs, lerr := m.cfg.Runner.run(ctx, "logs", "--tail", "20", name); lerr == nil {
+		if trimmed := strings.TrimSpace(string(logs)); trimmed != "" {
+			detail = "container logs (tail):\n" + trimmed
+		} else {
+			detail = "container logs: empty (it wrote nothing before it stopped)"
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("container launch: %w: could not inspect it: %w\n%s",
+			model.ErrGuestNotServing, err, detail)
+	}
+	return fmt.Errorf("container launch: %w: it is not running\n%s",
+		model.ErrGuestNotServing, detail)
+}
+
+// forceRemove tears down a container that failed its readiness check, so a
+// launch that fails closed leaves nothing behind. Refs: MGIT-92
+func (m *Manager) forceRemove(ctx context.Context, name string) error {
+	if _, err := m.cfg.Runner.run(ctx, "rm", "--force", name); err != nil {
+		return fmt.Errorf("container launch: tear down %q: %w", name, err)
+	}
+	return nil
 }
 
 // stateDirName / privateStoreDirName / stagingDirName name the per-sandbox host

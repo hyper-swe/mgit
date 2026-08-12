@@ -223,7 +223,7 @@ func launchWorkSandbox(ctx context.Context, out io.Writer, deps workDeps, opts w
 		return
 	}
 	writeSandboxEnvDoc(out, info)
-	_, _ = fmt.Fprintf(out, "Launched sandbox %s for task %s (%s)\n", info.ID, info.TaskID, info.State)
+	_, _ = fmt.Fprint(out, launchMessage(info))
 }
 
 // upsertWorktreeEnvDoc writes the worktree's CLAUDE.md sandbox-env block for the

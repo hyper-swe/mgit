@@ -187,6 +187,11 @@ jobs:
           MGIT_GUEST_ROOTFS: ${{ runner.temp }}/guest/rootfs.ext4
         run: |
           set -uo pipefail
+          # shellcheck source=scripts/sandbox-image/pins.env
+          . scripts/sandbox-image/pins.env   # defines FC_CMDLINE; without it
+          # `set -u` kills this step on an unbound variable before a single verb
+          # runs, which is how this gate sat dead while reporting failure for
+          # days. The posture step above already sources it; this one did not.
           export PATH="$RUNNER_TEMP/bin:$PATH"
           export MGIT_GUEST_CMDLINE="$FC_CMDLINE"
           bash scripts/e2e/sandbox_cli_surface.sh "$RUNNER_TEMP/bin" 2>&1 | tee "$RUNNER_TEMP/cli.log"

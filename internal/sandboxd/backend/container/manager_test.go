@@ -38,6 +38,13 @@ func (r *fakeRunner) run(_ context.Context, args ...string) ([]byte, error) {
 	if res, ok := r.results[args[0]]; ok {
 		return res.out, res.err
 	}
+	// Default to a HEALTHY runtime: an unscripted readiness inspect reports a
+	// running container, so tests that are not about the fail-closed check are
+	// unaffected by it. A test that wants a dead container scripts "inspect".
+	// Refs: MGIT-92
+	if args[0] == "inspect" {
+		return []byte("true\n"), nil
+	}
 	return nil, nil
 }
 
@@ -242,4 +249,40 @@ func TestContainer_Guards(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, listed, "a failed launch is not registered")
 	})
+}
+
+// TestContainer_Launch_ContainerNotRunning_FailsClosedWithItsLogs is MGIT-92 in
+// the shape this backend takes. `podman run -d` succeeds the moment the
+// container is created, so an image whose entrypoint exits immediately yields a
+// launch that reports success and an exec that cannot work. As with the microVM
+// backends, the assertion is on WHICH error comes back: the container's own
+// last words, not a generic failure, because the cause is already written down
+// and the operator should not have to go looking for it.
+// Refs: MGIT-92, NFR-17.6
+func TestContainer_Launch_ContainerNotRunning_FailsClosedWithItsLogs(t *testing.T) {
+	runner := &fakeRunner{results: map[string]struct {
+		out []byte
+		err error
+	}{
+		"inspect": {out: []byte("false\n")},
+		"logs":    {out: []byte("standard_init_linux.go: exec user process caused: no such file or directory\n")},
+	}}
+	mgr := testManager(t, runner)
+
+	info, err := mgr.Launch(context.Background(), model.SandboxLaunchOptions{
+		TaskID: "MGIT-92", WorktreePath: t.TempDir(), ImageRef: "debian@sha256:" + strings.Repeat("a", 64),
+		Network: model.NetworkPolicy{Mode: model.NetworkModeNone},
+	})
+
+	require.Error(t, err, "a container that is not running must not be reported as launched")
+	assert.Nil(t, info)
+	assert.ErrorIs(t, err, model.ErrGuestNotServing)
+	assert.Contains(t, err.Error(), "no such file or directory",
+		"the error must carry the container's own output, not just a status")
+
+	// Fail CLOSED: torn down, and not listed as a usable sandbox.
+	assert.NotEmpty(t, runner.callsFor("rm"), "the dead container must be removed")
+	list, err := mgr.List(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, list)
 }

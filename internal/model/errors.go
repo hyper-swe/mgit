@@ -166,6 +166,11 @@ var (
 	// bypassing the verified land door. The plan is rejected. Refs: SEC-03
 	ErrSharedStoreReachable = errors.New("shared object store reachable from the guest")
 
+	// ErrGuestNotServing reports a sandbox whose VMM started but whose guest
+	// never answered on its control channel, so the launch failed CLOSED and
+	// the sandbox was torn down rather than reported as running. Refs: MGIT-92
+	ErrGuestNotServing = errors.New("guest never answered on its control channel")
+
 	// ErrSandboxCeilingExceeded indicates a launch would exceed the
 	// host-wide concurrency or memory ceiling; the launch fails fast
 	// rather than degrading the host (SEC-09). Refs: FR-17.26
