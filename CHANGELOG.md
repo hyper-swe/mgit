@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-08-12
+
+The Linux release. `-tags libkrun` on Linux went from "never validated" to a
+continuously gated path in one sequence, and the four defects that stood between
+those two states were each measured before they were fixed.
+
+**Why it matters to a deployment:** before this, a Linux agent loop that edits
+the host worktree between rounds had no validated option — firecracker cannot
+re-stage into a running guest or export from it (it delivers an ext4 image built
+at launch), and Linux libkrun was unproven. Now it has one.
+
+**Backend matrix — three validated columns, continuously gated:**
+
+| | macOS / libkrun | Linux / firecracker | Linux / libkrun |
+|---|---|---|---|
+| launch, exec, land | live (manual per release) | live in CI | **live in CI** |
+| live egress policy (grant → revoke) | live | live in CI | **live in CI** |
+| host edits → running guest (`sandbox sync`) | live | refused by design | **live in CI** |
+| artifact export (`sandbox export`) | live | refused by design | **live in CI** |
+
+firecracker's two refusals are deliberate and fail closed naming the backend;
+they are a property of delivering the worktree as a launch-time image, not a
+gap in its implementation.
+
+### Known limitations (0.4.5)
+
+- **On Linux/libkrun the guest root is writable only under `/tmp`, `/etc` and
+  the worktree.** An agent can build, test and commit; it cannot `apt install`
+  across the image root. The cause is upstream — libkrun's Linux virtio-fs
+  answers `FS_IOC_GETFLAGS` with `EOPNOTSUPP`, which overlayfs propagates, so
+  copy-up fails — and lifting it needs that errno fixed, not a change here.
+- **A host write landing in the same second as a previous guest read, at
+  unchanged length, can be missed on both libkrun backends** (cached size and
+  1-second mtime granularity both look unchanged). No sync test is that tightly
+  spaced; a fast agent loop could be. Tracked as MGIT-93.
+- **`mgit sandbox shell` is unavailable in every build** — the interactive
+  vsock-PTY transport is not implemented on any platform. `mgit run` and
+  `mgit sandbox exec` cover non-interactive use, which is what an agent loop
+  needs. Tracked as MGIT-94.
+- **Per-sandbox resource caps are not yet declarable at launch.** The guest
+  takes the policy default (2 vCPU / 2048 MB); a workload needing more cannot
+  ask for it, and a build that exceeds the cap fails with the guest's own
+  opaque OOM rather than a message naming the limit. Tracked as MGIT-95.
+- **`sandbox sync` and `sandbox export` remain refused on firecracker**, as
+  above. A loop that needs them should run libkrun on either platform.
+
 ### Fixed — a launch whose guest never starts now fails, loudly, instead of reporting success
 
 **`mgit sandbox launch` and `mgit work --sandbox` reported a working sandbox
