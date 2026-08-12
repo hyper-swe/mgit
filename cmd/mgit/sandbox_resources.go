@@ -122,23 +122,15 @@ func writeMemoryAdvisory(w io.Writer, info *model.SandboxInfo, exitCode int) {
 	writeCapAdvisory(w, info, fmt.Sprintf("the command exited %d (%s)", exitCode, reason))
 }
 
-// writeGuestLossAdvisory prints the same ceiling context when the guest stops
-// answering mid-command.
-//
-// That path is not hypothetical and not covered by exit codes: a guest driven
-// into real memory exhaustion loses its supervisor to the kernel's OOM killer,
-// so the host observes a dropped exec channel and then a refused vsock dial —
-// no exit status at all, and no way to read the guest's dmesg afterwards
-// because the guest is gone. Without this, the most severe form of the very
-// failure R-H212 is about is the one that says the least. Refs: R-H212
-func writeGuestLossAdvisory(w io.Writer, info *model.SandboxInfo) {
-	writeCapAdvisory(w, info, "the guest stopped answering mid-command")
-}
-
 // writeCapAdvisory renders the shared body: the ceiling in force, the fact
 // that it belongs to the sandbox rather than the project, and the command that
 // raises it. Nothing is printed when the cap is unknown — an invented number
-// would be worse than silence. Refs: R-H212
+// would be worse than silence.
+//
+// Its callers are GATED: only a signal death inside a running guest, or a
+// guest lost while it was serving, reaches here. A guest that never started
+// gets writeStartFailure instead, because memory exhaustion is not a candidate
+// for a guest that never ran (MGIT-104). Refs: R-H212, MGIT-104
 func writeCapAdvisory(w io.Writer, info *model.SandboxInfo, lead string) {
 	if info == nil || info.MemoryMB == 0 {
 		return

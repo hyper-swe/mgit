@@ -809,7 +809,11 @@ func consoleDiagnosis(vm VM) string {
 	}
 	tail := strings.TrimSpace(tailer.ConsoleTail(consoleTailBytes))
 	if tail == "" {
-		return "guest console: empty (the guest wrote nothing before it stopped answering)"
+		// Phase-correct wording: this function is only ever reached from a
+		// launch that failed closed, i.e. a guest that never answered at all.
+		// Saying it "stopped answering" described a serving guest that died,
+		// which is a different failure with a different fix (MGIT-104).
+		return "guest console: empty (the guest never wrote anything)"
 	}
 	return "guest console (tail):\n" + tail
 }

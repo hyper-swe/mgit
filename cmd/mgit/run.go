@@ -71,10 +71,13 @@ func runExec(cmd *cobra.Command, connect connectFunc, getwd func() (string, erro
 	code, err := cl.Exec(cmd.Context(), sb.TaskID,
 		model.ExecRequest{Command: args, Dir: dir, Env: env}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	if err != nil {
-		// The guest was reached and then stopped answering — one shape of
-		// in-guest memory exhaustion, which kills the supervisor that would
-		// otherwise report it (R-H212).
-		defer writeGuestLossAdvisory(cmd.ErrOrStderr(), sb)
+		// The guest is unreachable — but WHICH failure that is decides what to
+		// say. A guest lost mid-command is one shape of in-guest memory
+		// exhaustion, which kills the supervisor that would otherwise report it
+		// (R-H212); a guest that never started is a sandbox that could not boot,
+		// where the cap advisory would point at the wrong fix (MGIT-104). The
+		// diagnosis is deferred so it follows the error it explains.
+		defer writeGuestFailureAdvisory(cmd.Context(), cmd.ErrOrStderr(), sb, err)
 		return printRunErr(cmd.ErrOrStderr(), err)
 	}
 	if code != 0 {

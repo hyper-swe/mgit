@@ -65,7 +65,8 @@ visible instead, at every point where an agent would otherwise infer it.**
    in force when a command dies by a signal (134 / 137 / -1) **or** when the
    guest stops answering mid-command. Both messages are phrased as context, not
    as a diagnosis: they state what mgit knows for certain (the cap) and what to
-   do if the workload needs more.
+   do if the workload needs more. The advisory is **gated on the observed
+   phase** — see the amendment below.
 3. **When the size is wrong.** A launch above the host policy's per-sandbox
    maximum is refused naming the limit, never clamped — so a caller can never
    quietly receive less than it asked for and conclude memory was ruled out.
@@ -84,3 +85,39 @@ visible instead, at every point where an agent would otherwise infer it.**
   ADR does not preclude that; it records that shape 1 — the one we actually
   saw — remains undetectable in principle, so the visible cap is the load-
   bearing mechanism either way.
+
+## Amendment (MGIT-104, 2026-08-12): the advisory is gated on the observed phase
+
+The first version of decision point 2 attached the cap advisory to **every**
+unreachable guest. Found live on macOS/libkrun: a daemon without
+`com.apple.security.hypervisor` cannot create a VM at all, so the launch failed
+closed and printed the guest console tail containing
+`krun_start_enter: libkrun error -22` — and mgit then appended "the guest
+stopped answering mid-command" plus a cap advisory pointing at `--memory-mb`.
+Two inaccuracies at once: a guest that never started cannot have exhausted its
+memory, and the same message had just said the guest never answered.
+
+This is the MGIT-95 incident inverted. There, an agent inferred a cause from a
+failure with no visible ceiling. Here, a failure with an already-printed cause
+gets annotated with a memory hint the reader may act on. **A diagnostic that
+points at the wrong fix is worse than none, because it is acted upon** — and it
+spends the advisory's credibility in the cases where it is right.
+
+So mgit now names the phase it actually observed, and prints exactly one
+diagnosis:
+
+| Phase | Evidence | What is printed |
+|---|---|---|
+| never started | `ErrGuestNotServing` in the failure, or a VM-start marker (`krun_vm_failed` / `krun_vm_bootfail` / `krun_start_enter`) in the console tail | the start failure verbatim, its remedy where mgit can name one, and an explicit statement that the memory cap is **not** implicated. No cap advisory. |
+| never started, cause unidentified | `ErrGuestNotServing`, empty or unrecognized console | the phase, and a pointer to the console output and `mgit sandbox status`. No invented cause, no cap advisory. |
+| lost while serving | a dropped exec channel / refused dial with no launch failure | the MGIT-95 cap advisory, unchanged. |
+| signal exit (134 / 137 / -1) | the guest exit code | the MGIT-95 cap advisory, unchanged. |
+
+The advisory itself — including its "do not reshape the build to fit the
+sandbox" line — is **not** weakened. Only its trigger changed.
+
+On darwin, a VM-start failure additionally probes the local `mgit-sandboxd`
+with `codesign --display --entitlements -` (the same check
+`scripts/e2e/sandbox_posture.sh` gates on) and, when the hypervisor entitlement
+is absent, names it with the signing command. "Cannot tell" is a first-class
+verdict: an unprobeable daemon is never reported as unsigned.

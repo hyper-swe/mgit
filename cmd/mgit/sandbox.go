@@ -285,10 +285,12 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 			code, err := cl.Exec(cmd.Context(), task,
 				model.ExecRequest{Command: args, Env: env}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 			if err != nil {
-				// A guest that stopped answering may have been killed by its
-				// own kernel for exceeding this cap (R-H212).
+				// A guest LOST mid-command may have been killed by its own
+				// kernel for exceeding this cap (R-H212); a guest that never
+				// started ran nothing at all and gets its own diagnosis
+				// instead (MGIT-104).
 				if info, sErr := cl.Status(cmd.Context(), task); sErr == nil {
-					defer writeGuestLossAdvisory(cmd.ErrOrStderr(), info)
+					defer writeGuestFailureAdvisory(cmd.Context(), cmd.ErrOrStderr(), info, err)
 				}
 				return printErr(cmd.ErrOrStderr(), err)
 			}
