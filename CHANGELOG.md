@@ -44,6 +44,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`mgit commit` takes `--file/-F`, so a commit message never has to survive
+  the shell.** `-F <path>` reads the message verbatim, and `-F -` reads it from
+  stdin — the path a programmatic caller uses to avoid a temp file entirely.
+  The bytes are recorded as written: no trimming, no normalization, trailing
+  newlines and internal blank lines preserved, so the message round-trips
+  byte-identical to the file. The previous workaround, `-m "$(cat file)"`, made
+  the *shell* responsible for the integrity of an audit artifact, and a message
+  containing backticks or `$(...)` fails there by silent truncation or mangling
+  rather than by loud refusal — it had already bitten agents in two different
+  codebases. `-m` together with `-F` is **refused naming both flags** instead of
+  silently preferring one, and a missing, unreadable or empty message file is an
+  error that commits nothing and leaves the staging area untouched.
+  (MGIT-105, R-H229)
+
 - **A sandbox's CPU/memory/disk are now declarable at launch and bounded by host
   policy.** `mgit sandbox launch` and `mgit work` take `--cpus`, `--memory-mb`
   and `--disk-quota-mb`; unset still takes the host policy default. The fields

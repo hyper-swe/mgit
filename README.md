@@ -323,7 +323,7 @@ The everyday surface:
 | `mgit init` | Set mgit up alongside your existing git repo |
 | `mgit work PATH --task-id ID [--sandbox]` | Start an agent on a task: worktree + agent wiring + optional microVM |
 | `mgit run -- <command>` | Run a command in the task's microVM (fail-closed; never on the host) |
-| `mgit commit -m MSG` | Create a task-tagged micro-commit (task ID auto-inherited in a worktree) |
+| `mgit commit -m MSG` | Create a task-tagged micro-commit (task ID auto-inherited in a worktree); `-F FILE` (or `-F -` for stdin) reads the message verbatim, with no shell in the way |
 | `mgit log --task-id ID` | View a task's step-by-step history |
 | `mgit rollback --task-id ID [--commit HASH]` | Revert a task: an append-only revert commit that also restores the working tree |
 | `mgit audit --task-id ID` | Replay who did what, when, from the append-only audit trail |
@@ -338,7 +338,7 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 | Command | Description |
 |---------|-------------|
 | `mgit init` | Initialize a new mgit repository |
-| `mgit commit --task-id ID` | Create a task-tagged micro-commit |
+| `mgit commit --task-id ID` | Create a task-tagged micro-commit (`-m MSG` inline, or `-F FILE` / `-F -` to read the message verbatim from a file or stdin) |
 | `mgit log [--task-id ID]` | View commit history, optionally filtered by task |
 | `mgit status` | Show working tree status |
 | `mgit show HASH` | Display commit details |
