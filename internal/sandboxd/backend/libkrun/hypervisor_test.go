@@ -26,7 +26,18 @@ import (
 // ChildMain in a REAL child process — the exact dispatch cmd/mgit-sandboxd
 // performs — so the process plumbing (spec on stdin, handshake on fd 3, exit
 // reaping) is exercised without libkrun installed.
+// It also dispatches the parent-lifeline helper roles (MGIT-103), which need
+// a real three-process tree — test, spawner, VM child — to prove a SIGKILLed
+// parent takes its VM with it.
+// The helper roles are dispatched BEFORE ChildCommand: the lifeline helper
+// child is spawned by the REAL newChildCmd, so its argv IS ChildCommand, and
+// checking that first would run ChildMain instead — which on a build without
+// a bootable VM exits at once and leaves a zombie that answers signal 0,
+// making the orphan test pass without testing anything.
 func TestMain(m *testing.M) {
+	if code, isHelper := runLifelineHelper(); isHelper {
+		os.Exit(code)
+	}
 	if len(os.Args) > 1 && os.Args[1] == ChildCommand {
 		os.Exit(ChildMain(os.Stdin, os.Stderr))
 	}
@@ -496,11 +507,12 @@ func TestNewChildCmd_StdioContractNeverInheritsTheDaemonStreams(t *testing.T) {
 	spec := baseSpec(model.NetworkModeNone, dir)
 	consolePath := filepath.Join(dir, consoleLogName)
 
-	cmd, handshakeR, cleanup, err := newChildCmd("/fake/mgit-sandboxd", spec, consolePath)
+	c, err := newChildCmd("/fake/mgit-sandboxd", spec, consolePath)
 	if err != nil {
 		t.Fatalf("newChildCmd: %v", err)
 	}
-	t.Cleanup(func() { cleanup(); _ = handshakeR.Close() })
+	cmd := c.cmd
+	t.Cleanup(func() { c.cleanup(); _ = c.handshake.Close(); _ = c.lifeline.Close() })
 
 	// krun_start_enter hands the child's stdin/stdout to the guest, so none
 	// of them may be the daemon's own streams (SEC-10).
@@ -510,14 +522,16 @@ func TestNewChildCmd_StdioContractNeverInheritsTheDaemonStreams(t *testing.T) {
 	if cmd.Stdout != cmd.Stderr {
 		t.Error("stdout and stderr should both capture to the console file")
 	}
-	if len(cmd.ExtraFiles) != 1 {
-		t.Errorf("ExtraFiles = %d, want exactly the handshake pipe on fd 3", len(cmd.ExtraFiles))
+	if len(cmd.ExtraFiles) != 2 {
+		t.Errorf("ExtraFiles = %d, want the handshake pipe on fd 3 and the parent lifeline on fd 4",
+			len(cmd.ExtraFiles))
 	}
 	if len(cmd.Args) != 2 || cmd.Args[1] != ChildCommand {
 		t.Errorf("args = %v, want [exe %s]", cmd.Args, ChildCommand)
 	}
 	for _, kv := range cmd.Env {
-		if !strings.HasPrefix(kv, "PATH=") && !strings.HasPrefix(kv, "DYLD_FALLBACK_LIBRARY_PATH=") {
+		if !strings.HasPrefix(kv, "PATH=") && !strings.HasPrefix(kv, "DYLD_FALLBACK_LIBRARY_PATH=") &&
+			!strings.HasPrefix(kv, envLifelineFD+"=") {
 			t.Errorf("child env carries %q; the daemon environment must not leak toward the guest", kv)
 		}
 	}

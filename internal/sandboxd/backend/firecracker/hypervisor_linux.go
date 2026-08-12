@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 
 	fc "github.com/firecracker-microvm/firecracker-go-sdk"
 	models "github.com/firecracker-microvm/firecracker-go-sdk/client/models"
@@ -269,6 +270,7 @@ func (h *fcHypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
 	vmmCtx, cancel := context.WithCancel(context.Background())
 	cmd := fc.VMCommandBuilder{}.WithBin(h.bin).WithSocketPath(p.socket).
 		WithStdout(console).WithStderr(console).Build(vmmCtx)
+	tieVMMToParent(cmd)
 
 	machine, err := fc.NewMachine(vmmCtx, fcfg,
 		fc.WithProcessRunner(cmd), fc.WithLogger(nopLogger))
@@ -289,6 +291,31 @@ func (h *fcHypervisor) removeTap(plan *egress.TapPlan) {
 	}
 }
 
+// tieVMMToParent asks the kernel to SIGKILL the VMM when the thread that
+// forked it dies, so a daemon that exits WITHOUT draining — SIGKILL, OOM kill,
+// a panic that escapes the recover — does not leave its microVMs running,
+// reparented to init, holding their memory and their worktree image, and
+// addressable by nobody (MGIT-103).
+//
+// PR_SET_PDEATHSIG is the only lever here: unlike the libkrun backend, whose
+// VM child is mgit's own binary and can watch a lifeline descriptor, the
+// firecracker VMM is a foreign binary that watches nothing. Its Linux-only
+// nature costs nothing — this backend is Linux-only already.
+//
+// It is deliberately NOT paired with Setpgid. Leaving the VMM in the daemon's
+// process group means a group-directed signal reaches it too; giving it its
+// own group would take that away in exchange for nothing the death signal does
+// not already cover.
+//
+// The signal fires on the forking THREAD's death, which is why Start forks
+// under microvm.ForkPinned. Refs: FR-17.19, NFR-17.6, MGIT-103
+func tieVMMToParent(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Pdeathsig = syscall.SIGKILL
+}
+
 // fcVM adapts a Firecracker machine to the manager's lifecycle seam.
 type fcVM struct {
 	machine   *fc.Machine
@@ -297,6 +324,11 @@ type fcVM struct {
 	net       NetRunner       // host network runner, for tap teardown
 	tapPlan   *egress.TapPlan // the applied tap plan; nil in none mode
 	vsockPath string          // per-VM firecracker vsock unix socket (host-private, unique per VM)
+
+	// unpin releases the OS thread the VMM was forked on, whose lifetime the
+	// kernel ties the VMM's own to (MGIT-103). Set by Start, called by
+	// teardown — never before, or a healthy VM would be SIGKILLed.
+	unpin func()
 }
 
 // ConsoleTail returns the tail of this VM's captured guest console, which is
@@ -339,20 +371,35 @@ func (v *fcVM) NotifySocketPath() string {
 	return reverseVsockSocketPath(v.vsockPath, microvm.GuestNotifyPort)
 }
 
-// teardown cancels the VMM lifetime, closes the console capture, and removes
-// the host tap + firewall so no network residue remains (FR-17.19).
+// teardown cancels the VMM lifetime, closes the console capture, removes the
+// host tap + firewall so no network residue remains (FR-17.19), and releases
+// the pinned forking thread. The thread is released LAST: its exit is itself a
+// SIGKILL to the VMM, which is correct only once teardown has already decided
+// the VM must end. Refs: FR-17.19, MGIT-103
 func (v *fcVM) teardown() {
 	v.cancel()
 	_ = v.console.Close()
 	if v.tapPlan != nil {
 		removeTapPlan(context.Background(), v.net, *v.tapPlan)
 	}
+	if v.unpin != nil {
+		v.unpin()
+		v.unpin = nil
+	}
 }
 
 // Start boots the guest. The VMM runs under the detached lifetime
 // context; the passed ctx bounds only the start handshake.
+//
+// The fork happens on a pinned OS thread (microvm.ForkPinned) because the
+// VMM's parent-death signal keys on that thread's exit, not the daemon's:
+// forking from an ordinary goroutine would let the Go scheduler kill a healthy
+// VM. machine.Start runs the VMM fork inline on the calling goroutine (the
+// SDK's startVMM handler), so pinning it covers the fork. Refs: MGIT-103
 func (v *fcVM) Start(ctx context.Context) error {
-	if err := v.machine.Start(ctx); err != nil {
+	unpin, err := microvm.ForkPinned(func() error { return v.machine.Start(ctx) })
+	v.unpin = unpin
+	if err != nil {
 		v.teardown()
 		return fmt.Errorf("firecracker start: %w", err)
 	}

@@ -427,39 +427,65 @@ func (v *krunVM) NotifySocketPath() string {
 // inherited — krun_start_enter hands the child's stdin/stdout to the guest,
 // and a hostile guest must not hold the daemon's streams. Refs: SEC-10, ADR-010
 func spawnChild(exePath string, spec vmSpec, consolePath string) (childProcess, error) {
-	cmd, handshakeR, cleanup, err := newChildCmd(exePath, spec, consolePath)
+	c, err := newChildCmd(exePath, spec, consolePath)
 	if err != nil {
 		return nil, err
 	}
-	if err := cmd.Start(); err != nil {
-		cleanup()
-		_ = handshakeR.Close()
+	if err := c.cmd.Start(); err != nil {
+		c.cleanup()
+		_ = c.handshake.Close()
+		_ = c.lifeline.Close()
 		return nil, fmt.Errorf("start vm child: %w", err)
 	}
 	// The parent's copies of the child-held files are closed once the child
-	// owns them; the read end of the handshake pipe stays.
-	cleanup()
-	return &execChild{cmd: cmd, handshake: handshakeR}, nil
+	// owns them; the read end of the handshake pipe stays — and so does the
+	// WRITE end of the lifeline, for the VM's whole life (MGIT-103).
+	c.cleanup()
+	return &execChild{cmd: c.cmd, handshake: c.handshake, lifeline: c.lifeline}, nil
+}
+
+// childCmd is a built-but-unstarted VM child: the command, the parent's ends
+// of its two pipes, and the cleanup that closes the parent's copies of the
+// files the child takes over.
+type childCmd struct {
+	cmd       *exec.Cmd
+	handshake *os.File // parent's READ end of the fd-3 progress pipe
+	lifeline  *os.File // parent's WRITE end of the fd-4 parent lifeline (MGIT-103)
+	cleanup   func()
 }
 
 // newChildCmd builds the child command with its full stdio contract. Split
 // from spawnChild so tests can assert the wiring — spec on stdin, console
-// file (never the daemon's streams) on stdout/stderr, handshake pipe as the
-// sole extra fd — without spawning anything. The returned cleanup closes the
-// parent's copies of the files handed to the child.
-func newChildCmd(exePath string, spec vmSpec, consolePath string) (*exec.Cmd, *os.File, func(), error) {
+// file (never the daemon's streams) on stdout/stderr, handshake pipe and
+// parent lifeline as the only extra fds — without spawning anything.
+//
+// The returned cleanup closes the parent's copies of the files handed to the
+// child. It deliberately does NOT close the lifeline write end: that one is
+// the supervision link the child keys its own teardown on, and closing it
+// would tell a child with a live parent that its parent had died.
+// Refs: SEC-10, ADR-010, MGIT-103
+func newChildCmd(exePath string, spec vmSpec, consolePath string) (*childCmd, error) {
 	var specJSON bytes.Buffer
 	if err := spec.encode(&specJSON); err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	console, err := os.OpenFile(consolePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // path built from the manager-owned state dir
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("vm console log: %w", err)
+		return nil, fmt.Errorf("vm console log: %w", err)
 	}
 	handshakeR, handshakeW, err := os.Pipe()
 	if err != nil {
 		_ = console.Close()
-		return nil, nil, nil, fmt.Errorf("vm handshake pipe: %w", err)
+		return nil, fmt.Errorf("vm handshake pipe: %w", err)
+	}
+	// The parent lifeline: the child holds the read end, the daemon the write
+	// end. Its EOF is the daemon's death, however the daemon dies. Refs: MGIT-103
+	lifelineR, lifelineW, err := os.Pipe()
+	if err != nil {
+		_ = console.Close()
+		_ = handshakeR.Close()
+		_ = handshakeW.Close()
+		return nil, fmt.Errorf("vm lifeline pipe: %w", err)
 	}
 
 	// No context: the child's lifetime is the VM's (minutes to hours), owned
@@ -471,17 +497,20 @@ func newChildCmd(exePath string, spec vmSpec, consolePath string) (*exec.Cmd, *o
 	cmd.Stdin = &specJSON
 	cmd.Stdout = console
 	cmd.Stderr = console
-	cmd.ExtraFiles = []*os.File{handshakeW} // fd 3 in the child
+	cmd.ExtraFiles = []*os.File{handshakeW, lifelineR} // fd 3 and fd 4 in the child
 	// The child gets a MINIMAL environment: the daemon's env must not leak
-	// toward the guest, and the child needs nothing from it. (The guest's own
-	// env comes from the spec, independent of this.)
-	cmd.Env = childEnv(os.Getenv, libkrunfwDirs)
+	// toward the guest, and the child needs nothing from it beyond the loader
+	// paths and the lifeline descriptor. (The guest's own env comes from the
+	// spec, independent of this.)
+	cmd.Env = append(childEnv(os.Getenv, libkrunfwDirs),
+		envLifelineFD+"="+strconv.Itoa(lifelineFD))
 
 	cleanup := func() {
 		_ = console.Close()
 		_ = handshakeW.Close()
+		_ = lifelineR.Close()
 	}
-	return cmd, handshakeR, cleanup, nil
+	return &childCmd{cmd: cmd, handshake: handshakeR, lifeline: lifelineW, cleanup: cleanup}, nil
 }
 
 // childEnv builds the child's minimal environment.
@@ -580,9 +609,17 @@ func libkrunfwDirsIn(dirs []string) []string {
 }
 
 // execChild adapts a real *exec.Cmd to childProcess.
+//
+// It holds the parent's end of the lifeline for the child's whole life. That
+// is not bookkeeping: os.File closes its descriptor from a finalizer, so an
+// unreachable lifeline would be closed by the garbage collector and tell a
+// live daemon's child that its daemon had died. Reachability comes from
+// krunVM.child, which the manager holds for as long as the VM exists.
+// Refs: MGIT-103
 type execChild struct {
 	cmd       *exec.Cmd
 	handshake *os.File
+	lifeline  *os.File
 }
 
 func (c *execChild) Handshake() io.Reader { return c.handshake }
@@ -591,11 +628,16 @@ func (c *execChild) Signal(sig os.Signal) error { return c.cmd.Process.Signal(si
 
 func (c *execChild) Kill() error { return c.cmd.Process.Kill() }
 
-// Wait reaps the child, closes the parent's handshake end, and returns the
-// exit code (-1 when killed by signal, per os.ProcessState).
+// Wait reaps the child, closes the parent's handshake and lifeline ends, and
+// returns the exit code (-1 when killed by signal, per os.ProcessState). The
+// lifeline is released only AFTER the reap: closing it earlier would be a
+// second, redundant kill signal to a child that is already ending.
 func (c *execChild) Wait() (int, error) {
 	err := c.cmd.Wait()
 	_ = c.handshake.Close()
+	if c.lifeline != nil {
+		_ = c.lifeline.Close()
+	}
 	if c.cmd.ProcessState == nil {
 		return -1, err
 	}

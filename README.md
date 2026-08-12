@@ -234,10 +234,23 @@ visible to an agent loop rather than an implementation detail:
 | guest can write outside `/tmp`, `/etc` and its worktree | ✅ | ✅ | ❌ (upstream, MGIT-89) |
 | host edits reach a **running** guest (`sandbox sync`) | ✅ | ❌ refused | ✅ live-validated (CI-gated) |
 | artifact export (`sandbox export`) | ✅ | ❌ refused | ✅ |
+| the VM dies with a **crashed** daemon (`kill -9`) | ✅ live-validated | ✅ CI-gated | ✅ live-validated |
 
 firecracker packs the worktree into an ext4 image at launch and the guest
 mounts it, so there is no host directory to re-stage into or read out of. Both
 refusals fail closed and name the backend — nothing silently no-ops.
+
+**A daemon that dies takes its microVMs with it**, on every exit path rather
+than only the orderly ones. Ordinary exits (idle timeout, SIGINT, SIGTERM)
+drain: each sandbox is stopped and removed. The ungraceful ones — SIGKILL, an
+OOM kill, a crash — run no code at all, so the guarantee has to come from the
+kernel. libkrun's VM child holds a *lifeline* descriptor whose other end the
+daemon owns; the kernel closes it when the daemon dies, and the child ends the
+VM. firecracker's VMM, a foreign binary that watches nothing, is given
+`PR_SET_PDEATHSIG` from a pinned forking thread instead. Both are asserted with
+a real booted VM and a process count in
+`scripts/e2e/sandbox_registry_durability.sh`. The `--backend container`
+fallback is **not** covered: podman owns those containers' lifetime, not mgit.
 
 **What that means in practice.** If your loop edits the host worktree between
 rounds — the usual shape for an agent that reviews, fixes and re-tests — every
