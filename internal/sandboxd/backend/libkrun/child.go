@@ -51,7 +51,13 @@ type childHandshake struct {
 // and in a mis-invoked process (run by hand, no ExtraFiles) fd 3 can be a
 // live runtime descriptor, where a stray close is fatal to the Go runtime.
 // Writes to a bad fd fail harmlessly and are logged.
+//
+// The PARENT LIFELINE is installed first, before any VM exists: a daemon that
+// dies ungracefully (SIGKILL, OOM, crash) never runs its drain, and a VM child
+// that outlived it kept running unsupervised and unaddressable (MGIT-103).
+// Refs: FR-17.19, MGIT-103
 func ChildMain(stdin io.Reader, stderr io.Writer) int {
+	installParentLifeline(os.Getenv, stderr)
 	return childMain(stdin, os.NewFile(handshakeFD, "krun-handshake"), stderr)
 }
 

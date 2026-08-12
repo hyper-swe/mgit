@@ -121,6 +121,37 @@ kill_repo_daemon() {
 	_e2e_fail "daemon $pid survived SIGKILL"
 }
 
+# child_pids prints the direct child pids of a pid — for a sandbox daemon,
+# its VM processes (the `__krun-vm` re-exec child on libkrun, the firecracker
+# VMM on Linux). ps rather than pgrep -P: identical output on macOS and Linux.
+child_pids() {
+	ps -A -o pid=,ppid= 2>/dev/null | awk -v p="$1" '$2 == p {print $1}'
+}
+
+# assert_reaped fails unless every listed pid is gone. This is MGIT-103: a
+# SIGKILLed daemon never runs its drain, and before the parent-lifeline
+# (libkrun) / Pdeathsig (firecracker) fix its microVMs were reparented to init
+# and kept running — holding their memory, their copy of the worktree and their
+# per-VM sockets, addressable by no daemon and killable only by hand. Counting
+# processes is the only proof of this one; reasoning about it is what let it
+# ship.
+assert_reaped() {
+	local survivors="" p i
+	for p in "$@"; do
+		for i in $(seq 1 100); do
+			kill -0 "$p" 2>/dev/null || break
+			sleep 0.1
+		done
+		if kill -0 "$p" 2>/dev/null; then
+			survivors="$survivors $p"
+			kill -9 "$p" 2>/dev/null || true # never leave the gate's own orphan behind
+		fi
+	done
+	[ -z "$survivors" ] ||
+		_e2e_fail "orphaned VM process(es):$survivors — a SIGKILLed daemon left its microVM running (MGIT-103)"
+	pass "no VM process survived the daemon's SIGKILL (MGIT-103)"
+}
+
 # events prints the sandbox_events event_type stream for a task, in append
 # order, space-separated — the durable trail an auditor would read.
 events() {
@@ -232,6 +263,21 @@ if [ -z "${MGIT_GUEST_IMAGE:-}" ] && [ "$os" = "Linux" ] &&
 	[ -n "$MGIT_GUEST_IMAGE" ] || _e2e_fail "image add produced no reference"
 	pass "guest image registered for the live phase: $MGIT_GUEST_IMAGE"
 fi
+# macOS/libkrun composes its guest from a userspace TREE, not a kernel+rootfs
+# pair, and the trust root that signs it is PER REPOSITORY — so a ref exported
+# from another repo can never resolve in this gate's scratch repo, and
+# MGIT_GUEST_IMAGE alone left the live phase unreachable on the GA backend.
+# Point MGIT_GUEST_BASE at a guest root (what `mgit sandbox base from` builds)
+# and it is registered here instead. MGIT_GUEST_BIN_DIR supplies the linux
+# mgit/mgit-guest binaries when this install ships none beside it.
+if [ -z "${MGIT_GUEST_IMAGE:-}" ] && [ -n "${MGIT_GUEST_BASE:-}" ]; then
+	mgit sandbox image init >/dev/null
+	MGIT_GUEST_IMAGE="$(mgit sandbox base set "$MGIT_GUEST_BASE" \
+		${MGIT_GUEST_BIN_DIR:+--guest-bin-dir "$MGIT_GUEST_BIN_DIR"} --json |
+		sed -n 's/.*"image_ref":"\([^"]*\)".*/\1/p')"
+	[ -n "$MGIT_GUEST_IMAGE" ] || _e2e_fail "base set produced no reference"
+	pass "guest base registered for the live phase: $MGIT_GUEST_IMAGE"
+fi
 if [ -n "${MGIT_GUEST_IMAGE:-}" ]; then
 	echo "== live: boot a real VM, kill its daemon, and check the state reported =="
 	LIVE="REG-2"
@@ -241,7 +287,18 @@ if [ -n "${MGIT_GUEST_IMAGE:-}" ]; then
 	out="$(mgit sandbox status "$LIVE")"
 	assert_contains "$out" "running" "status reports 'running' while the VM is up"
 
+	# MGIT-103: name the VM processes BEFORE the kill. After it the daemon is
+	# gone and its children have been reparented to init, so there is nothing
+	# left to derive them from — which is precisely why an orphan was invisible.
+	live_daemon="$(repo_daemon_pid)"
+	vm_pids="$(child_pids "$live_daemon")"
+	[ -n "$vm_pids" ] ||
+		_e2e_fail "daemon $live_daemon has no VM child process; the live phase did not boot one"
+	pass "the booted VM runs as daemon $live_daemon's child:$(echo " $vm_pids" | tr '\n' ' ')"
+
 	kill_repo_daemon
+	# shellcheck disable=SC2086 # deliberate word splitting: one pid per argument
+	assert_reaped $vm_pids
 	code=0
 	out="$(mgit sandbox status "$LIVE" 2>&1)" || code=$?
 	assert_not_contains "$out" "running" \

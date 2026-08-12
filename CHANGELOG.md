@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A SIGKILLed or crashed `mgit-sandboxd` no longer orphans its microVMs.**
+  Ordinary daemon exits — idle timeout, SIGINT, SIGTERM — drain, stopping and
+  removing every sandbox, and always did. The ungraceful ones do not: a SIGKILL,
+  an OOM kill or a crash simply ends the process, and its VM children were
+  reparented to init and kept running — holding their memory, their staged copy
+  of the worktree and their per-VM sockets, addressable by no daemon (the
+  replacement has no handle, so `stop` and `remove` could not reach them) and
+  killable only by hand. Measured on macOS/libkrun before the fix: `kill -9` of
+  the daemon left the VM child alive at 54 MB RSS with the worktree still
+  mounted. The fix is kernel-enforced on both GA backends, because a host-side
+  cleanup is exactly what a SIGKILLed process is not around to run: on
+  **libkrun** (macOS and Linux) the VM child — mgit's own binary — inherits a
+  *lifeline* descriptor whose other end the daemon holds, and the kernel closing
+  it on the daemon's death is what ends the VM; on **firecracker**, whose VMM is
+  a foreign binary that watches nothing, the VMM gets `PR_SET_PDEATHSIG` and is
+  forked from a pinned OS thread, since Linux keys that signal on the forking
+  *thread's* exit and a Go scheduler free to retire that thread would otherwise
+  kill healthy VMs. Asserted with a real booted VM and a process count in
+  `scripts/e2e/sandbox_registry_durability.sh`. **Not covered:** the
+  `--backend container` reduced-isolation fallback, whose containers podman
+  owns. This was a supervision and resource leak, never a containment breach —
+  on libkrun the egress authorizer lives in the VM child, so an orphan's network
+  policy went on being enforced. (MGIT-103, R-H227, FR-17.19, NFR-17.6)
+
 - **The fleet-wide memory ceiling was inert in a default install; it is now
   resolved from host policy.** `mgit-sandboxd` wired the FR-17.26 aggregate
   memory ceiling from `--max-memory-mb`, which defaults to `0` — and `0`
