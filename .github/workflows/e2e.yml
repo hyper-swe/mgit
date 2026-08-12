@@ -197,14 +197,22 @@ jobs:
           bash scripts/e2e/sandbox_cli_surface.sh "$RUNNER_TEMP/bin" 2>&1 | tee "$RUNNER_TEMP/cli.log"
           grep -q 'SANDBOX CLI SURFACE E2E: PASS (live)' "$RUNNER_TEMP/cli.log" || {
             echo "FATAL: the CLI surface gate did not pass LIVE (a SKIP is a failure here)"; exit 1; }
-          # shell and grants are refused OFF Linux by documented platform gates
-          # (KVM PTY transport; the Linux-only egress escalation stack). This IS
-          # Linux with KVM, so both must have RUN -- if they report NOT SERVED
-          # here, the capability regressed rather than being unavailable.
-          if grep -q 'NOT SERVED on this backend' "$RUNNER_TEMP/cli.log"; then
-            echo "FATAL: a verb reported NOT SERVED on the Linux/KVM gate, where both are expected to run"
-            exit 1
-          fi
+          # `grants` rides the daemon's egress escalation stack, which is
+          # Linux-only, so on THIS gate it must actually run.
+          grep -q 'grants runs and reports' "$RUNNER_TEMP/cli.log" || {
+            echo "FATAL: grants did not run on the Linux/KVM gate, where the egress stack is wired"
+            exit 1; }
+          # `shell` is deliberately NOT asserted here. It is unavailable in
+          # EVERY build -- sandboxd.Client.Shell returns
+          # ErrShellTransportUnavailable unconditionally, with no platform check
+          # and no build tag. The earlier assertion demanded it run on Linux,
+          # inferred from the error text "requires the KVM guest PTY transport";
+          # that string describes what the transport WOULD need, not something
+          # any build serves, and the gate has been red on that ever since.
+          # Capability inferred from a message rather than verified in the code
+          # is the same mistake this repo keeps paying for. Whether the
+          # transport should be served is MGIT-94; until it is, there is
+          # nothing here to assert.
 
       - name: Firecracker e2e — unprivileged half
         env:

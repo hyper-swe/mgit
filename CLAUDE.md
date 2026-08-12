@@ -480,32 +480,64 @@ type WorktreeManager interface {
 - `internal/service/worktree_service.go` — Lifecycle orchestration, task binding, hooks
 - `cmd/mgit/worktree.go` — CLI subcommands
 
-### Spawning sub-agents — DOGFOOD mgit worktrees (do not reach for git worktrees)
+### Spawning sub-agents — DOGFOOD mgit, INCLUDING the sandbox
 
-We build mgit; we use mgit. When you spawn a sub-agent to work a task in
-parallel, **prefer an mgit worktree over a git worktree.** For each parallel
-task:
+We build mgit; we use mgit. The credibility test is blunt: *if we don't use it,
+why would anyone?* And it is not just credibility — nearly every serious defect
+found in this codebase recently was found by USING the thing, not by reading it:
+`mgit commit` silently recording nothing (MGIT-77), mgit's own scaffolding
+landing in user patches (MGIT-80), a wire-tag collision between two parallel
+branches (MGIT-73), the guest root that could not copy up (MGIT-89).
 
-1. `mgit work <path> --task <ID>` — creates an mgit worktree bound to the task
-   (FR-16) and wires the agent files (`CLAUDE.md` + `.claude/settings.json` →
-   `mgit run`). This is the first-class "start an agent on a task" entry point.
-2. Run the sub-agent **in that worktree**, and have it commit with
-   `mgit commit` (or just `mgit commit` from inside the worktree — the bound
-   task ID is auto-inherited). Its shell routes through `mgit run` into the
-   task sandbox when one is launched (`--sandbox`).
-3. Integrate the finished task with `mgit squash --task <ID> --to-git`, then
-   `git apply` / land it onto the project's git.
+**Start every parallel task with a contained worktree:**
 
-**Honest caveat (this instruction is advisory, not enforced):** the Claude
-Code Agent tool's built-in `isolation: "worktree"` is **git-only** — it cannot
-natively isolate a sub-agent into an mgit worktree. So "spawn with mgit" is a
-deliberate workaround: create the mgit worktree with `mgit work` first, then
-spawn the sub-agent **without** the harness's git-worktree isolation, pointed
-at that path. This trades the harness's automatic worktree cleanup for mgit's
-task-binding + provenance. Prefer it for mgit-dev's own parallel work so we
-exercise the product we ship (the credibility test: *if we don't use mgit, why
-would anyone?*). If a step genuinely blocks delivery, fall back to a git
-worktree and **file the friction as a task** — that friction is the backlog.
+```bash
+mgit work /tmp/mgit-<N>-wt --task-id MGIT-<N> --agent-id claude-mgit-<N> \
+  --sandbox --image <base@sha256:...>
+```
+
+`mgit work` provisions a task-bound worktree (FR-16), wires the agent files
+(`CLAUDE.md` + `.claude/settings.json` → `mgit run`), and with `--sandbox`
+registers the task's microVM. Provisioning is LAZY (FR-17.9/17.10): the VM boots
+on first use, and that boot fails closed with the guest's own console tail if it
+cannot serve (MGIT-92). Get the image ref from `mgit sandbox base from debian:12`
+(macOS/libkrun composes from any OCI image; Linux/firecracker needs a registered
+kernel+rootfs).
+
+**Then work INSIDE it, using the real verbs:**
+
+| What | Command | Why not the alternative |
+|---|---|---|
+| run anything untrusted | `mgit run -- <cmd>` | routes through the sandbox; a bare shell command runs on YOUR host |
+| commit a step | `mgit commit -a -m "..."` | `-a` stages, including new files; a bare `mgit commit` with nothing staged is refused (MGIT-77) |
+| push host edits into a running guest | `mgit sandbox sync --task <ID>` | the guest holds a staged COPY; edits do not reach it otherwise (MGIT-71/76). `--dry-run` classifies without touching the guest |
+| bring build artifacts out | `mgit sandbox export --task <ID> <guest-path> <host-path>` | the only way out besides `land`; host names both paths |
+| grant then revoke egress | `mgit sandbox policy set/revoke --task <ID>` | revoke KILLS established flows by default; `--drain` lets them finish (ADR-012) |
+| see what is running | `mgit sandbox status <ID>` / `list` | `created` before first use is correct, not stale |
+| integrate | `mgit squash --task-id <ID> --to-git` → `git apply` | never `git add -A` |
+
+**Backend reality, because it changes what your loop can do.** `sandbox sync`
+and `sandbox export` work on libkrun/vzf and are REFUSED on firecracker, which
+delivers the worktree as a launch-time ext4 image. On firecracker every exec
+after launch runs against the launch-time copy. See the backend table in
+README.md before assuming a capability.
+
+**Honest caveats, both real:**
+
+1. The Claude Code Agent tool's `isolation: "worktree"` is **git-only** — it
+   cannot natively place a sub-agent in an mgit worktree. So: create the mgit
+   worktree first, then spawn the sub-agent pointed at that path *without* the
+   harness's git isolation. You trade automatic cleanup for task binding and
+   provenance.
+2. The sub-agent's own shell is **not** transparently inside the sandbox — the
+   wiring routes it through `mgit run`, but a sub-agent that types a bare
+   command still runs on the host. Until the harness can launch an agent inside
+   the sandbox, containment is a discipline the agent must apply by using
+   `mgit run`, not something enforced on it. Say so in the sub-agent's brief.
+
+If a step genuinely blocks delivery, fall back and **file the friction as a
+task** — that friction is the backlog, and it is where the last dozen tickets
+came from.
 
 ---
 
