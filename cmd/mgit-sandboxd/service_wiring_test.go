@@ -147,3 +147,62 @@ func TestBuildSandboxService_CreatesTheHostRootItOwns(t *testing.T) {
 	require.DirExists(t, hostRoot)
 	require.FileExists(t, filepath.Join(hostRoot, sandboxIndexDB))
 }
+
+// TestBuildSandboxService_RegistrationSurvivesTheProcessThatMadeIt is the
+// wiring-level proof of MGIT-102: a registration made through one service (as
+// one daemon would) is found by a SECOND service built over the same host root
+// (as the daemon that replaces it would), with its resolved caps and pinned
+// image intact.
+//
+// It is a behavioral test rather than an assertion that SetRegistry was
+// called, because the defect was not "a setter was missing" — it was that a
+// user's containment ceased to exist between two daemons. If the registry were
+// ever unwired here, this fails without needing anyone to remember why.
+// Refs: FR-17.9, FR-17.10, MGIT-102
+func TestBuildSandboxService_RegistrationSurvivesTheProcessThatMadeIt(t *testing.T) {
+	clock := func() time.Time { return time.Unix(0, 0).UTC() }
+	hostRoot := t.TempDir()
+	ctx := context.Background()
+	opts := model.SandboxLaunchOptions{
+		TaskID: "MGIT-102", WorktreePath: "/work/a",
+		ImageRef: "img@sha256:" + repeat64('a'),
+		Network:  model.NetworkPolicy{Mode: model.NetworkModeNone},
+		MemoryMB: 6144, CPUs: 4,
+	}
+
+	first, _, closeFirst, err := buildSandboxService(nopManager{}, hostRoot,
+		newPolicyStore(hostRoot, clock, testLogger()), clock)
+	require.NoError(t, err)
+	registered, err := first.Register(ctx, opts)
+	require.NoError(t, err)
+	require.NoError(t, closeFirst(), "the first daemon exits, taking its process memory with it")
+
+	second, _, closeSecond, err := buildSandboxService(nopManager{}, hostRoot,
+		newPolicyStore(hostRoot, clock, testLogger()), clock)
+	require.NoError(t, err)
+	defer func() { _ = closeSecond() }()
+	require.NoError(t, rehydrateRegistry(ctx, second, testLogger()))
+
+	recovered, err := second.Status(ctx, "MGIT-102")
+	require.NoError(t, err, "the replacement daemon must find the sandbox its predecessor registered")
+	assert.Equal(t, registered.ID, recovered.ID, "the sandbox keeps its identity")
+	assert.Equal(t, model.StateCreated, recovered.State, "a never-booted sandbox comes back as created")
+	assert.Equal(t, 6144, recovered.MemoryMB, "the resolved ceiling comes back with it")
+	assert.Equal(t, 4, recovered.CPUs)
+}
+
+// TestRehydrateRegistry_EmptyRegistry_RecoversNothing covers the ordinary
+// first-boot path: no prior registrations, no error, nothing invented.
+func TestRehydrateRegistry_EmptyRegistry_RecoversNothing(t *testing.T) {
+	clock := func() time.Time { return time.Unix(0, 0).UTC() }
+	hostRoot := t.TempDir()
+	svc, _, closeAudit, err := buildSandboxService(nopManager{}, hostRoot,
+		newPolicyStore(hostRoot, clock, testLogger()), clock)
+	require.NoError(t, err)
+	defer func() { _ = closeAudit() }()
+
+	require.NoError(t, rehydrateRegistry(context.Background(), svc, testLogger()))
+	list, err := svc.List(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, list)
+}

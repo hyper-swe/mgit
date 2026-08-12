@@ -68,3 +68,43 @@ func TestContainmentStatusLine(t *testing.T) {
 		assert.Contains(t, line, tt.contains)
 	}
 }
+
+// TestContainmentOpen_StatesOnlyWhatWasProbed is MGIT-102's loose thread: the
+// Open posture is selected purely because `--sandbox` was NOT passed — nothing
+// anywhere probes whether a sandbox backend exists on this host. The old
+// wording nonetheless asserted "no sandbox on this host" and told the reader to
+// "install mgit-sandboxd", which was measurably wrong on a machine where
+// mgit-sandboxd was installed and on PATH.
+//
+// That matters here specifically: this ticket is about containment status being
+// TRUSTWORTHY. A status line that asserts an unprobed host fact sends a user to
+// install something they already have, and implies containment is impossible
+// where it is one flag away. State what is known — nothing was requested.
+// Refs: MGIT-47, MGIT-102
+func TestContainmentOpen_StatesOnlyWhatWasProbed(t *testing.T) {
+	line := ContainmentStatusLine(ContainmentOpen)
+	body := RenderClaudeMdSection(SandboxEnv{WorktreePath: "/repo/wt", NetworkMode: "none", Containment: ContainmentOpen})
+
+	for _, unprobed := range []string{
+		"no sandbox on this host",
+		"no sandbox on this machine",
+		"No sandbox is active on this machine",
+		"containment is unavailable",
+	} {
+		assert.NotContains(t, line, unprobed, "the status line asserts a host fact nothing probed")
+		assert.NotContains(t, body, unprobed, "the CLAUDE.md block asserts a host fact nothing probed")
+	}
+
+	// What IS known: containment was not requested for this worktree, and how
+	// to request it.
+	assert.Contains(t, strings.ToLower(line), "no sandbox was requested for this worktree",
+		"the line must say what was actually established")
+	assert.Contains(t, line, "--sandbox", "and how to get containment")
+	assert.Contains(t, strings.ToLower(body), "no sandbox was requested for this worktree")
+	assert.Contains(t, body, "mgit work --sandbox")
+
+	// The honest-open contract (MGIT-47) is unchanged: commands run on the
+	// host, and nothing claims routing.
+	assert.Contains(t, strings.ToLower(body), "host")
+	assert.NotContains(t, body, "routes through `mgit run`")
+}

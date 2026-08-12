@@ -58,6 +58,11 @@ func (s *SandboxService) suspendLocked(ctx context.Context, reg *sandboxReg) err
 	}); err != nil {
 		return fmt.Errorf("sandbox suspend: audit: %w", err)
 	}
+	// Durably record the pause so the next daemon reconciles a suspended
+	// sandbox as suspended rather than as still-running. Refs: MGIT-102
+	if err := s.setPersistedState(ctx, reg.info.ID, model.StateSuspended); err != nil {
+		return fmt.Errorf("sandbox suspend: %w", err)
+	}
 	reg.booted = false
 	reg.info.State = model.StateSuspended
 	return nil
@@ -192,6 +197,13 @@ func (s *SandboxService) teardownLocked(ctx context.Context, reg *sandboxReg, ev
 		SandboxID: reg.info.ID, TaskID: reg.info.TaskID, EventType: eventType,
 	}); err != nil {
 		return fmt.Errorf("sandbox teardown: audit: %w", err)
+	}
+	// Drop the durable row LAST, once the VM is gone and the terminal event is
+	// recorded: a row removed before the audit could leave a sandbox with no
+	// terminal event at all, and one removed before the VM is stopped would
+	// hide a still-running VM from the next daemon. Refs: FR-17.9, MGIT-102
+	if err := s.dropPersisted(ctx, reg.info.ID); err != nil {
+		return fmt.Errorf("sandbox teardown: %w", err)
 	}
 	return nil
 }

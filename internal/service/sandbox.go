@@ -24,6 +24,24 @@ type SandboxPolicyReader interface {
 	Load(ctx context.Context) (model.SandboxPolicy, error)
 }
 
+// SandboxRegistry is the DURABLE roster of registered sandboxes (satisfied by
+// internal/store/index.Store). It is what makes a registration outlive the
+// daemon process that created it: registration is lazy (FR-17.9, FR-17.10),
+// so a never-booted sandbox holds no VM to keep its daemon alive, the daemon
+// idle-exits (NFR-17.6), and without this the registration went with it —
+// `mgit sandbox status` answering "sandbox not found" for containment the
+// agent had been told it had (MGIT-102).
+//
+// It is live state, NOT the audit trail: SandboxEventAppender remains the
+// append-only history, and every transition recorded here is also recorded
+// there. Refs: FR-17.1, FR-17.9, FR-17.18, MGIT-102
+type SandboxRegistry interface {
+	UpsertSandbox(ctx context.Context, reg *model.SandboxRegistration) error
+	SetSandboxState(ctx context.Context, sandboxID, state string) error
+	DeleteSandbox(ctx context.Context, sandboxID string) error
+	ListSandboxes(ctx context.Context) ([]model.SandboxRegistration, error)
+}
+
 // EgressController starts and stops a sandbox's host-side network
 // enforcement (the allowlist proxy + restricted DNS) around its lifecycle.
 // It is an OPTIONAL collaborator wired at the daemon: StartEgress is a no-op
@@ -84,15 +102,26 @@ type SandboxService struct {
 	capRev  CapabilityRevoker     // optional; nil disables capability-grant teardown
 	capRep  GrantReplayer         // optional; nil disables grant replay on resume
 	ports   PortPublishController // optional; nil disables one-way port publishing (SEC-09)
+	// registry is the DURABLE roster (MGIT-102). Nil leaves the service
+	// memory-only — the pre-MGIT-102 behavior, kept for wirings that have no
+	// index (unit tests, greet-only daemons), never for a serving daemon.
+	registry SandboxRegistry
 
-	// byTask holds LIVE sandbox registrations, keyed by task ID. This is
-	// in-memory by design, not a duplicate of the sandbox_events audit
-	// trail: a microVM is a child of this daemon process, so a daemon
-	// restart takes its VMs with it (microvm.Manager) — there is no live
-	// sandbox to recover, and a fresh daemon correctly starts empty. The
-	// DURABLE record (created/landed/destroyed) lives in sandbox_events
-	// (DeriveState); the durable worktree<->task binding is FR-16's. The
-	// daemon is single-instance (flock, MGIT-11.4), so the mutex
+	// byTask is the in-process WORKING SET of registrations, keyed by task ID:
+	// a fast, lock-guarded view of the durable rows in `registry`, plus the
+	// per-process boot state (a VM handle cannot be persisted).
+	//
+	// It used to be the ONLY record, on the reasoning that a microVM is a
+	// child of this process so a restart takes its VMs with it and a fresh
+	// daemon correctly starts empty. That reasoning missed the state a
+	// registration is normally in: lazy provisioning (FR-17.9, FR-17.10)
+	// registers WITHOUT booting, so the most common sandbox is one with no VM
+	// to lose — and losing its registration cost containment availability
+	// exactly when an agent had been told it was contained (MGIT-102).
+	// Rehydrate rebuilds this map from `registry`, verifying rather than
+	// assuming any state that claims a VM exists.
+	//
+	// The daemon is single-instance (flock, MGIT-11.4), so the mutex
 	// serializes exclusivity for live sandboxes.
 	mu     sync.Mutex
 	byTask map[string]*sandboxReg
@@ -156,6 +185,17 @@ func (s *SandboxService) SetGrantReplayer(r GrantReplayer) {
 	s.capRep = r
 }
 
+// SetRegistry wires the durable sandbox registry. Set once at daemon wiring
+// time, before the service handles any request. It is kept off the constructor
+// like the other collaborators (parameter-count limit), but unlike them it is
+// not optional for a SERVING daemon: without it, registrations live only in
+// this process and vanish with it (MGIT-102). The daemon wiring always sets
+// it, and the e2e gate proves a registration survives a daemon restart.
+// Refs: FR-17.9, FR-17.10, MGIT-102
+func (s *SandboxService) SetRegistry(r SandboxRegistry) {
+	s.registry = r
+}
+
 // SetPortPublishController wires the optional one-way port-publish controller
 // (SEC-09). Set once at daemon wiring time, before the service handles any
 // request; nil leaves port publishing disabled. Kept off the constructor for
@@ -215,11 +255,73 @@ func (s *SandboxService) Register(ctx context.Context, opts model.SandboxLaunchO
 		// not only once a VM exists. Refs: R-H212
 		CPUs: opts.CPUs, MemoryMB: opts.MemoryMB, DiskQuotaMB: opts.DiskQuotaMB,
 	}
+	// Make the registration DURABLE before it is considered registered. A
+	// registration only this process knows about is one idle exit away from
+	// never having happened, which is the whole of MGIT-102; so a registry
+	// write failure fails the registration closed and records the terminal
+	// event, rather than returning success for containment that will not be
+	// there. Refs: FR-17.9, FR-17.10, FR-17.18, MGIT-102
+	if err := s.persistRegistration(ctx, info, opts); err != nil {
+		return nil, err
+	}
 	// lastActivity seeds the idle-suspend deadline from registration time;
 	// expiresAt is resolved at boot (with the effective TTL) or lazily in the
 	// reap sweep for a never-booted sandbox. Refs: NFR-17.3, FR-17.9
 	s.byTask[opts.TaskID] = &sandboxReg{info: info, opts: opts, lastActivity: now}
 	return &info, nil
+}
+
+// persistRegistration writes the durable registry row for a newly registered
+// sandbox. On failure it appends the terminal `destroyed` event before
+// returning: the `created` event is already in the append-only trail, and a
+// trail ending at `created` for a sandbox that does not exist is a record
+// asserting a sandbox that is not there — the second defect of MGIT-102, which
+// must not be reintroduced at the very moment registration fails.
+// Refs: FR-17.18, MGIT-102
+func (s *SandboxService) persistRegistration(ctx context.Context, info model.SandboxInfo, opts model.SandboxLaunchOptions) error {
+	if s.registry == nil {
+		return nil
+	}
+	reg := &model.SandboxRegistration{
+		Info: info, ImageRef: opts.ImageRef, TTL: opts.TTL, ConfineAgent: opts.ConfineAgent,
+	}
+	err := s.registry.UpsertSandbox(ctx, reg)
+	if err == nil {
+		return nil
+	}
+	auditErr := s.events.AppendSandboxEvent(ctx, &model.SandboxEvent{
+		SandboxID: info.ID, TaskID: info.TaskID, EventType: model.EventDestroyed,
+		Detail: `{"reason":"registration could not be made durable"}`,
+	})
+	return errors.Join(fmt.Errorf("sandbox register: persist registration: %w", err), auditErr)
+}
+
+// setPersistedState records a state transition in the durable registry so the
+// NEXT daemon reconciles against what was last observed rather than against
+// the registration-time state. A nil registry (memory-only wiring) is a no-op.
+// Refs: FR-17.18, MGIT-102
+func (s *SandboxService) setPersistedState(ctx context.Context, sandboxID, state string) error {
+	if s.registry == nil {
+		return nil
+	}
+	if err := s.registry.SetSandboxState(ctx, sandboxID, state); err != nil {
+		return fmt.Errorf("sandbox registry: record %s state: %w", state, err)
+	}
+	return nil
+}
+
+// dropPersisted removes a torn-down sandbox from the durable registry so it is
+// not rehydrated by the next daemon. The terminal event stays in
+// sandbox_events — the history is not what is being deleted here.
+// Refs: FR-17.9, MGIT-102
+func (s *SandboxService) dropPersisted(ctx context.Context, sandboxID string) error {
+	if s.registry == nil {
+		return nil
+	}
+	if err := s.registry.DeleteSandbox(ctx, sandboxID); err != nil {
+		return fmt.Errorf("sandbox registry: drop %s: %w", sandboxID, err)
+	}
+	return nil
 }
 
 // createdEvent builds the registration audit record. The created event must
@@ -319,17 +421,17 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 		// sandbox is an audit-trail gap, FR-17.18). Roll back the VM we
 		// just launched (and its egress) before returning; the registration
 		// stays un-booted and retryable. Errors are joined so none is swallowed.
-		if s.ports != nil {
-			s.ports.StopPublish(launched.ID)
-		}
-		if s.egress != nil {
-			s.egress.StopEgress(launched.ID)
-		}
 		return nil, errors.Join(
 			fmt.Errorf("sandbox ensure-running: audit: %w", auditErr),
-			s.manager.Stop(ctx, launched.ID, true),
-			s.manager.Remove(ctx, launched.ID, true),
-		)
+			s.rollbackBoot(ctx, launched.ID))
+	}
+	// Record the boot durably: a registry still saying `created` for a running
+	// VM would send the next daemon down the un-verified path and leave the VM
+	// unaccounted. A failure here is treated exactly like the audit failure
+	// above — roll the VM back rather than run one the durable record does not
+	// describe. Refs: MGIT-102
+	if stateErr := s.setPersistedState(ctx, launched.ID, model.StateRunning); stateErr != nil {
+		return nil, errors.Join(stateErr, s.rollbackBoot(ctx, launched.ID))
 	}
 	reg.info = *launched
 	// The backend's SandboxInfo does not carry the published-port mappings
@@ -354,6 +456,24 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 	}
 	info := reg.info
 	return &info, nil
+}
+
+// rollbackBoot undoes a boot whose bookkeeping failed: it closes the published
+// ports and host egress, then stops and removes the VM. It exists so every
+// post-boot failure path fails closed the same way — a VM that the audit trail
+// or the durable registry does not describe must never keep running. The
+// registration stays un-booted and retryable. Refs: FR-17.18, FR-17.19, MGIT-102
+func (s *SandboxService) rollbackBoot(ctx context.Context, sandboxID string) error {
+	if s.ports != nil {
+		s.ports.StopPublish(sandboxID)
+	}
+	if s.egress != nil {
+		s.egress.StopEgress(sandboxID)
+	}
+	return errors.Join(
+		s.manager.Stop(ctx, sandboxID, true),
+		s.manager.Remove(ctx, sandboxID, true),
+	)
 }
 
 // Exec routes one command into the task's sandbox, booting it on first

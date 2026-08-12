@@ -9,7 +9,9 @@ package index
 // and the additive task_commits.sandbox_id column.
 // Version 3: ADR-008 — additive worktrees.fork_base column pinning the base
 // commit each task forked from (MGIT-35).
-const schemaVersion = 3
+// Version 4: MGIT-102 — the `sandboxes` durable registry, so a sandbox
+// registration survives the daemon process that created it.
+const schemaVersion = 4
 
 // createTablesSQL defines all tables for the mgit index database.
 // task_commits is APPEND-ONLY: no UPDATE, no DELETE. Ever.
@@ -109,6 +111,45 @@ CREATE TABLE IF NOT EXISTS sandbox_events (
 CREATE INDEX IF NOT EXISTS idx_sandbox_events_sandbox_id ON sandbox_events(sandbox_id);
 -- Index for per-task audit queries
 CREATE INDEX IF NOT EXISTS idx_sandbox_events_task_id ON sandbox_events(task_id);
+
+-- Durable registry of LIVE sandbox registrations (MGIT-102).
+--
+-- This table is deliberately MUTABLE, and it is deliberately NOT the audit
+-- trail. sandbox_events above is the append-only history of what happened;
+-- this is the current roster of what EXISTS, so a daemon that starts after
+-- the one which registered a sandbox can bring it back instead of reporting
+-- "sandbox not found" for containment a user was told they had. One row per
+-- sandbox: state is updated in place and the row is deleted at teardown, with
+-- the terminal transition recorded in sandbox_events.
+--
+-- UNIQUE(task_id) and UNIQUE(worktree_path) put FR-17.1 exclusivity in the
+-- schema rather than only in daemon memory.
+-- Refs: FR-17.1, FR-17.9, FR-17.10, FR-17.18, MGIT-102
+CREATE TABLE IF NOT EXISTS sandboxes (
+    sandbox_id        TEXT PRIMARY KEY,   -- ULID, host-assigned at registration
+    task_id           TEXT NOT NULL,
+    worktree_path     TEXT NOT NULL,
+    image_ref         TEXT NOT NULL,      -- digest-pinned (FR-17.17)
+    image_digest      TEXT NOT NULL DEFAULT '',
+    backend           TEXT NOT NULL DEFAULT '',
+    network_mode      TEXT NOT NULL DEFAULT '',
+    network_allowlist TEXT NOT NULL DEFAULT '',  -- JSON array (list-valued)
+    publish_ports     TEXT NOT NULL DEFAULT '',  -- JSON array (list-valued, SEC-09)
+    cpus              INTEGER NOT NULL DEFAULT 0,   -- resolved effective caps,
+    memory_mb         INTEGER NOT NULL DEFAULT 0,   -- not the requested ones
+    disk_quota_mb     INTEGER NOT NULL DEFAULT 0,
+    ttl_ns            INTEGER NOT NULL DEFAULT 0,
+    confine_agent     INTEGER NOT NULL DEFAULT 0,
+    state             TEXT NOT NULL,      -- last state this daemon OBSERVED
+    created_at        TEXT NOT NULL,      -- ISO-8601 UTC, registration time
+    expires_at        TEXT NOT NULL DEFAULT '',  -- TTL deadline; '' = no TTL
+    updated_at        TEXT NOT NULL,      -- ISO-8601 UTC, last state write
+    UNIQUE(task_id),
+    UNIQUE(worktree_path)
+);
+
+-- Index for the task lookup every sandbox verb starts from
+CREATE INDEX IF NOT EXISTS idx_sandboxes_task_id ON sandboxes(task_id);
 
 -- Egress decisions in allowlist mode (APPEND-ONLY, same laws as
 -- sandbox_events: no UPDATE, no DELETE, no retention pruning, ever).

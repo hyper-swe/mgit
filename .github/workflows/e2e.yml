@@ -214,6 +214,39 @@ jobs:
           # transport should be served is MGIT-94; until it is, there is
           # nothing here to assert.
 
+      # Registry durability across a daemon restart. A CONTINUOUS gate by
+      # explicit requirement, not a one-time proof: the live registry used to be
+      # daemon-process memory, so a `mgit work --sandbox` registration vanished
+      # when its daemon idle-exited (the intended NFR-17.6 behavior) and
+      # `mgit sandbox status` answered "sandbox not found" for containment an
+      # agent had been told it had. That is loss of containment AVAILABILITY,
+      # which pushes an agent under progress pressure toward bare host commands.
+      # A store unit test proves rows persist; only this proves a real CLI finds
+      # a real sandbox after the daemon that registered it is gone.
+      # "This class shouldn't be findable twice." Refs: MGIT-102
+      - name: Sandbox registry durability e2e (survives a daemon restart)
+        env:
+          MGIT_GUEST_KERNEL: ${{ runner.temp }}/guest/vmlinux
+          MGIT_GUEST_ROOTFS: ${{ runner.temp }}/guest/rootfs.ext4
+        run: |
+          set -uo pipefail
+          # shellcheck source=scripts/sandbox-image/pins.env
+          . scripts/sandbox-image/pins.env   # defines FC_CMDLINE; without it
+          # `set -u` kills the step before a single verb runs.
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          export MGIT_GUEST_CMDLINE="$FC_CMDLINE"
+          bash scripts/e2e/sandbox_registry_durability.sh "$RUNNER_TEMP/bin" 2>&1 |
+            tee "$RUNNER_TEMP/registry.log"
+          grep -q 'SANDBOX REGISTRY DURABILITY E2E: PASS (live)' "$RUNNER_TEMP/registry.log" || {
+            echo "FATAL: the registry durability gate did not pass LIVE (a SKIP is a failure here)"; exit 1; }
+          # This job HAS a guest image, so the booted-sandbox reconciliation arm
+          # must actually run here. A "NOT EXERCISED" note means the live phase
+          # was skipped and the gate proved less than its headline says.
+          if grep -q 'NOT EXERCISED' "$RUNNER_TEMP/registry.log"; then
+            echo "FATAL: the booted-sandbox reconciliation arm did not run on a job that has a guest image"
+            exit 1
+          fi
+
       - name: Firecracker e2e — unprivileged half
         env:
           MGIT_TEST_KERNEL: ${{ runner.temp }}/guest/vmlinux

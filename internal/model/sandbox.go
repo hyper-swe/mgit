@@ -63,6 +63,15 @@ var (
 	validStates   = map[string]bool{StateCreated: true, StateRunning: true, StateSuspended: true, StateLanded: true, StateDestroyed: true}
 )
 
+// ValidSandboxState reports whether a state is in the closed lifecycle
+// vocabulary above. Exported so the durable sandbox registry (MGIT-102)
+// closes the vocabulary at its own write boundary, exactly as sandbox_events
+// does for event types — a vocabulary only some writers validate is a
+// vocabulary with a hole in it. Refs: FR-17.18, MGIT-102
+func ValidSandboxState(state string) bool {
+	return validStates[state]
+}
+
 // Image-reference grammar per FR-17.17: lowercase OCI-style name
 // components (the first may carry a registry :port), pinned by a
 // sha256 digest. Tag-only and mixed-case references are rejected.

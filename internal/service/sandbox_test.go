@@ -36,6 +36,14 @@ type fakeSandboxManager struct {
 	removeErr       error
 
 	listResult []model.SandboxInfo
+
+	// Resolve is the verification seam MGIT-102's rehydration reconciles
+	// against: the zero value (nil, nil) means "this daemon cannot confirm the
+	// sandbox exists", which is what a fresh daemon sees for a VM its
+	// predecessor owned.
+	resolves    int
+	resolveInfo *model.SandboxInfo
+	resolveErr  error
 }
 
 func (m *fakeSandboxManager) Launch(_ context.Context, opts model.SandboxLaunchOptions) (*model.SandboxInfo, error) {
@@ -73,7 +81,8 @@ func (m *fakeSandboxManager) Remove(_ context.Context, id string, force bool) er
 	return m.removeErr
 }
 func (m *fakeSandboxManager) Resolve(context.Context, string) (*model.SandboxInfo, error) {
-	return nil, nil
+	m.resolves++
+	return m.resolveInfo, m.resolveErr
 }
 
 // fakeEventAppender records appended sandbox events.
