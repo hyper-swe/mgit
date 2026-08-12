@@ -36,6 +36,12 @@ type workOptions struct {
 	Image         string   // --image: digest-pinned image (sandbox leg only)
 	Network       string   // --network: none | allowlist | open
 	Allow         []string // --allow: allowlist entries (allowlist mode)
+	// Resources are the per-sandbox caps this task's guest is launched with
+	// (--cpus/--memory-mb/--disk-quota-mb; zero = host policy default). They
+	// belong here and not only on `sandbox launch` because `work --sandbox`
+	// is how agents are STARTED on a task: a flag only the lower-level verb
+	// carried would never reach the lane that needs it. Refs: R-H212
+	Resources resourceFlags
 }
 
 // workDeps are the injected collaborators of workSetup, so the host-side
@@ -95,6 +101,7 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	cmd.Flags().StringVar(&opts.Image, "image", "", "digest-pinned image <name>@sha256:<hex>; defaults to this repo's registered guest base")
 	cmd.Flags().StringVar(&opts.Network, "network", model.NetworkModeNone, "sandbox network mode: none | allowlist | open")
 	cmd.Flags().StringArrayVar(&opts.Allow, "allow", nil, "allowlist entry (repeatable; allowlist mode only)")
+	bindResourceFlags(cmd, &opts.Resources)
 }
 
 // workCmd is the production `mgit work` command. Refs: MGIT-34
@@ -209,17 +216,21 @@ func launchWorkSandbox(ctx context.Context, out io.Writer, deps workDeps, opts w
 	cl, err := deps.connect(ctx)
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "sandbox not launched (%v); the worktree and agent wiring are ready — "+
-			"run `mgit sandbox launch --task %s --worktree %s --image %s` once the backend is available\n",
-			err, wt.TaskID, wt.Path, image)
+			"run `mgit sandbox launch --task-id %s --worktree %s --image %s%s` once the backend is available\n",
+			err, wt.TaskID, wt.Path, image, opts.Resources.flagSuffix())
 		return
 	}
-	info, err := cl.Launch(ctx, model.SandboxLaunchOptions{
+	launch := model.SandboxLaunchOptions{
 		TaskID: wt.TaskID, WorktreePath: canonicalPath(wt.Path), ImageRef: image,
 		Network: model.NetworkPolicy{Mode: opts.Network, Allowlist: opts.Allow},
-	})
+	}
+	// Declared caps (zero = host policy default), bounded daemon-side by the
+	// per-sandbox maximum and refused rather than clamped. Refs: R-H212
+	opts.Resources.apply(&launch)
+	info, err := cl.Launch(ctx, launch)
 	if err != nil {
-		_, _ = fmt.Fprintf(out, "sandbox not launched (%v); run `mgit sandbox launch --task %s "+
-			"--worktree %s --image %s` to retry\n", err, wt.TaskID, wt.Path, image)
+		_, _ = fmt.Fprintf(out, "sandbox not launched (%v); run `mgit sandbox launch --task-id %s "+
+			"--worktree %s --image %s%s` to retry\n", err, wt.TaskID, wt.Path, image, opts.Resources.flagSuffix())
 		return
 	}
 	writeSandboxEnvDoc(out, info)

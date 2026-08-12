@@ -288,17 +288,26 @@ func nestField(parent string, err error) error {
 // via List+Remove (FR-17.9). Wraps backend types — no VMM or go-git
 // types are exposed. Refs: FR-17.1, FR-17.18
 type SandboxInfo struct {
-	ID               string    `json:"id"`      // ULID
-	TaskID           string    `json:"task_id"` // bound task (FR-17.1)
-	WorktreePath     string    `json:"worktree_path"`
-	Backend          string    `json:"backend"`                     // BackendKVM | BackendVZF | BackendHyperV | BackendContainer
-	ImageDigest      string    `json:"image_digest"`                // sha256 of rootfs image
-	NetworkMode      string    `json:"network_mode"`                // NetworkModeNone | NetworkModeAllowlist | NetworkModeOpen
-	NetworkAllowlist []string  `json:"network_allowlist,omitempty"` // immutable launch-time allowlist (FR-17.7)
-	State            string    `json:"state"`                       // derived (StateCreated..StateDestroyed)
-	MemoryMB         int       `json:"memory_mb,omitempty"`         // effective memory cap; feeds the FR-17.26 ceiling
-	CreatedAt        time.Time `json:"created_at"`                  // ISO-8601 UTC
-	ExpiresAt        time.Time `json:"expires_at,omitempty"`        // TTL deadline; zero = no TTL
+	ID               string   `json:"id"`      // ULID
+	TaskID           string   `json:"task_id"` // bound task (FR-17.1)
+	WorktreePath     string   `json:"worktree_path"`
+	Backend          string   `json:"backend"`                     // BackendKVM | BackendVZF | BackendHyperV | BackendContainer
+	ImageDigest      string   `json:"image_digest"`                // sha256 of rootfs image
+	NetworkMode      string   `json:"network_mode"`                // NetworkModeNone | NetworkModeAllowlist | NetworkModeOpen
+	NetworkAllowlist []string `json:"network_allowlist,omitempty"` // immutable launch-time allowlist (FR-17.7)
+	State            string   `json:"state"`                       // derived (StateCreated..StateDestroyed)
+	MemoryMB         int      `json:"memory_mb,omitempty"`         // effective memory cap; feeds the FR-17.26 ceiling
+	// CPUs and DiskQuotaMB complete the EFFECTIVE resource caps this sandbox
+	// runs under (declared at launch or filled from host policy). They are
+	// reported so an agent can SEE its ceiling — `mgit sandbox status`, the
+	// generated CLAUDE.md block — instead of inferring it from a build that
+	// died. Invisibility of the ceiling at the point of failure is what let a
+	// sandbox's memory cap nearly become permanent bundler config in a
+	// customer's repository. Refs: R-H212, NFR-17.5
+	CPUs        int       `json:"cpus,omitempty"`
+	DiskQuotaMB int       `json:"disk_quota_mb,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`           // ISO-8601 UTC
+	ExpiresAt   time.Time `json:"expires_at,omitempty"` // TTL deadline; zero = no TTL
 	// PublishPorts mirrors the launch-time one-way host->guest port mappings
 	// (SEC-09) so List/Status report a sandbox's published ports. Each binds
 	// host 127.0.0.1:<HostPort> forwarding into the guest's <GuestPort>.

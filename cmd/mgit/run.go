@@ -71,9 +71,18 @@ func runExec(cmd *cobra.Command, connect connectFunc, getwd func() (string, erro
 	code, err := cl.Exec(cmd.Context(), sb.TaskID,
 		model.ExecRequest{Command: args, Dir: dir, Env: env}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	if err != nil {
+		// The guest was reached and then stopped answering — one shape of
+		// in-guest memory exhaustion, which kills the supervisor that would
+		// otherwise report it (R-H212).
+		defer writeGuestLossAdvisory(cmd.ErrOrStderr(), sb)
 		return printRunErr(cmd.ErrOrStderr(), err)
 	}
 	if code != 0 {
+		// The sandbox is already resolved here, so the ceiling the command
+		// ran under is known at the exact moment it failed — which is the
+		// moment an agent otherwise starts reshaping its build to fit a
+		// limit it cannot see (R-H212).
+		writeMemoryAdvisory(cmd.ErrOrStderr(), sb, code)
 		return &exitError{code: code}
 	}
 	return nil

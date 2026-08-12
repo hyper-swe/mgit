@@ -85,12 +85,20 @@ func (c *CeilingManager) reserve(ctx context.Context, requestMB int) error {
 	count += c.reservedCount
 	usedMB += c.reservedMB
 
+	// Both refusals below say the FLEET is full — a different problem, with a
+	// different fix, from a single launch asking for more than the
+	// per-sandbox maximum (model.ErrSandboxResourceLimitExceeded, refused in
+	// the service before this decorator is reached). The wording names the
+	// host-wide cap and points at freeing capacity, never at shrinking the
+	// request. Refs: FR-17.26, R-H212
 	if c.maxConcurrent > 0 && count >= c.maxConcurrent {
-		return fmt.Errorf("%w: %d sandboxes running or admitted (cap %d)",
+		return fmt.Errorf("%w: the host is already running or admitting %d sandboxes (host-wide cap %d); "+
+			"this launch is not too big — free capacity with `mgit sandbox remove <task>` or wait for one to expire",
 			model.ErrSandboxCeilingExceeded, count, c.maxConcurrent)
 	}
 	if c.maxTotalMemoryMB > 0 && usedMB+requestMB > c.maxTotalMemoryMB {
-		return fmt.Errorf("%w: %d MB in use or admitted + %d MB requested exceeds %d MB ceiling",
+		return fmt.Errorf("%w: %d MB in use or admitted + %d MB requested exceeds the %d MB host-wide ceiling; "+
+			"free capacity with `mgit sandbox remove <task>` or wait for one to expire",
 			model.ErrSandboxCeilingExceeded, usedMB, requestMB, c.maxTotalMemoryMB)
 	}
 

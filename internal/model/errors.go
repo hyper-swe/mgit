@@ -176,6 +176,15 @@ var (
 	// rather than degrading the host (SEC-09). Refs: FR-17.26
 	ErrSandboxCeilingExceeded = errors.New("global sandbox ceiling exceeded")
 
+	// ErrSandboxResourceLimitExceeded indicates ONE launch declared more
+	// CPU, memory, or disk than the host policy's per-sandbox maximum
+	// allows. Deliberately distinct from ErrSandboxCeilingExceeded: "this
+	// launch is too big" and "the fleet is full" have different fixes —
+	// lower the request (or have the operator raise the maximum) versus
+	// free a running sandbox. The request is refused, never clamped.
+	// Refs: R-H212, NFR-17.5, FR-17.26
+	ErrSandboxResourceLimitExceeded = errors.New("per-sandbox resource limit exceeded")
+
 	// ErrPeerBindingMismatch indicates a vsock/HvSocket connection's
 	// hypervisor peer identity (CID or VM-GUID) does not match the
 	// sandbox channel it addresses — one guest may never reach another's

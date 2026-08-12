@@ -58,6 +58,21 @@ These are intentional or deferred; recorded here so an agent is not surprised
   daemon re-stages through the same host-side invariants a launch enforces),
   and its `dry_run` form is the only way to learn which paths diverged without
   running a command in the guest and being refused. Refs: MGIT-76, ADR-011
+- **Per-sandbox resource caps (`--cpus`/`--memory-mb`/`--disk-quota-mb`) are
+  CLI-only** — they are launch parameters, and launch is not on MCP. The
+  decision was re-examined for R-H212 (an agent whose build died against an
+  invisible memory ceiling rewrote a customer's bundler config to fit it) and
+  the flags stayed off MCP for two reasons. First, sizing a guest *is* the
+  lifecycle decision: it commits host RAM and CPU, so an agent that could
+  declare its own size could walk itself up to the per-sandbox maximum
+  unattended — the authority the lifecycle exclusion exists to withhold.
+  Second, the agent-facing half of that problem is not authority but
+  VISIBILITY, and that is served without a new tool: `mgit sandbox status`
+  reports the effective caps, the generated CLAUDE.md states them, and a
+  signal-death exit prints the cap it ran under. An agent can therefore see
+  its ceiling and report it — which is the correct action — while raising it
+  remains an operator's (or the launching lane's) call on the CLI.
+  Refs: R-H212, NFR-17.5
 
 ## Live egress policy is on MCP on purpose (MGIT-72)
 

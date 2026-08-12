@@ -161,6 +161,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 	var task, worktree, image, network string
 	var allow, publish []string
 	var asJSON bool
+	var res resourceFlags
 	cmd := &cobra.Command{
 		Use:   "launch --task <id> --worktree <path>",
 		Short: "Register a sandbox for a task (the VM boots on first exec)",
@@ -185,11 +186,16 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			info, err := cl.Launch(cmd.Context(), model.SandboxLaunchOptions{
+			opts := model.SandboxLaunchOptions{
 				TaskID: task, WorktreePath: canonicalPath(worktree), ImageRef: image,
 				Network:      model.NetworkPolicy{Mode: network, Allowlist: allow},
 				PublishPorts: ports,
-			})
+			}
+			// Declared caps travel with the launch; the daemon bounds them
+			// against host policy and refuses (never clamps) an over-large
+			// request. Refs: R-H212
+			res.apply(&opts)
+			info, err := cl.Launch(cmd.Context(), opts)
 			if err != nil {
 				return err
 			}
@@ -207,6 +213,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 	cmd.Flags().StringArrayVar(&allow, "allow", nil, "allowlist entry (repeatable; allowlist mode only)")
 	cmd.Flags().StringArrayVar(&publish, "publish", nil,
 		"one-way published port HOST:GUEST or PORT (repeatable; host binds 127.0.0.1 only, SEC-09)")
+	bindResourceFlags(cmd, &res)
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
 	return cmd
 }
@@ -278,9 +285,20 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 			code, err := cl.Exec(cmd.Context(), task,
 				model.ExecRequest{Command: args, Env: env}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 			if err != nil {
+				// A guest that stopped answering may have been killed by its
+				// own kernel for exceeding this cap (R-H212).
+				if info, sErr := cl.Status(cmd.Context(), task); sErr == nil {
+					defer writeGuestLossAdvisory(cmd.ErrOrStderr(), info)
+				}
 				return printErr(cmd.ErrOrStderr(), err)
 			}
 			if code != 0 {
+				// A signal death may be memory exhaustion; name the cap in
+				// force so the caller does not "fix" its workload instead
+				// (R-H212). Status is only consulted on the failure path.
+				if info, sErr := cl.Status(cmd.Context(), task); sErr == nil {
+					writeMemoryAdvisory(cmd.ErrOrStderr(), info, code)
+				}
 				return &exitError{code: code}
 			}
 			return nil
@@ -375,8 +393,11 @@ func sandboxStatusCmd(connect connectFunc) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// The effective resource caps are part of status on purpose: an
+			// agent must be able to READ its ceiling rather than infer it
+			// from a build that died against it (R-H212).
 			return writeSandbox(cmd.OutOrStdout(), info, asJSON,
-				fmt.Sprintf("%s\t%s\t%s\n", info.TaskID, info.State, info.ID))
+				fmt.Sprintf("%s\t%s\t%s\n%s", info.TaskID, info.State, info.ID, capsLine(info)))
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")

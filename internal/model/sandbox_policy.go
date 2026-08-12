@@ -26,6 +26,21 @@ type SandboxPolicy struct {
 	MemoryMB    int           `json:"memory_mb"`
 	DiskQuotaMB int           `json:"disk_quota_mb"`
 	TTL         time.Duration `json:"ttl_ns"`
+	// Per-sandbox maxima (R-H212): the largest a SINGLE launch may declare
+	// for itself. These are a third, distinct thing from the two above them
+	// and the two below:
+	//   - the defaults say what an undeclared launch GETS,
+	//   - these maxima say what a declaring launch may ASK FOR,
+	//   - the aggregate ceilings say what the whole fleet may consume.
+	// A request over one of these is REFUSED naming the limit, never
+	// clamped: a caller that silently gets less than it asked for concludes
+	// its workload is at fault and reshapes it (the R-H212 defect, where a
+	// sandbox's memory ceiling nearly became permanent bundler config in a
+	// customer's repository). Zero disables that dimension's per-sandbox
+	// bound — the aggregate ceiling still applies. Refs: R-H212, NFR-17.5
+	MaxCPUs        int `json:"max_cpus"`
+	MaxMemoryMB    int `json:"max_memory_mb"`
+	MaxDiskQuotaMB int `json:"max_disk_quota_mb"`
 	// Global ceilings enforced by mgit-sandboxd across all sandboxes
 	// (FR-17.26): exceeding either fails launch rather than degrading
 	// the host.
@@ -53,6 +68,15 @@ func DefaultSandboxPolicy() SandboxPolicy {
 		MemoryMB:    2048,
 		DiskQuotaMB: 4096,
 		TTL:         4 * time.Hour,
+		// R-H212 per-sandbox maxima: generous enough that a real production
+		// build (the motivating case peaked at 2.10 GB RSS) is declarable
+		// WITHOUT an operator editing host policy — a caller editing the
+		// operator's policy to fit its own workload defeats the point of
+		// having one — yet bounded so a single launch cannot claim a whole
+		// workstation. Operators raise or lower them in the host policy file.
+		MaxCPUs:        8,
+		MaxMemoryMB:    16384,
+		MaxDiskQuotaMB: 65536,
 		// FR-17.26 defaults: 8 concurrent sandboxes, 50% of host memory.
 		MaxConcurrentSandboxes: 8,
 		MaxTotalMemoryPercent:  50,
@@ -88,6 +112,72 @@ func (p SandboxPolicy) Validate() error {
 		if value < 0 {
 			return &ValidationError{Field: field, Message: fmt.Sprintf("must be non-negative, got %d", value)}
 		}
+	}
+	return p.validateResourceMaxima()
+}
+
+// resourceDimension is one bounded resource: what a launch declares, what the
+// policy defaults it to, and the policy field naming its per-sandbox maximum.
+// Refs: R-H212
+type resourceDimension struct {
+	field     string // launch-option field name (the caller's vocabulary)
+	maxField  string // host-policy field that sets the maximum
+	flag      string // CLI flag that declares it
+	unit      string // human unit for messages ("MB", "vCPU")
+	requested int
+	limit     int
+	def       int
+}
+
+// dimensions enumerates the bounded resources for one declared request.
+// Refs: R-H212, NFR-17.5
+func (p SandboxPolicy) dimensions(o SandboxLaunchOptions) []resourceDimension {
+	return []resourceDimension{
+		{"cpus", "max_cpus", "--cpus", "vCPU", o.CPUs, p.MaxCPUs, p.CPUs},
+		{"memory_mb", "max_memory_mb", "--memory-mb", "MB", o.MemoryMB, p.MaxMemoryMB, p.MemoryMB},
+		{"disk_quota_mb", "max_disk_quota_mb", "--disk-quota-mb", "MB", o.DiskQuotaMB, p.MaxDiskQuotaMB, p.DiskQuotaMB},
+	}
+}
+
+// validateResourceMaxima rejects negative maxima and any policy whose own
+// default exceeds its own per-sandbox maximum — that policy would make every
+// undeclared launch instantly illegal. Refs: R-H212, FR-17.13
+func (p SandboxPolicy) validateResourceMaxima() error {
+	for _, d := range p.dimensions(SandboxLaunchOptions{}) {
+		if d.limit < 0 {
+			return &ValidationError{Field: d.maxField, Message: fmt.Sprintf("must be non-negative, got %d", d.limit)}
+		}
+		if d.limit > 0 && d.def > d.limit {
+			return &ValidationError{Field: d.maxField, Message: fmt.Sprintf(
+				"per-sandbox maximum %d is below the default %s of %d", d.limit, d.field, d.def)}
+		}
+	}
+	return nil
+}
+
+// EnforceResourceLimits refuses a launch that declares more of any resource
+// than this policy's per-sandbox maximum. It is the "declared by the workload,
+// bounded by the operator" half of R-H212, and it REFUSES rather than clamps
+// on purpose: a caller handed 2 GB after asking for 4 concludes the ceiling is
+// not the problem and goes back to reshaping its build — which is the defect
+// this whole mechanism exists to prevent.
+//
+// A zero request means "policy default" and is always legal. A zero maximum
+// disables that dimension's bound. This is the PER-SANDBOX check only: the
+// FR-17.26 aggregate ceiling applies independently on top, and its refusal
+// (ErrSandboxCeilingExceeded — the fleet is full) is a different problem with
+// a different fix from this one (this launch is too big).
+// Refs: R-H212, NFR-17.5, FR-17.26
+func (p SandboxPolicy) EnforceResourceLimits(o SandboxLaunchOptions) error {
+	for _, d := range p.dimensions(o) {
+		if d.limit <= 0 || d.requested <= d.limit {
+			continue
+		}
+		return fmt.Errorf("%w: requested %s %d %s exceeds the per-sandbox maximum of %d %s "+
+			"set by host sandbox policy %s; ask for at most %d with %s, or have the operator raise %s "+
+			"(mgit refuses rather than silently giving you less than you asked for)",
+			ErrSandboxResourceLimitExceeded, d.field, d.requested, d.unit, d.limit, d.unit,
+			d.maxField, d.limit, d.flag, d.maxField)
 	}
 	return nil
 }

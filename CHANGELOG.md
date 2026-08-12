@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A sandbox's CPU/memory/disk are now declarable at launch and bounded by host
+  policy.** `mgit sandbox launch` and `mgit work` take `--cpus`, `--memory-mb`
+  and `--disk-quota-mb`; unset still takes the host policy default. The fields
+  existed in the API and reached the VM config already — nothing could set them,
+  so a workload larger than the 2048 MB default had no route except editing the
+  operator's host policy. `SandboxPolicy` gains `max_cpus` / `max_memory_mb` /
+  `max_disk_quota_mb`, and a request above one of them is **refused naming the
+  limit and the policy field that set it — never clamped**. Clamping would
+  reproduce the defect one level up: a caller that asks for 4 GB, silently gets
+  2, and concludes memory was already ruled out. The fleet-wide FR-17.26 ceiling
+  still applies on top and now reads differently ("the host is already running N
+  sandboxes") so "this launch is too big" and "the host is full" are never
+  confused. (MGIT-95, R-H212)
+
+- **The ceiling is visible, because its invisibility is what caused harm.** A
+  customer's production build peaked at 2.10 GB against a ~1.94 GB guest, died
+  with exit 134, and the agent — reasoning correctly from all it could see —
+  rewrote the production bundler config to fit. The effective caps are now
+  reported by `mgit sandbox status`, stated in the generated CLAUDE.md block
+  along with an explicit instruction not to reshape the project to fit the
+  guest, and printed by `mgit run` / `mgit sandbox exec` when a command dies by
+  a signal or the guest stops answering mid-command. (MGIT-95)
+
+- **We do not claim to detect guest OOM, and `docs/adr/014` records why with
+  evidence.** The customer's failure is V8 aborting itself against a heap it
+  sized from guest RAM — the kernel never runs its OOM killer, so there is
+  nothing to detect. And when the kernel *does* fire (reproduced live on
+  libkrun) it kills the guest supervisor that would have reported it: the host
+  sees a dropped exec channel and a refused vsock dial, never an exit code. So
+  mgit reports what it knows for certain — the cap in force — and leaves the
+  conclusion to the caller. (MGIT-95)
+
+
 ## [0.4.5] - 2026-08-12
 
 The Linux release. `-tags libkrun` on Linux went from "never validated" to a
