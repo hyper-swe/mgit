@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the first command after a launch no longer dies on a connection reset
+
+**`mgit run` failed on the first command after every sandbox launch on
+Linux/libkrun**, with `connection reset by peer` on the guest's vsock exec
+socket, and the same reset hit the library path roughly one run in ten. Both
+are gone: the shared posture pass (launch -> exec -> land) now PASSES on
+Linux/libkrun, and it is a required CI gate again rather than a tripwire.
+(MGIT-91)
+
+**Two causes, one product and one test — and the guest was innocent of both.**
+Reading the per-VM console right after a failing exec showed mgit-guest logging
+*nothing at all* for that attempt and serving the next one normally: no panic,
+no crash, the guest simply never received it.
+
+- **The product bug: the first-command retry could not fire.** `microvm.Manager`
+  already retries a first command that never reaches a listener, but its
+  predicate matched only `io.EOF`. libkrun creates the host-side vsock socket
+  when the VM is configured, so an exec issued before mgit-guest binds its
+  listener CONNECTS successfully and is then reset by the VMM — `ECONNRESET`,
+  never `io.EOF`. The predicate now also matches `ECONNRESET` and `EPIPE` (the
+  same event seen from the writing side). **All three of the caller's guards are
+  unchanged**: a retry still happens only while the guest has never answered,
+  only with no output whatsoever, and only inside the readiness deadline — so a
+  reset that kills a long-running build mid-stream still surfaces immediately
+  instead of being silently re-run. A test pins exactly that.
+- **The test bug: one e2e waited on the wrong marker.** `MgitGuestControlPlane`
+  waited for the console to mention `mgit-guest`, which is its very first log
+  line — printed before it binds. Every sibling test that drives the exec port
+  waits for `"vsock_port":1024`; this one was the outlier, and it dialed
+  straight into the unbound window.
+
+**Verified by repetition, not by one green run** — the standard this repo's own
+FLAKY category exists to enforce: 20/20 consecutive runs of the previously
+intermittent test, 14/14 first-`mgit run`s after launch (it was 0/3 before), two
+consecutive clean passes of the full real-VM battery on Linux/KVM, and the
+macOS suite twice with no regression.
+
+- **The CI gate's INTERMITTENT list is now empty**, alongside its known-gap
+  list, and the validated column stands at 25. Both lists are kept, empty, so
+  the next finding has an obvious home — and both steps now no-op cleanly on an
+  empty list rather than running a pattern that matches everything.
+
 ### Fixed — a deleted file can no longer be read by a running guest
 
 **`mgit sandbox sync` reported a path deleted while a guest process could still

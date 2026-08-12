@@ -3,11 +3,13 @@ package microvm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"os"
 	"runtime"
+	"syscall"
 	"testing"
 	"time"
 
@@ -308,4 +310,136 @@ func (d *muteAfterDialer) DialGuest(ctx context.Context, id string) (net.Conn, e
 	}
 	d.answered = true
 	return d.inner.DialGuest(ctx, id)
+}
+
+// resetConn is a connection that accepts the request and then reports the
+// connection reset the VMM produces when nothing is listening on the guest
+// side yet. It reads as a real socket error, wrapped exactly as the net
+// package wraps it, because the predicate under test unwraps to the errno.
+type resetConn struct {
+	net.Conn
+	errno syscall.Errno
+}
+
+func (c *resetConn) Read([]byte) (int, error) {
+	return 0, &net.OpError{Op: "read", Net: "unix", Err: os.NewSyscallError("read", c.errno)}
+}
+
+func (c *resetConn) Write(b []byte) (int, error) { return len(b), nil }
+func (c *resetConn) Close() error                { return nil }
+func (c *resetConn) SetDeadline(time.Time) error { return nil }
+
+// resettingDialer hands back connections that reset for the first failFirst
+// calls — the libkrun window where the host-side vsock socket exists but
+// mgit-guest has not bound its listener — then delegates to a working dialer.
+type resettingDialer struct {
+	failFirst int
+	errno     syscall.Errno
+	calls     int
+	inner     GuestDialer
+}
+
+func (d *resettingDialer) DialGuest(ctx context.Context, id string) (net.Conn, error) {
+	d.calls++
+	if d.calls <= d.failFirst {
+		return &resetConn{errno: d.errno}, nil
+	}
+	return d.inner.DialGuest(ctx, id)
+}
+
+// TestExec_RetriesWhenTheGuestResetsBeforeListening is the MGIT-91 regression.
+// The dial SUCCEEDS here — that is the point, and why the existing
+// MGIT-58 dial-retry could not cover it: libkrun creates the host-side vsock
+// socket with the VM, so a too-early exec connects and is then reset. Before
+// the fix the predicate matched only io.EOF, so this surfaced to the caller as
+// "connection reset by peer" on the very first command after every launch.
+// Refs: MGIT-91, MGIT-58
+func TestExec_RetriesWhenTheGuestResetsBeforeListening(t *testing.T) {
+	skipWithoutPOSIXShell(t)
+	for _, tt := range []struct {
+		name  string
+		errno syscall.Errno
+	}{
+		{"connection_reset", syscall.ECONNRESET},
+		{"broken_pipe", syscall.EPIPE},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dialer := &resettingDialer{failFirst: 2, errno: tt.errno, inner: &pipeDialer{}}
+			mgr := execManager(t, dialer)
+			info, err := mgr.Launch(context.Background(), launchOpts("MGIT-91", model.NetworkModeNone))
+			require.NoError(t, err)
+
+			res, err := mgr.Exec(context.Background(), info.ID,
+				model.ExecRequest{Command: []string{"/bin/sh", "-c", "echo served"}})
+
+			require.NoError(t, err, "a reset before the guest listens must be waited out, not surfaced")
+			assert.Equal(t, "served\n", string(res.Stdout))
+			assert.Equal(t, 3, dialer.calls, "2 resets then the successful attempt")
+		})
+	}
+}
+
+// TestExec_ResetAfterTheGuestAnswered_Surfaces pins the safety property the
+// broadened predicate must not cost us. Once the guest has served a command,
+// the first-command window is over and a reset is a REAL failure — an agent
+// whose long-running build dies mid-stream has to see that, not have it
+// silently retried into a second run. Refs: MGIT-91
+func TestExec_ResetAfterTheGuestAnswered_Surfaces(t *testing.T) {
+	skipWithoutPOSIXShell(t)
+	inner := &pipeDialer{}
+	dialer := &afterFirstResetDialer{inner: inner}
+	mgr := execManager(t, dialer)
+	info, err := mgr.Launch(context.Background(), launchOpts("MGIT-91b", model.NetworkModeNone))
+	require.NoError(t, err)
+
+	_, err = mgr.Exec(context.Background(), info.ID, model.ExecRequest{Command: []string{"/bin/sh", "-c", "echo one"}})
+	require.NoError(t, err, "the first command establishes that the guest answers")
+
+	_, err = mgr.Exec(context.Background(), info.ID, model.ExecRequest{Command: []string{"/bin/sh", "-c", "echo two"}})
+
+	require.Error(t, err, "a reset AFTER the guest has answered must surface, never be retried away")
+	assert.Contains(t, err.Error(), "exec")
+}
+
+// afterFirstResetDialer serves the first exec normally and resets every one
+// after it.
+type afterFirstResetDialer struct {
+	calls int
+	inner GuestDialer
+}
+
+func (d *afterFirstResetDialer) DialGuest(ctx context.Context, id string) (net.Conn, error) {
+	d.calls++
+	if d.calls == 1 {
+		return d.inner.DialGuest(ctx, id)
+	}
+	return &resetConn{errno: syscall.ECONNRESET}, nil
+}
+
+// TestIsSilentDisconnect_OnlyWhenNothingWasSaid covers the predicate directly,
+// including the case that must stay FALSE: a connection that dropped after the
+// guest had already written something cannot be re-sent, because part of the
+// command's effect is already real. Refs: MGIT-91
+func TestIsSilentDisconnect_OnlyWhenNothingWasSaid(t *testing.T) {
+	reset := &net.OpError{Op: "read", Net: "unix", Err: os.NewSyscallError("read", syscall.ECONNRESET)}
+	tests := []struct {
+		name           string
+		err            error
+		stdout, stderr []byte
+		want           bool
+	}{
+		{"clean_eof_no_output", io.EOF, nil, nil, true},
+		{"reset_no_output", reset, nil, nil, true},
+		{"wrapped_reset_no_output", fmt.Errorf("read frame: %w", reset), nil, nil, true},
+		{"broken_pipe_no_output", os.NewSyscallError("write", syscall.EPIPE), nil, nil, true},
+		{"reset_after_stdout", reset, []byte("partial"), nil, false},
+		{"reset_after_stderr", reset, nil, []byte("boom"), false},
+		{"unrelated_error", errors.New("protocol violation"), nil, nil, false},
+		{"nil_error", nil, nil, nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isSilentDisconnect(tt.err, tt.stdout, tt.stderr))
+		})
+	}
 }

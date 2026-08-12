@@ -228,8 +228,7 @@ visible to an agent loop rather than an implementation detail:
 
 | | macOS / libkrun | Linux / firecracker | Linux / libkrun (`-tags libkrun`) |
 |---|---|---|---|
-| compose a guest base, launch a sandbox | ✅ live-validated | ✅ live-validated (CI-gated) | ✅ live-validated (CI-gated) |
-| exec in the guest, and `land` behind it | ✅ | ✅ | ❌ **exec channel resets** (intermittently over vsock, always via `mgit run`) |
+| launch, exec, land | ✅ live-validated | ✅ live-validated (CI-gated) | ✅ live-validated (CI-gated) |
 | hostile-guest containment (SEC-03) | ✅ | ✅ | ✅ |
 | guest networking + live egress policy | ✅ | ✅ | ✅ live-validated (CI-gated) |
 | guest can write outside `/tmp`, `/etc` and its worktree | ✅ | ✅ | ❌ (upstream, MGIT-89) |
@@ -252,18 +251,9 @@ is fine.
 decided by the loop rather than by preference. Linux libkrun boots real microVMs
 and runs the containment, sync and export suites on real KVM — validated and
 CI-gated as of MGIT-87, superseding the older "never validated end to end"
-caveat — but four things do not carry over from macOS, all measured on real
-hardware:
+caveat, and MGIT-89/90/91 closed the gaps that validation found. Two residuals
+do not carry over from macOS, both measured on real hardware and both upstream:
 
-- **The guest exec channel resets.** Every failure carries the same signature,
-  "connection reset by peer" on the guest's vsock exec socket. Through
-  `mgit run` it failed every time it was tried (on bare metal only for the
-  everyday `mgit run -- echo hi`, on a hosted runner for `/bin/echo` too);
-  through the library path it passed in three environments and then failed in a
-  fourth run with no code change. So exec is intermittent here rather than
-  simply broken, and `mgit sandbox land` sits behind it. Tracked as MGIT-91.
-  CI runs those tests and reports the outcome without gating on it — an
-  intermittent capability is one the tables must not claim.
 - **The guest cannot write most of its image root.** `/tmp`, `/etc` and the
   mounted worktree are writable; anything else under `/` fails with `operation
   not supported`, so an agent can build and commit but cannot `apt install`.
