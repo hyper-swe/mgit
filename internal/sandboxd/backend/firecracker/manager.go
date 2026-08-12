@@ -23,7 +23,13 @@ type ImagePaths = microvm.ImagePaths
 // ErrSandboxBackendUnavailable.
 type Config struct {
 	WorkDir string
-	Resolve func(imageRef string) (ImagePaths, error)
+	// GuestDialer overrides how the guest's exec channel is reached. Nil
+	// selects the real vsock dialer; a test injects a stand-in guest so it can
+	// exercise the manager's lifecycle without a live VM behind the socket,
+	// which the fail-closed launch (MGIT-92) otherwise refuses — correctly.
+	// Refs: MGIT-92, FR-17.11
+	GuestDialer microvm.GuestDialer
+	Resolve     func(imageRef string) (ImagePaths, error)
 	// Hypervisor is the platform host; nil selects the Firecracker
 	// implementation. Injectable for tests.
 	Hypervisor microvm.Hypervisor
@@ -69,7 +75,7 @@ func NewManager(cfg Config) (*microvm.Manager, error) {
 		WorkDir:          cfg.WorkDir,
 		Resolve:          cfg.Resolve,
 		Hypervisor:       hv,
-		GuestDialer:      newGuestDialer(cfg.WorkDir),
+		GuestDialer:      guestDialerOr(cfg.GuestDialer, newGuestDialer(cfg.WorkDir)),
 		PeerBinder:       cfg.PeerBinder,
 		NotifyRegistrar:  cfg.NotifyRegistrar,
 		StoreProvisioner: cfg.StoreProvisioner,
@@ -77,4 +83,13 @@ func NewManager(cfg Config) (*microvm.Manager, error) {
 		Logger:           cfg.Logger,
 		Clock:            cfg.Clock,
 	})
+}
+
+// guestDialerOr returns the injected dialer when a caller supplied one, else
+// the backend's real vsock dialer. Refs: MGIT-92
+func guestDialerOr(injected, real microvm.GuestDialer) microvm.GuestDialer {
+	if injected != nil {
+		return injected
+	}
+	return real
 }

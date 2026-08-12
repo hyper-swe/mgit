@@ -48,7 +48,11 @@ func testImages(t *testing.T) ImagePaths {
 
 // TestKVM_NewManager_WiresKVMBackend verifies NewManager builds a
 // working manager that reports the kvm backend and uses the injected
-// hypervisor. Refs: FR-17.15
+// hypervisor — and, since MGIT-92, that firecracker inherits the fail-closed
+// launch: a fake VM has no guest behind its vsock, so the launch must REFUSE
+// rather than report a sandbox no exec could use. The short context keeps the
+// readiness wait from running its full bound in a unit test.
+// Refs: FR-17.15, MGIT-92
 func TestKVM_NewManager_WiresKVMBackend(t *testing.T) {
 	hv := &fakeHypervisor{}
 	mgr, err := NewManager(Config{
@@ -60,16 +64,20 @@ func TestKVM_NewManager_WiresKVMBackend(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	info, err := mgr.Launch(context.Background(), model.SandboxLaunchOptions{
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, err = mgr.Launch(ctx, model.SandboxLaunchOptions{
 		TaskID:       "MGIT-4.2",
 		WorktreePath: "/work/MGIT-4.2",
 		ImageRef:     "go-node@sha256:" + strings.Repeat("a", 64),
 		Network:      model.NetworkPolicy{Mode: model.NetworkModeNone},
 		CPUs:         2, MemoryMB: 1024,
 	})
-	require.NoError(t, err)
-	assert.Equal(t, model.BackendKVM, info.Backend)
-	assert.Equal(t, 1, hv.created)
+
+	require.ErrorIs(t, err, model.ErrGuestNotServing,
+		"a VM with no guest behind its vsock must not be reported as launched")
+	assert.Equal(t, 1, hv.created, "the injected hypervisor was still the one used")
+	assert.Contains(t, err.Error(), "kvm launch", "and it reports as the kvm backend")
 }
 
 // TestKVM_NewManager_MissingHypervisorFailsClosed verifies that with no

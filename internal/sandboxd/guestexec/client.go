@@ -11,12 +11,18 @@ package guestexec
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
 	"github.com/hyper-swe/mgit/internal/execwire"
 	"github.com/hyper-swe/mgit/internal/model"
 )
+
+// ErrGuestReported marks an error the GUEST itself sent back on the wire — a
+// command it could not start, for instance — as opposed to a transport failure
+// where the guest was never reached. Refs: MGIT-92, FR-17.11
+var ErrGuestReported = errors.New("guest exec")
 
 // Run sends req over conn, streams the guest's stdout/stderr to the given
 // writers as frames arrive, and returns the terminal result. A non-zero
@@ -61,7 +67,12 @@ func decodeResult(payload []byte) (execwire.Result, error) {
 		return execwire.Result{}, fmt.Errorf("guest exec: decode result: %w", err)
 	}
 	if frame.Error != "" {
-		return frame.Result, fmt.Errorf("guest exec: %s", frame.Error)
+		// Wrapped in ErrGuestReported so a caller can tell "the guest answered
+		// and refused" from "the guest was never reached" WITHOUT parsing
+		// message text. Readiness turns on exactly that distinction: a refusal
+		// proves the control plane is serving, a dial failure proves the
+		// opposite. Refs: MGIT-92, FR-17.11
+		return frame.Result, fmt.Errorf("%w: %s", ErrGuestReported, frame.Error)
 	}
 	return frame.Result, nil
 }

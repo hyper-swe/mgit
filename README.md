@@ -380,7 +380,7 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 | Command | Description |
 |---------|-------------|
 | `mgit run -- <command>` | Run a command inside the current worktree's task microVM (fail-closed) |
-| `mgit sandbox launch --task-id ID --worktree PATH --image REF` | Provision a sandbox for a task |
+| `mgit sandbox launch --task-id ID --worktree PATH --image REF` | Register a sandbox for a task (the microVM boots on first use, and fails closed if its guest never comes up) |
 | `mgit sandbox exec --task-id ID -- <command>` | Execute one command in the task's sandbox |
 | `mgit sandbox shell --task-id ID` | Attach an interactive session (confined-agent mode) |
 | `mgit sandbox land --task-id ID` | Pull + host-verify + land the sandbox's changes |

@@ -246,8 +246,12 @@ func launchRealVMForSync(t *testing.T, sandboxID, taskID string) syncSandbox {
 	}
 	t.Cleanup(func() { _ = mgr.Remove(context.Background(), info.ID, true) })
 
+	// No readiness poll here any more: Manager.Launch now confirms the guest is
+	// serving before it returns, and fails the launch closed if it never does
+	// (MGIT-92). The helper this replaced also waited on the wrong marker —
+	// "mgit-guest" is printed BEFORE the listener binds, the same mistake that
+	// made one e2e flaky in MGIT-91.
 	stateDir := microvm.SandboxStateDir(workDir, info.ID)
-	waitGuestBooted(t, stateDir, "mgit-guest")
 	staged := filepath.Join(stateDir, stagedTreeDirName)
 	if !microvm.HasStagedTree(stateDir) {
 		t.Fatalf("the launch left no staged tree at %s; every assertion below "+
@@ -295,33 +299,6 @@ func seedProjectWithLinkedWorktree(t *testing.T, taskID string) (project, worktr
 	run(project, "commit", "-m", "host work before the sandbox", "--task", taskID)
 	run(project, "worktree", "add", worktree, "--task-id", taskID)
 	return project, worktree
-}
-
-// waitGuestBooted blocks until the guest's console reports ready.
-//
-// Manager.Launch returns as soon as the VMM is up, which is ~1s before the
-// guest userspace has bound its vsock port. Distinct from Manager.Exec's own
-// readiness wait: these tests read through the raw dialer deliberately (see
-// guestRead), so they need their own.
-func waitGuestBooted(t *testing.T, stateDir, ready string) {
-	t.Helper()
-	consolePath := filepath.Join(stateDir, consoleLogName)
-	deadline := time.Now().Add(45 * time.Second)
-	for time.Now().Before(deadline) {
-		data, err := os.ReadFile(consolePath) //nolint:gosec // test-owned state dir
-		if err == nil {
-			if strings.Contains(string(data), ready) {
-				t.Logf("guest console:\n%s", data)
-				return
-			}
-			if strings.Contains(string(data), "krun_vm_failed") {
-				t.Fatalf("the VM failed to boot; console:\n%s", data)
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	data, _ := os.ReadFile(consolePath) //nolint:gosec // test-owned state dir
-	t.Fatalf("guest never reported %q; console:\n%s", ready, data)
 }
 
 // guestRead reads one path through the guest, over the RAW exec dialer rather

@@ -130,6 +130,20 @@ type VM interface {
 	Stop(ctx context.Context, force bool) error
 }
 
+// ConsoleTailer is implemented by VMs that capture the guest's console. It is
+// OPTIONAL because the capability is per backend, not universal: libkrun and
+// firecracker capture a console log per VM, vzf does not. The manager asks for
+// a tail only when a launch fails closed, because that console is where the
+// guest's OWN startup error already sits — MGIT-89's "write /etc/resolv.conf:
+// operation not supported" and MGIT-91's telling silence were both there while
+// the operator saw either a success message or a socket path.
+// Refs: MGIT-92, MGIT-89
+type ConsoleTailer interface {
+	// ConsoleTail returns at most maxBytes of the END of the guest console,
+	// or "" when this backend captured none.
+	ConsoleTail(maxBytes int) string
+}
+
 // Hypervisor creates VMs from configs. Implemented per platform with
 // native bindings; faked in tests.
 type Hypervisor interface {
@@ -384,6 +398,12 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 	// auto-land is unavailable. Authorization keys on the same host-observed
 	// peer identity the binder recorded (SEC-10). Refs: MGIT-11.10.11, SEC-10
 	m.registerNotify(vm, id, opts.TaskID)
+
+	// FAIL CLOSED: confirm the guest is actually serving before calling this a
+	// launch. Everything above proves only that the VMM started. Refs: MGIT-92
+	if err := m.confirmGuestServing(ctx, id, vm); err != nil {
+		return nil, err
+	}
 
 	m.cfg.Logger.Info("sandbox launched", "event", "launched", "backend", m.cfg.Backend,
 		"sandbox_id", id, "task_id", opts.TaskID, "network_mode", opts.Network.Mode)
@@ -675,6 +695,150 @@ func (m *Manager) markGuestAnswered(id string) {
 	if sb, ok := m.sandboxes[id]; ok {
 		sb.guestReady = true
 	}
+}
+
+// guestProbeCommand is the readiness probe's argv. It names a program that
+// deliberately DOES NOT EXIST in any guest, because the probe's purpose is to
+// get an ANSWER, not to run anything: the guest resolves it, fails the lookup,
+// and replies on the wire. That reply is the proof we want — the control plane
+// is bound and serving — and it costs the guest no process and no side effect,
+// on any image, including one that ships its own guest binary. A reader who
+// finds it in a console log can tell what it is from its name.
+// Refs: MGIT-92, FR-17.11
+var guestProbeCommand = []string{"mgit-guest-readiness-probe"}
+
+// consoleTailBytes bounds how much guest console a failed launch quotes. Large
+// enough for a Go panic with a few frames, small enough that an agent's error
+// stays readable.
+const consoleTailBytes = 4 << 10
+
+// awaitGuestServing blocks until the guest ANSWERS on its control channel, or
+// the readiness deadline passes.
+//
+// A DIAL IS NOT ENOUGH, and that is the whole subtlety: libkrun creates the
+// host-side vsock socket when the VM is configured, so a connect succeeds long
+// before mgit-guest binds and the failure only shows up as a reset on the first
+// read (MGIT-91). Proving the guest is there therefore requires a round trip,
+// so this sends the probe request and accepts ANY well-formed reply — including
+// the guest refusing the probe, which is the expected reply and still proves
+// the channel serves. Only a SILENT disconnect means "not there yet", using the
+// same predicate and the same GuestReadyTimeout as the first-command retry
+// rather than a second notion of readiness.
+//
+// It deliberately does NOT mark the guest answered. A probe the guest rejects
+// at lookup is slightly weaker evidence than a real command round trip, and
+// leaving the first-command retry window OPEN costs nothing (it only ever fires
+// on a silent disconnect with no output) while keeping MGIT-91's protection
+// reachable for the caller's first real command.
+// Refs: MGIT-92, MGIT-91, FR-17.11, NFR-17.6
+func (m *Manager) awaitGuestServing(ctx context.Context, id string) error {
+	req := model.ExecRequest{Command: guestProbeCommand}
+	deadline := time.Now().Add(m.cfg.GuestReadyTimeout)
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		_, _, _, err := m.execOnce(ctx, id, req)
+		// READY means the GUEST answered: either it ran the probe (it will not)
+		// or, as expected, it replied refusing to. Anything else — a dial that
+		// never reaches a listener, a silent disconnect, a mangled frame — is
+		// not an answer. Getting this backwards is easy and was caught only on
+		// real hardware: a dead guest's dial failure is not a silent
+		// disconnect, so treating "not a silent disconnect" as proof of life
+		// declared a launched sandbox over a guest that had already exited.
+		if err == nil || errors.Is(err, guestexec.ErrGuestReported) {
+			return nil
+		}
+		lastErr = err
+		if !time.Now().Add(guestReadyPollInterval).Before(deadline) {
+			return fmt.Errorf("%w within %s: %w",
+				model.ErrGuestNotServing, m.cfg.GuestReadyTimeout, lastErr)
+		}
+		m.cfg.Logger.Debug("guest not serving yet; still waiting out its boot",
+			"event", "guest_boot_wait", "sandbox_id", id, "attempts", attempt+1)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%w: %w", model.ErrGuestNotServing, ctx.Err())
+		case <-time.After(guestReadyPollInterval):
+		}
+	}
+}
+
+// confirmGuestServing makes a launch FAIL CLOSED when the guest never comes up:
+// it waits for the guest to answer and, on timeout, tears the sandbox down and
+// returns the guest's own console tail as the diagnosis.
+//
+// Reporting a sandbox that no exec can use is the failure this exists to
+// prevent — it is the same contract `mgit run` already honors by refusing to
+// fall back to the host (NFR-17.6), enforced one step earlier, at the step the
+// operator actually reads. The ~1s this adds to a boot is the point, not a
+// cost: an agent walking into a sandbox that does not exist costs far more.
+//
+// It is skipped when no GuestDialer is wired, because then there is no control
+// plane to confirm and Exec already reports the transport unavailable rather
+// than faking success. That keeps the wait expressed ONCE, in the manager,
+// while still only asserting a capability the backend actually has.
+// Refs: MGIT-92, NFR-17.6, FR-17.11
+func (m *Manager) confirmGuestServing(ctx context.Context, id string, vm VM) error {
+	if m.cfg.GuestDialer == nil {
+		return nil
+	}
+	err := m.awaitGuestServing(ctx, id)
+	if err == nil {
+		return nil
+	}
+	// Read the console BEFORE teardown: Remove deletes the state dir, and the
+	// log inside it is the only place the guest's own error exists.
+	detail := consoleDiagnosis(vm)
+	m.cfg.Logger.Error("launch failed closed: the guest never answered",
+		"event", "launch_guest_not_serving", "backend", m.cfg.Backend,
+		"sandbox_id", id, "error", err.Error())
+	return errors.Join(
+		fmt.Errorf("%s launch: %w\n%s", m.cfg.Backend, err, detail),
+		m.Stop(ctx, id, true),
+		m.Remove(ctx, id, true),
+	)
+}
+
+// consoleDiagnosis renders the guest console tail for a failed launch, or says
+// plainly that this backend captured none — never an empty string, because a
+// blank space where the diagnosis should be reads like a missing feature.
+// Refs: MGIT-92
+func consoleDiagnosis(vm VM) string {
+	tailer, ok := vm.(ConsoleTailer)
+	if !ok {
+		return "guest console: not captured by this backend"
+	}
+	tail := strings.TrimSpace(tailer.ConsoleTail(consoleTailBytes))
+	if tail == "" {
+		return "guest console: empty (the guest wrote nothing before it stopped answering)"
+	}
+	return "guest console (tail):\n" + tail
+}
+
+// TailFile returns at most maxBytes from the END of the file at path, or ""
+// when it cannot be read. Backends implementing ConsoleTailer use it so the
+// per-backend method stays one line and the bounding rule stays in one place.
+// Refs: MGIT-92
+func TailFile(path string, maxBytes int) string {
+	f, err := os.Open(path) //nolint:gosec // manager-owned per-sandbox state dir
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	size := info.Size()
+	if size > int64(maxBytes) {
+		if _, err := f.Seek(size-int64(maxBytes), io.SeekStart); err != nil {
+			return ""
+		}
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // dialGuestReady dials the guest control vsock, retrying on failure until

@@ -110,8 +110,15 @@ func launchExportSandbox(t *testing.T, repoRoot, worktree, guestRoot string) (mg
 		// other real-VM test in this package shares its workload root rw for
 		// the same reason). The worktree share — the thing this test is about —
 		// is exactly the production one, staged by the real launch path.
-		Hypervisor:       writableRootHypervisor{inner: hv},
-		GuestDialer:      newGuestDialer(workDir),
+		Hypervisor: writableRootHypervisor{inner: hv},
+		// NO GuestDialer, deliberately. This fixture's guest root is a static
+		// workload that writes its results to the console and exits; it never
+		// was an mgit-guest and never bound the exec port, so wiring a dialer
+		// to it only ever described a channel that did not exist. Since
+		// MGIT-92 that fiction is load-bearing — a launch with a dialer wired
+		// must prove the guest answers — and the honest declaration is that
+		// this backend instance has no control plane at all. These tests read
+		// the console and the staged tree; they never exec. Refs: MGIT-92
 		StoreProvisioner: prov,
 		Logger:           logger,
 		Clock:            func() time.Time { return time.Now().UTC() },

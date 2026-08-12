@@ -6,6 +6,7 @@ package vzf
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mgit/internal/guest"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 	"github.com/hyper-swe/mgit/internal/testutil"
@@ -48,7 +50,11 @@ func testImages(t *testing.T) ImagePaths {
 
 // TestVZF_NewManager_WiresVZFBackend verifies NewManager builds a
 // working manager that reports the vzf backend and uses the injected
-// hypervisor. Refs: FR-17.15
+// hypervisor — and, since MGIT-92, that vzf inherits the fail-closed launch
+// too: a fake VM has no guest behind its vsock, so the launch must REFUSE
+// rather than report a sandbox no exec could use. The short context keeps the
+// readiness wait from running its full bound in a unit test.
+// Refs: FR-17.15, MGIT-92
 func TestVZF_NewManager_WiresVZFBackend(t *testing.T) {
 	hv := &fakeHypervisor{}
 	mgr, err := NewManager(Config{
@@ -60,16 +66,20 @@ func TestVZF_NewManager_WiresVZFBackend(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	info, err := mgr.Launch(context.Background(), model.SandboxLaunchOptions{
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, err = mgr.Launch(ctx, model.SandboxLaunchOptions{
 		TaskID:       "MGIT-4.2",
 		WorktreePath: "/work/MGIT-4.2",
 		ImageRef:     "go-node@sha256:" + strings.Repeat("a", 64),
 		Network:      model.NetworkPolicy{Mode: model.NetworkModeNone},
 		CPUs:         2, MemoryMB: 1024,
 	})
-	require.NoError(t, err)
-	assert.Equal(t, model.BackendVZF, info.Backend)
-	assert.Equal(t, 1, hv.created)
+
+	require.ErrorIs(t, err, model.ErrGuestNotServing,
+		"a VM with no guest behind its vsock must not be reported as launched")
+	assert.Equal(t, 1, hv.created, "the injected hypervisor was still the one used")
+	assert.Contains(t, err.Error(), "vzf launch", "and it reports as the vzf backend")
 }
 
 // vzfManager builds a vzf-wired manager over a fake hypervisor and
@@ -87,8 +97,13 @@ func vzfManager(t *testing.T) (mgr interface {
 		WorkDir:    workDir,
 		Resolve:    func(string) (ImagePaths, error) { return testImages(t), nil },
 		Hypervisor: &fakeHypervisor{},
-		Logger:     slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
-		Clock:      func() time.Time { return time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC) },
+		// A stand-in guest that answers, so the lifecycle under test gets past
+		// the fail-closed readiness check. The fake hypervisor boots no real
+		// guest, and MGIT-92 makes a launch with nothing behind the vsock fail
+		// — correctly, which is why this seam exists.
+		GuestDialer: &answeringDialer{},
+		Logger:      slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
+		Clock:       func() time.Time { return time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC) },
 	})
 	require.NoError(t, err)
 	return m, workDir
@@ -202,4 +217,19 @@ func TestVZF_CoreRemainsCGOFree(t *testing.T) {
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "core mgit must build CGO-free: %s", out)
+}
+
+// answeringDialer stands in for a booted guest: it speaks the real exec
+// protocol over an in-memory pipe, so a manager-lifecycle test can satisfy the
+// fail-closed readiness check without a live VM. Refs: MGIT-92
+type answeringDialer struct{}
+
+func (answeringDialer) DialGuest(ctx context.Context, _ string) (net.Conn, error) {
+	client, server := net.Pipe()
+	sup := guest.NewSupervisor(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	go func() {
+		defer func() { _ = server.Close() }()
+		_ = sup.Serve(ctx, server)
+	}()
+	return client, nil
 }
