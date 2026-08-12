@@ -482,14 +482,16 @@ func TestRegister_IDGenFailure_Rejected(t *testing.T) {
 }
 
 // TestEnsureRunning_PolicyLoadFailure covers the policy-load error path.
+// Registration fails closed on it too: the per-sandbox resource bound lives in
+// the host policy, so a request that cannot be bounded is never registered —
+// admitting it would leave the bound unenforced (R-H212).
 func TestEnsureRunning_PolicyLoadFailure(t *testing.T) {
 	svc, err := NewSandboxService(&fakeSandboxManager{}, &fakeEventAppender{}, errPolicy{},
 		func() time.Time { return time.Unix(0, 0).UTC() },
 		func() (string, error) { return "01JXSB" + strings.Repeat("0", 21), nil })
 	require.NoError(t, err)
-	// Register uses no policy; EnsureRunning does.
 	_, err = svc.Register(context.Background(), regOpts("MGIT-1", "/work/a"))
-	require.NoError(t, err)
+	assert.Error(t, err, "an unbounded registration is refused, not admitted")
 	_, err = svc.EnsureRunning(context.Background(), "MGIT-1")
 	assert.Error(t, err)
 }

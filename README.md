@@ -381,6 +381,7 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 |---------|-------------|
 | `mgit run -- <command>` | Run a command inside the current worktree's task microVM (fail-closed) |
 | `mgit sandbox launch --task-id ID --worktree PATH --image REF` | Register a sandbox for a task (the microVM boots on first use, and fails closed if its guest never comes up) |
+| `… --cpus N --memory-mb N --disk-quota-mb N` | Size this sandbox (also on `mgit work`). Unset takes the host policy default; above the policy's per-sandbox maximum the launch is **refused naming the limit**, never silently reduced |
 | `mgit sandbox exec --task-id ID -- <command>` | Execute one command in the task's sandbox |
 | `mgit sandbox shell --task-id ID` | Attach an interactive session (confined-agent mode) |
 | `mgit sandbox land --task-id ID` | Pull + host-verify + land the sandbox's changes |
@@ -391,6 +392,8 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 | `mgit sandbox image init` / `add --kernel … --rootfs …` | Manage the signed, digest-pinned image set (firecracker kernel + rootfs) |
 
 Sandbox commands require the host daemon and a guest base, and run on macOS (libkrun, Apple Silicon) and Linux (firecracker/KVM).
+
+**Sizing a guest.** A sandbox's CPU/memory/disk are declared by the workload and bounded by the operator: `--memory-mb` on `mgit work` or `mgit sandbox launch` asks for a size, and the host policy's `max_memory_mb` / `max_cpus` / `max_disk_quota_mb` bound what may be asked for. mgit **refuses** an over-large request naming that limit rather than clamping it — a caller that silently receives less than it asked for concludes its workload is at fault and reshapes it, which is exactly the failure this surface exists to prevent. The fleet-wide FR-17.26 ceiling applies on top and its refusal reads differently ("the host is already running N sandboxes"): a launch can be individually legal and still refused because the host is full. `mgit sandbox status <task>` reports the effective caps, and the generated CLAUDE.md states them to the agent.
 
 The guest's worktree is a **staged copy**, not a live view of yours — that is what lets mgit exclude an in-worktree `.git`/`.mgit` and reject an escaping symlink host-side, before the guest can act on them. Host edits therefore reach a running guest by re-staging: automatically before each `exec`, or on demand with `mgit sandbox sync`. Paths the guest changed since they were delivered are a conflict; the sync is refused entirely and names them, and `--force` overwrites them and reports each one destroyed. Files the guest created itself (`node_modules`, build caches) are never touched. A sandbox whose worktree was delivered as a launch-time image (firecracker) cannot be synced and says so — re-launch it to pick up host changes.
 

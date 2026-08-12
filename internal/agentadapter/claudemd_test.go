@@ -157,3 +157,30 @@ func TestUpsertClaudeMd_WriteError(t *testing.T) {
 	require.NoError(t, os.WriteFile(file, []byte("x"), 0o600))
 	assert.Error(t, UpsertClaudeMd(file, SandboxEnv{WorktreePath: file, NetworkMode: "none"}))
 }
+
+// TestGenDoc_StatesResourceCeilingAndForbidsReshapingTheProject verifies the
+// generated section names the guest's effective caps AND tells the agent what
+// to do when a workload does not fit: report the sandbox as too small rather
+// than rewrite the project to survive it. The absence of that instruction is
+// how a sandbox's memory ceiling nearly became permanent bundler config in a
+// customer's repository. Refs: R-H212
+func TestGenDoc_StatesResourceCeilingAndForbidsReshapingTheProject(t *testing.T) {
+	s := RenderClaudeMdSection(SandboxEnv{
+		WorktreePath: filepath.FromSlash("/repo/wt"), NetworkMode: "none",
+		CPUs: 4, MemoryMB: 6144,
+	})
+
+	assert.Contains(t, s, "6144 MB of memory", "the memory ceiling is stated")
+	assert.Contains(t, s, "4 vCPU", "the CPU ceiling is stated")
+	assert.Contains(t, s, "do not reshape the project to fit this guest")
+	assert.Contains(t, s, "--memory-mb", "the remedy names the flag that raises it")
+	assert.Contains(t, s, "refused", "and states an over-large request is refused, never silently reduced")
+}
+
+// TestGenDoc_UnknownResourceCaps_OmitsTheSection verifies nothing is claimed
+// about a ceiling mgit does not know — an invented number would be worse than
+// silence. Refs: R-H212
+func TestGenDoc_UnknownResourceCaps_OmitsTheSection(t *testing.T) {
+	s := RenderClaudeMdSection(SandboxEnv{WorktreePath: filepath.FromSlash("/repo/wt"), NetworkMode: "none"})
+	assert.NotContains(t, s, "### Resources")
+}

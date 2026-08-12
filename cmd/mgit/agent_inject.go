@@ -73,6 +73,11 @@ func writeSandboxEnvDoc(warn io.Writer, info *model.SandboxInfo) {
 		WorktreePath: info.WorktreePath,
 		NetworkMode:  info.NetworkMode,
 		Allowlist:    info.NetworkAllowlist,
+		// The effective resource ceiling, stated where the agent reads its
+		// environment — so a workload that does not fit is reported rather
+		// than designed around (R-H212).
+		CPUs:     info.CPUs,
+		MemoryMB: info.MemoryMB,
 	}
 	if err := agentadapter.UpsertClaudeMd(info.WorktreePath, env); err != nil {
 		_, _ = fmt.Fprintf(warn, "warning: could not update CLAUDE.md sandbox section (%v)\n", err)

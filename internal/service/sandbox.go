@@ -173,6 +173,19 @@ func (s *SandboxService) Register(ctx context.Context, opts model.SandboxLaunchO
 	if err := opts.Validate(); err != nil {
 		return nil, fmt.Errorf("sandbox register: %w", err)
 	}
+	// Resolve the effective resource caps HERE, at the caller's boundary:
+	// a request over the per-sandbox maximum is refused now, naming the
+	// limit, rather than clamped (R-H212) or discovered at first exec; and
+	// the resolved caps are recorded on the SandboxInfo so an agent can see
+	// its ceiling before a build dies against it. Refs: R-H212, NFR-17.5
+	policy, err := s.policy.Load(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox register: load policy: %w", err)
+	}
+	if err := policy.EnforceResourceLimits(opts); err != nil {
+		return nil, fmt.Errorf("sandbox register: %w", err)
+	}
+	applyPolicyDefaults(&opts, policy)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -187,18 +200,7 @@ func (s *SandboxService) Register(ctx context.Context, opts model.SandboxLaunchO
 	opts.SandboxID = id
 	digest := imageDigestOf(opts.ImageRef)
 
-	// The created event is the registration audit and must succeed before
-	// the sandbox is considered registered (no unaudited sandbox). Open
-	// network mode carries a recorded risk note (T3/T9 disabled) so the
-	// user-accepted risk is permanently attributable (FR-17.7).
-	created := &model.SandboxEvent{
-		SandboxID: id, TaskID: opts.TaskID, EventType: model.EventCreated,
-		ImageDigest: digest, NetworkMode: opts.Network.Mode,
-	}
-	if note, risky := model.NetworkRiskNote(opts.Network.Mode); risky {
-		created.Detail = fmt.Sprintf(`{"network_risk":%q}`, note)
-	}
-	if err := s.events.AppendSandboxEvent(ctx, created); err != nil {
+	if err := s.events.AppendSandboxEvent(ctx, createdEvent(id, opts, digest)); err != nil {
 		return nil, fmt.Errorf("sandbox register: audit: %w", err)
 	}
 
@@ -209,12 +211,30 @@ func (s *SandboxService) Register(ctx context.Context, opts model.SandboxLaunchO
 		NetworkAllowlist: opts.Network.Allowlist,
 		PublishPorts:     opts.PublishPorts,
 		State:            model.StateCreated, CreatedAt: now,
+		// The effective caps, resolved above — reported from registration on,
+		// not only once a VM exists. Refs: R-H212
+		CPUs: opts.CPUs, MemoryMB: opts.MemoryMB, DiskQuotaMB: opts.DiskQuotaMB,
 	}
 	// lastActivity seeds the idle-suspend deadline from registration time;
 	// expiresAt is resolved at boot (with the effective TTL) or lazily in the
 	// reap sweep for a never-booted sandbox. Refs: NFR-17.3, FR-17.9
 	s.byTask[opts.TaskID] = &sandboxReg{info: info, opts: opts, lastActivity: now}
 	return &info, nil
+}
+
+// createdEvent builds the registration audit record. The created event must
+// succeed before a sandbox is considered registered (no unaudited sandbox).
+// Open network mode carries a recorded risk note (T3/T9 disabled) so the
+// user-accepted risk is permanently attributable. Refs: FR-17.7, FR-17.18
+func createdEvent(id string, opts model.SandboxLaunchOptions, digest string) *model.SandboxEvent {
+	created := &model.SandboxEvent{
+		SandboxID: id, TaskID: opts.TaskID, EventType: model.EventCreated,
+		ImageDigest: digest, NetworkMode: opts.Network.Mode,
+	}
+	if note, risky := model.NetworkRiskNote(opts.Network.Mode); risky {
+		created.Detail = fmt.Sprintf(`{"network_risk":%q}`, note)
+	}
+	return created
 }
 
 // EnsureRunning boots the task's sandbox if it is not already running
@@ -316,6 +336,11 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 	// (they are a service-level concern); restore them so List/Status keep
 	// reporting them after boot. Refs: SEC-09
 	reg.info.PublishPorts = reg.opts.PublishPorts
+	// Likewise the effective resource caps: not every backend echoes them
+	// back, and a sandbox that stopped reporting its ceiling the moment it
+	// booted would hide it at exactly the point a build runs into it.
+	// Refs: R-H212
+	reg.info.CPUs, reg.info.MemoryMB, reg.info.DiskQuotaMB = reg.opts.CPUs, reg.opts.MemoryMB, reg.opts.DiskQuotaMB
 	reg.booted = true
 	// Record activity and the TTL deadline from the service clock (not the
 	// backend's), so idle-suspend and TTL reap are deterministic. The

@@ -42,6 +42,14 @@ type SandboxEnv struct {
 	NetworkMode  string      // model.NetworkMode{None,Allowlist,Open}
 	Allowlist    []string    // allowlist mode only
 	Containment  Containment // sandbox posture (default Active) — MGIT-47
+	// CPUs and MemoryMB are the guest's EFFECTIVE resource caps. They are
+	// rendered because their invisibility caused real damage: an agent whose
+	// build died against an unseen memory ceiling rewrote the project's
+	// production bundler config to fit it. An agent that can READ the ceiling
+	// can report it instead of designing around it. Zero omits the section.
+	// Refs: R-H212
+	CPUs     int
+	MemoryMB int
 }
 
 // ContainmentStatusLine is the single machine-parseable line `mgit work` prints
@@ -102,6 +110,7 @@ func renderActiveBody(env SandboxEnv) string {
 	b.WriteString(", so cwd, globs, and absolute paths work unchanged. ")
 	b.WriteString("Run build, install, and test commands freely **without asking for approval** — ")
 	b.WriteString("they are contained and cannot harm the host.\n\n")
+	b.WriteString(renderResources(env))
 	b.WriteString("### Network\n\n")
 	b.WriteString(renderNetwork(env))
 	b.WriteString("\n### When a connection is blocked\n\n")
@@ -207,6 +216,43 @@ func disciplineRoutingSentence(c Containment) string {
 	default: // ContainmentOpen
 		return "There is no sandbox on this machine, so run commands normally — they execute on the host."
 	}
+}
+
+// renderResources states the guest's resource ceiling and — the part that
+// matters — what to do when a workload does not fit inside it.
+//
+// The failure this prevents is not a crash but a WRONG REPAIR: a production
+// build that exceeded an invisible 2 GB guest had its bundler config rewritten
+// to fit, turning a property of the sandbox into permanent product code in a
+// customer's repository. The ceiling is stated up front, and the instruction
+// is explicit that it is mgit's limit to raise, not the project's to design
+// around. Nothing is rendered when the caps are unknown. Refs: R-H212
+func renderResources(env SandboxEnv) string {
+	if env.CPUs <= 0 && env.MemoryMB <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("### Resources\n\n")
+	b.WriteString("This guest is capped at")
+	if env.CPUs > 0 {
+		fmt.Fprintf(&b, " **%d vCPU**", env.CPUs)
+	}
+	if env.CPUs > 0 && env.MemoryMB > 0 {
+		b.WriteString(" /")
+	}
+	if env.MemoryMB > 0 {
+		fmt.Fprintf(&b, " **%d MB of memory**", env.MemoryMB)
+	}
+	b.WriteString(". That ceiling is a property of THIS SANDBOX, not of this project.\n\n")
+	b.WriteString("If a build or test run dies of memory exhaustion — exit 134/137, a killed process, ")
+	b.WriteString("or a runtime reporting its heap is full (Node/V8 sizes its heap from the memory it ")
+	b.WriteString("can see) — **do not reshape the project to fit this guest**. Changing a bundler, ")
+	b.WriteString("compiler, or test-runner configuration to survive a sandbox limit writes a ")
+	b.WriteString("posture-dependent fact into product code. Say the sandbox is too small and ask for ")
+	b.WriteString("a larger one: `mgit sandbox launch --memory-mb <MB>` (or `mgit work --memory-mb <MB>`). ")
+	b.WriteString("A request above the host policy maximum is refused naming that limit, so you will ")
+	b.WriteString("never silently receive less than you asked for.\n\n")
+	return b.String()
 }
 
 // renderNetwork describes the egress posture for the agent.
