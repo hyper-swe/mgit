@@ -85,12 +85,20 @@ func TestWorkCmd_ResourceFlags_ParsedIntoOptions(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"/tmp/does-not-matter", "--task-id", "MGIT-95",
+	cmd.SetArgs([]string{"wt", "--task-id", "MGIT-95",
 		"--cpus", "6", "--memory-mb", "8192", "--disk-quota-mb", "30720"})
 
-	// Parsing is what is under test; opening a repo from cwd may fail, and the
-	// flags are already parsed by then.
-	_ = cmd.Execute()
+	// Run from a real initialized repo. `work` calls openAppFromCwd() BEFORE the
+	// injected callback, so without a store here the callback never fires and
+	// the assertions below read a zero struct that asserts nothing. An earlier
+	// version of this test relied on the developer's own working tree happening
+	// to be an mgit repo: green on a maintainer's machine, red on a fresh clone
+	// and in CI.
+	repo := t.TempDir()
+	t.Chdir(repo)
+	require.NoError(t, runCLI(t, "init"))
+
+	require.NoError(t, cmd.Execute(), out.String())
 	assert.Equal(t, 6, got.Resources.CPUs)
 	assert.Equal(t, 8192, got.Resources.MemoryMB)
 	assert.Equal(t, 30720, got.Resources.DiskQuotaMB)
