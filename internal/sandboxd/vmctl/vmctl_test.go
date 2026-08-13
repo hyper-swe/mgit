@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // fakeHandler records what the child was asked to do.
@@ -100,6 +102,15 @@ func TestSetPolicy_DrainIsCarriedThrough(t *testing.T) {
 // most: a revoke that cannot reach the VM must REPORT FAILURE. Reporting
 // success while the VM keeps enforcing the old policy would have the caller
 // run untrusted code believing egress was closed. Refs: MGIT-74, MGIT-72
+//
+// The error reports EVIDENCE, not a diagnosis. This layer knows whether the VM
+// left host-side state and whether it ever bound a channel; it does not know the
+// sandbox's recorded lifecycle state, so it must not guess at the cause. The
+// two-cause guess that used to live here — "may not be running, or predates this
+// capability" — served three failures with three different remedies as one
+// shrug, and is why a live bug report was filed against two unrelated tickets.
+// The service names the condition from this evidence plus the state it holds,
+// and states there that the policy was NOT changed. Refs: MGIT-109, MGIT-104
 func TestSetPolicy_UnreachableChannel_FailsClosed(t *testing.T) {
 	client := Client{SocketPath: filepath.Join(t.TempDir(), "absent.sock")}
 
@@ -107,9 +118,34 @@ func TestSetPolicy_UnreachableChannel_FailsClosed(t *testing.T) {
 
 	require.Error(t, err)
 	assert.False(t, resp.OK)
-	assert.Contains(t, err.Error(), "NOT changed",
-		"the error must say the policy did not change, not merely that something failed")
 	assert.Contains(t, err.Error(), "unreachable")
+	assert.NotContains(t, err.Error(), "predates",
+		"this layer cannot know that, and guessing is the defect MGIT-109 removed")
+	assert.NotContains(t, err.Error(), "may not be running")
+
+	var unreachable *model.EgressChannelUnreachableError
+	require.ErrorAs(t, err, &unreachable,
+		"the failure must carry the evidence the service diagnoses from")
+	assert.Equal(t, client.SocketPath, unreachable.SocketPath)
+	assert.True(t, unreachable.VMStateSeen, "the VM state dir exists in this fixture")
+	assert.False(t, unreachable.ChannelSeen, "no socket was ever bound here")
+}
+
+// TestSetPolicy_UnreachableChannel_NoVMState_ReportsNoEvidence is the other
+// evidence combination: a sandbox with no host-side VM state at all. It is the
+// input that separates "this VM predates the control channel" (state dir
+// present, socket never created) from "there is nothing here at all".
+// Refs: MGIT-109
+func TestSetPolicy_UnreachableChannel_NoVMState_ReportsNoEvidence(t *testing.T) {
+	client := Client{SocketPath: filepath.Join(t.TempDir(), "gone", "c.sock")}
+
+	_, err := client.SetPolicy(nil, false)
+
+	require.Error(t, err)
+	var unreachable *model.EgressChannelUnreachableError
+	require.ErrorAs(t, err, &unreachable)
+	assert.False(t, unreachable.VMStateSeen)
+	assert.False(t, unreachable.ChannelSeen)
 }
 
 // TestSetPolicy_ChildRefusal_IsSurfaced verifies a child-side failure reaches

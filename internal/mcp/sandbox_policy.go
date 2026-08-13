@@ -2,11 +2,14 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/hyper-swe/mgit/internal/controlproto"
+	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // SandboxPolicyClient is the sandbox daemon's live egress-policy surface.
@@ -105,12 +108,37 @@ func (s *Server) sandboxPolicyTool(ctx context.Context, req mcp.CallToolRequest)
 		res, err = cl.SetEgressPolicy(ctx, taskID, allow, drain)
 	}
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return policyErrorResult(err), nil
 	}
 	if res == nil {
 		return mcp.NewToolResultError("the sandbox daemon returned no policy result"), nil
 	}
 	return jsonResult(res), nil
+}
+
+// policyErrorResult reports a policy failure to the agent WITH its stable
+// machine-readable code, as JSON.
+//
+// An agent handed only prose has to pattern-match on wording to decide whether
+// to retry, boot, or relaunch — exactly the brittleness this contract removes.
+// A consumer's pre-boot retry matched on wording and silently missed the
+// not-booted failure entirely. Refs: MGIT-109, R-H233
+func policyErrorResult(opErr error) *mcp.CallToolResult {
+	code := model.EgressFailureUnknown
+	var failure *model.EgressPolicyError
+	if errors.As(opErr, &failure) && model.ValidEgressFailureCode(failure.Code) {
+		code = failure.Code
+	}
+	body, err := json.Marshal(struct {
+		Error     string `json:"error"`
+		ErrorCode string `json:"error_code"`
+	}{Error: opErr.Error(), ErrorCode: code})
+	if err != nil {
+		// Encoding two strings cannot realistically fail; if it did, the agent
+		// must still get the code rather than lose it to a transport detail.
+		return mcp.NewToolResultError("[" + code + "] " + opErr.Error())
+	}
+	return mcp.NewToolResultError(string(body))
 }
 
 // stringList coerces an MCP array argument to []string, refusing a non-string

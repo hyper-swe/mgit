@@ -161,6 +161,13 @@ type PolicyResult struct {
 	RuleCount int      `json:"rule_count"`
 	Killed    int      `json:"killed"`
 	Drained   bool     `json:"drained"`
+	// Pending says these entries are NOT being enforced yet: the sandbox is
+	// registered but its microVM has not booted (lazy provisioning, FR-17.10),
+	// so this is the policy it WILL boot with. It crosses the wire because a
+	// caller that could not tell a staged policy from an enforced one would
+	// run untrusted code believing a line is being held that nothing is
+	// holding yet. Refs: MGIT-109, FR-17.10, SEC-04
+	Pending bool `json:"pending,omitempty"`
 }
 
 // GrantResult confirms an approved grant (host-observed destination). Refs: FR-17.12
@@ -209,12 +216,20 @@ type LandResult struct {
 // an execwire frame stream instead). A non-empty Error means the op
 // failed; the typed field for the request kind is set on success.
 type Response struct {
-	Error   string              `json:"error,omitempty"`
-	Sandbox *model.SandboxInfo  `json:"sandbox,omitempty"` // launch, status
-	List    []model.SandboxInfo `json:"list,omitempty"`    // list
-	Landed  *LandResult         `json:"landed,omitempty"`  // land
-	Pending []PendingGrant      `json:"pending,omitempty"` // grants
-	Granted *GrantResult        `json:"granted,omitempty"` // grant
+	Error string `json:"error,omitempty"`
+	// ErrorCode is a STABLE machine-readable token for WHY the op failed,
+	// where the verb defines one (today: the egress-policy verbs' model.Egress*
+	// codes). It travels beside Error rather than inside it because an
+	// integrator that has to match on prose will break every time the prose
+	// improves — which is exactly what happened to a consumer's pre-boot retry,
+	// silently, twice. Empty for verbs with no code vocabulary.
+	// Refs: MGIT-109, R-H233
+	ErrorCode string              `json:"error_code,omitempty"`
+	Sandbox   *model.SandboxInfo  `json:"sandbox,omitempty"` // launch, status
+	List      []model.SandboxInfo `json:"list,omitempty"`    // list
+	Landed    *LandResult         `json:"landed,omitempty"`  // land
+	Pending   []PendingGrant      `json:"pending,omitempty"` // grants
+	Granted   *GrantResult        `json:"granted,omitempty"` // grant
 	// Synced carries a worktree sync's classification. It is set on SUCCESS
 	// and, deliberately, on a conflict REFUSAL as well — alongside Error —
 	// because a refusal that cannot name the paths it refused is not

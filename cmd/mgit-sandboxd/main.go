@@ -225,16 +225,22 @@ func run(args []string, out, logSink io.Writer) int {
 			dcfg.Grants = egressWired.Grants
 		}
 
-		// Wire the LIVE egress-policy verbs (MGIT-72): change a RUNNING
-		// sandbox's allowlist without relaunching it. The enforcer differs by
-		// backend — the daemon's own runner on firecracker, a re-exec'd VM
-		// child over the control channel on libkrun — so the controller is
-		// selected per platform and the service depends on neither. With no
-		// controller the verbs report UNSERVED, never a silent success.
-		// Refs: MGIT-72, FR-17.18, SEC-04
+		// Wire the egress-policy verbs (MGIT-72): change a sandbox's allowlist
+		// without relaunching it. The enforcer differs by backend — the
+		// daemon's own runner on firecracker, a re-exec'd VM child over the
+		// control channel on libkrun — so the controller is selected per
+		// platform and the service depends on neither. With no controller the
+		// verbs report UNSERVED, never a silent success.
+		//
+		// The sandbox service is passed as the PENDING stager: it holds the
+		// registrations and their launch options, so a sandbox whose VM lazy
+		// provisioning has not booted yet gets the policy staged onto its
+		// pending launch instead of a dial to a control socket that does not
+		// exist — the MGIT-109 defect, which hit the documented setup path.
+		// Refs: MGIT-72, MGIT-109, FR-17.10, FR-17.18, SEC-04
 		if ctrl := selectPolicyController(
 			platformPolicyController(opts.workDir, logger), egressWired); ctrl != nil {
-			policySvc, policyErr := service.NewEgressPolicyService(ctrl, events, clock)
+			policySvc, policyErr := service.NewEgressPolicyService(ctrl, svc, events, clock)
 			if policyErr != nil {
 				logger.Error("live egress policy wiring failed; policy verbs will not be served",
 					"error", policyErr.Error())

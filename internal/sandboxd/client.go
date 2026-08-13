@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/controlproto"
@@ -61,9 +62,27 @@ func (c *Client) roundTrip(ctx context.Context, req *controlproto.Request) (*con
 		return nil, err
 	}
 	if resp.Error != "" {
-		return nil, fmt.Errorf("sandbox: %s", resp.Error)
+		return nil, remoteFailure(resp)
 	}
 	return resp, nil
+}
+
+// remoteFailure rebuilds a daemon-side failure on this side of the wire,
+// PRESERVING its stable machine-readable code where the verb defines one.
+//
+// Without this the code would survive the daemon only as text inside a message,
+// and every consumer would be back to matching on prose — the failure mode this
+// contract exists to end. A coded failure comes back as a *model.EgressPolicyError,
+// so callers use errors.As, not strings.Contains. Refs: MGIT-109, R-H233
+func remoteFailure(resp *controlproto.Response) error {
+	if model.ValidEgressFailureCode(resp.ErrorCode) {
+		// The daemon already rendered the token into its text; strip it so
+		// re-wrapping here does not print it twice. The token is carried
+		// STRUCTURALLY either way — the text is a convenience.
+		msg := strings.TrimPrefix(resp.Error, "["+resp.ErrorCode+"] ")
+		return &model.EgressPolicyError{Code: resp.ErrorCode, Reason: "sandbox: " + msg}
+	}
+	return fmt.Errorf("sandbox: %s", resp.Error)
 }
 
 // roundTripRaw sends one request and returns the daemon's response VERBATIM,
