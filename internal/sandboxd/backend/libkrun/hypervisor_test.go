@@ -531,7 +531,8 @@ func TestNewChildCmd_StdioContractNeverInheritsTheDaemonStreams(t *testing.T) {
 	}
 	for _, kv := range cmd.Env {
 		if !strings.HasPrefix(kv, "PATH=") && !strings.HasPrefix(kv, "DYLD_FALLBACK_LIBRARY_PATH=") &&
-			!strings.HasPrefix(kv, envLifelineFD+"=") {
+			!strings.HasPrefix(kv, envLifelineFD+"=") &&
+			!strings.HasPrefix(kv, envLifelineNonce+"=") {
 			t.Errorf("child env carries %q; the daemon environment must not leak toward the guest", kv)
 		}
 	}
