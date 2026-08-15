@@ -73,6 +73,25 @@ jobs:
         with:
           go-version: "1.26.6"
 
+      # Cache Homebrew's DOWNLOADS, not its installs. libkrun's dependency
+      # virglrenderer is the one formula built FROM SOURCE, and it fetches its
+      # tarball from gitlab.freedesktop.org -- so without this, every run of this
+      # job depends on a third-party server being up. On 2026-08-15 that server
+      # returned 504 for over half an hour and put main red three times with
+      # nothing wrong in this repository.
+      #
+      # A stale cache is safe: brew verifies the checksum of anything it reuses,
+      # so a corrupted or wrong-version entry fails the install rather than
+      # building something unexpected. restore-keys lets an older entry serve a
+      # newer formula's unchanged sources. Refs: MGIT-119
+      - name: Cache Homebrew downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Homebrew/downloads
+          key: brew-downloads-${{ runner.os }}-libkrun-v1-${{ github.run_id }}
+          restore-keys: |
+            brew-downloads-${{ runner.os }}-libkrun-v1-
+
       - name: Install libkrun (bottled)
         # This runner's Homebrew refuses to load a formula from a
         # newly-added third-party tap until it's explicitly trusted (first
@@ -83,7 +102,24 @@ jobs:
         run: |
           brew tap libkrun/krun
           brew trust libkrun/krun
-          brew install libkrun
+          # Retry the install: it pulls bottles from a third-party CDN, and a
+          # download failure there (seen twice on 2026-08-15 --
+          # `Failed to download resource "virglrenderer"`) is not a defect in
+          # this repository. A job that goes red on someone else's CDN teaches
+          # the team to re-run reds without reading them, which is how a REAL
+          # failure eventually gets waved through -- so the transient is
+          # absorbed here rather than in a habit. A persistent outage still
+          # fails, loudly, after the last attempt. Refs: MGIT-119
+          for attempt in 1 2 3; do
+            if brew install libkrun; then
+              echo "libkrun installed (attempt $attempt)"
+              exit 0
+            fi
+            echo "::warning::brew install libkrun failed on attempt $attempt/3"
+            sleep $((attempt * 45))
+          done
+          echo "::error::brew install libkrun failed 3 times -- treat this as a real outage, not a flake"
+          exit 1
 
       - name: Build, vet and test the tagged path
         # DYLD_FALLBACK_LIBRARY_PATH: libkrun dlopens libkrunfw by leaf name
