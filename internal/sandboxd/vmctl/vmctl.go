@@ -28,8 +28,22 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"time"
+
+	"github.com/hyper-swe/mgit/internal/model"
 )
+
+// pathExists reports whether a host-side path is present. It is used only to
+// gather EVIDENCE for an unreachable-channel diagnosis, so a stat error of any
+// kind is treated as "not observed" rather than escalated: the caller is
+// already on a failure path and a second failure must not mask the first.
+// Refs: MGIT-109
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
 
 // SocketName is the per-VM control socket, kept SHORT on purpose: every byte
 // comes out of the 104-byte sun_path budget the whole state-dir path shares,
@@ -184,11 +198,19 @@ func (c Client) do(req Request) (Response, error) {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", c.SocketPath)
 	if err != nil {
-		return Response{}, fmt.Errorf(
-			"vm control channel unreachable at %s: %w "+
-				"(the sandbox may not be running, or its VM predates this capability); "+
-				"the running policy was NOT changed",
-			c.SocketPath, err)
+		// FACTS ONLY. This layer knows whether the VM left host-side state and
+		// whether it ever bound a channel; it does NOT know the sandbox's
+		// recorded lifecycle state, so it must not guess at the cause. The
+		// service, which holds that state, names the condition from this
+		// evidence. The guess that used to live here — "may not be running, or
+		// predates this capability" — is what sent a live bug report to two
+		// unrelated tickets. Refs: MGIT-109, MGIT-104, MGIT-72
+		return Response{}, &model.EgressChannelUnreachableError{
+			SocketPath:  c.SocketPath,
+			VMStateSeen: pathExists(filepath.Dir(c.SocketPath)),
+			ChannelSeen: pathExists(c.SocketPath),
+			Cause:       err,
+		}
 	}
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(dialTimeout))

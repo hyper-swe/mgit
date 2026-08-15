@@ -401,10 +401,24 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 | `mgit sandbox sync --task-id ID [--dry-run] [--force]` | Re-stage the host worktree into the running guest; `--dry-run` reports what would change (and every conflict) without touching it |
 | `mgit sandbox status ID` / `list` / `remove ID` | Inspect or tear down sandboxes |
 | `mgit sandbox grants --task-id ID` / `grant --task-id ID KEY` | Review and approve per-task egress requests |
+| `mgit sandbox policy set/revoke/show --task-id ID` | Change or read a sandbox's egress allowlist without relaunching it. Works **before first boot** too — see below |
 | `mgit sandbox base from <oci-image>` / `set <dir>` | Compose this repo's guest base from an OCI image, or use a tree you built |
 | `mgit sandbox image init` / `add --kernel … --rootfs …` | Manage the signed, digest-pinned image set (firecracker kernel + rootfs) |
 
 Sandbox commands require the host daemon and a guest base, and run on macOS (libkrun, Apple Silicon) and Linux (firecracker/KVM).
+
+**Egress policy before the microVM boots.** Provisioning is lazy: `mgit work --sandbox` and `mgit sandbox launch` *register* a sandbox and the microVM starts on first use. `mgit sandbox policy set/revoke` work at that point too — the policy is **staged onto the pending launch**, so the VM comes up already enforcing it and never runs under the policy you were replacing, not even for the instant between boot and mutation. `policy show` reports a staged policy as `PENDING`, never as one in force: *"is being enforced"* and *"will be enforced once something starts"* are different facts, and a caller who confuses them runs untrusted code believing a line is being held that nothing is holding yet. Once the VM is up, the same verbs mutate the live enforcer and `show` reads back from it.
+
+**Failure codes are a stable contract.** Every failure of `policy set`, `policy revoke` and `policy show` carries a machine-readable token — as `error_code` in `--json` output, and in square brackets at the start of the human message. **Match on the token, never on the wording**, which will keep changing:
+
+| Token | What it means | Remedy |
+|---|---|---|
+| `NOT_BOOTED` | The sandbox is registered but its microVM has not booted; nothing is enforcing egress for it yet | Normally not an error at all — `policy set` stages instead. It appears when the staging itself failed |
+| `BOOTED_DIED` | Recorded as running, but its enforcer is not answering: the guest exited or was killed | `mgit sandbox remove --task <ID>`, then re-run the task |
+| `VERSION_PREDATES` | Its VM was launched without a control channel by an older build; the launch-time allowlist still stands and cannot be changed in place | Relaunch it with this build |
+| `UNKNOWN` | Anything this build cannot classify | Read the message |
+
+The set is **closed**, and an unrecognized cause gets `UNKNOWN` rather than the nearest of the other three — a confident wrong answer is worse than an admitted one. Every one of these failures leaves the policy **unchanged**: an unreachable enforcer is an error, never an empty policy, because an empty list reads as "nothing is allowed" when the truth may be "nothing is enforcing".
 
 **Sizing a guest.** A sandbox's CPU/memory/disk are declared by the workload and bounded by the operator: `--memory-mb` on `mgit work` or `mgit sandbox launch` asks for a size, and the host policy's `max_memory_mb` / `max_cpus` / `max_disk_quota_mb` bound what may be asked for. mgit **refuses** an over-large request naming that limit rather than clamping it — a caller that silently receives less than it asked for concludes its workload is at fault and reshapes it, which is exactly the failure this surface exists to prevent. The fleet-wide FR-17.26 ceiling applies on top and its refusal reads differently ("the host is already running N sandboxes"): a launch can be individually legal and still refused because the host is full. `mgit sandbox status <task>` reports the effective caps, and the generated CLAUDE.md states them to the agent.
 

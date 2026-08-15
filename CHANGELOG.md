@@ -7,8 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Egress-policy failures now carry a stable, machine-readable code.** Every
+  failure of `mgit sandbox policy set` / `revoke` / `show` reports one of
+  `NOT_BOOTED`, `BOOTED_DIED`, `VERSION_PREDATES` or `UNKNOWN` — as `error_code`
+  in `--json` output, in the MCP tool's error result, and in square brackets at
+  the start of the human message. **These tokens are a stable contract; the
+  prose beside them is not.** An integrator built a pre-boot retry by matching
+  on the error wording, and it silently missed the failure below entirely;
+  rewording it would have broken them a second time, just as silently. Match on
+  the token. The set is closed, and a cause this build cannot classify gets
+  `UNKNOWN` rather than the nearest of the other three — a confident wrong
+  answer is worse than an admitted one. A golden test pins the exact strings.
+  (MGIT-109, R-H233)
+
 ### Fixed
 
+<<<<<<< ours
 - **A SIGKILLed or crashed `mgit-sandboxd` no longer orphans its microVMs.**
   Ordinary daemon exits — idle timeout, SIGINT, SIGTERM — drain, stopping and
   removing every sandbox, and always did. The ungraceful ones do not: a SIGKILL,
@@ -37,6 +53,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   owns. This was a supervision and resource leak, never a containment breach —
   on libkrun the egress authorizer lives in the VM child, so an orphan's network
   policy went on being enforced. (MGIT-103, R-H227, FR-17.19, NFR-17.6)
+=======
+- **`sandbox policy set/show/revoke` failed against a sandbox that lazy
+  provisioning had deliberately not booted.** The verbs dialed the VM's control
+  socket unconditionally, so on the documented setup path — `mgit work
+  --sandbox --network allowlist`, then the egress-policy step — they failed with
+  `vm control channel unreachable … c.sock: no such file or directory` against a
+  sandbox that was correctly in state `created`. Provisioning is lazy by design
+  (FR-17.9, FR-17.10): the microVM boots on first use. The policy is now
+  **staged onto the pending launch** instead, durably, and the VM comes up
+  already enforcing it — which is not merely a workaround but strictly safer
+  than booting a guest in order to reconfigure it, since the VM never runs under
+  the replaced policy even momentarily. `policy show` reports a staged policy as
+  `PENDING` and never as one in force. A suspended sandbox is handled the same
+  way, and a boot landing mid-stage is refused with nothing staged and re-routed
+  to the live enforcer, so a policy can never be reported as enforced when it is
+  only pending. Verified live on macOS/libkrun: the replaced launch-time
+  destination is genuinely refused by the booted guest, and the staged one reads
+  back from the running enforcer. (MGIT-109, R-H232, FR-17.9, FR-17.10)
+
+- **The unreachable-enforcer message guessed between three different
+  failures.** It said "the sandbox may not be running, or its VM predates this
+  capability" — one shrug covering a sandbox that never booted, a guest that
+  died (MGIT-99), and a VM launched before the control channel existed
+  (MGIT-74). Each has a different remedy, and that string is why this very bug
+  was reported against two unrelated tickets (MGIT-102, MGIT-103). The daemon
+  holds the recorded state and the enforcer reports host-side evidence; between
+  them the condition is known, so it is now named, with its own code and remedy.
+  Every one of these still fails closed with the policy unchanged: an
+  unreachable enforcer is an error, never an empty policy. (MGIT-109, MGIT-104)
+>>>>>>> theirs
 
 - **The fleet-wide memory ceiling was inert in a default install; it is now
   resolved from host policy.** `mgit-sandboxd` wired the FR-17.26 aggregate

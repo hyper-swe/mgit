@@ -91,7 +91,12 @@ func policyTestSandbox() model.SandboxInfo {
 
 func newPolicyService(t *testing.T, ctrl EgressPolicyController, events SandboxEventAppender) *EgressPolicyService {
 	t.Helper()
-	svc, err := NewEgressPolicyService(ctrl, events, func() time.Time { return time.Unix(0, 0).UTC() })
+	// A stager that always reports the sandbox booted keeps these cases on the
+	// LIVE enforcer path, which is what they are about. The pending-launch
+	// route has its own file. Refs: MGIT-109
+	svc, err := NewEgressPolicyService(ctrl, &fakePendingStager{stageErr: model.ErrSandboxBooted,
+		pendingErr: model.ErrSandboxBooted}, events,
+		func() time.Time { return time.Unix(0, 0).UTC() })
 	require.NoError(t, err)
 	return svc
 }
@@ -335,16 +340,18 @@ func TestNewEgressPolicyService_RequiresItsCollaborators(t *testing.T) {
 	tests := []struct {
 		name   string
 		ctrl   EgressPolicyController
+		stager PendingPolicyStager
 		events SandboxEventAppender
 		clock  func() time.Time
 	}{
-		{name: "nil_controller", events: &recordingEvents{}, clock: clock},
-		{name: "nil_events", ctrl: &fakePolicyController{}, clock: clock},
-		{name: "nil_clock", ctrl: &fakePolicyController{}, events: &recordingEvents{}},
+		{name: "nil_controller", stager: &fakePendingStager{}, events: &recordingEvents{}, clock: clock},
+		{name: "nil_stager", ctrl: &fakePolicyController{}, events: &recordingEvents{}, clock: clock},
+		{name: "nil_events", ctrl: &fakePolicyController{}, stager: &fakePendingStager{}, clock: clock},
+		{name: "nil_clock", ctrl: &fakePolicyController{}, stager: &fakePendingStager{}, events: &recordingEvents{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewEgressPolicyService(tt.ctrl, tt.events, tt.clock)
+			_, err := NewEgressPolicyService(tt.ctrl, tt.stager, tt.events, tt.clock)
 			require.Error(t, err)
 		})
 	}

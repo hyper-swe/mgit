@@ -264,6 +264,9 @@ func (d *Daemon) servePolicySet(ctx context.Context, conn net.Conn, args *contro
 	d.reply(conn, &controlproto.Response{Policy: &controlproto.PolicyResult{
 		Entries: change.Entries, RuleCount: change.RuleCount,
 		Killed: change.Killed, Drained: change.Drained,
+		// A policy staged onto a sandbox whose VM has not booted crosses the
+		// wire LABELED. Refs: MGIT-109
+		Pending: change.Pending,
 	}}, nil)
 }
 
@@ -287,7 +290,7 @@ func (d *Daemon) servePolicyShow(ctx context.Context, conn net.Conn, ref *contro
 		return
 	}
 	d.reply(conn, &controlproto.Response{Policy: &controlproto.PolicyResult{
-		Entries: state.Entries, RuleCount: state.RuleCount,
+		Entries: state.Entries, RuleCount: state.RuleCount, Pending: state.Pending,
 	}}, nil)
 }
 
@@ -311,10 +314,28 @@ func (d *Daemon) serveExport(ctx context.Context, conn net.Conn, args *controlpr
 // operation is audited operationally. Refs: MGIT-11.10.8
 func (d *Daemon) reply(conn net.Conn, resp *controlproto.Response, opErr error) {
 	if opErr != nil {
-		d.cfg.Logger.Warn("sandboxd op failed", "event", "op_error", "error", opErr.Error())
-		resp = &controlproto.Response{Error: opErr.Error()}
+		code := failureCode(opErr)
+		d.cfg.Logger.Warn("sandboxd op failed", "event", "op_error",
+			"error", opErr.Error(), "error_code", code)
+		resp = &controlproto.Response{Error: opErr.Error(), ErrorCode: code}
 	}
 	d.writeResponse(conn, resp)
+}
+
+// failureCode extracts the STABLE machine-readable failure token from an
+// operation error, or "" for a verb with no code vocabulary.
+//
+// It is deliberately the only place a code reaches the wire, so a code can
+// never be invented at a call site: it comes from the typed error the service
+// built, validated against the closed set, or not at all. An integrator
+// matching on this token never has to match on prose again.
+// Refs: MGIT-109, R-H233
+func failureCode(opErr error) string {
+	var failure *model.EgressPolicyError
+	if errors.As(opErr, &failure) && model.ValidEgressFailureCode(failure.Code) {
+		return failure.Code
+	}
+	return ""
 }
 
 // armWriteDeadline bounds a single reply write so a stalled client cannot

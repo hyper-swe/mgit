@@ -108,6 +108,15 @@ var (
 	// registered sandbox. Refs: FR-17.20
 	ErrSandboxNotFound = errors.New("sandbox not found")
 
+	// ErrSandboxBooted indicates an operation that only makes sense for a
+	// sandbox whose VM has NOT booted was asked of one that has. It is the
+	// answer to a lost race: the egress-policy path decides, from the recorded
+	// state, whether to stage a policy onto a pending launch or to mutate a
+	// live enforcer, and a boot that lands between those two steps must never
+	// end with a staged policy reported as enforced. The caller re-routes to
+	// the live enforcer rather than reporting success. Refs: MGIT-109, MGIT-72, SEC-04
+	ErrSandboxBooted = errors.New("sandbox has already booted")
+
 	// ErrSandboxBackendUnavailable indicates no hypervisor backend is
 	// available on this platform (and the container fallback was not
 	// explicitly acknowledged). Refs: FR-17.15, FR-17.20
