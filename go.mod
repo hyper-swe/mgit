@@ -2,7 +2,7 @@ module github.com/hyper-swe/mgit
 
 go 1.25.5
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 require (
 	github.com/Code-Hex/vz/v3 v3.7.1
