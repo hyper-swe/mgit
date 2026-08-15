@@ -13,6 +13,16 @@ on:
 permissions:
   contents: read
 
+env:
+  # Pin the toolchain to the one setup-go installs, and forbid Go from
+  # downloading another. Without this, go.mod's `toolchain` directive makes
+  # Go fetch golang.org/toolchain AS A MODULE into the module cache; setup-go
+  # then caches that directory, and the next run's restore collides with the
+  # toolchain setup-go itself installed -- `gtar: Cannot open: File exists`,
+  # which is a hard job failure. Keep this in step with go.mod's toolchain
+  # line and the go-version pins below. Refs: MGIT-118
+  GOTOOLCHAIN: local
+
 jobs:
   test:
     name: Test
@@ -22,7 +32,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version: "1.26.6"
 
       - name: Run tests with race detector
         run: go test ./... -race -count=1
@@ -61,7 +71,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version: "1.26.6"
 
       - name: Install libkrun (bottled)
         # This runner's Homebrew refuses to load a formula from a
@@ -110,7 +120,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version: "1.26.6"
 
       - name: Install mgit from the repo formula on a libkrun-free runner
         run: scripts/brew-install-no-libkrun.sh
