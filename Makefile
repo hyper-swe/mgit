@@ -49,6 +49,33 @@ e2e:
 	echo "== MCP posture =="; MGIT_BIN="$$bindir/mgit" go run ./scripts/e2e/mcpdrive; \
 	echo "== sandbox posture =="; bash scripts/e2e/sandbox_posture.sh "$$bindir"
 
+## soak: Fleet soak + chaos gate — N concurrent sandboxes under churn
+# Needs a real sandbox backend AND a guest image, so unlike `make e2e` it builds
+# mgit-sandboxd too and signs it on macOS: an UNSIGNED daemon cannot create a VM
+# at all and hands back a vacuous SKIP. Point it at a guest base with
+# MGIT_GUEST_BASE (what `mgit sandbox base from` builds) or MGIT_GUEST_IMAGE.
+# MGIT_SOAK_PROFILE=short (default, what every push runs) or long (nightly).
+# Refs: MGIT-113
+.PHONY: soak
+soak:
+	@set -e; bindir="$$(mktemp -d)"; trap 'rm -rf "$$bindir"' EXIT; \
+	CGO_ENABLED=0 go build -trimpath $(LDFLAGS) -o "$$bindir/mgit" ./cmd/mgit/; \
+	go build -trimpath $(LDFLAGS) -o "$$bindir/mgit-sandboxd" ./cmd/mgit-sandboxd/; \
+	if [ "$$(uname -s)" = "Darwin" ]; then \
+		codesign --force --sign - --entitlements build/darwin/vz.entitlements \
+			"$$bindir/mgit-sandboxd" >/dev/null; \
+	fi; \
+	bash scripts/e2e/sandbox_fleet_soak.sh "$$bindir"
+
+## soak-redteam: prove each soak invariant goes RED against a broken build
+# Builds one deliberately defective mgit per invariant and requires the soak to
+# fail naming that invariant. An unverified gate is a decoration. Slow (a build
+# plus a full soak per case) — run it when the soak's assertions change.
+# Refs: MGIT-113
+.PHONY: soak-redteam
+soak-redteam:
+	bash scripts/e2e/fleet_soak_redteam.sh
+
 ## test: Run all unit tests
 .PHONY: test
 test:
