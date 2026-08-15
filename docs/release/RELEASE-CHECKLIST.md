@@ -155,20 +155,6 @@ green Linux gate is not evidence about macOS:
    `.goreleaser.yaml`'s `release.header` (the actual release-notes text) if
    it isn't there yet — that file is out of scope for this checklist edit,
    but the notes it produces are user-facing and easy to forget.
-   **Conditional known-limit note — check this every release, it self-cancels.**
-   If **MGIT-103 is still open** when you cut, the release notes MUST state the
-   orphan limit. This is a founder condition (R-H227) attached to the decision
-   that MGIT-103 is not release-gating: the limit was accepted *on the basis
-   that it would be disclosed*, so shipping without the note breaks the terms
-   the decision was made under, not merely a documentation nicety. State all
-   three parts, and do not soften them:
-     - a SIGKILLed or crashed sandbox daemon can orphan its VM children;
-     - ordinary daemon exits drain cleanly;
-     - on libkrun, egress policy is unaffected, because the authorizer lives
-       in the VM child — this is a supervision and resource leak, not a
-       containment breach.
-   Once MGIT-103 is fixed and released, delete this item rather than leaving
-   it to rot into a stale warning.
 2. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. This triggers
    `release.yml` (preflight → e2e gate → macOS release build+sign → GoReleaser).
 3. **Homebrew tap: version + checksums are automatic; the formula body is
