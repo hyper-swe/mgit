@@ -158,6 +158,24 @@ mgit verify --task-id PROJ-12    # prove the recorded chain has not been tampere
 
 That turns incident forensics from archaeology into a query: trace a landed commit back to its task, the agent that worked it, and every intermediate step including abandoned attempts; scope a regression's blast radius by asking what else that task touched. The trail is available for as long as the `.mgit` store is retained alongside the repo, which is how HyperSwe deployments run it.
 
+### The trail says whether it *is* a trail
+
+A list of commits looks like a list of steps, and often is not. Measured across six real agent runs on mgit's own repo, agents treat `mgit commit` as a final packaging step rather than a checkpoint: one task's six commits were all written in the last five minutes of a forty-minute run, thirteen seconds apart. Read as six steps, they are one step split six ways after the fact.
+
+So `mgit log --task-id` reports what it can actually know — when the work was recorded, against when the task's worktree was created — and labels the trail accordingly:
+
+```
+cadence: PACKAGED_POST_HOC
+  6 commits written over 4m41s of a 39m46s run (12% of it). This trail was packaged
+  post-hoc; it is not process history. Read it as one step recorded in 6 parts.
+  measured 2026-08-12T12:23:40Z to 2026-08-12T12:28:21Z, from the worktree created
+  at 2026-08-12T11:48:35Z [WORKTREE_CREATED_TO_LAST_COMMIT]
+```
+
+A manufactured trail is the rarer problem, though. Across those six runs, one was packaged post-hoc, two were genuinely spread, two recorded a single commit and one recorded nothing at all — half of them left no process history whatever. One commit closing a 33-minute run gets its own verdict, `SINGLE_CHECKPOINT`, because that is a complete observation rather than a failed measurement: the record holds a result, with no earlier point in the run to return to.
+
+The verdict token is stable and machine-readable (`cadence.verdict` under `--json`); the prose is not. When the *run* cannot be measured — no registered worktree, a worktree reused across sessions, commits older than the worktree holding them, a run too short to read anything into — it says `INSUFFICIENT_EVIDENCE` and why, never a default of "fine". It is evidence, not a score: nothing gates on it, deliberately, because an agent committing to satisfy a checker manufactures the very trail the label exists to expose.
+
 ## Installation
 
 **Install script** (macOS / Linux) — the recommended path:
@@ -337,7 +355,7 @@ The everyday surface:
 | `mgit work PATH --task-id ID [--sandbox]` | Start an agent on a task: worktree + agent wiring + optional microVM |
 | `mgit run -- <command>` | Run a command in the task's microVM (fail-closed; never on the host) |
 | `mgit commit -m MSG` | Create a task-tagged micro-commit (task ID auto-inherited in a worktree); `-F FILE` (or `-F -` for stdin) reads the message verbatim, with no shell in the way |
-| `mgit log --task-id ID` | View a task's step-by-step history |
+| `mgit log --task-id ID` | View a task's step-by-step history, with the evidence label saying whether it *is* one |
 | `mgit rollback --task-id ID [--commit HASH]` | Revert a task: an append-only revert commit that also restores the working tree |
 | `mgit audit --task-id ID` | Replay who did what, when, from the append-only audit trail |
 | `mgit squash --task-id ID [--to-git]` | Consolidate a task's micro-commits into one reviewable commit |

@@ -22,6 +22,7 @@ func logCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "log",
 		Short: "Show commit history",
+		Long:  "Show commit history." + cadenceTokenDoc,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			app, err := openAppFromCwd()
 			if err != nil {
@@ -33,17 +34,7 @@ func logCmd() *cobra.Command {
 
 			// Task-filtered log
 			if taskID != "" {
-				records, err := app.Commit.GetTaskCommits(ctx, taskID)
-				if err != nil {
-					return fmt.Errorf("log: %w", err)
-				}
-				if formatJSON {
-					return json.NewEncoder(os.Stdout).Encode(records)
-				}
-				for _, r := range records {
-					_, _ = fmt.Fprintf(os.Stdout, "%s [%s] pos=%d\n", r.CommitHash[:8], r.TaskID, r.Position)
-				}
-				return nil
+				return runTaskLog(ctx, app, taskID, formatJSON)
 			}
 
 			commits, err := app.Commit.ListCommits(ctx)
