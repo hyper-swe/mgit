@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/service"
 )
 
@@ -72,31 +73,13 @@ func squashCmd() *cobra.Command {
 			}
 
 			if toGit {
-				patch, perr := app.Squash.GitFormatPatch(ctx, squashed)
-				if perr != nil {
-					return fmt.Errorf("squash --to-git: %w", perr)
-				}
-				// A hunk-free patch is well formed and `git apply` accepts it, so
-				// the land step would report success and land nothing. Say so on
-				// stderr — stdout stays a clean patch when piped. Refs: MGIT-77
-				if !service.PatchHasHunks(patch) {
-					_, _ = fmt.Fprintf(os.Stderr,
-						"warning: the patch for task %s contains NO diff hunks — "+
-							"applying it will change nothing.\n"+
-							"  Its commits recorded no content. Check `mgit log --oneline` and "+
-							"`mgit diff --task-id %s`; work is recorded only when staged "+
-							"(`mgit add <path>`, or `mgit commit -a`).\n",
-						taskID, taskID)
-				}
-				if toGitOutput != "" {
-					if err := os.WriteFile(toGitOutput, []byte(patch), 0o600); err != nil {
-						return fmt.Errorf("squash --to-git: write patch: %w", err)
-					}
-					_, _ = fmt.Fprintf(os.Stdout, "Wrote git patch to %s\n", toGitOutput)
-				} else {
-					_, _ = fmt.Fprint(os.Stdout, patch)
-				}
-				return nil
+				return emitSquashPatch(ctx, app, squashPatchOptions{
+					taskID:   taskID,
+					message:  message,
+					dryRun:   dryRun,
+					squashed: squashed,
+					outPath:  toGitOutput,
+				})
 			}
 
 			if formatJSON {
@@ -130,4 +113,78 @@ func squashCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&toMain, "to-main", false, "Fast-forward merge squash commit to main branch")
 	cmd.Flags().BoolVar(&apply, "apply", false, "Alias for --to-git that also writes the patch file")
 	return cmd
+}
+
+// squashPatchOptions carries the inputs to --to-git. squashed is the commit
+// SquashTask produced; under --dry-run it has no identity, so the patch comes
+// from the read-only preview instead. Refs: FR-7, MGIT-112
+type squashPatchOptions struct {
+	taskID   string
+	message  string
+	dryRun   bool
+	squashed *model.Commit
+	outPath  string
+}
+
+// emitSquashPatch renders the task's git format-patch and writes it to stdout
+// or --to-git-output.
+//
+// Under --dry-run no squash commit exists to diff, so it renders through
+// SquashService.PreviewGitPatch — the same read-only tree diff behind
+// `mgit export --format git`. Before MGIT-112 that combination simply failed
+// ("to commit is empty"); the preview path makes --dry-run --to-git a real
+// preview, and reports a genuinely empty net change instead of emitting a
+// hunk-free patch. Refs: FR-7, MGIT-112, MGIT-77
+func emitSquashPatch(ctx context.Context, app *App, opts squashPatchOptions) error {
+	patch, err := squashPatchText(ctx, app, opts)
+	if err != nil {
+		return fmt.Errorf("squash --to-git: %w", err)
+	}
+	// A genuinely empty net change was already reported on stderr; emitting an
+	// empty patch file or an empty mbox is the silent-loss shape. Refs: MGIT-112
+	if patch == "" {
+		return nil
+	}
+	// A hunk-free patch is well formed and `git apply --allow-empty` accepts
+	// it, so the land step would report success and land nothing. Say so on
+	// stderr — stdout stays a clean patch when piped. Refs: MGIT-77
+	if !service.PatchHasHunks(patch) {
+		_, _ = fmt.Fprintf(os.Stderr,
+			"warning: the patch for task %s contains NO diff hunks — "+
+				"applying it will change nothing.\n"+
+				"  Its commits recorded no content. Check `mgit log --oneline` and "+
+				"`mgit diff --task-id %s`; work is recorded only when staged "+
+				"(`mgit add <path>`, or `mgit commit -a`).\n",
+			opts.taskID, opts.taskID)
+	}
+	if opts.outPath != "" {
+		if err := os.WriteFile(opts.outPath, []byte(patch), 0o600); err != nil {
+			return fmt.Errorf("squash --to-git: write patch: %w", err)
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "Wrote git patch to %s\n", opts.outPath)
+		return nil
+	}
+	_, _ = fmt.Fprint(os.Stdout, patch)
+	return nil
+}
+
+// squashPatchText returns the patch to emit, or "" when the task's net change
+// is genuinely empty (having printed the explanatory note to stderr).
+// Refs: MGIT-112
+func squashPatchText(ctx context.Context, app *App, opts squashPatchOptions) (string, error) {
+	if !opts.dryRun {
+		return app.Squash.GitFormatPatch(ctx, opts.squashed)
+	}
+	preview, err := app.Squash.PreviewGitPatch(ctx, service.SquashRequest{
+		TaskID:  opts.taskID,
+		Message: opts.message,
+	})
+	if err != nil {
+		return "", err
+	}
+	if preview.Empty {
+		_, _ = fmt.Fprintln(os.Stderr, emptyNetChangeNote(opts.taskID))
+		return "", nil
+	}
+	return preview.Patch, nil
 }

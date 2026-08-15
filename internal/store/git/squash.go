@@ -20,28 +20,71 @@ type SquashCommitParams struct {
 	Branch      string
 }
 
-// CreateSquashCommit consolidates a task's micro-commits into a single commit
-// that captures ONLY that task's net file changes, parents it off the task's
-// base (the parent of its first micro-commit), and places it on its own Branch
-// ref. It NEVER advances HEAD or the integration branch and NEVER rewrites or
-// removes the original micro-commits: per the append-only law (FR-12) the
-// originals remain the audit trail and this commit is the task's clean,
-// exportable deliverable. The task's net change is derived by diffing each
-// micro-commit against its own parent (so an interleaved unrelated task's
-// changes are excluded) and layering the result, last-write-wins, onto the
-// base tree. Populates the commit's CommitID/ContentHash/CreatedAt/ParentID/
-// TreeHash/Branch. Refs: FR-7, FR-12, MGIT-22
-func (cs *CommitStore) CreateSquashCommit(_ context.Context, p SquashCommitParams) (string, error) {
-	if len(p.TaskCommits) == 0 {
-		return "", fmt.Errorf("squash: %w", model.ErrTaskNotFound)
-	}
-	if p.Branch == "" {
-		return "", fmt.Errorf("squash: target branch must not be empty")
-	}
-	goRepo := cs.repo.repo
+// SquashTreePreview names the tree-level outcome of squashing a task WITHOUT
+// creating a commit: the base the task forks from, that base's tree, and the
+// tree the task's net changes produce over it.
+//
+// BaseCommit is empty when the task began at a root (parentless) commit;
+// BaseTree is always a concrete tree hash, git's empty tree in that case, so
+// EmptyNet is a plain comparison. Refs: FR-7, MGIT-22, MGIT-112
+type SquashTreePreview struct {
+	BaseCommit string
+	BaseTree   string
+	Tree       string
+}
 
-	hashes := make([]plumbing.Hash, len(p.TaskCommits))
-	for i, h := range p.TaskCommits {
+// EmptyNet reports that the task's net change is genuinely nothing — its
+// result tree is identical to the tree it forked from. That is a legitimate
+// outcome (a change and its revert) and callers MUST distinguish it from a
+// failure to compute the diff rather than emit a hunk-free patch for either.
+// Refs: MGIT-112
+func (p SquashTreePreview) EmptyNet() bool {
+	return p.Tree != "" && p.Tree == p.BaseTree
+}
+
+// BuildSquashTree computes the tree a squash of the given task commits WOULD
+// produce, and returns it alongside the base it forks from — without creating
+// a commit, without moving any ref, and without touching the index or audit
+// trail. It writes only the tree objects needed to name the result; those are
+// content-addressed and unreferenced, identical to what a later real squash
+// would write, and reclaimable by `mgit gc`.
+//
+// This is the read-only half of CreateSquashCommit, which is implemented on
+// top of it — so `mgit export --format git` and `mgit squash --to-git` compute
+// the same net change by construction rather than by coincidence. MGIT-112
+// shipped because export rendered from a different, empty source.
+// Refs: FR-7, MGIT-22, MGIT-112
+func (cs *CommitStore) BuildSquashTree(_ context.Context, taskCommits []string) (SquashTreePreview, error) {
+	baseHash, treeHash, baseTree, err := cs.squashTree(taskCommits)
+	if err != nil {
+		return SquashTreePreview{}, err
+	}
+	p := SquashTreePreview{Tree: treeHash.String(), BaseTree: baseTree.String()}
+	if !baseHash.IsZero() {
+		p.BaseCommit = baseHash.String()
+	}
+	return p, nil
+}
+
+// emptyTreeHash returns git's well-known empty-tree object ID, computed from
+// the object encoding rather than hard-coded as a literal. It is the base tree
+// of a task that began at a root commit. Refs: MGIT-112
+func emptyTreeHash() plumbing.Hash {
+	o := &plumbing.MemoryObject{}
+	o.SetType(plumbing.TreeObject)
+	return o.Hash()
+}
+
+// squashTree computes the task's net result tree over its base, returning the
+// base commit hash (zero for a root-based task), the resulting tree hash, and
+// the base tree hash (zero when the base is the empty tree). Refs: MGIT-22
+func (cs *CommitStore) squashTree(taskCommits []string) (base, tree, baseTree plumbing.Hash, err error) {
+	if len(taskCommits) == 0 {
+		return plumbing.ZeroHash, plumbing.ZeroHash, plumbing.ZeroHash,
+			fmt.Errorf("squash: %w", model.ErrTaskNotFound)
+	}
+	hashes := make([]plumbing.Hash, len(taskCommits))
+	for i, h := range taskCommits {
 		hashes[i] = plumbing.NewHash(h)
 	}
 
@@ -49,13 +92,22 @@ func (cs *CommitStore) CreateSquashCommit(_ context.Context, p SquashCommitParam
 	// starts from the base tree (empty when the task began at a root commit).
 	baseHash, baseFiles, err := cs.squashBase(hashes[0])
 	if err != nil {
-		return "", err
+		return plumbing.ZeroHash, plumbing.ZeroHash, plumbing.ZeroHash, err
+	}
+	baseTree = emptyTreeHash()
+	if !baseHash.IsZero() {
+		obj, cerr := cs.repo.repo.CommitObject(baseHash)
+		if cerr != nil {
+			return plumbing.ZeroHash, plumbing.ZeroHash, plumbing.ZeroHash,
+				fmt.Errorf("squash: read base commit %s: %w", baseHash, cerr)
+		}
+		baseTree = obj.TreeHash
 	}
 
 	// Layer each micro-commit's own delta onto the base, last-write-wins.
 	net, err := cs.taskNetChanges(hashes)
 	if err != nil {
-		return "", err
+		return plumbing.ZeroHash, plumbing.ZeroHash, plumbing.ZeroHash, err
 	}
 	for path, entry := range net {
 		if entry == nil {
@@ -65,7 +117,32 @@ func (cs *CommitStore) CreateSquashCommit(_ context.Context, p SquashCommitParam
 		baseFiles[path] = *entry
 	}
 
-	treeHash, err := writeNestedTree(goRepo.Storer, baseFiles)
+	treeHash, err := writeNestedTree(cs.repo.repo.Storer, baseFiles)
+	if err != nil {
+		return plumbing.ZeroHash, plumbing.ZeroHash, plumbing.ZeroHash, err
+	}
+	return baseHash, treeHash, baseTree, nil
+}
+
+// CreateSquashCommit consolidates a task's micro-commits into a single commit
+// that captures ONLY that task's net file changes, parents it off the task's
+// base (the parent of its first micro-commit), and places it on its own Branch
+// ref. It NEVER advances HEAD or the integration branch and NEVER rewrites or
+// removes the original micro-commits: per the append-only law (FR-12) the
+// originals remain the audit trail and this commit is the task's clean,
+// exportable deliverable. The task's net change is derived by diffing each
+// micro-commit against its own parent (so an interleaved unrelated task's
+// changes are excluded) and layering the result, last-write-wins, onto the
+// base tree — see squashTree, which the read-only export path shares.
+// Populates the commit's CommitID/ContentHash/CreatedAt/ParentID/TreeHash/
+// Branch. Refs: FR-7, FR-12, MGIT-22
+func (cs *CommitStore) CreateSquashCommit(_ context.Context, p SquashCommitParams) (string, error) {
+	if p.Branch == "" {
+		return "", fmt.Errorf("squash: target branch must not be empty")
+	}
+	goRepo := cs.repo.repo
+
+	baseHash, treeHash, _, err := cs.squashTree(p.TaskCommits)
 	if err != nil {
 		return "", err
 	}

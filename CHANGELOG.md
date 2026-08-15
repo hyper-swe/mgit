@@ -5,7 +5,45 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`mgit export --format git` now emits a real patch (MGIT-112).** It rendered
+  a syntactically valid mbox with ZERO hunks: the export correctly squashed in
+  dry-run so it would not mutate state, then rendered from `FileDiffs` that
+  only the non-dry-run path ever populated. `git apply --allow-empty` and
+  `git am --allow-empty` accept that patch, exit 0 and change nothing — silent
+  loss on the verb whose only job is getting work out of mgit, the MGIT-77
+  failure shape one layer down. It was found by a consumer *during a work-item
+  recovery*, which is the worst possible moment to reach for an export.
+
+  The export now computes the task's net result **tree** over its base and
+  diffs it through the same go-git encoder `mgit squash --to-git` uses, so the
+  two verbs agree on hunks by construction rather than by coincidence. It still
+  creates no squash commit, indexes nothing, audits nothing and moves no ref —
+  its read semantics were right all along; only the rendering was wrong.
+
+  Three outcomes are now distinguishable, which matters most mid-recovery:
+  a real change prints the patch and exits 0; a genuinely empty net change
+  (a change and its revert) prints **no patch** and an explicit note on stderr
+  and exits 0; anything uncomputable **exits non-zero**. `--output` writes no
+  file for an empty net change rather than a misleading empty one, and a
+  non-empty task that somehow renders no hunks is refused outright.
+
+- **`mgit squash --to-git --dry-run` is a real preview.** It previously failed
+  with `commit not found: to commit is empty`, because there was no squash
+  commit to diff. It now renders through the same read-only path as the export.
+
+- **The test that missed MGIT-112 was unmasked.** `TestExport_Git` asserted only
+  on mbox header lines, every one of which a header-only patch satisfies. It now
+  asserts on hunks and applied file content, and the new CLI tests check the
+  round trip by reading files back after `git apply` — never by trusting its
+  exit code, which succeeds against the bug.
+
 ## [0.5.0] - 2026-08-15
+
+> **Update:** the known limitation below (MGIT-112) is FIXED in [Unreleased].
 
 The containment-integrity release. Everything below came from USING mgit — a
 consumer's agent walk, an interrupted recovery, and our own dogfooding — rather
@@ -17,14 +55,15 @@ complained about something that looked like a stale ticket.
 **`mgit export --format git` emits a header-only patch with no hunks
 (MGIT-112).** It runs the squash in dry-run so the export does not mutate
 state, but the git rendering reads file diffs that only the non-dry-run path
-populates — so the patch is SYNTACTICALLY VALID and semantically empty. `git
-apply` accepts it, applies nothing, and exits 0, which makes the loss silent on
-the verb whose purpose is getting work out of mgit. **Use `mgit squash
---task-id <ID> --to-git` instead**, which is correct and is the path the agent
-documentation has always specified. This predates v0.4.5 and is not a
-regression in this release; it is disclosed here because it was found during
-this cycle and a silent empty patch is the worst way to learn about it. Fix is
-P1 and next.
+populates, so the patch carries an mbox header and no content at all. How that
+presents depends on your git: **git 2.42+ rejects it loudly** (`No valid
+patches in input`, exit 128 from both `apply` and `am`, with `am` additionally
+leaving a stuck am-state), while an older git — or any `git apply
+--allow-empty` — accepts it, changes nothing, and exits 0. So the loss is loud
+on a current git and silent on an old one, and either way the work does not
+arrive. **Use `mgit squash --task-id <ID> --to-git` instead**, which is correct
+and is the path the agent documentation has always specified. This predates
+v0.4.5 and is not a regression in this release. Fix is P1 and next.
 
 ### Added
 
