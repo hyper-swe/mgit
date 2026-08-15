@@ -22,7 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cleanup is exactly what a SIGKILLed process is not around to run: on
   **libkrun** (macOS and Linux) the VM child — mgit's own binary — inherits a
   *lifeline* descriptor whose other end the daemon holds, and the kernel closing
-  it on the daemon's death is what ends the VM; on **firecracker**, whose VMM is
+  it on the daemon's death is what ends the VM. The child proves the descriptor
+  really is its daemon's before trusting it — right file type, carrying a per-VM
+  nonce the daemon wrote into it — because an inherited environment variable
+  naming a descriptor number is a claim rather than evidence, and acting on the
+  claim alone lets a process read an unrelated descriptor and announce that its
+  daemon died. On **firecracker**, whose VMM is
   a foreign binary that watches nothing, the VMM gets `PR_SET_PDEATHSIG` and is
   forked from a pinned OS thread, since Linux keys that signal on the forking
   *thread's* exit and a Go scheduler free to retire that thread would otherwise
@@ -67,20 +72,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   out. (MGIT-98)
 
 ### Added
-
-- **`mgit commit` takes `--file/-F`, so a commit message never has to survive
-  the shell.** `-F <path>` reads the message verbatim, and `-F -` reads it from
-  stdin — the path a programmatic caller uses to avoid a temp file entirely.
-  The bytes are recorded as written: no trimming, no normalization, trailing
-  newlines and internal blank lines preserved, so the message round-trips
-  byte-identical to the file. The previous workaround, `-m "$(cat file)"`, made
-  the *shell* responsible for the integrity of an audit artifact, and a message
-  containing backticks or `$(...)` fails there by silent truncation or mangling
-  rather than by loud refusal — it had already bitten agents in two different
-  codebases. `-m` together with `-F` is **refused naming both flags** instead of
-  silently preferring one, and a missing, unreadable or empty message file is an
-  error that commits nothing and leaves the staging area untouched.
-  (MGIT-105, R-H229)
 
 - **A sandbox's CPU/memory/disk are now declarable at launch and bounded by host
   policy.** `mgit sandbox launch` and `mgit work` take `--cpus`, `--memory-mb`
