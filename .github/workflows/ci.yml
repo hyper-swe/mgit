@@ -83,7 +83,24 @@ jobs:
         run: |
           brew tap libkrun/krun
           brew trust libkrun/krun
-          brew install libkrun
+          # Retry the install: it pulls bottles from a third-party CDN, and a
+          # download failure there (seen twice on 2026-08-15 --
+          # `Failed to download resource "virglrenderer"`) is not a defect in
+          # this repository. A job that goes red on someone else's CDN teaches
+          # the team to re-run reds without reading them, which is how a REAL
+          # failure eventually gets waved through -- so the transient is
+          # absorbed here rather than in a habit. A persistent outage still
+          # fails, loudly, after the last attempt. Refs: MGIT-119
+          for attempt in 1 2 3; do
+            if brew install libkrun; then
+              echo "libkrun installed (attempt $attempt)"
+              exit 0
+            fi
+            echo "::warning::brew install libkrun failed on attempt $attempt/3"
+            sleep $((attempt * 20))
+          done
+          echo "::error::brew install libkrun failed 3 times -- treat this as a real outage, not a flake"
+          exit 1
 
       - name: Build, vet and test the tagged path
         # DYLD_FALLBACK_LIBRARY_PATH: libkrun dlopens libkrunfw by leaf name
