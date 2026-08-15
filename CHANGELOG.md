@@ -24,7 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-<<<<<<< ours
 - **A SIGKILLed or crashed `mgit-sandboxd` no longer orphans its microVMs.**
   Ordinary daemon exits — idle timeout, SIGINT, SIGTERM — drain, stopping and
   removing every sandbox, and always did. The ungraceful ones do not: a SIGKILL,
@@ -53,7 +52,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   owns. This was a supervision and resource leak, never a containment breach —
   on libkrun the egress authorizer lives in the VM child, so an orphan's network
   policy went on being enforced. (MGIT-103, R-H227, FR-17.19, NFR-17.6)
-=======
 - **`sandbox policy set/show/revoke` failed against a sandbox that lazy
   provisioning had deliberately not booted.** The verbs dialed the VM's control
   socket unconditionally, so on the documented setup path — `mgit work
@@ -82,7 +80,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them the condition is known, so it is now named, with its own code and remedy.
   Every one of these still fails closed with the policy unchanged: an
   unreachable enforcer is an error, never an empty policy. (MGIT-109, MGIT-104)
->>>>>>> theirs
 
 - **The fleet-wide memory ceiling was inert in a default install; it is now
   resolved from host policy.** `mgit-sandboxd` wired the FR-17.26 aggregate
