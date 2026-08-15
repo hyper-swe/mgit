@@ -160,7 +160,7 @@ fleet_assert_registry_honesty() {
 			st="$(mgit sandbox status "$task" 2>&1 || true)"
 			case "$st" in
 			*running*)
-				mgit sandbox exec --task "$task" -- /bin/true >/dev/null 2>&1 ||
+				mgit sandbox exec --task "$task" -- /bin/echo . >/dev/null 2>&1 ||
 					_e2e_fail "INVARIANT I2 (HONESTY) BROKE: $task is reported 'running' after its daemon was SIGKILLed but cannot execute — a present-and-dead registration is the worst of the three states: an agent is told it is contained, and containment is not there (MGIT-102)"
 				;;
 			esac

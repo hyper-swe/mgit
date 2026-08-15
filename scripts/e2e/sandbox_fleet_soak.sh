@@ -243,7 +243,13 @@ launch_sandbox() {
 		printf '%s: register: %s\n' "$t" "$(printf '%s' "$o" | tr '\n' ' ')" >"$work/.why-$t"
 		return 1
 	fi
-	if ! o="$(mgit sandbox exec --task "$t" -- /bin/true 2>&1)"; then
+	# /bin/echo, not /bin/true: the firecracker guest rootfs is a minimal image
+	# built by scripts/sandbox-image/build-rootfs.sh and does NOT ship /bin/true,
+	# so probing with it failed the whole gate on Linux while passing on the
+	# macOS debian base. Match what sandbox_posture.sh and sandbox_cli_surface.sh
+	# already exec, since those are the shapes both guests are known to serve.
+	# Refs: MGIT-113
+	if ! o="$(mgit sandbox exec --task "$t" -- /bin/echo . 2>&1)"; then
 		printf '%s: boot: %s\n' "$t" "$(printf '%s' "$o" | tr '\n' ' ')" >"$work/.why-$t"
 		return 1
 	fi
@@ -388,7 +394,7 @@ for r in $(seq 1 "$CHURN_ROUNDS"); do
 	for i in $(seq 1 "$FLEET"); do
 		(
 			for _ in 1 2 3; do
-				mgit sandbox exec --task "F-$i" -- /bin/true >/dev/null 2>&1 ||
+				mgit sandbox exec --task "F-$i" -- /bin/echo . >/dev/null 2>&1 ||
 					echo "exec F-$i" >>"$work/.churn-failed"
 			done
 		) &
@@ -451,7 +457,7 @@ while [ "$i" -lt "$guard" ]; do
 	provision "$t" || _e2e_fail "could not provision worktree for $t: $(why "$t")"
 	mgit sandbox launch --task-id "$t" --worktree "$work/wt-$t" \
 		--image "$MGIT_GUEST_IMAGE" --memory-mb "$SB_MEM_MB" --cpus "$SB_CPUS" >/dev/null 2>&1 || true
-	if out="$(mgit sandbox exec --task "$t" -- /bin/true 2>&1)"; then
+	if out="$(mgit sandbox exec --task "$t" -- /bin/echo . 2>&1)"; then
 		continue
 	fi
 	ceiling_hit=1
