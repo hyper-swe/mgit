@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`mgit log --task-id` labels a task's commit trail as process history or
+  post-hoc packaging (MGIT-110).** Measured across five real sub-agent runs on
+  this repo, agents treat `mgit commit` as a final packaging step: MGIT-102's
+  seven index rows look like a healthy micro-commit trail until you notice the
+  six authored ones were all written in the last five minutes of a forty-minute
+  run, thirteen seconds apart. A reviewer reading six commits believes they are
+  seeing six coherent steps; they are seeing one step split six ways after the
+  fact. That is a provenance claim the record does not support, and the label
+  converts it from an unfixed problem into a disclosed one.
+
+  The verdict rests on a **denominator**, because a commit window on its own
+  says nothing — six minutes of commits is a burst across a forty-minute run
+  and is *complete coverage* of a six-minute one. The denominator is the
+  worktree's `created_at` in the worktrees registry (written by `mgit work`)
+  through to the last authored commit, published with every verdict as
+  `WORKTREE_CREATED_TO_LAST_COMMIT`. Squash and merge commits are excluded from
+  the trail: they restate existing work at hand-off, so counting them both
+  inflates the count and drags the window to the end of the run.
+
+  A manufactured trail turns out to be the *rarer* problem. Across the same six
+  runs, one was packaged post-hoc, two were genuinely spread, two recorded a
+  **single commit**, and one recorded **nothing at all** — half the runs left no
+  process history whatever. So one commit closing a 33-minute run gets its own
+  verdict, `SINGLE_CHECKPOINT`, rather than being pooled into "cannot tell":
+  that is not a measurement that failed, it is the complete observation that
+  there is no earlier point in the run to return to. It is gated on the same
+  denominator trust as every other verdict, so one commit ending a three-minute
+  run stays unremarkable and unlabeled.
+
+  Every way that denominator stops measuring one agent run is a **refusal**,
+  never a verdict — no worktree registered, a trail spanning more than one
+  session, commits older than the worktree holding them, or a run too short to
+  read anything into its shape. Every refusal is a failure of the *denominator*;
+  none is about the commit count. `INSUFFICIENT_EVIDENCE` always carries a
+  reason and never means "fine".
+
+  The tokens (`PACKAGED_POST_HOC`, `SPREAD_ACROSS_RUN`, `SINGLE_CHECKPOINT`,
+  `NO_COMMITS`, `INSUFFICIENT_EVIDENCE`) are a closed, golden-tested contract,
+  readable from `cadence.verdict` under `--json` and from the head of the human
+  footer; the summary prose is explicitly not contract. The closed-set test
+  holds the set closed from both sides — nothing may invent a token, and no
+  published token may be unreachable. It is **evidence, not a score**: there is
+  no percentage, no ranking, and nothing in mgit gates on it, because an agent
+  committing to satisfy a checker manufactures exactly the trail the label
+  exists to expose.
+
+### Changed
+
+- **BREAKING: `mgit log --task-id <ID> --json` emits an object**
+  `{"task_id", "commits", "cadence"}` instead of a bare array of commit
+  records. Callers reading the array should read `.commits`. Plain
+  `mgit log --json` is unchanged.
+
 ### Fixed
 
 - **`mgit export --format git` now emits a real patch (MGIT-112).** It rendered
