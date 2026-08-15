@@ -54,7 +54,82 @@ func (s *SquashService) WithAudit(a *AuditService) *SquashService {
 // exportable deliverable (consumable via ExportToGitPatch / `git am`). The
 // squash is indexed and audited like any commit. Refs: FR-7, FR-12, MGIT-22
 func (s *SquashService) SquashTask(ctx context.Context, req SquashRequest) (*model.Commit, error) {
-	// Retrieve all commits for this task
+	plan, err := s.planSquash(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	taskID, err := model.ParseTaskID(req.TaskID)
+	if err != nil {
+		return nil, fmt.Errorf("squash task: %w", err)
+	}
+
+	if req.DryRun {
+		// Return what would be created without making changes.
+		return &model.Commit{
+			TaskID:     taskID,
+			Message:    plan.message,
+			FileDiffs:  plan.diffs,
+			CommitType: model.CommitTypeSquash,
+		}, nil
+	}
+
+	squashCommit := &model.Commit{
+		TaskID:     taskID,
+		AgentID:    "mgit-squash",
+		Message:    plan.message,
+		FileDiffs:  plan.diffs,
+		CommitType: model.CommitTypeSquash,
+		CreatedBy:  "mgit-squash",
+		Branch:     "task/" + req.TaskID,
+	}
+
+	// The squash captures only this task's net changes on a dedicated task
+	// branch, parented off the task's base — it never advances the integration
+	// branch and never removes the originals (append-only, FR-12). MGIT-22.
+	hash, err := s.commitStore.CreateSquashCommit(ctx, gitstore.SquashCommitParams{
+		Commit:      squashCommit,
+		TaskCommits: plan.hashes,
+		Branch:      squashCommit.Branch,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("squash task %s: create squash commit: %w", req.TaskID, err)
+	}
+	// Bind the created commit's identity so GitFormatPatch can compute the net
+	// base->squash tree diff for the git-am-compatible export. Refs: MGIT-33
+	squashCommit.CommitID = hash
+	squashCommit.ParentID = plan.base
+
+	// Index the squash commit
+	position := len(plan.hashes)
+	err = s.indexStore.AddCommitToTask(ctx, req.TaskID, hash, squashCommit.ContentHash, "mgit-squash", position)
+	if err != nil {
+		return nil, fmt.Errorf("squash task %s: index squash commit: %w", req.TaskID, err)
+	}
+
+	// Record the operation in the append-only audit trail (MGIT-20).
+	if err := s.logAudit(squashCommit, req.TaskID, len(plan.hashes)); err != nil {
+		return nil, fmt.Errorf("squash task %s: audit: %w", req.TaskID, err)
+	}
+
+	return squashCommit, nil
+}
+
+// squashPlan is the read-only groundwork shared by squashing a task and by
+// previewing its patch: the task's micro-commit hashes in position order, their
+// merged file diffs, the base they fork from, and the squash message. Computing
+// it once, for both verbs, is what keeps `mgit squash --to-git` and
+// `mgit export --format git` describing the same change. Refs: FR-7, MGIT-112
+type squashPlan struct {
+	hashes  []string
+	diffs   []model.FileDiff
+	base    string
+	message string
+}
+
+// planSquash gathers a task's commits, merges their diffs, verifies the pinned
+// fork base and builds the squash message — without creating anything.
+// Refs: FR-7, MGIT-22, MGIT-112
+func (s *SquashService) planSquash(ctx context.Context, req SquashRequest) (*squashPlan, error) {
 	records, err := s.indexStore.GetTaskCommits(ctx, req.TaskID)
 	if err != nil {
 		return nil, fmt.Errorf("squash task %s: get commits: %w", req.TaskID, err)
@@ -65,104 +140,40 @@ func (s *SquashService) SquashTask(ctx context.Context, req SquashRequest) (*mod
 
 	// Merge all file diffs from individual commits. base is the task's base
 	// (the first micro-commit's parent) — the "from" side of the net export diff.
+	plan := &squashPlan{hashes: make([]string, len(records))}
 	var allDiffs []model.FileDiff
-	var commitSummaries []string
-	var base string
+	var summaries []string
 	for i, rec := range records {
 		c, getErr := s.commitStore.GetCommit(ctx, rec.CommitHash)
 		if getErr != nil {
 			return nil, fmt.Errorf("squash task %s: get commit %s: %w", req.TaskID, rec.CommitHash, getErr)
 		}
 		if i == 0 {
-			base = c.ParentID
+			plan.base = c.ParentID
 		}
+		plan.hashes[i] = rec.CommitHash
 		allDiffs = append(allDiffs, c.FileDiffs...)
-		commitSummaries = append(commitSummaries,
-			fmt.Sprintf("- %s: %s", c.ShortID(), c.Message))
+		summaries = append(summaries, fmt.Sprintf("- %s: %s", c.ShortID(), c.Message))
 	}
 
 	// ADR-008 §4: a task's net change is computed against its PINNED fork-base.
 	// Enforce that the computed base still matches the pin — fail loud if a base
 	// move or retarget ever shifted it, rather than export a corrupt patch.
-	if err := assertPinnedForkBase(ctx, s.indexStore, req.TaskID, base); err != nil {
+	if err := assertPinnedForkBase(ctx, s.indexStore, req.TaskID, plan.base); err != nil {
 		return nil, fmt.Errorf("squash task %s: %w", req.TaskID, err)
 	}
 
-	// Merge diffs: last write wins per path
-	mergedDiffs := mergeDiffs(allDiffs)
+	// Merge diffs: last write wins per path.
+	plan.diffs = mergeDiffs(allDiffs)
 
-	// Build squash message
-	message := req.Message
-	if message == "" {
-		message = fmt.Sprintf("[%s] Squashed from %d micro-commits", req.TaskID, len(records))
+	plan.message = req.Message
+	if plan.message == "" {
+		plan.message = fmt.Sprintf("[%s] Squashed from %d micro-commits", req.TaskID, len(records))
 	}
-	if len(commitSummaries) > 0 {
-		message = message + "\n\n" + strings.Join(commitSummaries, "\n")
+	if len(summaries) > 0 {
+		plan.message = plan.message + "\n\n" + strings.Join(summaries, "\n")
 	}
-
-	if req.DryRun {
-		// Return what would be created without making changes
-		taskID, parseErr := model.ParseTaskID(req.TaskID)
-		if parseErr != nil {
-			return nil, fmt.Errorf("squash task: %w", parseErr)
-		}
-		return &model.Commit{
-			TaskID:     taskID,
-			Message:    message,
-			FileDiffs:  mergedDiffs,
-			CommitType: model.CommitTypeSquash,
-		}, nil
-	}
-
-	// Create the squash commit
-	taskID, err := model.ParseTaskID(req.TaskID)
-	if err != nil {
-		return nil, fmt.Errorf("squash task: %w", err)
-	}
-
-	squashCommit := &model.Commit{
-		TaskID:     taskID,
-		AgentID:    "mgit-squash",
-		Message:    message,
-		FileDiffs:  mergedDiffs,
-		CommitType: model.CommitTypeSquash,
-		CreatedBy:  "mgit-squash",
-		Branch:     "task/" + req.TaskID,
-	}
-
-	// The squash captures only this task's net changes on a dedicated task
-	// branch, parented off the task's base — it never advances the integration
-	// branch and never removes the originals (append-only, FR-12). MGIT-22.
-	taskHashes := make([]string, len(records))
-	for i, rec := range records {
-		taskHashes[i] = rec.CommitHash
-	}
-	hash, err := s.commitStore.CreateSquashCommit(ctx, gitstore.SquashCommitParams{
-		Commit:      squashCommit,
-		TaskCommits: taskHashes,
-		Branch:      squashCommit.Branch,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("squash task %s: create squash commit: %w", req.TaskID, err)
-	}
-	// Bind the created commit's identity so GitFormatPatch can compute the net
-	// base->squash tree diff for the git-am-compatible export. Refs: MGIT-33
-	squashCommit.CommitID = hash
-	squashCommit.ParentID = base
-
-	// Index the squash commit
-	position := len(records)
-	err = s.indexStore.AddCommitToTask(ctx, req.TaskID, hash, squashCommit.ContentHash, "mgit-squash", position)
-	if err != nil {
-		return nil, fmt.Errorf("squash task %s: index squash commit: %w", req.TaskID, err)
-	}
-
-	// Record the operation in the append-only audit trail (MGIT-20).
-	if err := s.logAudit(squashCommit, req.TaskID, len(records)); err != nil {
-		return nil, fmt.Errorf("squash task %s: audit: %w", req.TaskID, err)
-	}
-
-	return squashCommit, nil
+	return plan, nil
 }
 
 // logAudit appends a SQUASH entry to the audit trail. No-op when no
@@ -180,12 +191,23 @@ func (s *SquashService) logAudit(c *model.Commit, taskID string, n int) error {
 	})
 }
 
-// ExportToGitPatch renders a squash commit as a standard git format-patch
-// (mbox) text. The first line of the message is prefixed with "[squashed]"
-// per FR-7 / MGIT-4.2.2 so downstream git tooling can recognize the patch
-// as originating from an mgit squash operation. The output is consumable by
-// "git am" in any standard git repository.
-// Refs: FR-7, MGIT-4.2.2
+// ExportToGitPatch renders a squash commit's model.FileDiff METADATA as
+// format-patch-shaped text. The first line of the message is prefixed with
+// "[squashed]" per FR-7 / MGIT-4.2.2.
+//
+// DO NOT USE IT FOR A DELIVERY PATCH. It is not a git-apply-compatible
+// renderer and never was: it emits `--- a/<path>` for an added file where git
+// requires `/dev/null`, and its `@@` line numbers come from display-oriented
+// hunks (changeHunks always starts at line 1). Worse, it renders whatever is
+// in c.FileDiffs — which is EMPTY on a dry-run squash, so it silently produced
+// a well-formed patch with no hunks at all. That was MGIT-112: `git apply
+// --allow-empty` accepted the result, exited 0 and changed nothing.
+//
+// Every patch that leaves mgit now goes through GitFormatPatch (for a real
+// squash commit) or PreviewGitPatch (for a read), both of which diff real
+// trees through go-git's own unified encoder. This method has no production
+// caller left and is retained only for its unit tests; see MGIT-114 to delete
+// it. Refs: FR-7, MGIT-4.2.2, MGIT-112
 func (s *SquashService) ExportToGitPatch(c *model.Commit) string {
 	if c == nil {
 		return ""

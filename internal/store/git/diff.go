@@ -70,25 +70,69 @@ func (ds *DiffStore) DiffCommits(_ context.Context, fromHash, toHash string) ([]
 // file an addition). This is the content body behind `mgit squash --to-git`,
 // the mgit->git delivery bridge. Refs: FR-7, MGIT-33
 func (ds *DiffStore) PatchBetween(ctx context.Context, fromHash, toHash string) (string, error) {
-	toCommit, err := ds.repo.repo.CommitObject(hashFromString(toHash))
+	// An empty "to" is never a legitimate empty tree here: it means the caller
+	// has no commit to diff. Reject it rather than render a hunk-free patch
+	// that `git apply` accepts and applies nothing (MGIT-112).
+	if toHash == "" {
+		return "", fmt.Errorf("%w: to commit is empty", model.ErrCommitNotFound)
+	}
+	toTree, err := ds.commitTree(toHash, "to")
 	if err != nil {
-		return "", fmt.Errorf("%w: to commit %s", model.ErrCommitNotFound, toHash)
+		return "", err
 	}
-	toTree, err := toCommit.Tree()
+	fromTree, err := ds.commitTree(fromHash, "from")
 	if err != nil {
-		return "", fmt.Errorf("get to tree: %w", err)
+		return "", err
 	}
-	var fromTree *object.Tree // nil = empty tree (all additions)
-	if fromHash != "" {
-		fromCommit, cerr := ds.repo.repo.CommitObject(hashFromString(fromHash))
-		if cerr != nil {
-			return "", fmt.Errorf("%w: from commit %s", model.ErrCommitNotFound, fromHash)
-		}
-		if fromTree, err = fromCommit.Tree(); err != nil {
-			return "", fmt.Errorf("get from tree: %w", err)
-		}
+	return ds.patchBetweenTrees(ctx, fromTree, toTree)
+}
+
+// PatchFromCommitToTree renders the same unified diff as PatchBetween, but the
+// "to" side is a raw TREE hash rather than a commit. That is what a read-only
+// export needs: the net result of squashing a task exists as a tree before any
+// squash commit is created, and `mgit export --format git` must never create
+// one. Sharing patchBetweenTrees with PatchBetween is what makes the export and
+// `mgit squash --to-git` byte-identical in their hunks by construction.
+// fromCommit may be empty to diff against the empty tree (every file an
+// addition). Refs: FR-7, MGIT-33, MGIT-112
+func (ds *DiffStore) PatchFromCommitToTree(ctx context.Context, fromCommit, toTree string) (string, error) {
+	if toTree == "" {
+		return "", fmt.Errorf("patch to tree: empty target tree hash")
 	}
-	changes, err := object.DiffTreeContext(ctx, fromTree, toTree)
+	to, err := object.GetTree(ds.repo.repo.Storer, hashFromString(toTree))
+	if err != nil {
+		return "", fmt.Errorf("get to tree %s: %w", toTree, err)
+	}
+	from, err := ds.commitTree(fromCommit, "from")
+	if err != nil {
+		return "", err
+	}
+	return ds.patchBetweenTrees(ctx, from, to)
+}
+
+// commitTree resolves a commit hash to its tree. An empty hash yields a nil
+// tree, which go-git's differ reads as the empty tree (every file an addition).
+// side names the operand in error messages ("from" / "to").
+func (ds *DiffStore) commitTree(hash, side string) (*object.Tree, error) {
+	if hash == "" {
+		return nil, nil //nolint:nilnil // a nil tree IS the empty tree for go-git's differ
+	}
+	commit, err := ds.repo.repo.CommitObject(hashFromString(hash))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s commit %s", model.ErrCommitNotFound, side, hash)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("get %s tree: %w", side, err)
+	}
+	return tree, nil
+}
+
+// patchBetweenTrees renders the unified diff between two trees via go-git's own
+// patch encoder — the single renderer behind every mgit->git patch, so squash
+// and export cannot drift apart. A nil tree is the empty tree. Refs: MGIT-33
+func (ds *DiffStore) patchBetweenTrees(ctx context.Context, from, to *object.Tree) (string, error) {
+	changes, err := object.DiffTreeContext(ctx, from, to)
 	if err != nil {
 		return "", fmt.Errorf("compute patch: %w", err)
 	}

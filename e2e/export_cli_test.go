@@ -72,32 +72,50 @@ func TestExport_JSON(t *testing.T) {
 }
 
 // TestExport_Git verifies that --format=git produces a git format-patch
-// derived from a dry-run squash of the task.
-// Refs: MGIT-4.2.4
+// carrying the task's REAL net diff, without mutating state.
+//
+// This test used to assert only on mbox header lines — HasPrefix("From "),
+// Contains("Subject: [PATCH] ") — every one of which a header-only patch
+// satisfies. That is exactly how MGIT-112 shipped: the export rendered zero
+// hunks and this test stayed green. It now asserts on hunks and content.
+// Refs: MGIT-4.2.4, MGIT-112
 func TestExport_Git(t *testing.T) {
 	env := setupServiceEnv(t)
 	ctx := context.Background()
 	taskID := "MGIT-4.2.4"
-	seedTaskCommits(t, env, taskID, 2)
 
-	// Mirror the CLI's --format=git path: dry-run squash + ExportToGitPatch.
-	dryRunSquash, err := env.squash.SquashTask(ctx, service.SquashRequest{
-		TaskID: taskID,
-		DryRun: true,
+	const content = "package export\n\nfunc Export() int { return 7 }\n"
+	require.NoError(t, os.WriteFile(
+		filepath.Join(env.repo.Root(), "export.go"), []byte(content), 0o600))
+	require.NoError(t, env.worktree.Add(ctx, "export.go"))
+	_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
+		TaskID: taskID, AgentID: "export-test", Message: "add export.go",
 	})
 	require.NoError(t, err)
 
-	patch := env.squash.ExportToGitPatch(dryRunSquash)
-	require.NotEmpty(t, patch)
+	// Mirror the CLI's --format=git path exactly.
+	preview, err := env.squash.PreviewGitPatch(ctx, service.SquashRequest{TaskID: taskID})
+	require.NoError(t, err)
+	require.False(t, preview.Empty, "the task has a real net change")
+
+	patch := preview.Patch
 	assert.True(t, strings.HasPrefix(patch, "From "))
 	assert.Contains(t, patch, "Subject: [PATCH] ")
 	assert.Contains(t, patch, "[squashed]")
 
-	// A dry-run squash must NOT advance the task's commit count.
+	// The assertions that would have caught MGIT-112.
+	require.True(t, service.PatchHasHunks(patch),
+		"the export must carry real diff hunks, not just a well-formed header")
+	assert.Contains(t, patch, "diff --git a/export.go b/export.go")
+	assert.Contains(t, patch, "--- /dev/null", "an added file is git-apply-correct")
+	assert.Contains(t, patch, "+func Export() int { return 7 }",
+		"the patch must carry the real added content")
+
+	// The export is a READ: no squash commit may be indexed for the task.
 	records, err := env.idx.GetTaskCommits(ctx, taskID)
 	require.NoError(t, err)
-	assert.Len(t, records, 2,
-		"--format=git uses dry-run squash and must not append a real squash commit")
+	assert.Len(t, records, 1,
+		"--format=git must not append a real squash commit")
 }
 
 // TestExport_File verifies that the export pipeline can write its payload

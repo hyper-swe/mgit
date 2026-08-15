@@ -370,7 +370,7 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 | `mgit rollback --task-id ID [--commit HASH]` | Revert a task: an append-only revert commit that also restores the working tree (a step's hash resolves its task) |
 | `mgit verify [--task-id ID] [--fix]` | Verify commit chain and index integrity |
 | `mgit audit [--task-id ID] [--since --until]` | View the audit trail |
-| `mgit export --task-id ID --format json\|git\|audit-log` | Export task data |
+| `mgit export --task-id ID --format json\|git\|audit-log` | Export task data. A pure read: creates no squash commit, writes no audit record. `--format git` yields the same hunks as `squash --to-git`; a task whose net change is genuinely empty prints an explanatory note on stderr and no patch, rather than an empty one |
 
 </details>
 
