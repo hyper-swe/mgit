@@ -5,7 +5,26 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-08-15
+
+The containment-integrity release. Everything below came from USING mgit — a
+consumer's agent walk, an interrupted recovery, and our own dogfooding — rather
+than from reading it. Two of the defects were found because a sub-agent
+complained about something that looked like a stale ticket.
+
+### Known limitation in this release
+
+**`mgit export --format git` emits a header-only patch with no hunks
+(MGIT-112).** It runs the squash in dry-run so the export does not mutate
+state, but the git rendering reads file diffs that only the non-dry-run path
+populates — so the patch is SYNTACTICALLY VALID and semantically empty. `git
+apply` accepts it, applies nothing, and exits 0, which makes the loss silent on
+the verb whose purpose is getting work out of mgit. **Use `mgit squash
+--task-id <ID> --to-git` instead**, which is correct and is the path the agent
+documentation has always specified. This predates v0.4.5 and is not a
+regression in this release; it is disclosed here because it was found during
+this cycle and a silent empty patch is the worst way to learn about it. Fix is
+P1 and next.
 
 ### Added
 
