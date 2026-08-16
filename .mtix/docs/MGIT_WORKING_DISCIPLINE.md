@@ -272,11 +272,18 @@ don't rediscover them by stumbling:
     project root. See [docs/INSTALL-SANDBOX.md](../../docs/INSTALL-SANDBOX.md) to
     enable the sandbox.
 
-12. **"another mgit process is running" means a server holds the lock.** A
-    running `mgit serve` / MCP server used to hold the repo lock for its whole
-    lifetime and starve the CLI; it now takes the lock only per operation, so
-    this error is brief and self-clears. If it persists, a stuck command or
-    server is holding it — the error names the holding command, not just a PID.
+12. **"another mgit process is running" names the command holding the repo
+    lock — read it, don't assume a server.** The error's second line is the
+    holder's own command line, and it is the diagnosis. Two things used to
+    cause it and both are fixed: a `mgit serve` / MCP server held the lock for
+    its whole lifetime (MGIT-46), and `mgit work` held it across worktree
+    materialization and the sandbox daemon round-trip, so concurrent agents
+    provisioning at once timed out at 30s (MGIT-120). Both now take the lock
+    only around their shared-store phase, so contention is brief and
+    self-clearing. If it persists, the named holder is stuck — that command, not
+    "a server", is what to look at. The wait itself is `locks.timeout_seconds`
+    in `.mgit/config.json` (default 30); raising it buys time to investigate, it
+    does not fix a command that holds the lock too long.
 
 13. **The MCP worktree tools are real.** `mgit_worktree_add` / `list` / `remove`
     (and every other MCP tool) delegate to the same service layer as the CLI and

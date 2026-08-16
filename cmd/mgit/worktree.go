@@ -37,8 +37,12 @@ func worktreeCmd() *cobra.Command {
 			defer app.Close()
 
 			ctx := context.Background()
+			// Same lock boundary as `mgit work`: the lifetime lock is detached and
+			// re-acquired around the shared-store phase only, so one agent's
+			// materialization cannot starve the others. Refs: MGIT-120, ADR-009
 			wtSvc := service.NewWorktreeService(app.Index, app.Branch, gitstore.NewWorktreeStore(app.Repo), func() time.Time { return time.Now().UTC() }).
-				WithSync(app.Sync, app.Repo, gitstore.NewCommitStore(app.Repo))
+				WithSync(app.Sync, app.Repo, gitstore.NewCommitStore(app.Repo)).
+				WithLocker(app.DetachLock())
 
 			wt, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
 				Path: args[0], TaskID: wtTaskID, AgentID: wtAgentID, Branch: wtBranch,

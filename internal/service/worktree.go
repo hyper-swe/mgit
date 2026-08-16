@@ -9,6 +9,7 @@ import (
 	"github.com/hyper-swe/mgit/internal/model"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 	"github.com/hyper-swe/mgit/internal/store/index"
+	"github.com/hyper-swe/mgit/internal/store/lock"
 )
 
 // WorktreeService orchestrates worktree lifecycle with task binding.
@@ -22,6 +23,13 @@ type WorktreeService struct {
 	commits    *gitstore.CommitStore
 	sync       *SyncService
 	clock      func() time.Time
+	// locker, when set, is acquired around the SHARED-STORE phase of Add and
+	// released before the per-worktree phase. It is nil for callers that
+	// already hold the process lock for their whole operation (the MCP/REST
+	// middleware, unit tests), which must NOT re-acquire it: flock is
+	// per-open-file-description, so a second acquire inside the same process
+	// would block on itself. Refs: MGIT-120, ADR-009
+	locker *lock.Guarder
 }
 
 // NewWorktreeService creates a WorktreeService with injected dependencies. The
@@ -49,9 +57,38 @@ func (s *WorktreeService) WithSync(sync *SyncService, repo *gitstore.Repository,
 	return s
 }
 
-// Add creates a new worktree bound to a task.
-// Auto-creates the task branch if it doesn't exist.
-// Refs: FR-16.1, FR-16.2
+// WithLocker makes Add acquire the repo-wide process lock around its
+// SHARED-STORE phase only, instead of relying on the caller to hold it for the
+// whole command. It is wired by the CLI commands that provision worktrees
+// (`mgit work`, `mgit worktree add`), which detach their lifetime lock first;
+// callers already inside a guarded operation (MCP/REST) must NOT wire it.
+// Refs: MGIT-120, ADR-009
+func (s *WorktreeService) WithLocker(g *lock.Guarder) *WorktreeService {
+	s.locker = g
+	return s
+}
+
+// Add creates a new worktree bound to a task, auto-creating the task branch if
+// it doesn't exist.
+//
+// LOCK BOUNDARY (MGIT-120). Add runs in two phases, and only the first needs
+// the repo-wide exclusive lock:
+//
+//  1. CLAIM (locked): resync the base, resolve/create the task branch, and
+//     register the worktree. Every step here mutates state SHARED by all
+//     worktrees — the base branch, the refs, the registry — so it must be
+//     serialized against other processes.
+//  2. MATERIALIZE (unlocked): write the branch tree and the marker into the
+//     new worktree's own path. Nothing here is shared: the claim already made
+//     this process the exclusive owner of the path, task and branch (the
+//     registry's UNIQUE constraints refuse any second claimant), and the
+//     objects being read are reachable from the branch ref the claim created,
+//     so a concurrent gc cannot collect them. Holding the lock across this
+//     phase bought no safety and cost every other agent a 30-second wait.
+//
+// A failed materialization releases the claim, so a race loser and a failed
+// provision both leave the registry as they found it.
+// Refs: FR-16.1, FR-16.2, MGIT-120
 func (s *WorktreeService) Add(ctx context.Context, opts model.WorktreeAddOptions) (*model.WorktreeInfo, error) {
 	if err := opts.Validate(); err != nil {
 		return nil, fmt.Errorf("worktree add: %w", err)
@@ -63,48 +100,88 @@ func (s *WorktreeService) Add(ctx context.Context, opts model.WorktreeAddOptions
 		branchName = "task/" + opts.TaskID
 	}
 
-	// Auto-housekeep BEFORE forking so the new worktree carries the current
-	// local working state (incl. the developer's unpushed foundation) — the
-	// concrete advantage of an mgit worktree over a git worktree (ADR-008 §2).
-	// Then resolve+pin the fork-base so a later base resync cannot shift it.
-	forkBase, err := s.resolveForkBase(ctx, opts, branchName)
+	wt, err := s.claim(ctx, opts, branchName)
 	if err != nil {
-		return nil, fmt.Errorf("worktree add: %w", err)
+		return nil, err
 	}
-
-	wt := &model.WorktreeInfo{
-		Path:      opts.Path,
-		Name:      model.DeriveNameFromPath(opts.Path),
-		Branch:    branchName,
-		TaskID:    opts.TaskID,
-		AgentID:   opts.AgentID,
-		ForkBase:  forkBase,
-		CreatedAt: s.clock(),
+	if err := s.materialize(ctx, wt); err != nil {
+		_ = s.guard(func() error { return s.indexStore.DeleteWorktree(ctx, wt.Path) })
+		return nil, err
 	}
-
-	// Register in SQLite (UNIQUE constraints enforce isolation) BEFORE touching
-	// disk, so a duplicate path/task is rejected without materializing anything.
-	if err := s.indexStore.InsertWorktree(ctx, wt); err != nil {
-		return nil, fmt.Errorf("worktree add: %w", err)
-	}
-
-	// Materialize the branch's source into the linked worktree path so it is a
-	// usable working copy, not an empty dir (MGIT-17). On failure, roll back the
-	// registration so we never leave a registered-but-empty worktree behind.
-	if err := s.worktree.MaterializeBranchTo(ctx, branchName, opts.Path); err != nil {
-		_ = s.indexStore.DeleteWorktree(ctx, opts.Path)
-		return nil, fmt.Errorf("worktree add: materialize source: %w", err)
-	}
-
-	// Write the linked-worktree marker (with the pinned fork-base) so `mgit` run
-	// from inside the worktree binds to the shared parent store on this task
-	// branch and computes diff/squash against the pinned base (ADR-007, ADR-008).
-	if err := s.worktree.WriteWorktreeMarkerWithBase(opts.Path, branchName, opts.TaskID, forkBase); err != nil {
-		_ = s.indexStore.DeleteWorktree(ctx, opts.Path)
-		return nil, fmt.Errorf("worktree add: write marker: %w", err)
-	}
-
 	return wt, nil
+}
+
+// claim is Add's locked phase: it advances the shared base, pins the task's
+// fork-base, and registers the worktree. The registry insert is the moment the
+// worktree's path, task and branch become this process's exclusively — the
+// UNIQUE constraints make it the single point where a concurrent race is
+// decided, so it is the last thing the lock has to cover.
+// Refs: FR-16, MGIT-120
+func (s *WorktreeService) claim(ctx context.Context, opts model.WorktreeAddOptions,
+	branchName string) (*model.WorktreeInfo, error) {
+	var wt *model.WorktreeInfo
+	err := s.guard(func() error {
+		// Auto-housekeep BEFORE forking so the new worktree carries the current
+		// local working state (incl. the developer's unpushed foundation) — the
+		// concrete advantage of an mgit worktree over a git worktree (ADR-008 §2).
+		// Then resolve+pin the fork-base so a later base resync cannot shift it.
+		forkBase, err := s.resolveForkBase(ctx, opts, branchName)
+		if err != nil {
+			return fmt.Errorf("worktree add: %w", err)
+		}
+		wt = &model.WorktreeInfo{
+			Path:      opts.Path,
+			Name:      model.DeriveNameFromPath(opts.Path),
+			Branch:    branchName,
+			TaskID:    opts.TaskID,
+			AgentID:   opts.AgentID,
+			ForkBase:  forkBase,
+			CreatedAt: s.clock(),
+		}
+		// Register in SQLite (UNIQUE constraints enforce isolation) BEFORE touching
+		// disk, so a duplicate path/task/branch is rejected without materializing
+		// anything.
+		if err := s.indexStore.InsertWorktree(ctx, wt); err != nil {
+			return fmt.Errorf("worktree add: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return wt, nil
+}
+
+// materialize is Add's unlocked phase: it writes the linked-worktree marker and
+// the claimed branch's tree under the worktree's own path. The marker is what
+// makes `mgit` run from inside the worktree bind to the shared parent store on
+// this branch and compute diff/squash against the pinned base (ADR-007,
+// ADR-008).
+//
+// The marker is written FIRST, before any content. Since this phase runs
+// unlocked, a peer's `mgit work` may fingerprint the project while this
+// worktree is still filling up; the marker (and the `.mgit` directory it lives
+// in) is what tells that walk this subtree is another worktree and not project
+// content to absorb into the shared base. Refs: MGIT-17, MGIT-120
+func (s *WorktreeService) materialize(ctx context.Context, wt *model.WorktreeInfo) error {
+	if err := s.worktree.WriteWorktreeMarkerWithBase(wt.Path, wt.Branch, wt.TaskID, wt.ForkBase); err != nil {
+		return fmt.Errorf("worktree add: write marker: %w", err)
+	}
+	if err := s.worktree.MaterializeBranchTo(ctx, wt.Branch, wt.Path); err != nil {
+		return fmt.Errorf("worktree add: materialize source: %w", err)
+	}
+	return nil
+}
+
+// guard runs fn under the repo-wide process lock when a locker is wired, and
+// directly otherwise. A nil locker means the caller already holds the lock for
+// its whole operation — re-acquiring it in-process would deadlock on our own
+// flock. Refs: MGIT-120, ADR-009
+func (s *WorktreeService) guard(fn func() error) error {
+	if s.locker == nil {
+		return fn()
+	}
+	return s.locker.Guard(fn)
 }
 
 // resolveForkBase ensures the base is synced (unless an explicit --base is

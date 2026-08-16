@@ -4,27 +4,79 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // InsertWorktree adds a worktree record to the index.
-// UNIQUE constraints on task_id and path enforce isolation.
-// Refs: FR-16.11, MGIT-8.1.2
+//
+// The UNIQUE constraints on path, task_id and branch_name are not bookkeeping:
+// they are what ENFORCES the FR-16 exclusivity rules (one worktree per path,
+// per task, per branch) between concurrent `mgit work` processes. The repo-wide
+// process lock serializes the racers, but this insert is the single point at
+// which a winner is decided, so a conflict is translated into the matching
+// named refusal rather than surfacing a raw SQLite constraint string.
+// Refs: FR-16.11, MGIT-8.1.2, MGIT-120
 func (s *Store) InsertWorktree(ctx context.Context, wt *model.WorktreeInfo) error {
 	const insertSQL = `INSERT INTO worktrees (path, branch_name, task_id, agent_id, created_at, fork_base)
 		VALUES (?, ?, ?, ?, ?, ?)`
 
-	return s.WriteTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, insertSQL,
+	err := s.WriteTx(ctx, func(tx *sql.Tx) error {
+		_, execErr := tx.ExecContext(ctx, insertSQL,
 			wt.Path, wt.Branch, wt.TaskID, wt.AgentID,
 			s.clock().UTC().Format(time.RFC3339), wt.ForkBase)
-		if err != nil {
-			return fmt.Errorf("insert worktree: %w", err)
+		if execErr != nil {
+			return fmt.Errorf("insert worktree: %w", execErr)
 		}
 		return nil
 	})
+	if err != nil {
+		return s.classifyWorktreeConflict(ctx, err, wt)
+	}
+	return nil
+}
+
+// classifyWorktreeConflict maps a UNIQUE-constraint failure on the worktrees
+// table to the sentinel that names WHICH exclusivity rule refused the insert,
+// and points at the worktree that already holds the contested resource. A
+// non-constraint error is returned unchanged. The holder lookup is best-effort:
+// the refusal must still be clear when the registry cannot be re-read.
+// Refs: FR-16, MGIT-120
+func (s *Store) classifyWorktreeConflict(ctx context.Context, err error, wt *model.WorktreeInfo) error {
+	msg := err.Error()
+	if !strings.Contains(msg, "UNIQUE constraint failed") {
+		return err
+	}
+	switch {
+	case strings.Contains(msg, "worktrees.task_id"):
+		return fmt.Errorf("%w: task %s%s", model.ErrTaskAlreadyBound, wt.TaskID,
+			s.holderSuffix(ctx, "task_id", wt.TaskID))
+	case strings.Contains(msg, "worktrees.branch_name"):
+		return fmt.Errorf("%w: branch %s%s", model.ErrBranchInUse, wt.Branch,
+			s.holderSuffix(ctx, "branch_name", wt.Branch))
+	case strings.Contains(msg, "worktrees.path"):
+		return fmt.Errorf("%w: %s", model.ErrWorktreeExists, wt.Path)
+	}
+	return err
+}
+
+// holderSuffix returns " (held by worktree <path>)" for the row already holding
+// the contested column value, or "" when it cannot be read. column is an
+// internal literal (never user input), so it is safe to interpolate; the VALUE
+// is always parameterized. Refs: MGIT-120
+func (s *Store) holderSuffix(ctx context.Context, column, value string) string {
+	var path string
+	//nolint:gosec // column is one of two internal literals; the value is parameterized
+	query := "SELECT path FROM worktrees WHERE " + column + " = ?"
+	err := s.ReadTx(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, query, value).Scan(&path)
+	})
+	if err != nil || path == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (held by worktree %s)", path)
 }
 
 // GetWorktree retrieves a worktree by path.

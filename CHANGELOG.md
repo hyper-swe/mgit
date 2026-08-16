@@ -64,6 +64,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Concurrent `mgit work` no longer times out on the repo lock (MGIT-120).**
+  `mgit work` held the repo-wide exclusive lock for its whole lifetime — across
+  a full working-tree fingerprint, the worktree materialization *and* the
+  `mgit-sandboxd` round-trip — so the worker-pool shape every fleet starts with
+  serialized and then failed: the fleet soak measured concurrent provisions
+  dying with `another mgit process is running: held by PID ... after 30s`. The
+  tell was that `mgit sandbox launch` performs the same daemon registration
+  while taking no repo lock at all.
+
+  Provisioning now runs in two phases: a **locked claim** (base resync, task
+  branch, registry insert) and an **unlocked materialize** (marker + branch tree
+  into the worktree's own path, then the sandbox launch). The narrowing is safe
+  because the lock was never what enforced FR-16's exclusivity rules — the
+  registry's `UNIQUE(path)`/`UNIQUE(task_id)`/`UNIQUE(branch_name)` constraints
+  are, and the insert precedes any disk write, so exactly one racer wins and
+  owns its path/task/branch for the whole unlocked phase. Race losers are now
+  refused *by name* (`task already bound to a worktree: T-1 (held by worktree
+  wt-a)`) instead of by a raw SQLite constraint string.
+  [ADR-009](docs/adr/009-per-operation-locking.md) is amended accordingly: the
+  lock is scoped to a shared-store mutation, never to a process — server or CLI.
+
+  Two defects found alongside it are fixed too. A worktree materialized
+  **inside** the repo root was walked as project content by every later
+  fingerprint (quadratic as a pool warms up) and absorbed into the shared base,
+  so each new worktree carried a copy of every earlier one; the walk now skips
+  any nested mgit root wherever it sits. And `locks.timeout_seconds` — promised
+  by REQUIREMENTS.md while the code carried a compile-time constant — is now
+  real (default 30s unchanged, capped at 3600s), which also required
+  `mgit config set` to stop rejecting numeric and boolean values.
+
+  Measured on a loaded scratch repo: before, 2 of 4 concurrent provisions failed
+  and the winner took 65s; after, 6 of 6 succeed in 1–2s each.
+
 - **`mgit export --format git` now emits a real patch (MGIT-112).** It rendered
   a syntactically valid mbox with ZERO hunks: the export correctly squashed in
   dry-run so it would not mutate state, then rendered from `FileDiffs` that

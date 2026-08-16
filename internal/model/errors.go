@@ -95,6 +95,12 @@ var (
 	// ErrWorktreeNotFound indicates a worktree does not exist.
 	ErrWorktreeNotFound = errors.New("worktree not found")
 
+	// ErrWorktreeExists indicates a worktree is already registered at a path.
+	// It is the third of the three FR-16 exclusivity refusals (alongside
+	// ErrTaskAlreadyBound and ErrBranchInUse) and is what the loser of a race
+	// to provision the same path sees. Refs: FR-16, MGIT-120
+	ErrWorktreeExists = errors.New("worktree already registered at path")
+
 	// ErrFileNotFound indicates a path is absent from a commit's tree.
 	// Refs: FR-6.7
 	ErrFileNotFound = errors.New("file not found in commit")

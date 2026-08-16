@@ -1,16 +1,25 @@
-# ADR-009: Per-Operation Repo Locking for the Long-Lived Server
+# ADR-009: Per-Operation Repo Locking for Long-Lived Operations
 
-**Status:** Accepted
+**Status:** Accepted (amended 2026-08-16, MGIT-120)
 **Date:** 2026-07-03
-**Refs:** MGIT-46, MGIT-10 (process lock), ADR-001 (embedded git)
+**Refs:** MGIT-46, MGIT-120, MGIT-10 (process lock), ADR-001 (embedded git)
 
 ## Context
 
 Every mgit process serializes on one advisory file lock —
 `.mgit/locks/mgit.lock`, an exclusive `flock(2)` acquired in `OpenApp` and held
-until the process closes its stores (MGIT-10, `internal/store/lock`). For a CLI
-command this is exactly right: the lock is held for the command's (short)
-lifetime, giving a single-writer guarantee across concurrent `mgit` processes.
+until the process closes its stores (MGIT-10, `internal/store/lock`). The
+original decision below reasoned that this is exactly right for a CLI command,
+because the lock is then held for the command's (short) lifetime.
+
+> **Amendment (2026-08-16, MGIT-120): "a CLI command is short" was an
+> assumption, and it was wrong.** `mgit work` — the command every parallel
+> agent starts with — held the lifetime lock across a full working-tree
+> fingerprint, a whole worktree materialization and, with `--sandbox`, a
+> round-trip to a daemon that may be booting another agent's VM. The fleet soak
+> measured four concurrent provisions on a loaded repo: one held the lock for
+> more than thirty seconds and the waiters died with the very error this ADR was
+> written to eliminate. See "Amendment" below for the corrected rule.
 
 `mgit serve` broke the assumption. It opens the same `App` and holds the
 lifetime lock for **the whole life of the server**. An external trial (2026-07-03)
@@ -74,6 +83,7 @@ Concretely:
   the correctness argument trivial.
 - **CLI is untouched.** Only `serve` detaches; every CLI command keeps holding
   the lock for its command lifetime, so its single-writer behavior is identical.
+  *(Superseded by the amendment below: the provisioning commands detach too.)*
 
 ## Alternatives considered
 
@@ -84,3 +94,76 @@ Concretely:
 - **A separate in-process RW mutex in the server plus the lifetime flock.** Would
   fix in-process races but not the cross-process CLI starvation, which is the
   actual reported bug.
+
+---
+
+## Amendment (2026-08-16) — the rule is about DURATION, not about `serve`
+
+**Refs:** MGIT-120
+
+### What went wrong
+
+The original decision drew the line in the wrong place: around the *kind* of
+process (server vs. CLI) rather than around *how long the work takes*. `mgit
+work` is a CLI command, so it kept the lifetime lock — and it is the least
+short command mgit has. Inside one critical section it ran:
+
+1. `SyncService.EnsureSyncedForNewWorktree` → `WorkingTreeFingerprint`, which
+   reads and SHA-256s every working file;
+2. `WorktreeStore.MaterializeBranchTo`, which inflates and writes every blob of
+   the branch tree to disk, serially;
+3. with `--sandbox`, `EnsureRunning` + `Launch` against `mgit-sandboxd`, whose
+   own service mutex is held across a full VM boot.
+
+The tell was already in the tree: `mgit sandbox launch` performs the same daemon
+registration and opens **no** `App` at all, so it takes no repo lock. One command
+was holding the repo-wide lock across a call its sibling makes without it.
+
+### The corrected rule
+
+**The exclusive repo lock is held for the duration of the shared-store mutation,
+never for the duration of a process — server or CLI.** Any operation that is not
+bounded by store work detaches the lifetime lock (`App.DetachLock`) and guards
+the mutation itself.
+
+Concretely, `mgit work` and `mgit worktree add` now split provisioning in two:
+
+| Phase | Lock | What runs | Why that scope is correct |
+|---|---|---|---|
+| **Claim** | held | base resync, task-branch resolve/create, registry insert | every step mutates state shared by all worktrees: the base branch, the refs, the registry |
+| **Materialize** | free | marker + branch tree written under the worktree's own path | the path, task and branch are already this process's exclusively (below); the objects read are reachable from the ref the claim created, so a concurrent `gc` cannot collect them |
+| **Sandbox** | free | the `mgit-sandboxd` round-trip | touches no repo state whatsoever — the same call `mgit sandbox launch` makes unlocked |
+
+### Why narrowing does not open a race
+
+The lock was not what enforced FR-16's exclusivity rules — the registry was, and
+still is. `worktrees` carries `UNIQUE(path)`, `UNIQUE(task_id)` and
+`UNIQUE(branch_name)`, and the insert happens **before** anything is written to
+disk. So the registry insert is the single point at which a concurrent race is
+decided: exactly one claimant wins, every other is refused, and the winner owns
+its path/task/branch for the whole unlocked phase. What changed is only that the
+refusal is now *named* (`task already bound to a worktree`, `branch checked out
+in another worktree`) instead of surfacing a raw SQLite constraint string.
+
+One ordering detail is load-bearing: the worktree's marker is written **before**
+its content. A peer's `mgit work` may fingerprint the project while this
+worktree is still filling up, and the walk skips any directory carrying its own
+`.mgit` — so a half-materialized worktree is never mistaken for project content
+and absorbed into the shared base.
+
+### Reentrancy is the hazard to respect
+
+`flock` is per *open file description*, so a second acquire inside the same
+process blocks on the first. A component that guards its own critical section
+(`WorktreeService.WithLocker`) must therefore be wired **only** by callers that
+hold no lock — the CLI commands that have just detached. The MCP and REST
+surfaces are already inside a `Guard`, so they wire no locker and the service
+runs pass-through, exactly as `Guarder.Guard` treats a nil receiver.
+
+### Timeout
+
+The wait is now `locks.timeout_seconds` from `.mgit/config.json` (default 30s,
+capped at 1h), as REQUIREMENTS.md FR-4.7/NFR-3.5 had promised all along while
+the code carried a compile-time constant. It is an escape hatch for an operator
+on a busy repo, not a remedy: widening the wait converts a wedge into a slower
+wedge. The remedy is this amendment's rule.

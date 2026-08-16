@@ -4,7 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/hyper-swe/mgit/internal/store/lock"
 )
 
 // Config represents the mgit configuration stored in .mgit/config.json.
@@ -21,6 +25,20 @@ type Config struct {
 	Rollback RollbackConfig `json:"rollback"`
 	Branch   BranchConfig   `json:"branch"`
 	Audit    AuditConfig    `json:"audit"`
+	Locks    LocksConfig    `json:"locks"`
+}
+
+// LocksConfig holds process-lock settings.
+//
+// TimeoutSeconds is how long an mgit process waits for the repo-wide exclusive
+// lock (`.mgit/locks/mgit.lock`) before failing with ErrLockHeld. It exists
+// because REQUIREMENTS.md (FR-4.7, NFR-3.5) promised `locks.timeout_seconds`
+// while the code carried a compile-time constant, leaving an operator on a busy
+// repo with no knob at all. Widening it is a workaround, never a fix: a command
+// that holds the lock across slow work is the defect (MGIT-120).
+// Refs: FR-4.7, NFR-3.5, MGIT-120
+type LocksConfig struct {
+	TimeoutSeconds int `json:"timeout_seconds"`
 }
 
 // ProjectConfig holds project-level settings.
@@ -86,7 +104,52 @@ func DefaultConfig() Config {
 		Rollback: RollbackConfig{AutoReopen: true},
 		Branch:   BranchConfig{AutoCreate: true},
 		Audit:    AuditConfig{LogFile: ".mgit/audit.log", MaxSizeMB: 100},
+		Locks:    LocksConfig{TimeoutSeconds: int(lock.DefaultTimeout / time.Second)},
 	}
+}
+
+// MaxLockTimeout caps `locks.timeout_seconds`. Input is hostile even from the
+// repo's own config file: an absurd value would turn a contended lock into an
+// unbounded hang with no diagnostic, which is strictly worse than a named
+// failure. Refs: NFR-5, MGIT-120
+const MaxLockTimeout = time.Hour
+
+// LockTimeoutFromConfig returns the process-lock wait timeout configured at
+// configPath (`locks.timeout_seconds`), or lock.DefaultTimeout when the file is
+// absent, unreadable, unparseable, or the value is not positive — so the
+// out-of-the-box behavior is exactly what it was before the knob existed.
+// Values above MaxLockTimeout are clamped.
+//
+// It is deliberately a standalone, best-effort read rather than a ConfigService
+// method: the timeout must be known BEFORE the lock is acquired, which is
+// before any store (including the ConfigService's own load) is opened. A
+// malformed config is not swallowed — OpenApp still loads it through
+// NewConfigService afterwards and fails loudly there.
+// Refs: FR-4.7, NFR-3.5, MGIT-120
+func LockTimeoutFromConfig(configPath string) time.Duration {
+	data, err := os.ReadFile(configPath) //nolint:gosec // internal path under .mgit
+	if err != nil {
+		return lock.DefaultTimeout
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return lock.DefaultTimeout
+	}
+	return clampLockTimeout(cfg.Locks.TimeoutSeconds)
+}
+
+// clampLockTimeout turns a configured second count into a usable duration:
+// non-positive means "unset" (the default), and anything over MaxLockTimeout is
+// capped. Refs: MGIT-120
+func clampLockTimeout(seconds int) time.Duration {
+	if seconds <= 0 {
+		return lock.DefaultTimeout
+	}
+	d := time.Duration(seconds) * time.Second
+	if d > MaxLockTimeout {
+		return MaxLockTimeout
+	}
+	return d
 }
 
 // ConfigService manages mgit configuration via .mgit/config.json.
@@ -144,8 +207,47 @@ func (s *ConfigService) Get(key string) (any, error) {
 }
 
 // Set updates a config value by dot-notation key.
-// Refs: FR-13
+//
+// A CLI value always arrives as a string, so a numeric or boolean setting
+// (`locks.timeout_seconds`, `api.http_port`, `git.auto_stage`) would be
+// rejected by the typed apply below. When the string form does not fit the
+// field, Set retries once with the value coerced to the scalar it spells —
+// making every documented key actually settable from `mgit config set`, not
+// just the string-typed ones. Refs: FR-13, MGIT-120
 func (s *ConfigService) Set(key string, value any) error {
+	err := s.applySet(key, value)
+	if err == nil {
+		return nil
+	}
+	if coerced, ok := coerceScalar(value); ok {
+		if retryErr := s.applySet(key, coerced); retryErr == nil {
+			return nil
+		}
+	}
+	return err
+}
+
+// coerceScalar converts a CLI string to the bool or number it spells, reporting
+// false when it spells neither (so a genuinely-string setting is left alone).
+// Refs: FR-13, MGIT-120
+func coerceScalar(value any) (any, bool) {
+	s, ok := value.(string)
+	if !ok {
+		return nil, false
+	}
+	if b, err := strconv.ParseBool(s); err == nil {
+		return b, true
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return f, true
+	}
+	return nil, false
+}
+
+// applySet writes value at the dot-notation key through a marshal/unmarshal
+// round-trip, so an unknown key or a value of the wrong type is rejected by the
+// typed Config rather than silently stored. Refs: FR-13
+func (s *ConfigService) applySet(key string, value any) error {
 	data, err := json.Marshal(s.config)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)

@@ -112,9 +112,17 @@ func workCmd() *cobra.Command {
 // runWork is the production runner: it wires the App's worktree service into
 // workDeps and invokes the orchestrator. Refs: MGIT-34
 func runWork(ctx context.Context, app *App, opts workOptions) error {
+	// PER-OPERATION LOCKING (MGIT-120, ADR-009 amendment). `mgit work` is not a
+	// short command: it materializes a worktree and, with --sandbox, waits on a
+	// daemon that may be booting another agent's VM. Holding the repo-wide
+	// exclusive lock for that whole lifetime made N concurrent provisions
+	// serialize and then time out — the same starvation ADR-009 fixed for
+	// `serve`, with the CLI as the offender. So the lifetime lock is released
+	// here and re-acquired around the shared-store phase alone.
 	wtSvc := service.NewWorktreeService(app.Index, app.Branch,
 		gitstore.NewWorktreeStore(app.Repo), func() time.Time { return time.Now().UTC() }).
-		WithSync(app.Sync, app.Repo, gitstore.NewCommitStore(app.Repo))
+		WithSync(app.Sync, app.Repo, gitstore.NewCommitStore(app.Repo)).
+		WithLocker(app.DetachLock())
 	deps := workDeps{
 		addWorktree:     wtSvc.Add,
 		writeAdapters:   injectAgentAdapters,

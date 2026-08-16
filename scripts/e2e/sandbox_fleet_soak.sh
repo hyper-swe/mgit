@@ -216,12 +216,12 @@ create_sandbox() {
 	provision "$1" && launch_sandbox "$1"
 }
 
-# provision <task> creates the task-bound worktree only. `mgit work` takes the
-# repo-wide exclusive lock for its whole lifetime, so provisioning is SERIALIZED
-# throughout this soak: running it concurrently produces lock timeouts that have
-# nothing to do with the fleet, and an invariant must not be measured through a
-# confounder. The concurrency of provisioning is itself asserted, once, in phase
-# 0 -- where it is the subject rather than the noise. Refs: MGIT-120
+# provision <task> creates the task-bound worktree only. The fleet phases below
+# call it SERIALLY -- no longer because they must (since MGIT-120 `mgit work`
+# holds the repo lock across its shared-store phase only, and concurrent
+# provisioning is asserted on its own in phase 7), but because those phases
+# measure sandbox lifecycle: provisioning separately keeps a fleet invariant
+# from being read through provisioning noise. Refs: MGIT-120
 provision() {
 	local t="$1" o
 	if ! o="$(mgit work "wt-$t" --task-id "$t" 2>&1)"; then
@@ -307,8 +307,8 @@ track() { CREATED_TASKS="$CREATED_TASKS $1"; }
 # ---------------------------------------------------------------------------
 echo
 echo "== phase 1: bring up $FLEET sandboxes CONCURRENTLY =="
-# Worktrees first, serially: `mgit work` holds the repo lock (MGIT-120), and
-# provisioning is not what this phase measures.
+# Worktrees first, serially: provisioning is not what this phase measures
+# (its own concurrency is phase 7's subject).
 for i in $(seq 1 "$FLEET"); do
 	track "F-$i"
 	provision "F-$i" || _e2e_fail "could not provision worktree for F-$i: $(why "F-$i")"
@@ -384,8 +384,8 @@ echo "== phase 2: $CHURN_ROUNDS churn rounds — create/destroy overlapping live
 for r in $(seq 1 "$CHURN_ROUNDS"); do
 	: >"$work/.churn-failed"
 	# Pre-provision this round's transient worktrees serially, so the churn
-	# below is pure sandbox lifecycle (register/boot/destroy) rather than a
-	# contest for the repo lock (MGIT-120).
+	# below is pure sandbox lifecycle (register/boot/destroy) and not mixed
+	# with provisioning work.
 	for c in 1; do
 		track "C$r-$c"
 		provision "C$r-$c" || _e2e_fail "could not provision churn worktree C$r-$c: $(why "C$r-$c")"
@@ -589,12 +589,16 @@ echo "== phase 7: $FLEET agents provision task worktrees CONCURRENTLY =="
 # <own task> --sandbox` at once. Registration is lazy, so this costs no VM boot.
 #
 # It runs LAST, deliberately. The same check at the top of a fresh scratch repo
-# passes: `mgit work` holds the repo-wide lock across a full working-tree
-# fingerprint and a worktree materialization, and on an empty repo both are
-# instant. The contention appears once the repo carries the worktrees the soak
-# has just created -- which is exactly how it appears in production, as a worker
-# pool warms up. Asserting it against an empty repo would have been a check that
-# could not observe the defect it names. Refs: MGIT-120
+# passed even while MGIT-120 was open: `mgit work` held the repo-wide lock
+# across a full working-tree fingerprint and a worktree materialization, and on
+# an empty repo both are instant. The contention appeared only once the repo
+# carried the worktrees the soak has just created -- which is exactly how it
+# appears in production, as a worker pool warms up. Asserting it against an
+# empty repo would have been a check that could not observe the defect it names,
+# so keep this phase here even though the defect is fixed. Refs: MGIT-120
+#
+# A provision that produced a directory but no linked-worktree marker is NOT a
+# success: the exit status alone would let a half-provisioned worktree pass.
 : >"$work/.p7-failed"
 pids=""
 for i in $(seq 1 "$FLEET"); do
@@ -603,6 +607,9 @@ for i in $(seq 1 "$FLEET"); do
 		if ! o="$(mgit work "wt-P7-$i" --task-id "P7-$i" --sandbox --image "$MGIT_GUEST_IMAGE" \
 			--memory-mb "$SB_MEM_MB" --cpus "$SB_CPUS" 2>&1)"; then
 			printf 'P7-%s: %s\n' "$i" "$(printf '%s' "$o" | tr '\n' ' ' | cut -c1-200)" >"$work/.why-P7-$i"
+			echo "P7-$i" >>"$work/.p7-failed"
+		elif [ ! -f "$work/wt-P7-$i/.mgit/worktree" ]; then
+			printf 'P7-%s: exited 0 but produced no linked-worktree marker\n' "$i" >"$work/.why-P7-$i"
 			echo "P7-$i" >>"$work/.p7-failed"
 		fi
 	) &
@@ -613,15 +620,9 @@ for p in $pids; do wait "$p" || true; done
 if [ -s "$work/.p7-failed" ]; then
 	# shellcheck disable=SC2046 # deliberate word splitting: one task per argument
 	why $(cat "$work/.p7-failed")
-	if grep -q "another mgit process is running" "$work"/.why-P7-* 2>/dev/null; then
-		known_defect "MGIT-120" \
-			"$(wc -l <"$work/.p7-failed" | tr -d ' ') of $FLEET concurrent \`mgit work --sandbox\` provisions timed out on the repo-wide exclusive lock (30s, not configurable) — the worker-pool shape this gate exists for"
-	else
-		_e2e_fail "CONCURRENT PROVISIONING BROKE: $(tr '\n' ' ' <"$work/.p7-failed")failed for a reason other than lock contention; the recorded reasons above are the evidence"
-	fi
-else
-	pass "phase 7: $FLEET concurrent provisions succeeded against a loaded repo"
+	_e2e_fail "CONCURRENT PROVISIONING BROKE: $(tr '\n' ' ' <"$work/.p7-failed")failed; the recorded reasons above are the evidence. \`another mgit process is running\` here would be a REGRESSION of MGIT-120 — the repo lock must not be held across worktree materialization or the sandboxd round-trip"
 fi
+pass "phase 7: $FLEET concurrent provisions succeeded against a loaded repo"
 for i in $(seq 1 "$FLEET"); do mgit sandbox remove "P7-$i" --force >/dev/null 2>&1 || true; done
 
 # ---------------------------------------------------------------------------

@@ -267,7 +267,7 @@ CREATE TABLE branch_locks (
     expires_at  TEXT NOT NULL
 );
 ```
-This table is used by squash and rollback operations to prevent concurrent modifications to the same branch. Lock timeout is 30 seconds (configurable via `locks.timeout_seconds`). Expired locks are auto-cleaned. See NFR-3.5 for the full two-level locking model.
+This table is used by squash and rollback operations to prevent concurrent modifications to the same branch. A branch lease's duration is supplied by the caller of `LockBranch` (30 seconds is the conventional value); expired locks are auto-cleaned. The **process** lock's wait is what `locks.timeout_seconds` configures — see NFR-3.5 for the full two-level locking model and the knob's exact scope.
 
 ---
 
@@ -1197,14 +1197,16 @@ The `land` integrity guarantees (dual hash per ADR-002, task-ID binding, host-an
 
 **Level 1: Process-level PID lock** (`.mgit/locks/mgit.lock`):
 - Prevents multiple mgit processes from writing simultaneously
-- Contains PID + timestamp; stale locks auto-cleaned on startup (FR-1.4)
+- Contains PID + holder command; released by the kernel on process exit, so a stale lockfile cannot block a future run (FR-1.4)
 - All write operations acquire this lock; read operations do not
+- **Wait timeout: 30 seconds, configurable via `locks.timeout_seconds` in `.mgit/config.json`** (values ≤ 0 mean "unset" and keep the 30s default; the wait is capped at 3600s). On expiry the command fails with `another mgit process is running`, naming the holding command
+- **Scope: the lock is held for the duration of a shared-store MUTATION, never for the duration of a process.** A long-lived server (`mgit serve`) and a long-running provisioning command (`mgit work`, `mgit worktree add`) both detach the lifetime lock and guard only their store phase. Raising `locks.timeout_seconds` is an operator escape hatch, never the fix for a command that holds the lock across slow work — see ADR-009 and its MGIT-120 amendment
 
 **Level 2: Branch-level advisory locks** (SQLite `branch_locks` table):
 - Prevents concurrent squash/rollback on the same branch
 - Schema: `CREATE TABLE branch_locks (branch TEXT PRIMARY KEY, agent_id TEXT NOT NULL, locked_at TEXT NOT NULL, expires_at TEXT NOT NULL)`
-- Lock timeout: 30 seconds (configurable via `locks.timeout_seconds`)
-- If lock holder crashes, lock auto-expires after timeout
+- Lease duration is supplied by the caller of `LockBranch` (conventionally 30 seconds); it is NOT what `locks.timeout_seconds` configures
+- If lock holder crashes, lock auto-expires at `expires_at`
 - PID lock and branch locks are independent: PID lock is for process mutual exclusion, branch locks are for operation coordination within a single process or across MCP tool invocations
 
 Read operations are always safe (WAL mode). If a write fails due to PID lock contention, return `ErrLockContention` with advisory: `"another mgit process is writing — retry in a moment"`. If a branch lock fails, return `ErrBranchLocked` with the locking agent_id and expiry time.

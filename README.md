@@ -581,6 +581,7 @@ Stored in `.mgit/config.json`, managed via `mgit config get/set/list`.
 | `squash.auto_notify` | `true` | Notify mtix on squash |
 | `rollback.auto_reopen` | `true` | Reopen tasks on rollback |
 | `branch.auto_create` | `true` | Auto-create branch on first task commit |
+| `locks.timeout_seconds` | `30` | How long a command waits for the repo lock (`.mgit/locks/mgit.lock`) before failing with `another mgit process is running`. Capped at 3600. Widening it is a workaround, never a fix: a command that holds the lock across slow work is the defect |
 
 ## Development
 
