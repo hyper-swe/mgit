@@ -86,7 +86,7 @@ func TestEnsureSynced_ReadOnlyGit_NeverMutatesDotGit(t *testing.T) {
 
 	before := gitSnapshot(t, dir)
 	svc := NewSyncService(env.repo, env.wt, env.cs, "", fixedClock()) // production gitref reader
-	require.NoError(t, svc.EnsureSynced(ctx))
+	require.NoError(t, svc.EnsureSyncedForNewWorktree(ctx))
 	after := gitSnapshot(t, dir)
 
 	assert.Equal(t, before, after, "EnsureSynced must never mutate the project .git")
@@ -162,7 +162,7 @@ func TestEnsureSynced_Concurrent_NoCorruption(t *testing.T) {
 			defer func() { _ = repo.Close() }()
 			svc := NewSyncService(repo, gitstore.NewWorktreeStore(repo),
 				gitstore.NewCommitStore(repo), "", clock)
-			_ = svc.EnsureSynced(context.Background())
+			_ = svc.EnsureSyncedForNewWorktree(context.Background())
 		}()
 	}
 	wg.Wait()

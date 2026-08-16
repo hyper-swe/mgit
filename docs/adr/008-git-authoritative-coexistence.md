@@ -1,8 +1,8 @@
 # ADR-008: Git-Authoritative Coexistence and Auto-Housekeeping
 
-**Status:** Accepted (revised 2026-06-26 — §2: base = current LOCAL working state pinned per task, not the pushed integration ref; after real-use validation, MGIT-28/35)
+**Status:** Accepted (revised 2026-06-26 — §2: base = current LOCAL working state pinned per task, not the pushed integration ref; after real-use validation, MGIT-28/35. **Amended 2026-08-16 — §3: read verbs never absorb uncommitted content; see "Amendment (MGIT-123)" below**)
 **Date:** 2026-06-26
-**Refs:** MGIT-35, MGIT-14 (mgit-over-git coexistence), ADR-001 (Embedded git), ADR-007 (Linked-worktree binding), MGIT-26 (dogfood), MGIT-32 (.gitignore), MGIT-34 (`mgit work`)
+**Refs:** MGIT-35, MGIT-14 (mgit-over-git coexistence), ADR-001 (Embedded git), ADR-007 (Linked-worktree binding), MGIT-26 (dogfood), MGIT-32 (.gitignore), MGIT-34 (`mgit work`), MGIT-123 (read verbs must not absorb)
 
 ## Context
 
@@ -51,6 +51,10 @@ hotfix` from silently re-basing (and mis-landing) in-flight work. The hazard is
 build on a different base targets it explicitly and pinned:
 `mgit work --task <ID> --base <ref>`.
 
+Note (MGIT-123): this working-state capture is scoped to **worktree creation**.
+It is not a licence for a read verb to absorb uncommitted content — see the
+amendment in §3.
+
 mgit reads `.git` **read-only** only to learn the current local `HEAD`/ref. It
 does NOT require the work to be pushed, and it does NOT base on the remote/pushed
 integration ref — doing so would erase the local-foundation advantage above.
@@ -72,6 +76,40 @@ Only NEW worktrees pick up a resync; each task's **pinned** fork-base (§4) is
 untouched, so an in-flight task never shifts under the agent. The common path
 is the cheap compare; a full re-import runs only on real drift. It **fails
 loud** — it never materializes or diffs against a *known-stale* base.
+
+> **Amended 2026-08-16 (MGIT-123): what a resync may absorb depends on WHO
+> triggered it.** As originally written, this section applied one resync — the
+> §2 working-state capture — to every base-dependent command, including the
+> read verbs. That is the defect MGIT-123 records: `mgit status` absorbed the
+> user's *uncommitted* edit into an untagged `[mgit-sync]` base commit, so
+> `status` then reported a clean tree (it had just made it so), `add` staged
+> against a base that already matched, and `commit` correctly refused a tree
+> identical to its parent. The user's change silently landed in housekeeping
+> instead of a task-tagged micro-commit — defeating the premise that every
+> coherent step is traceable to a task. The gate is therefore split:
+>
+> - **Read verbs** (`mgit status`, `mgit diff`, the MCP `status` tool) use the
+>   **read-safe** gate. It fires only when git's **committed** `HEAD` has moved,
+>   and absorbs only content git has **committed**. Untracked files, modified
+>   tracked files and staged task WIP are the user's uncommitted work: they stay
+>   out of the base, visible to `status` and committable to a task. *A command
+>   that reports state must not change the state it reports.*
+> - **New-worktree creation** (`mgit work` / `worktree add` / materialize) keeps
+>   the full §2 capture, including uncommitted local foundation, so the worktree
+>   materializes present-and-building. This is the one place absorption is
+>   legitimate, because the user explicitly asked to fork a new base from *here*.
+>
+> This does not weaken the drift protection §3 exists for. The MGIT-26 drift
+> that motivated this ADR was **committed** drift (work delivered via plain
+> `git commit`), and the read-safe gate still heals exactly that. The read path
+> also carries the stored working-tree fingerprint forward rather than advancing
+> it, so it can never convince the new-worktree gate that foundation already in
+> the working tree is already in the base.
+>
+> Implemented as `SyncService.EnsureSynced` (read-safe) vs
+> `SyncService.EnsureSyncedForNewWorktree` (foundation), with
+> `gitref.CommittedBlobs` reading git's `HEAD` tree read-only to define
+> "committed". MGIT-56 (staged task WIP is never absorbed) is subsumed and kept.
 
 ### 4. Each task pins its fork-base
 

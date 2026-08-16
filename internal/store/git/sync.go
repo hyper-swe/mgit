@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+
+	"github.com/go-git/go-git/v5/plumbing"
 )
 
 // This file is the store-side support for ADR-008 auto-housekeeping: a cheap,
@@ -40,6 +42,33 @@ func (r *Repository) WorkingTreeFingerprint() (string, error) {
 		fmt.Fprintf(h, "%s\x00%o\x00%x\n", rel, mode, blob)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// PathsMatchingCommitted returns the subset of paths whose CURRENT working-tree
+// content is byte-identical to the content git has COMMITTED for that path
+// (committed maps project-relative path -> git blob id, from
+// gitref.CommittedBlobs). A path absent from committed is untracked in git, and
+// a path whose content differs is locally modified: both are the user's
+// UNCOMMITTED work, and neither may be absorbed into the base by a read verb's
+// auto-resync — absorbing them is what made a user's edit uncommittable and
+// untraceable in MGIT-123. Comparison is by git blob id, so it is exact and
+// case-preserving. Refs: MGIT-123, ADR-008 §3
+func (r *Repository) PathsMatchingCommitted(committed map[string]string, paths []string) ([]string, error) {
+	var out []string
+	for _, rel := range paths {
+		want, tracked := committed[rel]
+		if !tracked {
+			continue // untracked in git → uncommitted user work
+		}
+		data, _, err := r.workingFileContent(rel)
+		if err != nil {
+			return nil, fmt.Errorf("compare %s against git-committed content: %w", rel, err)
+		}
+		if plumbing.ComputeHash(plumbing.BlobObject, data).String() == want {
+			out = append(out, rel)
+		}
+	}
+	return out, nil
 }
 
 // ClearStaging resets the staging area. It is the exported entry point the

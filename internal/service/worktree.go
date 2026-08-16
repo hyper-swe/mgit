@@ -121,7 +121,11 @@ func (s *WorktreeService) resolveForkBase(ctx context.Context, opts model.Worktr
 		return s.createBranchAtBase(ctx, opts.TaskID, opts.Base)
 	}
 	if s.sync != nil {
-		if err := s.sync.EnsureSynced(ctx); err != nil {
+		// A NEW worktree legitimately captures the developer's uncommitted local
+		// foundation so it materializes present-and-building (ADR-008 §2). This
+		// is the ONLY caller allowed to absorb uncommitted content; read verbs
+		// use the read-safe EnsureSynced. Refs: MGIT-123, ADR-008 §2,§3
+		if err := s.sync.EnsureSyncedForNewWorktree(ctx); err != nil {
 			return "", fmt.Errorf("auto-resync base: %w", err)
 		}
 	}
