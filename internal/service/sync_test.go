@@ -44,7 +44,7 @@ func TestEnsureSynced_NewWorktreeCarriesLocalFoundation(t *testing.T) {
 	writeProjectFile(t, env, "foundation.go", "package foundation\n")
 
 	svc := newSyncService(env, "aaaa", "")
-	require.NoError(t, svc.EnsureSynced(ctx))
+	require.NoError(t, svc.EnsureSyncedForNewWorktree(ctx))
 
 	// The base now contains the foundation file.
 	head, err := env.repo.Head()
@@ -62,14 +62,14 @@ func TestEnsureSynced_DriftAfterChange_AutoResyncs(t *testing.T) {
 
 	writeProjectFile(t, env, "a.go", "v1\n")
 	svc := newSyncService(env, "head1", "")
-	require.NoError(t, svc.EnsureSynced(ctx))
+	require.NoError(t, svc.EnsureSyncedForNewWorktree(ctx))
 	base1, err := env.repo.Head()
 	require.NoError(t, err)
 
 	// Same-size content change (would defeat an mtime/size signal) → must still
 	// be detected by the content fingerprint.
 	writeProjectFile(t, env, "a.go", "v2\n")
-	require.NoError(t, svc.EnsureSynced(ctx))
+	require.NoError(t, svc.EnsureSyncedForNewWorktree(ctx))
 	base2, err := env.repo.Head()
 	require.NoError(t, err)
 
@@ -87,12 +87,12 @@ func TestEnsureSynced_CleanState_CheapNoOp(t *testing.T) {
 
 	writeProjectFile(t, env, "a.go", "stable\n")
 	svc := newSyncService(env, "h", "")
-	require.NoError(t, svc.EnsureSynced(ctx))
+	require.NoError(t, svc.EnsureSyncedForNewWorktree(ctx))
 	base1, err := env.repo.Head()
 	require.NoError(t, err)
 
 	// Second call with no change: base must be byte-identical (no empty commit).
-	require.NoError(t, svc.EnsureSynced(ctx))
+	require.NoError(t, svc.EnsureSyncedForNewWorktree(ctx))
 	base2, err := env.repo.Head()
 	require.NoError(t, err)
 	assert.Equal(t, base1, base2, "clean re-sync must be a no-op")
@@ -151,10 +151,11 @@ func TestEnsureSynced_UnreadableGit_FailsLoud(t *testing.T) {
 	assert.True(t, errors.Is(err, gitref.ErrUnsupportedGitState))
 }
 
-// TestEnsureSynced_DriftWithManualStaging_PreservesStaging verifies the resync
-// is STAGING-NEUTRAL: the gate fires on read-ish commands (`mgit status`/`diff`),
-// so a user's manual partial staging selection on the shared host store must
-// survive a drift resync rather than be consumed/cleared. Refs: MGIT-35, ADR-008 §3
+// TestEnsureSynced_DriftWithManualStaging_PreservesStaging verifies the
+// foundation resync is STAGING-NEUTRAL: a user's manual partial staging
+// selection on the shared host store must survive a drift resync rather than be
+// consumed/cleared. (The read-verb gate's own staging neutrality is covered by
+// TestEnsureSynced_ReadPath_StagingNeutral.) Refs: MGIT-35, MGIT-123, ADR-008 §3
 func TestEnsureSynced_DriftWithManualStaging_PreservesStaging(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
@@ -166,10 +167,10 @@ func TestEnsureSynced_DriftWithManualStaging_PreservesStaging(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"keep.go"}, stagedBefore)
 
-	// A second file drifts the working tree; EnsureSynced (as on `mgit status`)
-	// resyncs the base — and must restore the user's staging selection after.
+	// A second file drifts the working tree; the new-worktree gate resyncs the
+	// base — and must restore the user's staging selection after.
 	writeProjectFile(t, env, "other.go", "other\n")
-	require.NoError(t, newSyncService(env, "git-Z", "").EnsureSynced(ctx))
+	require.NoError(t, newSyncService(env, "git-Z", "").EnsureSyncedForNewWorktree(ctx))
 
 	stagedAfter, err := env.repo.StagedSnapshot()
 	require.NoError(t, err)
@@ -186,14 +187,14 @@ func TestEnsureSynced_InterruptedResync_LeavesConsistentBase(t *testing.T) {
 
 	writeProjectFile(t, env, "a.go", "content\n")
 	svc := newSyncService(env, "h", "")
-	require.NoError(t, svc.EnsureSynced(ctx))
+	require.NoError(t, svc.EnsureSyncedForNewWorktree(ctx))
 	base1, err := env.repo.Head()
 	require.NoError(t, err)
 
 	// Simulate an interrupt that dropped the persisted drift signal.
 	require.NoError(t, os.Remove(filepath.Join(env.repo.MgitDir(), "sync_state.json")))
 
-	require.NoError(t, svc.EnsureSynced(ctx))
+	require.NoError(t, svc.EnsureSyncedForNewWorktree(ctx))
 	base2, err := env.repo.Head()
 	require.NoError(t, err)
 

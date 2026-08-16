@@ -58,7 +58,7 @@ func TestWorktreeAdd_PinnedBase_UnchangedByLaterResync(t *testing.T) {
 
 	// Unrelated local work drifts the shared base and triggers a resync.
 	writeProjectFile(t, env, "unrelated.go", "noise\n")
-	require.NoError(t, newSyncService(env, "head-2", "").EnsureSynced(ctx))
+	require.NoError(t, newSyncService(env, "head-2", "").EnsureSyncedForNewWorktree(ctx))
 	newBase, err := env.repo.Head()
 	require.NoError(t, err)
 	require.NotEqual(t, pinned, newBase, "precondition: the shared base advanced")

@@ -11,11 +11,12 @@ import (
 )
 
 // TestEnsureSynced_StagedTaskWIP_NotAbsorbedIntoBase is the MGIT-56 core: the
-// user's mgit-STAGED paths are pending task work, and a status-time resync
-// must not absorb their CONTENT into the [mgit-sync] base — otherwise the
-// task's first commit has no delta and its net diff (review surface, squash
-// content) is silently empty. Unstaged project drift is still absorbed.
-// Refs: MGIT-56, ADR-008 §3
+// user's mgit-STAGED paths are pending task work, and a resync must not absorb
+// their CONTENT into the [mgit-sync] base — otherwise the task's first commit
+// has no delta and its net diff (review surface, squash content) is silently
+// empty. Unstaged drift is still absorbed by the FOUNDATION gate, which is the
+// one caller allowed to capture uncommitted content (MGIT-123); read verbs
+// absorb neither. Refs: MGIT-56, MGIT-123, ADR-008 §2,§3
 func TestEnsureSynced_StagedTaskWIP_NotAbsorbedIntoBase(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
@@ -26,7 +27,7 @@ func TestEnsureSynced_StagedTaskWIP_NotAbsorbedIntoBase(t *testing.T) {
 	// Independent local project drift (unstaged).
 	writeProjectFile(t, env, "drift.go", "package drift\n")
 
-	require.NoError(t, newSyncService(env, "git-A", "").EnsureSynced(ctx))
+	require.NoError(t, newSyncService(env, "git-A", "").EnsureSyncedForNewWorktree(ctx))
 
 	head, err := env.repo.Head()
 	require.NoError(t, err)
@@ -53,7 +54,7 @@ func TestEnsureSynced_AddStatusCommitDiff_TaskDiffNonEmpty(t *testing.T) {
 	writeProjectFile(t, env, "feature.go", "package feature\n")
 	require.NoError(t, env.wt.Add(ctx, "feature.go"))
 
-	// `mgit status` runs the sync gate before showing status.
+	// `mgit status` runs the read-safe sync gate before showing status.
 	require.NoError(t, newSyncService(env, "git-B", "").EnsureSynced(ctx))
 
 	c, err := env.commit.CreateCommit(ctx, CreateCommitRequest{
@@ -80,7 +81,7 @@ func TestEnsureSynced_OnlyStagedWIP_NoBaseCommit(t *testing.T) {
 	writeProjectFile(t, env, "wip.go", "package wip\n")
 	require.NoError(t, env.wt.Add(ctx, "wip.go"))
 
-	require.NoError(t, newSyncService(env, "git-C", "").EnsureSynced(ctx))
+	require.NoError(t, newSyncService(env, "git-C", "").EnsureSyncedForNewWorktree(ctx))
 
 	headAfter, err := env.repo.Head()
 	require.NoError(t, err)

@@ -48,6 +48,11 @@ func assertPinnedForkBase(ctx context.Context, idx *index.Store, taskID, compute
 // hard-wired. Refs: MGIT-35, ADR-008 §5
 type localStateReader func(projectRoot string) (*gitref.LocalState, error)
 
+// committedReader reads the project's git-COMMITTED file set (project-relative
+// path -> git blob id) READ-ONLY. It is an interface so the read-safe resync is
+// unit-testable without a real `.git`. Refs: MGIT-123, ADR-008 §3
+type committedReader func(projectRoot string) (map[string]string, error)
+
 // SyncService self-heals the `.mgit` base so a NEW worktree always carries the
 // project's current local working state, eliminating the manual
 // `mgit add . && mgit commit` resync. It runs a CHEAP content-based drift gate
@@ -56,11 +61,12 @@ type localStateReader func(projectRoot string) (*gitref.LocalState, error)
 // fork-bases are never touched — only the shared base branch advances.
 // Refs: MGIT-35, ADR-008 §3,§4,§6
 type SyncService struct {
-	repo        *gitstore.Repository
-	worktree    *gitstore.WorktreeStore
-	commitStore *gitstore.CommitStore
-	readLocal   localStateReader
-	clock       func() time.Time
+	repo          *gitstore.Repository
+	worktree      *gitstore.WorktreeStore
+	commitStore   *gitstore.CommitStore
+	readLocal     localStateReader
+	readCommitted committedReader
+	clock         func() time.Time
 	// boundTask is non-empty when the App is a linked worktree; a worktree has a
 	// pinned fork-base and must NEVER resync (ADR-008 §3). Refs: MGIT-35
 	boundTask string
@@ -71,12 +77,13 @@ type SyncService struct {
 func NewSyncService(repo *gitstore.Repository, ws *gitstore.WorktreeStore, cs *gitstore.CommitStore,
 	boundTask string, clock func() time.Time) *SyncService {
 	return &SyncService{
-		repo:        repo,
-		worktree:    ws,
-		commitStore: cs,
-		readLocal:   gitref.ReadLocalState,
-		clock:       clock,
-		boundTask:   boundTask,
+		repo:          repo,
+		worktree:      ws,
+		commitStore:   cs,
+		readLocal:     gitref.ReadLocalState,
+		readCommitted: gitref.CommittedBlobs,
+		clock:         clock,
+		boundTask:     boundTask,
 	}
 }
 
@@ -86,27 +93,65 @@ func (s *SyncService) withLocalReader(r localStateReader) *SyncService {
 	return s
 }
 
-// EnsureSynced is the auto-housekeeping gate. It runs the cheap content drift
-// check and, only on real drift, resyncs the `.mgit` base from the current
-// local working state. It is a no-op inside a linked worktree (pinned fork-base,
-// ADR-008 §3) and degrades — not hard-fails — when the project has no readable
-// git (gitref.ErrNoGit): the `.mgit` base is then simply used as-is. Any other
-// git-read failure FAILS LOUD so mgit never materializes/diffs against a
-// known-stale base. Refs: MGIT-35, ADR-008 §3,§6
+// withCommittedReader overrides the git-committed-tree reader (test seam).
+// Refs: MGIT-123
+func (s *SyncService) withCommittedReader(r committedReader) *SyncService {
+	s.readCommitted = r
+	return s
+}
+
+// EnsureSynced is the READ-SAFE auto-housekeeping gate, used by the read verbs
+// (`mgit status`, `mgit diff`, the MCP status tool). It keeps the base coherent
+// with what the user's git has COMMITTED and NEVER absorbs uncommitted
+// working-tree content into the base.
+//
+// That boundary is the MGIT-123 fix. A read verb that absorbs the working tree
+// makes the user's edit part of the base, so `status` reports clean (it just
+// made it so) and the edit becomes uncommittable to any task — silently landing
+// a user's change in an untagged `[mgit-sync]` commit instead of a task-tagged
+// micro-commit. A command that REPORTS state must not change the state it
+// reports. Capturing uncommitted local foundation is still ADR-008 §2 behavior,
+// but it belongs to the explicit new-worktree boundary
+// (EnsureSyncedForNewWorktree), not to a read.
+//
+// The gate therefore fires only when git's committed HEAD has moved (the actual
+// staleness ADR-008 §3 exists to prevent, per the MGIT-26 drift that motivated
+// it), and even then absorbs only git-committed content. It is a no-op inside a
+// linked worktree (pinned fork-base) and degrades — not hard-fails — when the
+// project has no readable git; any other git-read failure FAILS LOUD.
+// Refs: MGIT-123, MGIT-35, ADR-008 §3,§6
 func (s *SyncService) EnsureSynced(ctx context.Context) error {
-	if s.boundTask != "" {
-		return nil // worktree: pinned fork-base, never resync.
+	local, proceed, err := s.localOrDegrade()
+	if err != nil || !proceed {
+		return err
 	}
-	local, err := s.readLocal(s.repo.Root())
+	stored, found, err := s.repo.ReadSyncState()
 	if err != nil {
-		// No git, or git present but HEAD has no commit yet (unborn branch /
-		// detached-without-commit): there is nothing to sync FROM, so degrade
-		// to the .mgit base rather than block the command. Only states that
-		// could SILENTLY corrupt the base (shallow/sparse/unreadable) fail loud.
-		if errors.Is(err, gitref.ErrNoGit) || errors.Is(err, gitref.ErrDetachedOrUnborn) {
-			return nil
-		}
-		return fmt.Errorf("sync: read git state: %w", err)
+		return fmt.Errorf("sync: read state: %w", err)
+	}
+	if found && stored.GitHead == local.HeadCommit {
+		// git's committed truth has not moved, so the base is not stale. A
+		// working-tree edit alone is the user's uncommitted work and is NOT a
+		// reason to advance the base. Refs: MGIT-123
+		return nil
+	}
+	return s.resyncCommitted(ctx, local, stored, found)
+}
+
+// EnsureSyncedForNewWorktree is the FOUNDATION-capturing gate, used only when a
+// new task worktree is being created (`mgit work` / `worktree add` /
+// materialize). Unlike the read-safe gate it captures the full current LOCAL
+// working state — including files never committed to git — so the new worktree
+// carries the developer's in-progress foundation and builds (ADR-008 §2, the
+// deliberate advantage over a git worktree).
+//
+// This is the one place that absorption is legitimate: the user has explicitly
+// asked to fork a new task base from "here". Read verbs must use EnsureSynced.
+// Refs: MGIT-123, MGIT-35, ADR-008 §2,§3
+func (s *SyncService) EnsureSyncedForNewWorktree(ctx context.Context) error {
+	local, proceed, err := s.localOrDegrade()
+	if err != nil || !proceed {
+		return err
 	}
 	liveWT, err := s.repo.WorkingTreeFingerprint()
 	if err != nil {
@@ -120,6 +165,26 @@ func (s *SyncService) EnsureSynced(ctx context.Context) error {
 		return nil // cheap path: no drift, no reimport.
 	}
 	return s.resync(ctx, local, liveWT)
+}
+
+// localOrDegrade resolves the project's git truth for a sync gate. It reports
+// proceed=false (with a nil error) for the two states where syncing is a no-op
+// rather than an error: inside a linked worktree (pinned fork-base, never
+// resync — ADR-008 §3) and when there is nothing to sync FROM (no git, or an
+// unborn/detached HEAD with no commit). Only states that could SILENTLY corrupt
+// the base (shallow/sparse/unreadable) fail loud. Refs: MGIT-35, ADR-008 §3,§6
+func (s *SyncService) localOrDegrade() (*gitref.LocalState, bool, error) {
+	if s.boundTask != "" {
+		return nil, false, nil
+	}
+	local, err := s.readLocal(s.repo.Root())
+	if err != nil {
+		if errors.Is(err, gitref.ErrNoGit) || errors.Is(err, gitref.ErrDetachedOrUnborn) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("sync: read git state: %w", err)
+	}
+	return local, true, nil
 }
 
 // resync brings the base up to the current local working state TRANSACTIONALLY:
@@ -177,6 +242,93 @@ func (s *SyncService) resync(ctx context.Context, local *gitref.LocalState, live
 		BaseCommit:   baseCommit,
 		SyncedAt:     s.clock().UTC().Format(time.RFC3339),
 	})
+}
+
+// resyncCommitted brings the base up to git's COMMITTED state without ever
+// absorbing uncommitted working-tree content (MGIT-123). It stages the working
+// tree, then narrows the staging set to only those paths whose content git has
+// actually committed, and appends a base commit only if that changes the base
+// tree. Everything else — a modified tracked file, an untracked file, the
+// user's staged task WIP — is left OUT of the base, so `status` still reports it
+// and `commit` can still attribute it to a task.
+//
+// It is STAGING-NEUTRAL: the user's manual staging selection is snapshotted up
+// front and restored afterward, so a read verb leaves staging untouched
+// (ADR-008 §3). Refs: MGIT-123, MGIT-56, ADR-008 §3,§6
+func (s *SyncService) resyncCommitted(ctx context.Context, local *gitref.LocalState,
+	stored gitstore.SyncState, found bool) error {
+	stagedBefore, err := s.repo.StagedSnapshot()
+	if err != nil {
+		return fmt.Errorf("sync: snapshot staging: %w", err)
+	}
+	if err := s.worktree.Add(ctx, "."); err != nil {
+		return fmt.Errorf("sync: stage working tree: %w", err)
+	}
+	absorb, err := s.absorbableCommitted(stagedBefore)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.RestoreStaging(absorb); err != nil {
+		return fmt.Errorf("sync: limit base to git-committed content: %w", err)
+	}
+	clean, err := s.commitStore.StagedTreeMatchesHead()
+	if err != nil {
+		return fmt.Errorf("sync: %w", err)
+	}
+	baseCommit, err := s.applyResync(ctx, clean, local)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.RestoreStaging(stagedBefore); err != nil {
+		return fmt.Errorf("sync: restore staging: %w", err)
+	}
+	return s.repo.WriteSyncState(gitstore.SyncState{
+		GitHead: local.HeadCommit,
+		// WorkTreeHash is deliberately CARRIED FORWARD, not advanced: this path
+		// never absorbed the working tree, so recording the live fingerprint
+		// would falsely tell the foundation gate that the working tree is
+		// already in the base and suppress the next `mgit work` capture
+		// (ADR-008 §2). Refs: MGIT-123
+		WorkTreeHash: carriedWorkTreeHash(stored, found),
+		BaseCommit:   baseCommit,
+		SyncedAt:     s.clock().UTC().Format(time.RFC3339),
+	})
+}
+
+// absorbableCommitted returns the currently-staged paths that the base MAY
+// absorb: those whose working content matches git's committed content, minus
+// anything the user had already staged (pending task work must never be
+// absorbed — MGIT-56). Refs: MGIT-123, MGIT-56
+func (s *SyncService) absorbableCommitted(stagedBefore []string) ([]string, error) {
+	all, err := s.repo.StagedSnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("sync: snapshot absorbed staging: %w", err)
+	}
+	committed, err := s.readCommitted(s.repo.Root())
+	if err != nil {
+		// No git, or a HEAD with no commit: git has committed NOTHING here, so
+		// nothing may be absorbed. Degrade to an empty committed set rather than
+		// block a read verb (ADR-008 §6). Unreadable git still fails loud.
+		if !errors.Is(err, gitref.ErrNoGit) && !errors.Is(err, gitref.ErrDetachedOrUnborn) {
+			return nil, fmt.Errorf("sync: read git-committed tree: %w", err)
+		}
+		committed = nil
+	}
+	matching, err := s.repo.PathsMatchingCommitted(committed, all)
+	if err != nil {
+		return nil, fmt.Errorf("sync: %w", err)
+	}
+	return subtractPaths(matching, stagedBefore), nil
+}
+
+// carriedWorkTreeHash returns the working-tree fingerprint to persist from a
+// read-safe resync: the previously stored one, or empty when no state existed.
+// Refs: MGIT-123
+func carriedWorkTreeHash(stored gitstore.SyncState, found bool) string {
+	if !found {
+		return ""
+	}
+	return stored.WorkTreeHash
 }
 
 // applyResync materializes the resync into the base: when clean (the staged

@@ -41,7 +41,7 @@ func TestSquash_PinnedForkBase_UnchangedByResync(t *testing.T) {
 
 	// Unrelated local work drifts + resyncs the shared base forward.
 	writeProjectFile(t, env, "unrelated.go", "noise\n")
-	require.NoError(t, newSyncService(env, "git-B", "").EnsureSynced(ctx))
+	require.NoError(t, newSyncService(env, "git-B", "").EnsureSyncedForNewWorktree(ctx))
 	movedBase, err := env.repo.Head()
 	require.NoError(t, err)
 	require.NotEqual(t, pinnedBase, movedBase, "precondition: shared base advanced")
