@@ -17,6 +17,13 @@ on:
   # On-demand: re-run the live containment gate against a branch without
   # waiting for a release tag. Refs: MGIT-78
   workflow_dispatch: {}
+  # Nightly. The fleet soak runs its SHORT profile on every push and its LONG
+  # profile here: a wide fleet costs minutes of real VM boots, and a gate that
+  # slow on every push gets disabled rather than fixed. The soak names the
+  # profile that ran in its own output, so a short run can never be read as the
+  # wide one. Refs: MGIT-113
+  schedule:
+    - cron: "0 3 * * *"
 
 permissions:
   contents: read
@@ -255,6 +262,46 @@ jobs:
           if grep -q 'NOT EXERCISED' "$RUNNER_TEMP/registry.log"; then
             echo "FATAL: the booted-sandbox reconciliation arm did not run on a job that has a guest image"
             exit 1
+          fi
+
+      # Fleet soak + chaos. Everything the registry/reaping class was fixed for
+      # was verified SEQUENTIALLY, one sandbox at a time; MGIT-98's aggregate
+      # refusal was proven by unit test alone because reaching it needs a real
+      # concurrent fleet. This drives N sandboxes through create/exec/destroy
+      # with genuine overlap, SIGKILLs the daemon with execs in flight, and
+      # asserts six invariants -- reaping, registry honesty, capacity floor,
+      # state-dir isolation, audit-trail coherence, and a clean ceiling refusal.
+      # Short profile here (every push); the nightly schedule runs the wide one.
+      # Refs: MGIT-113, MGIT-98, MGIT-102, MGIT-103
+      - name: Fleet soak + chaos gate (concurrent sandboxes under churn)
+        env:
+          MGIT_GUEST_KERNEL: ${{ runner.temp }}/guest/vmlinux
+          MGIT_GUEST_ROOTFS: ${{ runner.temp }}/guest/rootfs.ext4
+          MGIT_SOAK_PROFILE: ${{ github.event_name == 'schedule' && 'long' || 'short' }}
+        run: |
+          set -uo pipefail
+          # shellcheck source=scripts/sandbox-image/pins.env
+          . scripts/sandbox-image/pins.env   # defines FC_CMDLINE; without it
+          # `set -u` kills the step before a single sandbox is created.
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          export MGIT_GUEST_CMDLINE="$FC_CMDLINE"
+          bash scripts/e2e/sandbox_fleet_soak.sh "$RUNNER_TEMP/bin" 2>&1 |
+            tee "$RUNNER_TEMP/soak.log"
+          grep -q 'SANDBOX FLEET SOAK: PASS' "$RUNNER_TEMP/soak.log" || {
+            echo "FATAL: the fleet soak did not pass (a SKIP is a failure here)"; exit 1; }
+          # Say what ran. The soak names its own profile, and this asserts the
+          # one that ran is the one this event asked for -- otherwise a nightly
+          # could quietly report a short run's result as the wide soak's.
+          grep -q "$MGIT_SOAK_PROFILE profile" "$RUNNER_TEMP/soak.log" || {
+            echo "FATAL: expected the $MGIT_SOAK_PROFILE profile; the soak reports otherwise"
+            exit 1; }
+          # Known defects are filed, unfixed violations the soak deliberately
+          # does not fail on -- they would block every push on a defect that is
+          # already tracked. They must stay VISIBLE: a run that silently carried
+          # them would be the decoration this gate exists to avoid.
+          if grep -q 'PASS WITH KNOWN DEFECTS' "$RUNNER_TEMP/soak.log"; then
+            echo "::warning::fleet soak passed with KNOWN DEFECTS — invariants violated by filed, unfixed tickets:"
+            grep 'KNOWN DEFECT' "$RUNNER_TEMP/soak.log" || true
           fi
 
       - name: Firecracker e2e — unprivileged half

@@ -317,7 +317,11 @@ fi
 if [ "$live_phase" = "1" ]; then
 	echo "SANDBOX REGISTRY DURABILITY E2E: PASS (live)"
 else
-	echo "SANDBOX REGISTRY DURABILITY E2E: PASS (live)"
+	# NOT "PASS (live)". The live phase did not run, and a headline that says it
+	# did is the exact failure this gate exists to catch, one level up: callers
+	# grep the headline, and only a caller that ALSO greps for the note below
+	# would notice. Say what ran. Refs: MGIT-113
+	echo "SANDBOX REGISTRY DURABILITY E2E: PASS (registration durability only)"
 	echo "  NOT EXERCISED: reconciliation of a BOOTED sandbox (set MGIT_GUEST_IMAGE"
 	echo "  to a registered guest image to cover it). The registration-durability"
 	echo "  path above ran in full; that one did not."
