@@ -45,12 +45,16 @@ func NewTestStore(t *testing.T) (*TestStore, func()) {
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err, "failed to open test SQLite database")
 
-	// Apply safety-critical PRAGMAs per CLAUDE.md SQL rules
+	// Apply safety-critical PRAGMAs per CLAUDE.md SQL rules.
+	// busy_timeout FIRST: journal_mode = WAL takes an exclusive lock, and with
+	// busy_timeout still at its default of zero a concurrent opener is refused
+	// outright instead of waiting (MGIT-121). Tests share temp dirs and run in
+	// parallel, so they contend for the same reason a fleet does.
 	ctx := context.Background()
 	pragmas := []string{
+		"PRAGMA busy_timeout = 5000",
 		"PRAGMA foreign_keys = ON",
 		"PRAGMA journal_mode = WAL",
-		"PRAGMA busy_timeout = 5000",
 		"PRAGMA synchronous = FULL",
 	}
 	for _, pragma := range pragmas {

@@ -544,22 +544,26 @@ row := db.QueryRow(query, taskID)
 
 Even if taskID is "from a trusted source," parameterize it. This is a hill to die on.
 
-**PRAGMAs on Every Connection**
+**PRAGMAs on Every Connection — `busy_timeout` FIRST**
 
-Configure SQLite pragmatically for safety and concurrency:
+Configure SQLite for safety and concurrency, in this order:
 
 ```go
 func initDB(path string) (*sql.DB, error) {
     db, _ := sql.Open("sqlite", path)
 
+    // Timeout for busy database (5 seconds).
+    // FIRST, always: it defaults to zero, and until it is set every lock
+    // this connection meets is an instant SQLITE_BUSY instead of a wait.
+    db.Exec("PRAGMA busy_timeout = 5000")
+
     // Foreign key constraints
     db.Exec("PRAGMA foreign_keys = ON")
 
-    // Write-ahead logging for concurrency
+    // Write-ahead logging for concurrency.
+    // Takes a database-wide lock, so it must come after busy_timeout — and
+    // needs a bounded retry besides (see below).
     db.Exec("PRAGMA journal_mode = WAL")
-
-    // Timeout for busy database (5 seconds)
-    db.Exec("PRAGMA busy_timeout = 5000")
 
     return db, nil
 }
@@ -567,6 +571,12 @@ func initDB(path string) (*sql.DB, error) {
 
 - `foreign_keys = ON`: Enforce referential integrity.
 - `journal_mode = WAL`: Write-ahead logging allows concurrent readers.
+  Converting a database to WAL takes an exclusive lock that SQLite acquires
+  *without consulting the busy handler*, so `busy_timeout` does not cover this
+  statement: apply it through a bounded retry that treats "another connection
+  already made it WAL" as success. `internal/store/index/pragmas.go` is the
+  reference implementation. Getting this wrong killed a whole daemon fleet at
+  start-up (MGIT-121).
 - `busy_timeout = 5000`: Wait up to 5 seconds if database is locked (prevents errors on contention).
 
 **Separate Read and Write Connection Pools**
