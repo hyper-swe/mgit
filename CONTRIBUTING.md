@@ -155,14 +155,22 @@ row := db.QueryRow("SELECT id FROM commits WHERE task_id = ?", taskID)
 row := db.QueryRow(fmt.Sprintf("SELECT id FROM commits WHERE task_id = '%s'", taskID))
 ```
 
-### PRAGMAs on Every Connection
+### PRAGMAs on Every Connection — `busy_timeout` FIRST
+
+The order is part of the rule. `busy_timeout` defaults to zero ("fail
+immediately"), so until it is set, any lock this connection meets is a hard
+`SQLITE_BUSY` — including the one `journal_mode = WAL` takes.
 
 ```go
+db.Exec("PRAGMA busy_timeout = 5000")   // FIRST: nothing waits until this is set
 db.Exec("PRAGMA foreign_keys = ON")
-db.Exec("PRAGMA journal_mode = WAL")
-db.Exec("PRAGMA busy_timeout = 5000")
+db.Exec("PRAGMA journal_mode = WAL")    // takes a database-wide lock
 db.Exec("PRAGMA synchronous = FULL")
 ```
+
+`journal_mode = WAL` additionally needs a bounded retry: SQLite takes its
+exclusive lock without consulting the busy handler, so `busy_timeout` does not
+cover that one statement. See `internal/store/index/pragmas.go` (MGIT-121).
 
 ### All Writes in Transactions
 

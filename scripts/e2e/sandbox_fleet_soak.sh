@@ -317,18 +317,19 @@ done
 # COLD START. Before the fleet races, one launch brings the daemon up alone.
 #
 # This is not a convenience: N launches into a repo with NO daemon each spawn
-# one, and they race to open the shared audit index. That race is a real defect
-# (MGIT-121) which fails the WHOLE fleet, and it fails so early that every later
-# invariant would be measured over an empty fleet — a vacuous pass in the making.
-# So it is asserted HERE, on its own, and the fleet phases then run against a
-# daemon that is already up.
+# one, and they race to open the shared audit index. That race used to fail the
+# WHOLE fleet (MGIT-121: journal_mode=WAL was set before busy_timeout, and the
+# WAL switch needs a retry besides), and it failed so early that every later
+# invariant would have been measured over an empty fleet — a vacuous pass in the
+# making. It is fixed and unit-covered in internal/store/index; the cold start
+# stays on its own here so a start-up failure is still reported as a start-up
+# failure rather than as N confusing downstream failures.
 cold_first="F-1"
 if launch_sandbox "$cold_first"; then
 	pass "cold start: the first launch brought the daemon up"
 else
 	if grep -q "SQLITE_BUSY\|database is locked" "$work/.why-$cold_first" 2>/dev/null; then
-		known_defect "MGIT-121" \
-			"the daemon died at start-up opening its audit index (SQLITE_BUSY): journal_mode=WAL is set before busy_timeout, so a concurrent open is refused instead of waiting"
+		echo "  NOTE: this looks like MGIT-121 (SQLITE_BUSY opening the audit index) returning."
 	fi
 	_e2e_fail "cold start failed, so the fleet could never come up: $(why "$cold_first")"
 fi

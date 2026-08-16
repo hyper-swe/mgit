@@ -168,22 +168,17 @@ func (s *Store) ReadTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// applyPragmas sets safety-critical SQLite PRAGMAs on both pools.
-// Refs: CLAUDE.md SQL Rule 2
+// applyPragmas sets safety-critical SQLite PRAGMAs on both pools, in the
+// order pragmaStatements defines (see pragmas.go — the order is load-bearing).
+// Refs: CLAUDE.md SQL Rule 2, MGIT-121
 func (s *Store) applyPragmas() error {
 	ctx := context.Background()
-	pragmas := []string{
-		"PRAGMA foreign_keys = ON",
-		"PRAGMA journal_mode = WAL",
-		"PRAGMA busy_timeout = 5000",
-		"PRAGMA synchronous = FULL",
-	}
 
-	for _, pragma := range pragmas {
-		if _, err := s.writeDB.ExecContext(ctx, pragma); err != nil {
+	for _, pragma := range pragmaStatements() {
+		if err := applyPragma(ctx, s.writeDB, pragma); err != nil {
 			return fmt.Errorf("write db pragma %q: %w", pragma, err)
 		}
-		if _, err := s.readDB.ExecContext(ctx, pragma); err != nil {
+		if err := applyPragma(ctx, s.readDB, pragma); err != nil {
 			return fmt.Errorf("read db pragma %q: %w", pragma, err)
 		}
 	}

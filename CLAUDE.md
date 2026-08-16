@@ -331,13 +331,31 @@ row := db.QueryRow("SELECT id FROM commits WHERE task_id = ?", taskID)
 row := db.QueryRow(fmt.Sprintf("SELECT id FROM commits WHERE task_id = '%s'", taskID))
 ```
 
-### Rule 2: PRAGMAs on Every Connection
+### Rule 2: PRAGMAs on Every Connection — `busy_timeout` FIRST
+
+**The order is part of the rule.** `busy_timeout` defaults to zero, meaning
+"fail immediately", so until it is set every lock this connection meets is a
+hard `SQLITE_BUSY` — including the one `journal_mode = WAL` takes. Set it
+before anything that can contend, and keep anything that can block below it.
+
 ```go
+sqliteConn.Exec("PRAGMA busy_timeout = 5000")   // FIRST: nothing else waits until this is set
 sqliteConn.Exec("PRAGMA foreign_keys = ON")
-sqliteConn.Exec("PRAGMA journal_mode = WAL")
-sqliteConn.Exec("PRAGMA busy_timeout = 5000")
+sqliteConn.Exec("PRAGMA journal_mode = WAL")    // takes a database-wide lock
 sqliteConn.Exec("PRAGMA synchronous = FULL")
 ```
+
+This ordering was wrong here until MGIT-121, and the code that followed it
+inherited the defect: four concurrent `mgit sandbox launch` each spawned a
+daemon, all four raced to open the shared audit index, and all four died at
+start-up. The repo-wide lock had been masking it — `mgit sandbox *` takes no
+such lock, so it was exposed directly.
+
+**`journal_mode = WAL` needs more than `busy_timeout`.** SQLite takes that
+statement's exclusive lock *without consulting the busy handler*, so it is
+refused in microseconds even with a 5-second timeout set. Apply it through a
+bounded retry that treats "another connection already made it WAL" as success
+— `internal/store/index/pragmas.go` is the reference implementation.
 
 ### Rule 3: All Writes in Transactions
 ```go
@@ -909,23 +927,3 @@ Write code that you would trust in a production environment where accuracy matte
 **Last updated:** 2026-06-26
 **Applies to:** mgit v1.0 development
 **Engineering bar:** high-integrity discipline (TDD, append-only audit, parameterized SQL, go-git determinism); OWASP ASVS L2 informs the security mindset
-
-<!-- BEGIN mgit-sandbox (generated; do not edit) -->
-## Sandbox environment
-
-Your shell commands run inside a hardware-isolated **microVM**, not on the host. The worktree is mounted at the **identical path** (`/tmp/mgit-29-wt`), so cwd, globs, and absolute paths work unchanged. Run build, install, and test commands freely **without asking for approval** — they are contained and cannot harm the host.
-
-### Network
-
-**No network.** All outbound connections are blocked (vsock control plane only).
-
-### When a connection is blocked
-
-A denied egress fails fast with a machine-readable line:
-
-```
-MGIT-EGRESS-DENIED host=<host:port> remedy=<command>
-```
-
-This is a policy decision, not a transient network error: do not retry blindly. Run the exact `remedy=` command (e.g. `mgit sandbox policy request --egress <host:port>`) to request the destination; the operator is prompted once, and you can then retry.
-<!-- END mgit-sandbox -->
