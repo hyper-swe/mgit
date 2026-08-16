@@ -227,12 +227,24 @@ func TestStatus_GenuineCaseCollision_StillCommits(t *testing.T) {
 	require.NoError(t, runCLI(t, "init"))
 	require.NoError(t, runCLI(t, "status"))
 
-	// Exactly one of the two collides onto disk on a case-insensitive host;
-	// read the directory for its REAL casing (os.Stat would match either name
-	// and tell us nothing about what mgit will see when it walks the tree).
+	// How many files land depends on the FILESYSTEM, not on mgit: a
+	// case-insensitive host (macOS, the reported platform) collides the two
+	// tree entries onto one file, while a case-sensitive one (Linux, and CI)
+	// materializes both. Asserting one of those shapes fails on the other
+	// platform for a reason that has nothing to do with the property under
+	// test — which is that a genuine collision still commits its CONTENT.
+	// So read the directory for the REAL casing and assert the shape that
+	// this filesystem actually produces. os.Stat would match either name on a
+	// case-insensitive host and tell us nothing about what mgit sees when it
+	// walks the tree. Refs: MGIT-123
 	entries, err := os.ReadDir(filepath.Join(dir, "src"))
 	require.NoError(t, err)
-	require.Len(t, entries, 1, "precondition: the two paths collide onto one file")
+	if len(entries) == 1 {
+		t.Logf("case-insensitive filesystem: the two entries collided onto %q", entries[0].Name())
+	} else {
+		require.Len(t, entries, 2, "a case-sensitive filesystem must materialize both entries")
+		t.Logf("case-sensitive filesystem: both entries materialized")
+	}
 	rel := "src/" + entries[0].Name()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte("export const a = 2;\n"), 0o600))
 
