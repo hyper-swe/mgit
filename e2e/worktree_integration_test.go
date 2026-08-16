@@ -138,8 +138,11 @@ func TestWorktreeIntegration_TaskConflict(t *testing.T) {
 		Path: makeWorktreePath(t, "wt-2"), TaskID: taskID, AgentID: "agent-2",
 	})
 	require.Error(t, err, "second worktree on the same task must be rejected")
-	// SQLite UNIQUE violation surfaces as a constraint error from the index layer.
-	assert.Contains(t, err.Error(), "UNIQUE")
+	// The UNIQUE(task_id) violation surfaces as the NAMED refusal rather than a
+	// raw SQLite constraint string: it is what the loser of a concurrent race
+	// reads. Refs: MGIT-120
+	assert.ErrorIs(t, err, model.ErrTaskAlreadyBound)
+	assert.Contains(t, err.Error(), "wt-1", "the refusal names the worktree already holding the task")
 }
 
 // TestWorktreeIntegration_BranchConflict verifies the UNIQUE(branch_name)
@@ -164,7 +167,8 @@ func TestWorktreeIntegration_BranchConflict(t *testing.T) {
 		Branch:  "task/MGIT-8.2.31",
 	})
 	require.Error(t, err, "two worktrees must not share a branch")
-	assert.Contains(t, err.Error(), "UNIQUE")
+	assert.ErrorIs(t, err, model.ErrBranchInUse)
+	assert.Contains(t, err.Error(), "wt-A", "the refusal names the worktree already on the branch")
 }
 
 // TestWorktreeIntegration_RollbackInWorktree verifies that a rollback

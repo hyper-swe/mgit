@@ -44,6 +44,10 @@ type App struct {
 	// its per-operation Guarder. Refs: MGIT-46
 	storeDir string
 
+	// lockTimeout is how long this process waits for the repo lock, from
+	// `locks.timeout_seconds` (default 30s). Refs: FR-4.7, MGIT-120
+	lockTimeout time.Duration
+
 	fileLock *lock.FileLock
 }
 
@@ -73,7 +77,13 @@ func OpenApp(path string) (*App, error) {
 	// Acquire process-level lock before opening any stores. For a worktree the
 	// lock is on the SHARED parent store, so the parent and all its worktrees
 	// serialize on one lock (single-writer invariant).
-	fileLock, err := lock.Acquire(storeDir, lock.DefaultTimeout)
+	//
+	// The wait is read from the store's config BEFORE acquiring, since no store
+	// (including the ConfigService) can be opened until the lock is held. An
+	// absent or malformed config yields the 30s default, and the authoritative
+	// parse below still reports a malformed file. Refs: FR-4.7, MGIT-120
+	lockTimeout := service.LockTimeoutFromConfig(filepath.Join(storeDir, "config.json"))
+	fileLock, err := lock.Acquire(storeDir, lockTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -130,25 +140,26 @@ func OpenApp(path string) (*App, error) {
 	}
 
 	return &App{
-		Repo:      repo,
-		Index:     idx,
-		Commit:    service.NewCommitService(repo, cs, idx).WithAudit(audit),
-		Squash:    service.NewSquashService(repo, cs, idx).WithAudit(audit),
-		Rollback:  service.NewRollbackService(repo, cs, idx).WithAudit(audit),
-		Branch:    service.NewBranchService(repo, bs, idx),
-		Verify:    service.NewVerifyService(cs, idx),
-		Audit:     audit,
-		Config:    cfgSvc,
-		Diff:      service.NewDiffService(ds, cs, idx),
-		Restore:   service.NewRestoreService(repo, cs, path),
-		Checkout:  service.NewCheckoutService(bs, ws),
-		Merge:     service.NewMergeService(repo, bs, ms, cs),
-		GC:        service.NewGCService(gcs),
-		Bundle:    service.NewBundleService(idx, clock),
-		Sync:      service.NewSyncService(repo, ws, cs, boundTask, clock),
-		BoundTask: boundTask,
-		storeDir:  storeDir,
-		fileLock:  fileLock,
+		Repo:        repo,
+		Index:       idx,
+		Commit:      service.NewCommitService(repo, cs, idx).WithAudit(audit),
+		Squash:      service.NewSquashService(repo, cs, idx).WithAudit(audit),
+		Rollback:    service.NewRollbackService(repo, cs, idx).WithAudit(audit),
+		Branch:      service.NewBranchService(repo, bs, idx),
+		Verify:      service.NewVerifyService(cs, idx),
+		Audit:       audit,
+		Config:      cfgSvc,
+		Diff:        service.NewDiffService(ds, cs, idx),
+		Restore:     service.NewRestoreService(repo, cs, path),
+		Checkout:    service.NewCheckoutService(bs, ws),
+		Merge:       service.NewMergeService(repo, bs, ms, cs),
+		GC:          service.NewGCService(gcs),
+		Bundle:      service.NewBundleService(idx, clock),
+		Sync:        service.NewSyncService(repo, ws, cs, boundTask, clock),
+		BoundTask:   boundTask,
+		storeDir:    storeDir,
+		lockTimeout: lockTimeout,
+		fileLock:    fileLock,
 	}, nil
 }
 
@@ -158,14 +169,24 @@ func OpenApp(path string) (*App, error) {
 // the exclusive repo lock for its whole lifetime (MGIT-46), so it detaches the
 // lifetime lock at startup and guards each server operation instead. After
 // DetachLock the App no longer owns the lock (Close will not release it), so
-// only the server's per-operation guarding serializes access from then on.
-// Refs: MGIT-46, ADR-009
+// only the per-operation guarding serializes access from then on.
+//
+// It is not only for the server. A CLI command whose lifetime is NOT short —
+// `mgit work` / `mgit worktree add`, which materialize a whole worktree and may
+// wait on the sandbox daemon — detaches too, and guards just the shared-store
+// phase. Holding the lifetime lock across that work starved concurrent agents
+// exactly as the server did (MGIT-120).
+//
+// The caller must not re-enter the lock while inside a guarded region: flock is
+// per-open-file-description, so a second acquire in the same process blocks on
+// the first.
+// Refs: MGIT-46, MGIT-120, ADR-009
 func (a *App) DetachLock() *lock.Guarder {
 	if a.fileLock != nil {
 		_ = a.fileLock.Release()
 		a.fileLock = nil
 	}
-	return lock.NewGuarder(a.storeDir, lock.DefaultTimeout)
+	return lock.NewGuarder(a.storeDir, a.lockTimeout)
 }
 
 // Close shuts down all stores and releases the process-level lock.

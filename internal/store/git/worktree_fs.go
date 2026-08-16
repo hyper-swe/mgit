@@ -113,6 +113,16 @@ func (r *Repository) listWorkingFiles() ([]string, error) {
 			}
 			return nil
 		}
+		// Another mgit root nested in the tree — a linked worktree, or a separate
+		// store — is not this project's content, WHEREVER it sits. Without this,
+		// a worktree materialized inside the repo root is walked and hashed by
+		// every later fingerprint (quadratic as a worker pool warms up) and,
+		// worse, ABSORBED into the shared base by the auto-resync, so each new
+		// worktree materializes a copy of every earlier one.
+		// Refs: MGIT-120, ADR-008 §2
+		if d.IsDir() && isNestedMgitRoot(abs) {
+			return filepath.SkipDir
+		}
 		// Honor .gitignore (MGIT-32): an ignored directory is not descended and
 		// an ignored file is not listed, so `mgit status`/`add .` see only
 		// trackable working files. .git/.mgit are excluded above UNCONDITIONALLY
@@ -135,6 +145,21 @@ func (r *Repository) listWorkingFiles() ([]string, error) {
 		return nil, fmt.Errorf("walk working tree: %w", err)
 	}
 	return paths, nil
+}
+
+// isNestedMgitRoot reports whether dir holds its own `.mgit` — i.e. it is a
+// linked worktree or a separate mgit store nested inside this project's tree.
+//
+// It tests for the DIRECTORY, not the worktree marker inside it, on purpose: a
+// concurrent `mgit work` creates its worktree's `.mgit` and only then fills in
+// content and the marker, so a marker-only test would leave a window in which
+// a peer's half-materialized worktree is walked and absorbed. It is also
+// self-describing — no registry lookup — so it covers worktrees whose
+// registration was pruned and stores this repo has never heard of.
+// Refs: MGIT-120, FR-16, ADR-007
+func isNestedMgitRoot(dir string) bool {
+	_, err := os.Lstat(filepath.Join(dir, mgitDirName))
+	return err == nil
 }
 
 // ignoreMatcher builds a gitignore matcher from the project's .gitignore files
