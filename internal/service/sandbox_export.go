@@ -33,7 +33,7 @@ func (s *SandboxService) ExportArtifact(ctx context.Context, taskID string,
 	if !ok {
 		return nil, fmt.Errorf("%w: backend has no export path", model.ErrArtifactExportUnsupported)
 	}
-	info, err := s.runningSandbox(taskID)
+	info, err := s.runningSandbox(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -49,12 +49,16 @@ func (s *SandboxService) ExportArtifact(ctx context.Context, taskID string,
 
 // runningSandbox resolves a task's sandbox and requires it to be booted: there
 // is no worktree to read out of a sandbox that has never run.
-func (s *SandboxService) runningSandbox(taskID string) (model.SandboxInfo, error) {
+//
+// An in-flight boot of that task is waited out (awaitBootLocked) rather than
+// refused: the sandbox is about to be running, and refusing it here would make
+// an export fail for timing rather than for state. Refs: MGIT-73, MGIT-122
+func (s *SandboxService) runningSandbox(ctx context.Context, taskID string) (model.SandboxInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	reg, ok := s.byTask[taskID]
-	if !ok {
-		return model.SandboxInfo{}, fmt.Errorf("%w: task %q", model.ErrSandboxNotFound, taskID)
+	reg, err := s.awaitBootLocked(ctx, taskID)
+	if err != nil {
+		return model.SandboxInfo{}, err
 	}
 	if !reg.booted {
 		return model.SandboxInfo{}, fmt.Errorf("%w: task %q has a registered sandbox that has not booted; "+

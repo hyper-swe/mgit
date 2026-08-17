@@ -102,6 +102,13 @@ func (s *SandboxService) reapExpired(ctx context.Context, eventType string) ([]s
 	reaped := make([]string, 0)
 	for _, taskID := range s.sortedTasksLocked() {
 		reg := s.byTask[taskID]
+		// A boot in flight IS activity, and reaping through one would delete
+		// the registration while its VM was still being created — the VM would
+		// outlive the record of it. Skip; the next sweep reaps it if it is
+		// still expired. Refs: MGIT-122, FR-17.9
+		if reg.boot != nil {
+			continue
+		}
 		if !s.expiredLocked(reg, policy, now) {
 			continue
 		}
@@ -143,9 +150,11 @@ func (s *SandboxService) expiredLocked(reg *sandboxReg, policy model.SandboxPoli
 func (s *SandboxService) Land(ctx context.Context, taskID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	reg, ok := s.byTask[taskID]
-	if !ok {
-		return fmt.Errorf("%w: task %q", model.ErrSandboxNotFound, taskID)
+	// Land ends in a teardown, so like Remove it waits out an in-flight boot of
+	// this task rather than racing it. Refs: MGIT-122
+	reg, err := s.awaitBootLocked(ctx, taskID)
+	if err != nil {
+		return err
 	}
 	if err := s.events.AppendSandboxEvent(ctx, &model.SandboxEvent{
 		SandboxID: reg.info.ID, TaskID: taskID, EventType: model.EventLanded,

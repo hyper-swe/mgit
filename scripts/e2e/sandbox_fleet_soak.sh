@@ -49,8 +49,9 @@
 # N=2, 16.5 s at N=4 and 41-59 s at N=8; warm concurrent exec 42 ms / 145 ms /
 # 6.2 s; concurrent remove 37 ms / 88 ms / 1.5 s. N=8 is also exactly where the
 # stock host-wide count cap refuses. N=4 is therefore the widest fleet that
-# still costs well under two minutes with churn (the push gate), and N=8 the
-# widest the host admits at all (the nightly).
+# still costs well under two minutes with churn (the push gate), and N=7 the
+# widest the nightly can drive -- see STOCK_MAX_CONCURRENT below for why the
+# nightly is not 8.
 #
 # Gates the same way sandbox_cli_surface.sh and sandbox_registry_durability.sh
 # do: a missing prerequisite SKIPs and exits 0, but a SKIP is NOT a pass -- only
@@ -91,13 +92,33 @@ if [ "${1:-}" != "" ]; then export PATH="$1:$PATH"; fi
 require_mgit
 
 PROFILE="${MGIT_SOAK_PROFILE:-short}"
+
+# STOCK_MAX_CONCURRENT is the host-wide COUNT ceiling every daemon this gate can
+# reach is running under: `mgit-sandboxd --max-sandboxes`, default 8.
+#
+# THE SOAK CANNOT RAISE IT. The CLI auto-spawns the daemon with a fixed argument
+# list and never passes that flag, and host policy's max_concurrent_sandboxes is
+# inert (MGIT-119), so no profile and no policy file can move this number.
+#
+# A PROFILE MUST THEREFORE LEAVE ITS OWN HEADROOM. fleet_set_ceiling already
+# leaves exactly one sandbox of headroom in the MEMORY dimension, for the reason
+# it states: "the ceiling must admit FLEET+1 or the soak would be refusing its
+# own setup". The count dimension needs the same headroom and did not get it.
+# The long profile ran a standing fleet of 8 and then created a 9th transient
+# sandbox for churn, which the count cap refuses on EVERY host, so churn round 1
+# could never pass -- and, because the report dropped the reason (MGIT-122), it
+# read as the fleet being disturbed rather than as the gate refusing its own
+# setup. When MGIT-119 lands and the count cap becomes settable from host
+# policy, fleet_set_ceiling can raise it and this can go back to 8.
+STOCK_MAX_CONCURRENT=8
+
 case "$PROFILE" in
 short)
 	FLEET=4
 	CHURN_ROUNDS=2
 	;;
 long)
-	FLEET=8
+	FLEET=$((STOCK_MAX_CONCURRENT - 1)) # one slot reserved for the churn transient
 	CHURN_ROUNDS=4
 	;;
 *)
@@ -302,6 +323,62 @@ classify_refusals() {
 
 track() { CREATED_TASKS="$CREATED_TASKS $1"; }
 
+# churn_reason <op> <task> prints the error that operation recorded.
+#
+# Each churn operation writes its failure to its own file, so the report can
+# name a cause instead of a symptom. A missing file is called out as a gap in
+# THIS script rather than passed over: an operation that can fail without
+# recording why is the defect that made MGIT-122 expensive to diagnose.
+churn_reason() {
+	local op="$1" task="$2" file
+	case "$op" in
+	exec) file="$work/.why-exec-$task" ;;
+	remove) file="$work/.why-remove-$task" ;;
+	*) file="$work/.why-$task" ;;
+	esac
+	if [ -f "$file" ]; then
+		sed 's/^/      /' "$file"
+	else
+		echo "      (no reason recorded for '$op $task' — that is a gap in this gate, not a finding)"
+	fi
+}
+
+# churn_failed <round> fails the round naming BOTH the operations that broke and
+# the error each one recorded.
+#
+# It used to report only the operation names and assert "the standing fleet was
+# disturbed by concurrent create/destroy". That was a symptom presented as a
+# diagnosis, and twice misleading: for a failed launch of the TRANSIENT sandbox
+# the standing fleet had not been disturbed at all, and the underlying error --
+# already on disk, written by launch_sandbox -- was dropped. The nightly that
+# found MGIT-122 printed "churn round 1: launch C1-1" and nothing else, so the
+# read-exec-stream timeout that WAS the defect had to be reproduced by hand
+# before anyone could see it. A diagnostic that names no cause is worse than
+# none. Refs: MGIT-122, MGIT-113
+churn_failed() {
+	local round="$1" op task standing=0 transient=0 verdict
+	echo "  operations that failed in churn round $round, with the reason each recorded:"
+	while read -r op task; do
+		[ -n "${task:-}" ] || continue
+		case "$task" in
+		F-*) standing=$((standing + 1)) ;;
+		*) transient=$((transient + 1)) ;;
+		esac
+		printf '    %s %s\n' "$op" "$task"
+		churn_reason "$op" "$task"
+	done <"$work/.churn-failed"
+	# Say only what the evidence supports. Which of the two populations broke
+	# decides where the reader looks next, and they are different defects.
+	if [ "$standing" -gt 0 ] && [ "$transient" -gt 0 ]; then
+		verdict="$standing operation(s) against the STANDING fleet and $transient against the TRANSIENT sandbox failed — both populations broke"
+	elif [ "$standing" -gt 0 ]; then
+		verdict="$standing operation(s) against the STANDING fleet failed while a sandbox was created and destroyed alongside them — a healthy sandbox was disturbed by a sibling's lifecycle"
+	else
+		verdict="the standing fleet held; the TRANSIENT sandbox's own create/destroy failed $transient time(s) — the churn path itself broke, not the fleet around it"
+	fi
+	_e2e_fail "churn round $round: $verdict. The recorded reasons above are the evidence; read them before attributing this to an invariant."
+}
+
 # ---------------------------------------------------------------------------
 # PHASE 1 — concurrent bring-up
 # ---------------------------------------------------------------------------
@@ -392,11 +469,20 @@ for r in $(seq 1 "$CHURN_ROUNDS"); do
 	done
 	pids=""
 	# Steady load: keep execing the standing fleet throughout the round.
+	#
+	# The output of a failed exec is CAPTURED, not discarded. Discarding it is
+	# what left the nightly reporting "exec F-3" with no cause; the whole point
+	# of steady load is to catch a healthy sandbox being disturbed, and that
+	# finding is worth nothing without the error it produced.
 	for i in $(seq 1 "$FLEET"); do
 		(
-			for _ in 1 2 3; do
-				mgit sandbox exec --task "F-$i" -- /bin/echo . >/dev/null 2>&1 ||
+			rm -f "$work/.why-exec-F-$i" # a reason from an earlier round is not this round's
+			for n in 1 2 3; do
+				if ! o="$(mgit sandbox exec --task "F-$i" -- /bin/echo . 2>&1)"; then
+					printf 'F-%s: exec attempt %s: %s\n' "$i" "$n" \
+						"$(printf '%s' "$o" | tr '\n' ' ')" >>"$work/.why-exec-F-$i"
 					echo "exec F-$i" >>"$work/.churn-failed"
+				fi
 			done
 		) &
 		pids="$pids $!"
@@ -410,8 +496,13 @@ for r in $(seq 1 "$CHURN_ROUNDS"); do
 			# landing before or after them.
 			sleep "0.$((c * 3))"
 			if launch_sandbox "$t"; then
-				mgit sandbox remove "$t" --force >/dev/null 2>&1 ||
+				# Same rule as the execs above: a failed teardown records what
+				# the daemon actually said, not just that it failed.
+				if ! o="$(mgit sandbox remove "$t" --force 2>&1)"; then
+					printf '%s: remove: %s\n' "$t" "$(printf '%s' "$o" | tr '\n' ' ')" \
+						>"$work/.why-remove-$t"
 					echo "remove $t" >>"$work/.churn-failed"
+				fi
 			else
 				echo "launch $t" >>"$work/.churn-failed"
 			fi
@@ -420,7 +511,7 @@ for r in $(seq 1 "$CHURN_ROUNDS"); do
 	done
 	for p in $pids; do wait "$p" || true; done
 	if [ -s "$work/.churn-failed" ]; then
-		_e2e_fail "churn round $r: $(tr '\n' ' ' <"$work/.churn-failed")— the standing fleet was disturbed by concurrent create/destroy"
+		churn_failed "$r"
 	fi
 	live="$(fleet_live_tasks | wc -l | tr -d ' ')"
 	[ "$live" = "$FLEET" ] ||
@@ -644,7 +735,7 @@ fi
 if [ "$PROFILE" = "short" ]; then
 	echo
 	echo "SANDBOX FLEET SOAK: PASS (short profile — fleet=$FLEET, $CHURN_ROUNDS churn rounds)"
-	echo "  The LONG profile (fleet=8, 4 rounds) did NOT run here; it is the nightly"
+	echo "  The LONG profile (fleet=$((STOCK_MAX_CONCURRENT - 1)), 4 rounds) did NOT run here; it is the nightly"
 	echo "  soak. A short run is not evidence for the wide fleet."
 else
 	echo

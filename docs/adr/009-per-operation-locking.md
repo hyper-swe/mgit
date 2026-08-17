@@ -1,8 +1,8 @@
 # ADR-009: Per-Operation Repo Locking for Long-Lived Operations
 
-**Status:** Accepted (amended 2026-08-16, MGIT-120)
+**Status:** Accepted (amended 2026-08-16, MGIT-120; 2026-08-17, MGIT-122)
 **Date:** 2026-07-03
-**Refs:** MGIT-46, MGIT-120, MGIT-10 (process lock), ADR-001 (embedded git)
+**Refs:** MGIT-46, MGIT-120, MGIT-122, MGIT-10 (process lock), ADR-001 (embedded git)
 
 ## Context
 
@@ -113,7 +113,8 @@ short command mgit has. Inside one critical section it ran:
 2. `WorktreeStore.MaterializeBranchTo`, which inflates and writes every blob of
    the branch tree to disk, serially;
 3. with `--sandbox`, `EnsureRunning` + `Launch` against `mgit-sandboxd`, whose
-   own service mutex is held across a full VM boot.
+   own service mutex was, at the time, also held across a full VM boot (the
+   same defect one layer down — see the second amendment, MGIT-122).
 
 The tell was already in the tree: `mgit sandbox launch` performs the same daemon
 registration and opens **no** `App` at all, so it takes no repo lock. One command
@@ -167,3 +168,91 @@ capped at 1h), as REQUIREMENTS.md FR-4.7/NFR-3.5 had promised all along while
 the code carried a compile-time constant. It is an escape hatch for an operator
 on a busy repo, not a remedy: widening the wait converts a wedge into a slower
 wedge. The remedy is this amendment's rule.
+
+---
+
+## Second amendment (2026-08-17) — the same rule inside the daemon
+
+**Refs:** MGIT-122
+
+### What went wrong
+
+The first amendment fixed the repo lock and, in passing, named the defect one
+layer down without fixing it: `mgit-sandboxd`'s `SandboxService.mu` was held
+across `manager.Launch`, a full VM boot.
+
+That mutex has two jobs, and only one of them needs a boot's worth of duration.
+It protects the `byTask` registry map — microseconds of work — and it was
+*incidentally* serializing boots, which take 16.5 s at four concurrent sandboxes
+and 41–59 s at eight on the reference host (`docs/E2E-MATRIX.md`). So while any
+one sandbox booted, every registration, exec, status and teardown on the daemon
+queued behind it, however healthy their own sandboxes were, and expired on the
+client's socket deadline. The agent was shown `the guest stopped answering`
+about a guest that was fine, with advice (raise `--memory-mb`) unrelated to the
+cause.
+
+`internal/sandboxd/ceiling.go` already had the shape right and said so in its
+own doc comment: *"capacity is reserved under the lock, the (possibly slow)
+backend launch runs OUTSIDE it… one cold boot never serializes other
+operations."* The service above it did not follow.
+
+### The corrected rule
+
+**Same rule as the first amendment, applied to in-process locks: a mutex is
+held for the state transition, never for the duration of the work it
+authorizes.**
+
+| Phase | Lock | What runs |
+|---|---|---|
+| **Claim** | held | resolve options, refuse/join a boot already in flight, mark this registration as booting |
+| **Boot** | free | `manager.Launch`, egress start, grant replay, port publish |
+| **Record** | held | audit event, durable state, mark running, publish the outcome to joiners |
+
+### Why narrowing does not open a race
+
+The lock was never what made a boot exclusive — nothing was, because holding it
+made a second boot unreachable rather than refused. The claim is now explicit:
+a `bootAttempt` on the registration, set under the lock. Every window that
+opens is closed by it rather than tolerated:
+
+- **Two callers, one task.** The second finds the attempt and waits on it. It
+  receives the winner's outcome — including its *failure*, deliberately, so N
+  callers against a refusing backend produce one launch and not N.
+- **A teardown mid-boot.** `Remove`, `Land`, sync and export wait for that
+  task's attempt to settle (`awaitBootLocked`, which drops and re-takes the
+  lock). Acting through a boot would delete the registration while its VM was
+  still being created — a VM alive with nothing tracking it (the MGIT-103
+  shape) — and would record `resumed` after `destroyed`, a life continuing
+  after it ended, which the fleet soak's invariant I5 refuses. The wait is
+  per-task: tearing down one sandbox never waits on another's boot.
+- **The TTL sweep.** Skips a registration with a boot in flight; an in-flight
+  boot is activity, and the next sweep reaps it if it is still expired.
+- **A policy staged mid-boot.** Refused as booted. The launch already took its
+  copy of the options, so reporting a stage as successful would be a silent
+  fail-open at the moment containment is relied on — the defect MGIT-109 closed
+  (`pendingRegLocked`).
+
+`List` and `Status` deliberately do NOT wait: they report what is true now
+(`created`, not yet running), which is the honest answer and the one that keeps
+an inspection from blocking behind a boot.
+
+### The client deadline, which was the other half
+
+Narrowing the mutex is not sufficient on its own. `internal/sandboxd/client.go`
+armed **one** read deadline at dial and never re-armed it, so every request's
+budget was spent by whatever happened before it was written. For exec that was
+fatal in its own right: the daemon relays a command's output only once the
+command has finished, so a deadline on that stream is a cap on how long a build
+may take. Measured on a warm, single-VM, otherwise-idle sandbox, `mgit sandbox
+exec -- sleep 45` failed at exactly 30 s.
+
+The response budget is now armed when the request goes out, and the exec frame
+stream carries no wall clock at all. What bounds it instead is the per-exec
+timeout and the sandbox TTL (daemon-enforced), a dead daemon (its socket closes
+and the read ends at once), and the caller's context — now wired to the
+connection, so cancelling actually cancels. That last part is what makes
+removing the deadline safe rather than a trade of a timeout for a hang.
+
+**Known gap, filed not hidden:** while a command runs the daemon sends nothing,
+so a client cannot distinguish "the guest is working" from "the daemon is
+wedged". Closing that needs a liveness frame on the exec stream (MGIT-133).

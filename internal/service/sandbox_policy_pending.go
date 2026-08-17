@@ -82,7 +82,13 @@ func (s *SandboxService) pendingRegLocked(sandboxID string) (*sandboxReg, error)
 		if reg.info.ID != sandboxID {
 			continue
 		}
-		if reg.booted {
+		// A boot IN FLIGHT counts as booted here, and must. The launch has
+		// already taken its copy of reg.opts, so staging onto them would report
+		// success for an allowlist the VM will never enforce — a silent
+		// fail-open at the moment containment is being relied on, which is the
+		// defect MGIT-109 closed. The caller re-routes to the live enforcer.
+		// Refs: MGIT-109, MGIT-122, SEC-04
+		if reg.booted || reg.boot != nil {
 			return nil, fmt.Errorf("%w: sandbox %s", model.ErrSandboxBooted, sandboxID)
 		}
 		return reg, nil
