@@ -119,6 +119,38 @@ func TestConfigService_Set_ScalarValues_RoundTripThroughStrings(t *testing.T) {
 			value:   "soon",
 			wantErr: true,
 		},
+		// "0" and "1" spell BOTH a bool and a number. Stopping at the bool made
+		// every int key unsettable to 0 or 1 — including the value MGIT-131's
+		// size refusal tells an operator to use to disable the guard.
+		{
+			name:  "zero_for_int_key_is_a_number_not_a_bool",
+			key:   "limits.max_staged_file_mb",
+			value: "0",
+			check: func(t *testing.T, c Config) {
+				assert.Equal(t, 0, c.Limits.MaxStagedFileMB)
+				assert.Equal(t, int64(0), c.StagedFileLimitBytes())
+			},
+		},
+		{
+			name:  "one_for_int_key_is_a_number_not_a_bool",
+			key:   "api.http_port",
+			value: "1",
+			check: func(t *testing.T, c Config) { assert.Equal(t, 1, c.API.HTTPPort) },
+		},
+		{
+			name:  "one_for_bool_key_is_still_a_bool",
+			key:   "git.auto_stage",
+			value: "1",
+			check: func(t *testing.T, c Config) { assert.True(t, c.Git.AutoStage) },
+		},
+		{
+			name:  "int_key_raised_from_string",
+			key:   "limits.max_staged_file_mb",
+			value: "64",
+			check: func(t *testing.T, c Config) {
+				assert.Equal(t, int64(64<<20), c.StagedFileLimitBytes())
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

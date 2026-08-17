@@ -109,13 +109,21 @@ func NewServer(
 	// report a clear error rather than failing the whole server. Refs: MGIT-50
 	cfgSvc, _ := service.NewConfigService(filepath.Join(repo.MgitDir(), "config.json"))
 
+	// The per-file staging size limit this repo configures (MGIT-131). When the
+	// config could not be read, the service keeps its built-in default, so the
+	// guard is present either way — a broken config must not silently disarm it.
+	commitSvc := service.NewCommitService(repo, cs, idx).WithAudit(audit)
+	if cfgSvc != nil {
+		commitSvc = commitSvc.WithStagedFileLimit(cfgSvc.GetAll().StagedFileLimitBytes())
+	}
+
 	s := &Server{
 		mcpServer: mcpserver.NewMCPServer(
 			"mgit",
 			"1.0.0",
 			mcpserver.WithToolCapabilities(true),
 		),
-		commit:   service.NewCommitService(repo, cs, idx).WithAudit(audit),
+		commit:   commitSvc,
 		squash:   service.NewSquashService(repo, cs, idx).WithAudit(audit),
 		rollback: service.NewRollbackService(repo, cs, idx).WithAudit(audit),
 		branch:   branchSvc,
@@ -217,6 +225,8 @@ func (s *Server) registerTools() {
 			"Stage all working-tree changes before committing (default true)")),
 		mcp.WithBoolean("allow_empty", mcp.Description(
 			"Permit a commit whose tree is identical to its parent's (default false)")),
+		mcp.WithBoolean("allow_large", mcp.Description(
+			"Stage files above the limits.max_staged_file_mb size limit (default false)")),
 	), s.commitTool)
 
 	s.mcpServer.AddTool(mcp.NewTool("mgit_rollback",
@@ -372,6 +382,8 @@ func (s *Server) commitTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	// mgit_commit could only ever record an empty tree (MGIT-77). Callers may
 	// opt out explicitly to commit a selection staged elsewhere.
 	allowEmpty, _ := req.GetArguments()["allow_empty"].(bool)
+	// Escape hatch for the staged-file size tripwire (MGIT-131).
+	allowLarge, _ := req.GetArguments()["allow_large"].(bool)
 	stageAll := true
 	if v, ok := req.GetArguments()["stage_all"].(bool); ok {
 		stageAll = v
@@ -383,6 +395,7 @@ func (s *Server) commitTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		Message:    message,
 		StageAll:   stageAll,
 		AllowEmpty: allowEmpty,
+		AllowLarge: allowLarge,
 	})
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil

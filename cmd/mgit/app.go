@@ -39,6 +39,12 @@ type App struct {
 	// repository). Commands run from inside a worktree default to it. Refs: MGIT-24
 	BoundTask string
 
+	// StagedFileLimit is the per-file size (bytes) above which staging is
+	// refused, from `limits.max_staged_file_mb`; 0 means the guard is off. Held
+	// on the App so `mgit add` enforces exactly what `mgit commit -a` does.
+	// Refs: FR-13, MGIT-131
+	StagedFileLimit int64
+
 	// storeDir is the directory holding the shared store + file lock (the repo's
 	// .mgit, or a worktree's shared parent store). It is where DetachLock builds
 	// its per-operation Guarder. Refs: MGIT-46
@@ -129,6 +135,10 @@ func OpenApp(path string) (*App, error) {
 	// surfaced by `mgit audit` (MGIT-20).
 	audit := service.NewAuditService(auditPath, clock)
 
+	// Per-file staging size limit, shared by `mgit add` and `mgit commit -a` so
+	// one config key governs both staging paths. Refs: MGIT-131
+	stagedFileLimit := cfgSvc.GetAll().StagedFileLimitBytes()
+
 	// Complete any content-apply (rollback/cherry-pick) interrupted mid-write:
 	// under the lock, before any command logic or auto-resync can observe a
 	// tip/disk divergence. Refs: MGIT-54 (review finding H3)
@@ -140,23 +150,26 @@ func OpenApp(path string) (*App, error) {
 	}
 
 	return &App{
-		Repo:        repo,
-		Index:       idx,
-		Commit:      service.NewCommitService(repo, cs, idx).WithAudit(audit),
-		Squash:      service.NewSquashService(repo, cs, idx).WithAudit(audit),
-		Rollback:    service.NewRollbackService(repo, cs, idx).WithAudit(audit),
-		Branch:      service.NewBranchService(repo, bs, idx),
-		Verify:      service.NewVerifyService(cs, idx),
-		Audit:       audit,
-		Config:      cfgSvc,
-		Diff:        service.NewDiffService(ds, cs, idx),
-		Restore:     service.NewRestoreService(repo, cs, path),
-		Checkout:    service.NewCheckoutService(bs, ws),
-		Merge:       service.NewMergeService(repo, bs, ms, cs),
-		GC:          service.NewGCService(gcs),
-		Bundle:      service.NewBundleService(idx, clock),
-		Sync:        service.NewSyncService(repo, ws, cs, boundTask, clock),
-		BoundTask:   boundTask,
+		Repo:  repo,
+		Index: idx,
+		Commit: service.NewCommitService(repo, cs, idx).
+			WithAudit(audit).WithStagedFileLimit(stagedFileLimit),
+		Squash:          service.NewSquashService(repo, cs, idx).WithAudit(audit),
+		Rollback:        service.NewRollbackService(repo, cs, idx).WithAudit(audit),
+		Branch:          service.NewBranchService(repo, bs, idx),
+		Verify:          service.NewVerifyService(cs, idx),
+		Audit:           audit,
+		Config:          cfgSvc,
+		Diff:            service.NewDiffService(ds, cs, idx),
+		Restore:         service.NewRestoreService(repo, cs, path),
+		Checkout:        service.NewCheckoutService(bs, ws),
+		Merge:           service.NewMergeService(repo, bs, ms, cs),
+		GC:              service.NewGCService(gcs),
+		Bundle:          service.NewBundleService(idx, clock),
+		Sync:            service.NewSyncService(repo, ws, cs, boundTask, clock),
+		BoundTask:       boundTask,
+		StagedFileLimit: stagedFileLimit,
+
 		storeDir:    storeDir,
 		lockTimeout: lockTimeout,
 		fileLock:    fileLock,

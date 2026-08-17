@@ -33,6 +33,10 @@ type CreateCommitRequest struct {
 	// Off by default: a commit that records nothing but returns a hash is a
 	// false success signal (MGIT-77). Refs: FR-2, MGIT-77
 	AllowEmpty bool `json:"allow_empty,omitempty"`
+
+	// AllowLarge waives the per-file staging size limit for this call — the
+	// escape hatch for a legitimately large file. Refs: FR-2.6b, MGIT-131
+	AllowLarge bool `json:"allow_large,omitempty"`
 }
 
 // CommitService orchestrates commit creation across go-git and SQLite.
@@ -42,15 +46,30 @@ type CommitService struct {
 	indexStore  *index.Store
 	repo        *gitstore.Repository
 	audit       *AuditService
+
+	// maxStagedFileBytes is the per-file size above which a StageAll commit
+	// refuses to stage. Defaults to gitstore.DefaultMaxStagedFileBytes so every
+	// surface inherits the guard even if it never reads a config file.
+	// Refs: MGIT-131
+	maxStagedFileBytes int64
 }
 
 // NewCommitService creates a CommitService with injected dependencies.
 func NewCommitService(repo *gitstore.Repository, cs *gitstore.CommitStore, idx *index.Store) *CommitService {
 	return &CommitService{
-		commitStore: cs,
-		indexStore:  idx,
-		repo:        repo,
+		commitStore:        cs,
+		indexStore:         idx,
+		repo:               repo,
+		maxStagedFileBytes: gitstore.DefaultMaxStagedFileBytes,
 	}
+}
+
+// WithStagedFileLimit overrides the per-file staging size limit (bytes) that
+// `commit -a` enforces, from `limits.max_staged_file_mb`. A value <= 0 disables
+// the guard. Returns the receiver for fluent wiring. Refs: FR-13, MGIT-131
+func (s *CommitService) WithStagedFileLimit(limit int64) *CommitService {
+	s.maxStagedFileBytes = limit
+	return s
 }
 
 // WithAudit attaches an AuditService so successful commits are recorded in the
@@ -78,10 +97,8 @@ func (s *CommitService) CreateCommit(ctx context.Context, req CreateCommitReques
 		return nil, fmt.Errorf("create commit: %w", err)
 	}
 
-	if req.StageAll {
-		if err := gitstore.NewWorktreeStore(s.repo).Add(ctx, "."); err != nil {
-			return nil, fmt.Errorf("create commit: stage all changes: %w", err)
-		}
+	if err := s.stageAll(ctx, req); err != nil {
+		return nil, err
 	}
 
 	if err := s.rejectEmptyCommit(req); err != nil {
@@ -135,6 +152,30 @@ func (s *CommitService) CreateCommit(ctx context.Context, req CreateCommitReques
 	}
 
 	return commit, nil
+}
+
+// stageAll stages the whole working tree for a `commit -a`, under the per-file
+// size limit unless the caller waived it with AllowLarge. A size refusal is
+// returned UNWRAPPED: it already names the file, its size and both overrides,
+// and burying that behind "create commit: stage all changes:" costs the reader
+// the remedy — the same reason MGIT-77's refusal silences the usage dump.
+// Refs: FR-2.6b, MGIT-131, MGIT-77
+func (s *CommitService) stageAll(ctx context.Context, req CreateCommitRequest) error {
+	if !req.StageAll {
+		return nil
+	}
+	limit := s.maxStagedFileBytes
+	if req.AllowLarge {
+		limit = 0
+	}
+	ws := gitstore.NewWorktreeStore(s.repo).WithMaxStagedFileBytes(limit)
+	if err := ws.Add(ctx, "."); err != nil {
+		if errors.Is(err, model.ErrFileTooLarge) {
+			return err
+		}
+		return fmt.Errorf("create commit: stage all changes: %w", err)
+	}
+	return nil
 }
 
 // rejectEmptyCommit returns model.ErrNothingToCommit when the staging set would

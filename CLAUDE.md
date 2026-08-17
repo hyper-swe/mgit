@@ -882,13 +882,18 @@ golangci-lint run  # your host
 govulncheck ./...
 
 # 6. Build (must produce binary)
-go build -o mgit ./cmd/mgit/
+#    Build INTO build/ — it is gitignored, so the ~21MB binary cannot be swept
+#    into your task branch by `mgit commit -a`. Twice it was (MGIT-131), and
+#    mgit's store is append-only: a blob staged once stays in the branch's
+#    objects forever, even after a later commit deletes it. `make build` (which
+#    writes the equally-ignored cmd/mgit/mgit) is the other safe option.
+go build -o build/mgit ./cmd/mgit/
 
 # 7. Smoke test (manual or script)
-./mgit --help
-./mgit commit --help
-./mgit squash --help
-./mgit rollback --help
+./build/mgit --help
+./build/mgit commit --help
+./build/mgit squash --help
+./build/mgit rollback --help
 
 # 8. Code review readiness
 # - Godoc on every export

@@ -2,24 +2,31 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mgit/internal/model"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // addCmd implements mgit add. Refs: FR-8.15, MGIT-4.2.6
 func addCmd() *cobra.Command {
-	var all bool
+	var all, allowLarge bool
 	var taskScope string
 
 	cmd := &cobra.Command{
 		Use:   "add [paths...]",
 		Short: "Stage files for the next commit",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Past flag parsing a failure is a runtime condition, not misuse:
+			// the size refusal carries a remedy the flag table would bury.
+			// Refs: MGIT-131, MGIT-77
+			cmd.SilenceUsage = true
+
 			// --task is advisory; stored as metadata for future use.
 			_ = taskScope
 			app, err := openAppFromCwd()
@@ -29,12 +36,16 @@ func addCmd() *cobra.Command {
 			defer app.Close()
 
 			ctx := context.Background()
-			ws := gitstore.NewWorktreeStore(app.Repo)
+			// The size tripwire applies to BOTH staging paths — here and in
+			// `mgit commit -a` (service.CommitService) — because a guard on one
+			// of them is not a guard. Refs: MGIT-131
+			ws := gitstore.NewWorktreeStore(app.Repo).
+				WithMaxStagedFileBytes(stagingLimit(app, allowLarge))
 
 			if all {
 				// Stage all changes
 				if err := ws.Add(ctx, "."); err != nil {
-					return fmt.Errorf("add all: %w", err)
+					return addError("add all", err)
 				}
 				_, _ = fmt.Fprintln(os.Stdout, "Staged all changes")
 				return nil
@@ -46,7 +57,7 @@ func addCmd() *cobra.Command {
 
 			for _, path := range args {
 				if err := ws.Add(ctx, path); err != nil {
-					return fmt.Errorf("add %s: %w", path, err)
+					return addError("add "+path, err)
 				}
 				_, _ = fmt.Fprintf(os.Stdout, "Staged: %s\n", path)
 				warnIfGenerated(cmd.ErrOrStderr(), ws, path)
@@ -56,8 +67,32 @@ func addCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVarP(&all, "all", "A", false, "Stage all changes")
+	cmd.Flags().BoolVar(&allowLarge, "allow-large", false,
+		"Stage files over the limits.max_staged_file_mb size limit")
 	bindTaskIDFlag(cmd, &taskScope, "Task ID scope (advisory — stored as metadata for future use)")
 	return cmd
+}
+
+// addError adds the caller's context to a staging failure — except for the
+// size refusal, which is returned bare. That message already names the file,
+// its size, the limit and both overrides; an "add <path>:" prefix only repeats
+// the path and pushes the remedy further from the reader's eye.
+// Refs: FR-8.15, MGIT-131
+func addError(context string, err error) error {
+	if errors.Is(err, model.ErrFileTooLarge) {
+		return err
+	}
+	return fmt.Errorf("%s: %w", context, err)
+}
+
+// stagingLimit resolves the per-file staging size limit for one invocation:
+// `limits.max_staged_file_mb` from the repo config, or 0 (guard off) when the
+// caller passed --allow-large. Refs: FR-13, MGIT-131
+func stagingLimit(app *App, allowLarge bool) int64 {
+	if allowLarge {
+		return 0
+	}
+	return app.StagedFileLimit
 }
 
 // warnIfGenerated notes on stderr that an EXPLICITLY named path is one mgit
