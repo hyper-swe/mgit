@@ -225,3 +225,21 @@ func TestNew_ParentThatCannotBeCreated_Fails(t *testing.T) {
 
 	require.Error(t, err)
 }
+
+// TestNew_UnopenableDatabase_FailsAtOpenNotFirstUse covers the pool
+// verification in openPools. Since MGIT-121.1 the pools are created with
+// sql.OpenDB, which is lazy and dials nothing, so without the ping a database
+// that cannot be opened — or a pragma that will not apply — would surface on
+// some later first use, far from the cause. The path here is a directory,
+// which SQLite can name but not open.
+// Refs: MGIT-121.1
+func TestNew_UnopenableDatabase_FailsAtOpenNotFirstUse(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "index.db")
+	require.NoError(t, os.MkdirAll(dbPath, 0o700))
+
+	_, err := New(dbPath, fixedClock())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "open write db",
+		"the failure must be reported against the pool that could not connect")
+}
