@@ -56,6 +56,11 @@ type FileStatus struct {
 // Refs: FR-2, FR-8, MGIT-2.2.6, MGIT-14.3, MGIT-14.4
 type WorktreeStore struct {
 	repo *Repository
+
+	// maxStagedFileBytes is the per-file size above which staging is refused.
+	// Zero (the constructed default) disables the guard; the staging surfaces
+	// turn it on. See WithMaxStagedFileBytes. Refs: MGIT-131
+	maxStagedFileBytes int64
 }
 
 // NewWorktreeStore creates a WorktreeStore backed by the given Repository.
@@ -193,7 +198,13 @@ func (ws *WorktreeStore) classifyWorkingPath(path string, head map[string]blobEn
 // Add stages files for the next commit. A path of "." stages every changed and
 // untracked user-visible file; otherwise the given project-relative path is
 // staged. Staging is recorded in mgit's own staging file under .mgit/.
-// Refs: FR-2, MGIT-14.3
+//
+// When a per-file size limit is configured (WithMaxStagedFileBytes), a file
+// over it is REFUSED with model.ErrFileTooLarge rather than staged — the
+// tripwire for build output swept in by a bulk stage (MGIT-131). Both entry
+// points are covered: this one and addAll below, so a check here and not there
+// would leave `mgit commit -a` — the instructed way to commit — as the hole.
+// Refs: FR-2.6, FR-2.6b, MGIT-14.3, MGIT-131
 func (ws *WorktreeStore) Add(ctx context.Context, path string) error {
 	if path == "." || path == "" {
 		return ws.addAll(ctx)
@@ -207,6 +218,11 @@ func (ws *WorktreeStore) Add(ctx context.Context, path string) error {
 	// a nonexistent, never-tracked path.
 	if err := ws.assertStageable(rel); err != nil {
 		return fmt.Errorf("add %s: %w", path, err)
+	}
+	// Returned unwrapped: the refusal already names the path, the size and the
+	// two overrides, and a "add <path>:" prefix only buries the remedy.
+	if err := ws.assertNotOversized([]string{rel}); err != nil {
+		return err
 	}
 	if err := ws.repo.stagePath(rel); err != nil {
 		return fmt.Errorf("add %s: %w", path, err)
@@ -261,6 +277,12 @@ func (ws *WorktreeStore) addAll(ctx context.Context) error {
 			continue
 		}
 		paths = append(paths, f.Path)
+	}
+	// The size tripwire (MGIT-131). Status only reports paths that DIFFER from
+	// HEAD, so this weighs exactly the content a bulk stage would add — an
+	// already-committed large file staged by nobody is not re-flagged.
+	if err := ws.assertNotOversized(paths); err != nil {
+		return err
 	}
 	if err := ws.repo.stagePaths(paths); err != nil {
 		return fmt.Errorf("add all: %w", err)

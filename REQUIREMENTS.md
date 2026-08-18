@@ -155,6 +155,8 @@ where `task_title` is retrieved from mtix via MCP tool `mtix_show` if available,
 
 **FR-2.6a** If no files are staged and `mgit commit` is called, mgit MUST return an error: `"nothing to commit — stage files with 'mgit add' first"`.
 
+**FR-2.6b** Staging MUST refuse a file larger than `limits.max_staged_file_mb` (default 5 MiB) on EVERY staging path — `mgit add <file>`, `mgit add -A`, and the bulk stage behind `mgit commit -a` — because a guard on one path is not a guard. The refusal MUST name the offending path, its size, the limit it broke, and both overrides: `--allow-large` (per invocation) and the `limits.max_staged_file_mb` config key (`0` disables the check). A refused bulk stage MUST stage nothing at all, and a refused commit MUST NOT advance the branch. The guard exists because the store is append-only: a locally built binary staged once sits in the branch's objects forever, and `squash --to-git` exports base-to-tip, so it never appears in the landed patch a reviewer reads. It does NOT apply to the ADR-008 auto-resync's absorption of already-committed project content, where no new bytes enter the store and no author is present to act on a refusal. (MGIT-131)
+
 **FR-2.7** mgit MUST reject commits with an empty changeset (no file modifications). This prevents no-op commits from polluting the audit trail.
 
 **FR-2.8** mgit MUST support `--allow-empty` flag to override FR-2.7 for system-generated commits (e.g., rollback markers, squash markers).
@@ -681,6 +683,7 @@ The bundle includes: all objects, refs, index database, audit log, and a manifes
 | `mtix.api_url` | http://localhost:6851 | mtix REST API URL |
 | `mtix.mcp_transport` | stdio | mtix MCP transport for integration |
 | `mtix.auto_detect` | true | Auto-detect .mtix/ directory |
+| `limits.max_staged_file_mb` | 5 | Per-file size above which staging is refused (FR-2.6b); 0 disables the check |
 | `audit.log_file` | .mgit/audit.log | Audit log file path |
 | `audit.max_size_mb` | 100 | Max audit log size before rotation |
 | `gc.auto` | true | Auto-GC on pack threshold |

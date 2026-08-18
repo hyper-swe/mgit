@@ -3,11 +3,13 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 	"github.com/hyper-swe/mgit/internal/store/lock"
 )
 
@@ -26,6 +28,39 @@ type Config struct {
 	Branch   BranchConfig   `json:"branch"`
 	Audit    AuditConfig    `json:"audit"`
 	Locks    LocksConfig    `json:"locks"`
+	Limits   LimitsConfig   `json:"limits"`
+}
+
+// LimitsConfig holds the guards on what may enter the append-only store.
+//
+// MaxStagedFileMB is the per-file size above which `mgit add` and
+// `mgit commit -a` REFUSE to stage (MGIT-131). It exists because the project's
+// own verification checklist tells the agent to build a binary, and `-a` — the
+// instructed way to commit — then swept 21 MB and 40 MB binaries into task
+// branches. Zero or negative disables the check entirely; the refusal names
+// this key, so the operator with a genuinely large file has a stated way out
+// instead of abandoning the guard.
+// Refs: FR-13, MGIT-131
+type LimitsConfig struct {
+	MaxStagedFileMB int `json:"max_staged_file_mb"`
+}
+
+// StagedFileLimitBytes converts the configured per-file staging limit into
+// bytes, returning 0 when the guard is disabled (a non-positive setting).
+// Absurd values are clamped rather than overflowed: config content is input
+// like any other, and a wrapped-around limit would silently disable a guard
+// the operator believes they widened. Refs: FR-13, NFR-5, MGIT-131
+func (c Config) StagedFileLimitBytes() int64 {
+	const maxMB = math.MaxInt64 >> 20
+	mb := int64(c.Limits.MaxStagedFileMB)
+	switch {
+	case mb <= 0:
+		return 0
+	case mb > maxMB:
+		return math.MaxInt64
+	default:
+		return mb << 20
+	}
 }
 
 // LocksConfig holds process-lock settings.
@@ -105,6 +140,7 @@ func DefaultConfig() Config {
 		Branch:   BranchConfig{AutoCreate: true},
 		Audit:    AuditConfig{LogFile: ".mgit/audit.log", MaxSizeMB: 100},
 		Locks:    LocksConfig{TimeoutSeconds: int(lock.DefaultTimeout / time.Second)},
+		Limits:   LimitsConfig{MaxStagedFileMB: int(gitstore.DefaultMaxStagedFileBytes >> 20)},
 	}
 }
 
@@ -211,15 +247,21 @@ func (s *ConfigService) Get(key string) (any, error) {
 // A CLI value always arrives as a string, so a numeric or boolean setting
 // (`locks.timeout_seconds`, `api.http_port`, `git.auto_stage`) would be
 // rejected by the typed apply below. When the string form does not fit the
-// field, Set retries once with the value coerced to the scalar it spells —
-// making every documented key actually settable from `mgit config set`, not
-// just the string-typed ones. Refs: FR-13, MGIT-120
+// field, Set retries with each scalar the string could spell — making every
+// documented key actually settable from `mgit config set`, not just the
+// string-typed ones.
+//
+// It tries EVERY candidate rather than the first: "0" and "1" spell both a
+// bool and a number, and stopping at the bool made `mgit config set
+// limits.max_staged_file_mb 0` fail — the exact value MGIT-131's refusal tells
+// an operator to use to disable the size guard.
+// Refs: FR-13, MGIT-120, MGIT-131
 func (s *ConfigService) Set(key string, value any) error {
 	err := s.applySet(key, value)
 	if err == nil {
 		return nil
 	}
-	if coerced, ok := coerceScalar(value); ok {
+	for _, coerced := range coerceScalar(value) {
 		if retryErr := s.applySet(key, coerced); retryErr == nil {
 			return nil
 		}
@@ -227,21 +269,23 @@ func (s *ConfigService) Set(key string, value any) error {
 	return err
 }
 
-// coerceScalar converts a CLI string to the bool or number it spells, reporting
-// false when it spells neither (so a genuinely-string setting is left alone).
-// Refs: FR-13, MGIT-120
-func coerceScalar(value any) (any, bool) {
+// coerceScalar returns every scalar a CLI string could spell, most specific
+// first: a bool if it parses as one, then a number if it parses as one. An
+// empty result means the value spells neither, so a genuinely-string setting is
+// left alone. Refs: FR-13, MGIT-120, MGIT-131
+func coerceScalar(value any) []any {
 	s, ok := value.(string)
 	if !ok {
-		return nil, false
+		return nil
 	}
+	var candidates []any
 	if b, err := strconv.ParseBool(s); err == nil {
-		return b, true
+		candidates = append(candidates, b)
 	}
 	if f, err := strconv.ParseFloat(s, 64); err == nil {
-		return f, true
+		candidates = append(candidates, f)
 	}
-	return nil, false
+	return candidates
 }
 
 // applySet writes value at the dot-notation key through a marshal/unmarshal

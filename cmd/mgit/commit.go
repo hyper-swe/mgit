@@ -17,7 +17,7 @@ import (
 // commitCmd implements mgit commit. Refs: FR-8.3, MGIT-4.1.2, MGIT-77, MGIT-105
 func commitCmd() *cobra.Command {
 	var taskID, message, messageFile, agentID, sessionID string
-	var formatJSON, allowEmpty, dryRun, stageAll bool
+	var formatJSON, allowEmpty, dryRun, stageAll, allowLarge bool
 
 	cmd := &cobra.Command{
 		Use:   "commit",
@@ -72,6 +72,7 @@ func commitCmd() *cobra.Command {
 				Message:    message,
 				StageAll:   stageAll,
 				AllowEmpty: allowEmpty,
+				AllowLarge: allowLarge,
 			})
 			if err != nil {
 				return commitError(err)
@@ -102,6 +103,10 @@ func commitCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&stageAll, "all", "a", false,
 		"Stage every change (including new files, same as mgit add -A) then commit")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Validate inputs without creating a commit")
+	// The escape hatch for the -a size tripwire (MGIT-131). Named in the
+	// refusal itself, so a caller who hits the guard is told how to proceed.
+	cmd.Flags().BoolVar(&allowLarge, "allow-large", false,
+		"With -a, stage files over the limits.max_staged_file_mb size limit")
 	return cmd
 }
 
@@ -196,6 +201,12 @@ func readCommitMessageFile(cmd *cobra.Command, path string) ([]byte, error) {
 // CLI remedy belongs here, at the surface whose commands the remedy names.
 // Refs: FR-8.3, MGIT-77
 func commitError(err error) error {
+	// The size refusal (MGIT-131) is already a complete, self-contained
+	// message: file, size, limit, and both overrides. A "commit:" prefix adds
+	// nothing and separates the reader from the remedy.
+	if errors.Is(err, model.ErrFileTooLarge) {
+		return err
+	}
 	if errors.Is(err, model.ErrNothingToCommit) {
 		return fmt.Errorf("%w — mgit records only STAGED changes.\n"+
 			"  Stage them:      mgit add <path>   (or `mgit add -A` for everything)\n"+

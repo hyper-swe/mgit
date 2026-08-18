@@ -36,6 +36,14 @@ var (
 	// Refs: FR-2, MGIT-77
 	ErrNothingToCommit = errors.New("nothing to commit")
 
+	// ErrFileTooLarge indicates a file offered for staging exceeds the
+	// staged-file size limit. mgit's store is append-only, so a large blob
+	// staged by accident — nearly always a locally built binary swept in by a
+	// bulk stage — bloats the task branch permanently, even after a later
+	// commit deletes it again. The refusal is deliberate and overridable.
+	// Refs: FR-2.6b, MGIT-131, MGIT-80
+	ErrFileTooLarge = errors.New("file exceeds the staged-file size limit")
+
 	// ErrBranchAlreadyExists indicates a branch name is already in use.
 	ErrBranchAlreadyExists = errors.New("branch already exists")
 

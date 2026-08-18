@@ -1,8 +1,28 @@
+# Locally built binaries. `make build` writes cmd/mgit/mgit; CLAUDE.md's
+# verification checklist writes build/mgit. They are ~21 MB each, and mgit's
+# store is append-only, so one swept in by `mgit commit -a` — the instructed way
+# to commit — sits in the branch's objects forever. That has happened twice
+# (MGIT-131): a 40 MB binary in task/MGIT-121.1, a 21 MB one in task/MGIT-123.
 cmd/mgit/mgit
 /mgit
 /mgit-sandboxd
 /mgit-guest
 /mgit.exe
+
+# Build output directory. Everything under build/ is output EXCEPT the darwin
+# code-signing inputs the Makefile reads (`codesign --entitlements
+# build/darwin/vz.entitlements`), which are source and must stay tracked. The
+# directory itself is never excluded, only its contents, so git still descends
+# into build/darwin to see the re-included files below.
+/build/*
+!/build/darwin/
+/build/darwin/*
+!/build/darwin/README.md
+!/build/darwin/vz.entitlements
+
+# Compiled test binaries from `go test -c` (Makefile: e2e-libkrun), which land
+# in the package directory when -o is omitted.
+*.test
 
 CONCURRENCY-ANALYSIS.md
 SECURITY-AUDIT-LOCK.md

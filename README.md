@@ -582,6 +582,7 @@ Stored in `.mgit/config.json`, managed via `mgit config get/set/list`.
 | `rollback.auto_reopen` | `true` | Reopen tasks on rollback |
 | `branch.auto_create` | `true` | Auto-create branch on first task commit |
 | `locks.timeout_seconds` | `30` | How long a command waits for the repo lock (`.mgit/locks/mgit.lock`) before failing with `another mgit process is running`. Capped at 3600. Widening it is a workaround, never a fix: a command that holds the lock across slow work is the defect |
+| `limits.max_staged_file_mb` | `5` | Per-file size above which `mgit add` and `mgit commit -a` REFUSE to stage, naming the file, its size and both overrides. mgit's store is append-only, so a locally built binary staged once sits in the branch's objects forever even after a later commit deletes it. Pass `--allow-large` to stage one deliberately, or set `0` to disable the check |
 
 ## Development
 
