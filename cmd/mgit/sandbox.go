@@ -258,59 +258,6 @@ func parsePublishPorts(specs []string) ([]model.PortPublish, error) {
 // the daemon on launch).
 const validationStubImageRef = "x@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
-// sandboxExecCmd runs one command inside a task's sandbox, streaming
-// output and propagating the guest exit code.
-func sandboxExecCmd(connect connectFunc) *cobra.Command {
-	var task string
-	var env []string
-	cmd := &cobra.Command{
-		Use:   "exec --task <id> -- <command> [args...]",
-		Short: "Run a command in a task's sandbox (streams output, propagates exit code)",
-		Args:  cobra.MinimumNArgs(1),
-		// Real errors are printed here; cobra must not also print them or
-		// turn an exitError into an "Error:" line.
-		SilenceErrors: true,
-		SilenceUsage:  true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if task == "" {
-				return printErr(cmd.ErrOrStderr(), fmt.Errorf("--task-id is required"))
-			}
-			cl, err := connect(cmd.Context())
-			if err != nil {
-				return printErr(cmd.ErrOrStderr(), err)
-			}
-			// argv is passed as a list — no shell on the host path — and only
-			// the explicit --env injections are sent; the host environment is
-			// never forwarded into the hostile guest (FR-17.3).
-			code, err := cl.Exec(cmd.Context(), task,
-				model.ExecRequest{Command: args, Env: env}, cmd.OutOrStdout(), cmd.ErrOrStderr())
-			if err != nil {
-				// A guest LOST mid-command may have been killed by its own
-				// kernel for exceeding this cap (R-H212); a guest that never
-				// started ran nothing at all and gets its own diagnosis
-				// instead (MGIT-104).
-				if info, sErr := cl.Status(cmd.Context(), task); sErr == nil {
-					defer writeGuestFailureAdvisory(cmd.Context(), cmd.ErrOrStderr(), info, err)
-				}
-				return printErr(cmd.ErrOrStderr(), err)
-			}
-			if code != 0 {
-				// A signal death may be memory exhaustion; name the cap in
-				// force so the caller does not "fix" its workload instead
-				// (R-H212). Status is only consulted on the failure path.
-				if info, sErr := cl.Status(cmd.Context(), task); sErr == nil {
-					writeMemoryAdvisory(cmd.ErrOrStderr(), info, code)
-				}
-				return &exitError{code: code}
-			}
-			return nil
-		},
-	}
-	bindTaskIDFlag(cmd, &task, "task ID whose sandbox runs the command (required)")
-	cmd.Flags().StringArrayVar(&env, "env", nil, "explicit KEY=VALUE injected into the guest (repeatable; host env is never forwarded)")
-	return cmd
-}
-
 // sandboxShellCmd attaches an interactive session to a task's sandbox, the
 // T2 fully-confined-agent attach surface (ADR-005, MGIT-11.11.4). It
 // proxies stdin/stdout/stderr to the guest session and propagates the exit

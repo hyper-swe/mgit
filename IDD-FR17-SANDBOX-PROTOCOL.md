@@ -235,3 +235,133 @@ runs three phases in order, and that order is the atomicity guarantee:
 The object import, atomic append, and branch update are injected ports,
 so the trust-boundary logic is host-side and testable independent of
 go-git/SQLite wiring (which the sandbox service composes, MGIT-11.9).
+
+## 7. Exec-stream liveness — *MGIT-133* (normative)
+
+This section governs the **CLI ↔ `mgit-sandboxd`** leg, not the
+host↔guest leg above. Both legs frame exec traffic with
+`internal/execwire`, but only this one carries liveness beats: the guest
+neither sends nor sees them.
+
+### 7.1 Why a beat and not a timeout
+
+`serveExec` does not stream. It calls the service, waits for a whole
+`ExecResult`, and only then relays output. So between the request and
+the command's end the control socket carries **nothing**, and any wall
+clock measured over that read is a cap on how long a build may take.
+That is precisely what it was: a deadline armed at dial ended every exec
+at 30 s, reported to the agent as in-guest memory exhaustion (MGIT-122,
+MGIT-118). Removing it fixed the wrong kill and created a silent wedge —
+a daemon that is alive but stuck became indistinguishable from a guest
+doing slow work.
+
+A beat resolves both because it bounds **silence**, not **duration**. A
+build that emits nothing for an hour keeps the stream alive for that
+hour; a daemon that stops answering falls silent and is caught in
+seconds. A blanket `--timeout` cannot do this at any value: whatever is
+chosen, some legitimate build exceeds it and dies for running long
+rather than for being stuck.
+
+### 7.2 Frame
+
+```
+[1 byte: 'H'][4 bytes: big-endian uint32 length = 0]
+```
+
+`FrameHeartbeat` = `'H'`, distinct from `'O'` / `'E'` / `'R'` and
+asserted so by `TestFrameKinds_AreUnique_NoTagCollision` — two branches
+once collided on a control tag (MGIT-73), and on this stream a collision
+would write beats into the caller's output or end the stream early.
+
+The payload is **always empty**. A beat asserts one thing and must not
+invite a reader to conclude anything else from it. It is also
+**host-generated only**: guest frames arrive on a different connection
+and are relayed as stdout/stderr/result, so a hostile guest cannot forge
+liveness (SEC-05).
+
+### 7.3 What a beat asserts — and what it does not
+
+A beat means, exactly: the daemon process is scheduled, this exec's
+handler goroutine is running, this connection is writable, and the
+sandbox service answered for this exec's own sandbox within the last
+interval.
+
+It does **not** mean the guest is making progress. Nothing host-side can
+assert that: the daemon relays a command's output only on completion, so
+"backend call still running" and "backend call will never return" are
+the same observable state here. A caller who wants to bound duration
+asks for it with `ExecRequest.Timeout` (`--timeout`, default unbounded).
+
+**Every beat is gated on a probe**, and that gate is the design. The
+daemon runs one prober goroutine calling `Service.Status` for the exec's
+own task — which takes the sandbox registry mutex every state transition
+passes through — and a beat is written only against a fresh answer, at
+most one per answer. A free-running ticker would beat straight through a
+registry deadlock and certify a liveness that does not exist, which is
+worse than sending nothing.
+
+### 7.4 Timing
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `execwire.HeartbeatInterval` | 5 s | daemon beat cadence |
+| `execwire.HeartbeatMisses` | 3 | consecutive beats a client tolerates |
+| `execwire.StallTimeout` | 15 s | client idle deadline between frames |
+
+Both ends read these from `execwire` so the cadence and the judgement
+cannot drift apart. More than one miss is allowed because a busy daemon
+(a concurrent teardown holding the registry) can legitimately skip a
+beat; the total stays in seconds because a wedge must be caught fast.
+
+### 7.5 Client behaviour
+
+The client arms `StallTimeout` before every frame read; **every** frame —
+beat, output, or result — rearms it, so the clock measures the gap
+between frames.
+
+- **Beat then silence** → the daemon has proved its silence is
+  meaningful. The exec fails with `model.ErrSandboxDaemonUnresponsive`,
+  whose message names the daemon as the suspect and explicitly clears
+  the command and the guest. The CLI classifies this as
+  `phaseDaemonStalled` and prints **no** memory-cap advisory — a
+  daemon-side stall reported as a guest lost mid-command is MGIT-118's
+  misdiagnosis on a new cause.
+- **Never beat** → an `mgit-sandboxd` predating MGIT-133. The stall
+  deadline is dropped, MGIT-122's unbounded wait is restored, and a
+  one-line notice states that no liveness signal is available. It is
+  **not** reported as a wedge: an upgraded CLI against the long-lived
+  daemon the previous release left running is the ordinary mixed-version
+  pair, and accusing it would break every one of them.
+- **Cancellation** → `watchCancel` expires the connection rather than
+  closing it, so a Ctrl-C reaches the read as `os.ErrDeadlineExceeded`
+  too. The context is checked first; the caller's own withdrawal is
+  never reported as a daemon stall.
+
+### 7.6 Compatibility
+
+The first beat is written **before** the service is called, so its
+presence is this daemon's capability advertisement and its absence
+identifies an older one (§7.5). That covers **new CLI → old daemon**,
+which is the common mixed pair: the daemon is long-lived, so an upgrade
+leaves the previous release's daemon serving until it idles out.
+
+The other direction breaks, and the choice was forced. This control
+plane has **no capability negotiation available at all**: `controlproto`
+decodes requests *and* responses with `DisallowUnknownFields`, so a new
+field in either breaks the opposite peer; the greeting is a fixed
+17-byte constant read with `io.ReadFull`, so extending it desynchronizes
+an old client's next read. Any addition must pick a direction to break,
+and this one keeps the common pair working.
+
+Measured on macOS, mgit v0.5.0 CLI against an MGIT-133 daemon: `sandbox
+list`, `sandbox status` and `run --check` still work; `mgit run` fails
+with "unexpected exec frame 0x48" — and the old binary classifies that
+as a guest lost mid-command and prints its memory-cap advisory, so a
+version mismatch reads as in-guest memory exhaustion. That misdiagnosis
+lives in a released binary and cannot be fixed from this side. **MGIT-136
+tracks giving the control plane a forward-compatible seam** so the next
+addition does not face the same choice.
+
+Until then, an addition to this wire is a **same-release change**. The
+two binaries ship and install together (`mgit-sandboxd` is located beside
+`mgit`), which is what makes that assumption hold in practice.

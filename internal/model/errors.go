@@ -194,6 +194,19 @@ var (
 	// the sandbox was torn down rather than reported as running. Refs: MGIT-92
 	ErrGuestNotServing = errors.New("guest never answered on its control channel")
 
+	// ErrSandboxDaemonUnresponsive reports that mgit-sandboxd stopped emitting
+	// liveness beats on an exec stream that was still open: the DAEMON
+	// stalled. Neither the command nor the guest is implicated — a beating
+	// daemon keeps beating however long a build takes, so silence is a
+	// statement about the daemon and nothing else.
+	//
+	// It is a distinct sentinel because the diagnosis hangs off it. Every
+	// other way an exec fails mid-flight points at the guest, so a daemon
+	// stall reported through that path arrives dressed as a guest lost
+	// mid-command with a memory-cap advisory attached — the misdiagnosis
+	// class MGIT-118 is named for. Refs: MGIT-133, MGIT-118
+	ErrSandboxDaemonUnresponsive = errors.New("sandbox daemon stopped answering (no liveness beat)")
+
 	// ErrSandboxCeilingExceeded indicates a launch would exceed the
 	// host-wide concurrency or memory ceiling; the launch fails fast
 	// rather than degrading the host (SEC-09). Refs: FR-17.26

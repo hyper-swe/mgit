@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -33,6 +34,7 @@ func runCmd() *cobra.Command {
 func newRunCmd(connect connectFunc, getwd func() (string, error)) *cobra.Command {
 	var env []string
 	var check bool
+	var timeout time.Duration
 	cmd := &cobra.Command{
 		Use:   "run [--env KEY=VALUE]... -- <command> [args...]",
 		Short: "Run a command in the current worktree's task sandbox (fail-closed)",
@@ -50,18 +52,20 @@ func newRunCmd(connect connectFunc, getwd func() (string, error)) *cobra.Command
 			if len(args) == 0 {
 				return printRunErr(cmd.ErrOrStderr(), fmt.Errorf("a command is required (mgit run -- <command>)"))
 			}
-			return runExec(cmd, connect, getwd, args, env)
+			return runExec(cmd, connect, getwd, args, env, timeout)
 		},
 	}
 	cmd.Flags().StringArrayVar(&env, "env", nil, "explicit KEY=VALUE injected into the guest (repeatable; host env is never forwarded)")
 	cmd.Flags().BoolVar(&check, "check", false, "report whether a sandbox is available for the current worktree, without executing")
+	bindExecTimeoutFlag(cmd, &timeout)
 	return cmd
 }
 
 // runExec resolves the cwd's bound sandbox and runs the command in it,
 // propagating the guest exit code. Host env is never forwarded; the guest
 // cwd is the host cwd (identical-path mount). Refs: FR-17.3, FR-17.11
-func runExec(cmd *cobra.Command, connect connectFunc, getwd func() (string, error), args, env []string) error {
+func runExec(cmd *cobra.Command, connect connectFunc, getwd func() (string, error),
+	args, env []string, timeout time.Duration) error {
 	cl, dir, sb, err := resolveRun(cmd.Context(), connect, getwd)
 	if err != nil {
 		return printRunErr(cmd.ErrOrStderr(), err)
@@ -69,7 +73,8 @@ func runExec(cmd *cobra.Command, connect connectFunc, getwd func() (string, erro
 	// argv as a list — no host shell — and only explicit --env injections;
 	// the host environment is never forwarded into the hostile guest.
 	code, err := cl.Exec(cmd.Context(), sb.TaskID,
-		model.ExecRequest{Command: args, Dir: dir, Env: env}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+		model.ExecRequest{Command: args, Dir: dir, Env: env, Timeout: timeout},
+		cmd.OutOrStdout(), cmd.ErrOrStderr())
 	if err != nil {
 		// The guest is unreachable — but WHICH failure that is decides what to
 		// say. A guest lost mid-command is one shape of in-guest memory

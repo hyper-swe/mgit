@@ -28,11 +28,14 @@ type fakeSandboxClient struct {
 
 	listResult []model.SandboxInfo
 	statusInfo *model.SandboxInfo
-	execStdout string
-	execStderr string
-	execCode   int
-	execErr    error
-	opErr      error
+	// statusCalls counts Status lookups, so a test can assert a daemon that
+	// just proved it cannot answer is not asked again (MGIT-133).
+	statusCalls int
+	execStdout  string
+	execStderr  string
+	execCode    int
+	execErr     error
+	opErr       error
 
 	landedTID  string
 	landResult *controlproto.LandResult
@@ -98,6 +101,7 @@ func (f *fakeSandboxClient) List(context.Context) ([]model.SandboxInfo, error) {
 	return f.listResult, f.opErr
 }
 func (f *fakeSandboxClient) Status(_ context.Context, taskID string) (*model.SandboxInfo, error) {
+	f.statusCalls++
 	if f.opErr != nil {
 		return nil, f.opErr
 	}

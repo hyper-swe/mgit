@@ -34,6 +34,14 @@ const (
 	// the kernel OOM killer takes the supervisor that would have reported it
 	// (ADR-014). This is the phase the MGIT-95 cap advisory was built for.
 	phaseLostServing
+	// phaseDaemonStalled: mgit-sandboxd stopped emitting liveness beats on an
+	// exec stream that was still open. NO conclusion about the guest follows
+	// from this — the command may well still be running inside it — so this
+	// phase exists precisely to keep the default from applying. Without it a
+	// daemon-side stall lands in phaseLostServing and is reported as a guest
+	// lost mid-command with a memory-cap advisory attached, which is the
+	// MGIT-118 misdiagnosis rebuilt on a new cause. Refs: MGIT-133, MGIT-118
+	phaseDaemonStalled
 )
 
 // vmStartMarkers are console-log markers that appear ONLY when the VMM itself
@@ -79,6 +87,13 @@ func classifyGuestFailure(err error, ent entitlementState) guestFailure {
 		return guestFailure{phase: phaseLostServing}
 	}
 	text := err.Error()
+	// A daemon that stopped answering is settled FIRST and on its own: it is
+	// the one failure here that carries no evidence about the guest, and every
+	// branch below would otherwise reach a guest-shaped conclusion from it.
+	// Refs: MGIT-133
+	if isDaemonStall(err) {
+		return guestFailure{phase: phaseDaemonStalled}
+	}
 	detail := vmStartFailure(text)
 	neverStarted := detail != "" ||
 		errors.Is(err, model.ErrGuestNotServing) ||
@@ -87,6 +102,23 @@ func classifyGuestFailure(err error, ent entitlementState) guestFailure {
 		return guestFailure{phase: phaseLostServing}
 	}
 	return guestFailure{phase: phaseNeverStarted, startDetail: detail, entitlement: ent}
+}
+
+// isDaemonStall reports whether an exec failure is the DAEMON's rather than
+// the guest's.
+//
+// Two callers need this and they need it for different reasons: the classifier,
+// so a host-side stall never reaches a guest-shaped conclusion, and the exec
+// command, so it does not turn round and ask a daemon that just proved it
+// cannot answer — that question hangs for the whole control-plane timeout
+// before producing a diagnosis that never needed it.
+//
+// Matched by text as well as by errors.Is, for the same reason the
+// ErrGuestNotServing check is: an exec failure can reach a caller as a string.
+// Refs: MGIT-133
+func isDaemonStall(err error) bool {
+	return err != nil && (errors.Is(err, model.ErrSandboxDaemonUnresponsive) ||
+		strings.Contains(err.Error(), model.ErrSandboxDaemonUnresponsive.Error()))
 }
 
 // vmStartFailure returns the guest console line identifying a VM-start
@@ -158,13 +190,38 @@ func writeGuestFailureAdvisory(ctx context.Context, w io.Writer, info *model.San
 }
 
 // writeGuestFailure renders exactly one diagnosis for one phase.
-// Refs: MGIT-104
+// Refs: MGIT-104, MGIT-133
 func writeGuestFailure(w io.Writer, info *model.SandboxInfo, f guestFailure) {
-	if f.phase == phaseLostServing {
+	switch f.phase {
+	case phaseDaemonStalled:
+		writeDaemonStall(w, info)
+	case phaseLostServing:
 		writeCapAdvisory(w, info, "the guest stopped answering mid-command")
-		return
+	default:
+		writeStartFailure(w, info, f)
 	}
-	writeStartFailure(w, info, f)
+}
+
+// writeDaemonStall reports a daemon that stopped answering, and — as much as
+// anything else here — reports what is NOT known.
+//
+// The command's fate is genuinely open: mgit-sandboxd relays a command's output
+// only once it finishes, so a stall tells you the relay stopped, not that the
+// work did. Saying so is the honest report and also the useful one, because the
+// reader's next move (look at the daemon, expect the guest may still be busy)
+// differs from every guest-failure path. It deliberately prints NO memory-cap
+// advisory: the cap is not implicated by a host-side stall, and pointing at it
+// is the MGIT-118 mistake. Refs: MGIT-133, MGIT-118
+func writeDaemonStall(w io.Writer, info *model.SandboxInfo) {
+	_, _ = fmt.Fprintf(w, "\nmgit: the sandbox daemon stopped answering%s — this is a failure of "+
+		"mgit-sandboxd on THIS host, not of your command and not of the guest.\n", taskSuffix(info))
+	_, _ = fmt.Fprintf(w, "Your command may still be running inside the guest: mgit-sandboxd relays a "+
+		"command's output only once it finishes, so a stalled relay says nothing about the work.\n"+
+		"Check the daemon with `mgit sandbox list` — if that hangs too, it is wedged and restarting "+
+		"it (`mgit sandbox remove --task %s --force`, or killing mgit-sandboxd) is the way out.\n",
+		taskName(info))
+	_, _ = fmt.Fprint(w, "This sandbox's memory cap is not implicated: the daemon runs on the host, "+
+		"outside it. Do not resize the sandbox or reshape the build for this.\n")
 }
 
 // writeStartFailure reports a guest that never ran.

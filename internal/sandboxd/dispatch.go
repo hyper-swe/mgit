@@ -358,20 +358,38 @@ func (d *Daemon) writeResponse(conn net.Conn, resp *controlproto.Response) {
 // chunks, then the terminal result ('R') carrying the exit code. A setup
 // failure is reported as a result frame with an error string so the
 // client's frame reader always sees a clean end-of-stream.
-// Refs: FR-17.11, MGIT-11.10.8
+//
+// The stream OPENS with a liveness beat ('H') and keeps beating until the
+// command finishes. Nothing else crosses this connection in between — the
+// service returns a whole ExecResult, which is only relayed once the command
+// has ended — so without the beats a client cannot tell a twenty-minute build
+// from a daemon that stopped answering, and MGIT-122 established that killing
+// the first to catch the second is not an acceptable trade. The FIRST beat is
+// written before the service is called, so it also serves as this daemon's
+// capability advertisement: a daemon predating MGIT-133 never sends it, and a
+// client that never sees one falls back to waiting unbounded rather than
+// accusing it. Refs: FR-17.11, MGIT-11.10.8, MGIT-133, MGIT-122
 func (d *Daemon) serveExec(ctx context.Context, conn net.Conn, args *controlproto.ExecArgs) {
-	res, err := d.cfg.Service.Exec(ctx, args.TaskID, args.Exec)
-	if err != nil {
-		d.cfg.Logger.Warn("sandboxd exec failed", "event", "op_error", "error", err.Error())
-		d.writeResultFrame(conn, execwire.Result{}, err.Error())
+	if !d.writeHeartbeat(conn) {
+		return // the client is already gone; there is nothing to serve
+	}
+	done := make(chan execOutcome, 1)
+	go d.runExec(ctx, execArgs{taskID: args.TaskID, req: args.Exec}, done)
+	out, connLive := d.beatWhileExecuting(ctx, conn, args.TaskID, done)
+	if !connLive {
+		return // the client hung up mid-command; every further write would fail
+	}
+	if out.err != nil {
+		d.cfg.Logger.Warn("sandboxd exec failed", "event", "op_error", "error", out.err.Error())
+		d.writeResultFrame(conn, execwire.Result{}, out.err.Error())
 		return
 	}
 	d.armWriteDeadline(conn)
-	if !d.relayChunks(conn, execwire.FrameStdout, res.Stdout) ||
-		!d.relayChunks(conn, execwire.FrameStderr, res.Stderr) {
+	if !d.relayChunks(conn, execwire.FrameStdout, out.res.Stdout) ||
+		!d.relayChunks(conn, execwire.FrameStderr, out.res.Stderr) {
 		return // the connection is gone; the result frame would also fail
 	}
-	d.writeResultFrame(conn, execwire.Result{ExitCode: res.ExitCode}, "")
+	d.writeResultFrame(conn, execwire.Result{ExitCode: out.res.ExitCode}, "")
 }
 
 // relayChunks writes data as execwire frames no larger than

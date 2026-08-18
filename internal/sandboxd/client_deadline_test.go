@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,11 @@ type slowServer struct {
 	// of a control response.
 	execFrames []byte
 	execExit   int
+	// beats is how many liveness beats precede the reply, at beatEvery. Zero
+	// makes this peer an mgit-sandboxd that PREDATES MGIT-133 — the mixed
+	// -version pair a client must not mistake for a wedge.
+	beats     int
+	beatEvery time.Duration
 }
 
 // start serves exactly one connection and returns its socket path.
@@ -61,6 +67,14 @@ func (s *slowServer) start(t *testing.T) string {
 		req, err := controlproto.ReadRequest(conn)
 		if err != nil {
 			return
+		}
+		for i := 0; i < s.beats; i++ {
+			if i > 0 {
+				time.Sleep(s.beatEvery)
+			}
+			if err := execwire.WriteHeartbeat(conn); err != nil {
+				return
+			}
 		}
 		if s.silent {
 			<-make(chan struct{}) // never answers; the client must cancel itself
@@ -165,6 +179,91 @@ func TestClient_Exec_ContextCanceled_ReturnsPromptly(t *testing.T) {
 		require.Error(t, err, "a canceled exec reported success")
 	case <-time.After(5 * time.Second):
 		t.Fatal("a canceled exec stayed blocked in the frame read: cancellation is not wired to the connection")
+	}
+}
+
+// TestClient_Exec_OlderDaemonNeverBeats_WaitsAndSaysWhy is the mixed-version
+// pair, and it is the ordinary one: an upgraded CLI talking to the long-lived
+// daemon the previous release left running.
+//
+// That daemon emits no liveness beat, ever. Reading its silence as a wedge
+// would break every such pair — and the pair is not exotic, it is what an
+// upgrade looks like until the daemon idles out. So the client drops the stall
+// deadline, waits as MGIT-122 established, and states plainly that it has no
+// signal to judge by rather than implying the wait is known to be healthy.
+// Refs: MGIT-133, MGIT-122
+func TestClient_Exec_OlderDaemonNeverBeats_WaitsAndSaysWhy(t *testing.T) {
+	skipUnsupportedHostIPC(t)
+	// No beats, and a reply well past the stall deadline: an old daemon
+	// running a command that outlives the window.
+	srv := &slowServer{replyDelay: 600 * time.Millisecond, execFrames: []byte("done\n"), execExit: 5}
+	client := NewClient(srv.start(t), time.Now)
+	client.stallTimeout = 100 * time.Millisecond
+
+	var stdout, stderr bytes.Buffer
+	code, err := client.Exec(context.Background(), "MGIT-133",
+		model.ExecRequest{Command: []string{"go", "test", "./..."}}, &stdout, &stderr)
+
+	require.NoError(t, err, "a daemon that never beats was accused of stalling; "+
+		"every mixed-version pair would fail this way")
+	assert.Equal(t, "done\n", stdout.String())
+	assert.Equal(t, 5, code)
+	assert.Contains(t, stderr.String(), "predates MGIT-133",
+		"the caller was left waiting with no explanation of why nothing bounds the wait")
+	assert.Equal(t, 1, strings.Count(stderr.String(), "predates MGIT-133"),
+		"the notice repeated; it is a one-time statement about the daemon, not a ticker")
+}
+
+// TestClient_Exec_BeatsThenSilence_ReportsTheDaemon covers the transition the
+// whole mechanism turns on: a daemon that HAS beaten has proved its silence is
+// meaningful, so silence after that is a stall — not an old daemon, and not a
+// slow build. Refs: MGIT-133
+func TestClient_Exec_BeatsThenSilence_ReportsTheDaemon(t *testing.T) {
+	skipUnsupportedHostIPC(t)
+	srv := &slowServer{beats: 3, beatEvery: 30 * time.Millisecond, silent: true}
+	client := NewClient(srv.start(t), time.Now)
+	client.stallTimeout = 150 * time.Millisecond
+
+	var stdout, stderr bytes.Buffer
+	_, err := client.Exec(context.Background(), "MGIT-133",
+		model.ExecRequest{Command: []string{"make"}}, &stdout, &stderr)
+
+	require.ErrorIs(t, err, model.ErrSandboxDaemonUnresponsive)
+	assert.NotContains(t, stderr.String(), "predates MGIT-133",
+		"a daemon that beat and then stopped is wedged, not old")
+}
+
+// TestClient_Exec_Canceled_IsNotReportedAsAStall guards a trap the stall check
+// walked straight into.
+//
+// Cancellation reaches the frame read AS an expired deadline — watchCancel
+// expires the connection rather than closing it (MGIT-122) — so a client that
+// reads "deadline exceeded" as a verdict about the daemon will either blame a
+// healthy daemon for the user's own Ctrl-C or, worse, swallow the cancellation
+// as a mixed-version fallback and wait forever. Refs: MGIT-133, MGIT-122
+func TestClient_Exec_Canceled_IsNotReportedAsAStall(t *testing.T) {
+	skipUnsupportedHostIPC(t)
+	srv := &slowServer{silent: true} // never beats and never answers
+	client := NewClient(srv.start(t), time.Now)
+	client.stallTimeout = time.Hour // only cancellation can end this call
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(100 * time.Millisecond); cancel() }()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.Exec(ctx, "MGIT-133",
+			model.ExecRequest{Command: []string{"/bin/sleep", "600"}}, &bytes.Buffer{}, &bytes.Buffer{})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.NotErrorIs(t, err, model.ErrSandboxDaemonUnresponsive,
+			"the caller's own withdrawal was reported as a daemon stall")
+	case <-time.After(5 * time.Second):
+		t.Fatal("a canceled exec stayed blocked: cancellation was swallowed by the stall check")
 	}
 }
 
