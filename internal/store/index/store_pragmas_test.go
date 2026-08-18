@@ -3,6 +3,8 @@ package index
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -192,6 +194,149 @@ func TestNew_Pragmas_AreInForceOnBothPools(t *testing.T) {
 	}
 }
 
+// assertPragmasInForce reads the per-connection pragmas back FROM the given
+// connection rather than trusting that a statement was executed somewhere on
+// the pool. busy_timeout and foreign_keys are per-connection state: a pool-wide
+// query answers from whichever connection the pool happens to hand out, so only
+// a held *sql.Conn can say what an individual connection is carrying.
+// Refs: MGIT-121.1, CLAUDE.md SQL Rule 2
+func assertPragmasInForce(ctx context.Context, t *testing.T, conn *sql.Conn, label string) {
+	t.Helper()
+
+	var busyTimeout int
+	require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busyTimeout))
+	assert.Equal(t, busyTimeoutMillis, busyTimeout,
+		"%s: busy_timeout is %d, so a lock met here fails instantly instead of waiting",
+		label, busyTimeout)
+
+	var foreignKeys int
+	require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys))
+	assert.Equal(t, 1, foreignKeys, "%s: foreign_keys not in force", label)
+
+	// synchronous is reported numerically: 0=OFF, 1=NORMAL, 2=FULL, 3=EXTRA.
+	var synchronous int
+	require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA synchronous").Scan(&synchronous))
+	assert.Equal(t, 2, synchronous, "%s: synchronous must be FULL", label)
+
+	// journal_mode is a persistent database property, not per-connection, so it
+	// is checked for completeness rather than as evidence about this connection.
+	var mode string
+	require.NoError(t, conn.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode))
+	assert.Equal(t, "wal", mode, "%s: journal_mode", label)
+}
+
+// takeAllConns grabs MaxOpenConns *sql.Conn from db and holds them, which
+// forces the pool to open every connection it is allowed to. Each *sql.Conn
+// owns its underlying connection exclusively for its lifetime, so holding them
+// all at once guarantees they are DISTINCT.
+func takeAllConns(ctx context.Context, t *testing.T, db *sql.DB) []*sql.Conn {
+	t.Helper()
+
+	maxConns := db.Stats().MaxOpenConnections
+	require.Positive(t, maxConns, "pool has no connection limit to exhaust")
+
+	conns := make([]*sql.Conn, 0, maxConns)
+	for range maxConns {
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		conns = append(conns, conn)
+	}
+	t.Cleanup(func() {
+		for _, conn := range conns {
+			_ = conn.Close()
+		}
+	})
+
+	require.Equal(t, maxConns, db.Stats().OpenConnections,
+		"expected %d distinct connections to be open", maxConns)
+	return conns
+}
+
+// TestNew_EveryPooledConnection_HasPragmas is the regression for MGIT-121.1.
+// Applying pragmas with db.ExecContext sets them on exactly ONE pooled
+// connection, because database/sql routes that Exec to a single connection and
+// pragmas are per-connection state. The pool's other connections are opened
+// later, lazily, under concurrent load — bare, with busy_timeout back at its
+// default of zero, which is the MGIT-121 failure on the path that carries
+// concurrent readers.
+//
+// Every connection either pool can hand out must carry the pragmas, so the test
+// takes them all at once and asks each one directly.
+// Refs: MGIT-121.1, MGIT-121, CLAUDE.md SQL Rule 2
+func TestNew_EveryPooledConnection_HasPragmas(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	pools := []struct {
+		name string
+		db   *sql.DB
+	}{
+		{"write", store.writeDB},
+		{"read", store.readDB},
+	}
+	for _, pool := range pools {
+		t.Run(pool.name, func(t *testing.T) {
+			for i, conn := range takeAllConns(ctx, t, pool.db) {
+				assertPragmasInForce(ctx, t, conn, fmt.Sprintf("%s conn %d", pool.name, i))
+			}
+		})
+	}
+}
+
+// TestNew_ConnectionReplacedAfterDriverError_HasPragmas covers the case that
+// pre-warming the pool at open would have missed, and the reason MGIT-121.1
+// refused that shortcut: database/sql discards a connection that reported
+// driver.ErrBadConn and opens a REPLACEMENT on demand. Bounding the pool
+// (writeDB's MaxOpenConns(1)) bounds concurrency but does not pin identity, so
+// the replacement is a brand-new connection that no open-time setup ever saw.
+// Refs: MGIT-121.1
+func TestNew_ConnectionReplacedAfterDriverError_HasPragmas(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	pools := []struct {
+		name string
+		db   *sql.DB
+	}{
+		{"write", store.writeDB},
+		{"read", store.readDB},
+	}
+	for _, pool := range pools {
+		t.Run(pool.name, func(t *testing.T) {
+			// Poison one connection: returning ErrBadConn from Raw tells
+			// database/sql the connection is unusable, so it is closed rather
+			// than returned to the pool.
+			doomed, err := pool.db.Conn(ctx)
+			require.NoError(t, err)
+			var doomedID string
+			require.ErrorIs(t, doomed.Raw(func(driverConn any) error {
+				doomedID = fmt.Sprintf("%p", driverConn)
+				return driver.ErrBadConn
+			}), driver.ErrBadConn)
+			// Raw already discarded the connection on the way out, so Close is
+			// either a no-op or reports it as done; both mean it is gone.
+			if err := doomed.Close(); err != nil {
+				require.ErrorIs(t, err, sql.ErrConnDone)
+			}
+
+			// The pool now has to open a fresh connection to serve this.
+			replacement, err := pool.db.Conn(ctx)
+			require.NoError(t, err)
+			defer func() { _ = replacement.Close() }()
+
+			var replacementID string
+			require.NoError(t, replacement.Raw(func(driverConn any) error {
+				replacementID = fmt.Sprintf("%p", driverConn)
+				return nil
+			}))
+			require.NotEqual(t, doomedID, replacementID,
+				"the poisoned connection was reused, so nothing was replaced")
+
+			assertPragmasInForce(ctx, t, replacement, pool.name+" replacement conn")
+		})
+	}
+}
+
 // TestApplyPragmas_BusyTimeoutPrecedesLockTakingPragmas asserts the ordering
 // itself, not just its effect. The effect is a race and can pass by luck; the
 // ordering is wrong or right on reading. journal_mode is the pragma that takes
@@ -227,7 +372,7 @@ func TestSetJournalModeWAL_BudgetExhausted_ReturnsBusyError(t *testing.T) {
 	require.NoError(t, err)
 	defer holdWriteLock(ctx, t, holder, 10*time.Second)()
 
-	other := openWithBusyTimeout(t, dbPath)
+	other := openRawPragmaConn(t, dbPath)
 	err = setJournalModeWAL(ctx, other, 100*time.Millisecond)
 
 	require.Error(t, err)
@@ -253,28 +398,35 @@ func TestSetJournalModeWAL_CanceledContext_Aborts(t *testing.T) {
 		cancel()
 	}()
 
-	other := openWithBusyTimeout(t, dbPath)
+	other := openRawPragmaConn(t, dbPath)
 	err = setJournalModeWAL(ctx, other, walRetryBudget)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
 
-// TestApplyPragma_ClosedDatabase_ReturnsError covers the non-retryable path:
-// a failure that is not SQLITE_BUSY is returned at once, not retried until the
-// budget runs out. Both the plain pragma and the WAL switch are checked.
-// Refs: MGIT-121
-func TestApplyPragma_ClosedDatabase_ReturnsError(t *testing.T) {
+// TestApplyPragma_NonBusyError_IsReturnedNotRetried covers the non-retryable
+// path: a failure that is not SQLITE_BUSY is returned at once, not retried
+// until the budget runs out. Both the plain pragma and the WAL switch are
+// checked.
+//
+// The failure is scripted rather than provoked by closing a database: since
+// MGIT-121.1 the pragma sequence runs on a RAW driver connection, and a closed
+// modernc.org/sqlite connection has released the memory a further statement
+// would touch, so the honest way to produce a non-busy error is to script one.
+// Refs: MGIT-121.1, MGIT-121
+func TestApplyPragma_NonBusyError_IsReturnedNotRetried(t *testing.T) {
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "index.db")
+	boom := errors.New("disk I/O error")
 
-	db := openWithBusyTimeout(t, dbPath)
-	require.NoError(t, db.Close())
+	conn, err := newPragmaConn(&scriptedConn{execErr: boom, queryErr: boom})
+	require.NoError(t, err)
 
-	require.Error(t, applyPragma(ctx, db, "PRAGMA foreign_keys = ON"))
+	require.ErrorIs(t, applyPragma(ctx, conn, "PRAGMA foreign_keys = ON"), boom)
+	require.False(t, isBusy(boom), "the scripted failure must not look like SQLITE_BUSY")
 
 	start := time.Now()
-	err := applyPragma(ctx, db, walPragma)
-	require.Error(t, err)
+	err = applyPragma(ctx, conn, walPragma)
+	require.ErrorIs(t, err, boom)
 	assert.Less(t, time.Since(start), time.Second, "a non-busy error must not be retried")
 }

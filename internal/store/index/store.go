@@ -38,8 +38,10 @@ type Store struct {
 }
 
 // New creates or opens a Store at the given database path.
-// Configures safety-critical PRAGMAs per CLAUDE.md SQL rules.
-// Refs: NFR-3, MGIT-2.3.2
+// The safety-critical PRAGMAs required by CLAUDE.md SQL Rule 2 are applied by
+// the connector openPools installs, so they hold on every connection either
+// pool ever opens, not just the first (see connector.go).
+// Refs: NFR-3, MGIT-2.3.2, MGIT-121.1
 func New(dbPath string, clock func() time.Time) (*Store, error) {
 	if clock == nil {
 		return nil, fmt.Errorf("clock must not be nil")
@@ -56,20 +58,10 @@ func New(dbPath string, clock func() time.Time) (*Store, error) {
 		}
 	}
 
-	// Open write connection pool (single writer for mutual exclusion)
-	writeDB, err := sql.Open("sqlite", dbPath)
+	writeDB, readDB, err := openPools(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("open write db: %w", err)
+		return nil, err
 	}
-	writeDB.SetMaxOpenConns(1) // Enforce single-writer mutual exclusion
-
-	// Open read connection pool (multiple readers)
-	readDB, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		_ = writeDB.Close()
-		return nil, fmt.Errorf("open read db: %w", err)
-	}
-	readDB.SetMaxOpenConns(5)
 
 	store := &Store{
 		readDB:      readDB,
@@ -77,12 +69,6 @@ func New(dbPath string, clock func() time.Time) (*Store, error) {
 		dbPath:      dbPath,
 		clock:       clock,
 		ulidEntropy: ulid.Monotonic(rand.Reader, 0),
-	}
-
-	// Apply safety-critical PRAGMAs
-	if err := store.applyPragmas(); err != nil {
-		_ = store.Close()
-		return nil, fmt.Errorf("apply pragmas: %w", err)
 	}
 
 	// Run migrations
@@ -168,21 +154,50 @@ func (s *Store) ReadTx(ctx context.Context, fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
-// applyPragmas sets safety-critical SQLite PRAGMAs on both pools, in the
-// order pragmaStatements defines (see pragmas.go — the order is load-bearing).
-// Refs: CLAUDE.md SQL Rule 2, MGIT-121
-func (s *Store) applyPragmas() error {
-	ctx := context.Background()
+// Pool sizes: one writer for mutual exclusion, several readers for concurrency.
+const (
+	maxWriteConns = 1
+	maxReadConns  = 5
+)
 
-	for _, pragma := range pragmaStatements() {
-		if err := applyPragma(ctx, s.writeDB, pragma); err != nil {
-			return fmt.Errorf("write db pragma %q: %w", pragma, err)
-		}
-		if err := applyPragma(ctx, s.readDB, pragma); err != nil {
-			return fmt.Errorf("read db pragma %q: %w", pragma, err)
+// openPools opens the write and read pools over dbPath.
+//
+// Both go through a pragmaConnector, so the safety-critical PRAGMAs are applied
+// to EVERY connection either pool opens — including the ones opened lazily
+// under load and the ones opened to replace a connection a driver error retired
+// — rather than to whichever single connection a pool-level Exec landed on
+// (MGIT-121.1).
+//
+// Each pool is then pinged, because sql.OpenDB is lazy and nothing has
+// connected yet: an unopenable database, or a pragma that will not apply, must
+// fail HERE at New as it did when the pragmas were applied to the pool, not on
+// some later first use.
+// Refs: MGIT-121.1, MGIT-121, NFR-3, CLAUDE.md SQL Rule 2, CLAUDE.md SQL Rule 4
+func openPools(dbPath string) (*sql.DB, *sql.DB, error) {
+	connector, err := newPragmaConnector(dbPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// One connector, two pools: it is stateless, and both pools address the
+	// same database file with the same pragmas.
+	writeDB := sql.OpenDB(connector)
+	writeDB.SetMaxOpenConns(maxWriteConns)
+	readDB := sql.OpenDB(connector)
+	readDB.SetMaxOpenConns(maxReadConns)
+
+	ctx := context.Background()
+	for _, pool := range []struct {
+		name string
+		db   *sql.DB
+	}{{"write", writeDB}, {"read", readDB}} {
+		if err := pool.db.PingContext(ctx); err != nil {
+			_ = writeDB.Close() // already failing; a close error would mask why
+			_ = readDB.Close()
+			return nil, nil, fmt.Errorf("open %s db: %w", pool.name, err)
 		}
 	}
-	return nil
+	return writeDB, readDB, nil
 }
 
 // migrate runs schema migrations to the current version.

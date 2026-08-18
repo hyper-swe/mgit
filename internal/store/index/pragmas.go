@@ -2,7 +2,6 @@ package index
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -63,21 +62,22 @@ func pragmaStatements() []string {
 	}
 }
 
-// applyPragma executes one pragma from pragmaStatements against db, routing
-// the WAL switch through its retry path.
-// Refs: MGIT-121
-func applyPragma(ctx context.Context, db *sql.DB, pragma string) error {
+// applyPragma executes one pragma from pragmaStatements against a single
+// connection, routing the WAL switch through its retry path.
+//
+// The receiver is one connection, not a pool: busy_timeout and foreign_keys
+// are per-connection state, so a pool would leave every connection it did not
+// happen to pick bare (MGIT-121.1). See pragmaConnector.
+// Refs: MGIT-121.1, MGIT-121
+func applyPragma(ctx context.Context, conn pragmaConn, pragma string) error {
 	if pragma == walPragma {
-		return setJournalModeWAL(ctx, db, walRetryBudget)
+		return setJournalModeWAL(ctx, conn, walRetryBudget)
 	}
-	if _, err := db.ExecContext(ctx, pragma); err != nil {
-		return err
-	}
-	return nil
+	return conn.execPragma(ctx, pragma)
 }
 
-// setJournalModeWAL switches db into WAL mode, waiting out a concurrent
-// converter rather than failing on the first refusal.
+// setJournalModeWAL switches the connection's database into WAL mode, waiting
+// out a concurrent converter rather than failing on the first refusal.
 //
 // The wait has to be explicit because busy_timeout does not apply here.
 // SQLite takes the journal-mode change's exclusive lock WITHOUT consulting the
@@ -89,9 +89,13 @@ func applyPragma(ctx context.Context, db *sql.DB, pragma string) error {
 //
 // Losing the race is not an error condition: the winner leaves the database in
 // WAL mode, which is exactly what this call wanted, so each attempt re-reads
-// the mode first and returns as soon as it is "wal" whoever got it there.
-// Refs: MGIT-121, MGIT-113, CLAUDE.md SQL Rule 2
-func setJournalModeWAL(ctx context.Context, db *sql.DB, budget time.Duration) error {
+// the mode first and returns as soon as it is "wal" whoever got it there. That
+// read is also what keeps this cheap now that it runs on every connection
+// (MGIT-121.1): WAL is a persistent database property, so after the first
+// converter every later connection finds "wal" already set and returns without
+// asking for the exclusive lock.
+// Refs: MGIT-121.1, MGIT-121, MGIT-113, CLAUDE.md SQL Rule 2
+func setJournalModeWAL(ctx context.Context, conn pragmaConn, budget time.Duration) error {
 	// Real elapsed time, deliberately not the injected clock: this is a
 	// backoff against other processes, and a frozen test clock would spin.
 	deadline := time.Now().Add(budget)
@@ -99,7 +103,7 @@ func setJournalModeWAL(ctx context.Context, db *sql.DB, budget time.Duration) er
 	var lastErr error
 
 	for {
-		mode, err := journalMode(ctx, db)
+		mode, err := journalMode(ctx, conn)
 		if err != nil {
 			return err
 		}
@@ -108,7 +112,7 @@ func setJournalModeWAL(ctx context.Context, db *sql.DB, budget time.Duration) er
 		}
 
 		var got string
-		lastErr = db.QueryRowContext(ctx, walPragma).Scan(&got)
+		got, lastErr = conn.queryPragma(ctx, walPragma)
 		switch {
 		case lastErr == nil && strings.EqualFold(got, "wal"):
 			return nil
@@ -135,10 +139,10 @@ func setJournalModeWAL(ctx context.Context, db *sql.DB, budget time.Duration) er
 }
 
 // journalMode reads the database's current journal mode.
-func journalMode(ctx context.Context, db *sql.DB) (string, error) {
-	var mode string
+func journalMode(ctx context.Context, conn pragmaConn) (string, error) {
 	// PRAGMA journal_mode (no assignment) reports the mode without locking.
-	if err := db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+	mode, err := conn.queryPragma(ctx, "PRAGMA journal_mode")
+	if err != nil {
 		return "", fmt.Errorf("read journal mode: %w", err)
 	}
 	return mode, nil
