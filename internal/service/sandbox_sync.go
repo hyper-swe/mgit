@@ -27,7 +27,7 @@ const notBootedDetail = "the sandbox has not booted yet; it stages the current w
 // so naming the diverged paths costs no second round trip.
 // Refs: MGIT-76, MGIT-71, FR-17.40, ADR-011
 func (s *SandboxService) SyncWorktree(ctx context.Context, taskID string, opts model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error) {
-	sandboxID, booted, err := s.syncTarget(taskID)
+	sandboxID, booted, err := s.syncTarget(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -53,13 +53,19 @@ func (s *SandboxService) SyncWorktree(ctx context.Context, taskID string, opts m
 }
 
 // syncTarget resolves a task to its host-owned sandbox ID and whether its VM
-// has booted. Refs: FR-17.10
-func (s *SandboxService) syncTarget(taskID string) (sandboxID string, booted bool, err error) {
+// has booted.
+//
+// It waits out an in-flight boot of THAT task (awaitBootLocked) so the answer
+// is settled rather than a snapshot of a sandbox mid-transition: reporting
+// "not booted" for a VM that is seconds from running would tell the caller its
+// host edits were skipped when the boot is about to stage them.
+// Refs: FR-17.10, MGIT-122
+func (s *SandboxService) syncTarget(ctx context.Context, taskID string) (sandboxID string, booted bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	reg, ok := s.byTask[taskID]
-	if !ok {
-		return "", false, fmt.Errorf("%w: task %q", model.ErrSandboxNotFound, taskID)
+	reg, err := s.awaitBootLocked(ctx, taskID)
+	if err != nil {
+		return "", false, err
 	}
 	return reg.info.ID, reg.booted, nil
 }

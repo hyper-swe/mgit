@@ -28,29 +28,74 @@ import (
 type Client struct {
 	socketPath string
 	clock      func() time.Time
+	// requestTimeout bounds ONE control-plane request/response exchange, armed
+	// afresh for each phase it applies to (greeting, request write, response
+	// read) rather than once at dial. It deliberately does NOT bound the exec
+	// frame stream; see Exec. Refs: MGIT-122
+	requestTimeout time.Duration
 }
 
 // NewClient returns a control-plane client for the daemon at socketPath.
 func NewClient(socketPath string, clock func() time.Time) *Client {
-	return &Client{socketPath: socketPath, clock: clock}
+	return &Client{
+		socketPath:     socketPath,
+		clock:          clock,
+		requestTimeout: controlproto.DefaultRequestTimeout,
+	}
 }
 
 // dialGreeted dials the daemon and consumes its liveness greeting,
 // returning a connection ready to carry one request. A socket that does
 // not greet is rejected (squatter defense). The caller closes the conn.
+//
+// The greeting deadline is cleared before returning. What follows is a
+// REQUEST, and its budget starts when that request is written — inheriting
+// this one would silently charge the response for however long the greeting
+// took. Refs: MGIT-122
 func (c *Client) dialGreeted(ctx context.Context) (net.Conn, error) {
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "unix", c.socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: dial daemon: %w", err)
 	}
-	_ = conn.SetReadDeadline(c.clock().Add(controlproto.DefaultRequestTimeout))
+	_ = conn.SetReadDeadline(c.clock().Add(c.requestTimeout))
 	buf := make([]byte, len(greeting))
 	if _, err := io.ReadFull(conn, buf); err != nil || string(buf) != greeting {
 		_ = conn.Close()
 		return nil, fmt.Errorf("sandbox client: daemon did not greet (not running, or a squatter holds the socket)")
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 	return conn, nil
+}
+
+// expireNow is any instant safely in the past: setting it as a deadline makes
+// an in-progress read or write return at once. Used to unblock a connection on
+// cancellation, where "expire immediately" is the intent and the injected clock
+// (which a test may freeze) is the wrong thing to ask.
+var expireNow = time.Unix(1, 0)
+
+// watchCancel makes ctx cancellation end a blocked read on conn, and returns a
+// stop function the caller must defer.
+//
+// Without it a canceled caller is not actually canceled: it stays in the socket
+// read until some deadline fires, which for the exec stream is now never. The
+// connection is expired rather than closed so this never races the caller's own
+// deferred Close. Refs: MGIT-122
+func watchCancel(ctx context.Context, conn net.Conn) func() {
+	if ctx.Done() == nil {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		select {
+		case <-ctx.Done():
+			_ = conn.SetDeadline(expireNow)
+		case <-stop:
+		}
+	}()
+	return func() { close(stop); <-done }
 }
 
 // roundTrip sends one request and returns the daemon's response, mapping a
@@ -95,11 +140,16 @@ func (c *Client) roundTripRaw(ctx context.Context, req *controlproto.Request) (*
 		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
+	defer watchCancel(ctx, conn)()
 
-	_ = conn.SetWriteDeadline(c.clock().Add(controlproto.DefaultRequestTimeout))
+	_ = conn.SetWriteDeadline(c.clock().Add(c.requestTimeout))
 	if err := controlproto.WriteRequest(conn, req); err != nil {
 		return nil, fmt.Errorf("sandbox client: send request: %w", err)
 	}
+	// Arm the response budget HERE, from the instant the request went out.
+	// Armed at dial instead, it would already have been spent by the greeting
+	// and by anything else that happened first. Refs: MGIT-122
+	_ = conn.SetReadDeadline(c.clock().Add(c.requestTimeout))
 	resp, err := controlproto.ReadResponse(conn)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: read response: %w", err)
@@ -238,21 +288,38 @@ func (c *Client) EgressPolicy(ctx context.Context, taskID string) (*controlproto
 // Exec runs one command in a task's sandbox, copying stdout/stderr to the
 // supplied writers as frames arrive and returning the guest exit code. A
 // supervisor-level failure (the guest could not start the command) is
-// returned as an error with a -1 exit code. Refs: FR-17.11
+// returned as an error with a -1 exit code.
+//
+// NO WALL CLOCK BOUNDS THE FRAME STREAM, and that is the contract, not an
+// omission. The daemon relays the command's output only once the command has
+// finished, so any deadline on this read is a cap on how long a build, test run
+// or install may take — a control-plane timeout deciding a workload's lifetime.
+// It used to be exactly that: the deadline armed at dial ended every exec at
+// 30 s, and the failure was rendered to the agent as in-guest memory
+// exhaustion (MGIT-122, and the diagnosis defect MGIT-118).
+//
+// What bounds the wait instead: the per-exec timeout and the sandbox TTL, which
+// the daemon enforces guest-side; a dead daemon, whose socket closes and ends
+// the read at once; and ctx, wired to the connection here so a caller that
+// gives up is never left blocked. Refs: FR-17.11, MGIT-122
 func (c *Client) Exec(ctx context.Context, taskID string, req model.ExecRequest, stdout, stderr io.Writer) (int, error) {
 	conn, err := c.dialGreeted(ctx)
 	if err != nil {
 		return -1, err
 	}
 	defer func() { _ = conn.Close() }()
+	defer watchCancel(ctx, conn)()
 
-	_ = conn.SetWriteDeadline(c.clock().Add(controlproto.DefaultRequestTimeout))
+	_ = conn.SetWriteDeadline(c.clock().Add(c.requestTimeout))
 	if err := controlproto.WriteRequest(conn, &controlproto.Request{
 		Kind: controlproto.KindExec,
 		Exec: &controlproto.ExecArgs{TaskID: taskID, Exec: req},
 	}); err != nil {
 		return -1, fmt.Errorf("sandbox client: send exec: %w", err)
 	}
+	// Explicit, so the absence of a deadline reads as a decision: the command
+	// owns this stream's duration from here.
+	_ = conn.SetReadDeadline(time.Time{})
 	return relayFrames(conn, stdout, stderr)
 }
 

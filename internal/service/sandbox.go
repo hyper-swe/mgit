@@ -123,6 +123,16 @@ type SandboxService struct {
 	//
 	// The daemon is single-instance (flock, MGIT-11.4), so the mutex
 	// serializes exclusivity for live sandboxes.
+	//
+	// IT IS HELD FOR STATE TRANSITIONS, NEVER FOR A BOOT. It used to be held
+	// across manager.Launch, and a boot is the longest thing this daemon does:
+	// 16.5 s at four concurrent sandboxes and 41-59 s at eight
+	// (docs/E2E-MATRIX.md). Every other sandbox's exec, status and removal
+	// queued behind it and expired on the client's socket deadline, reported to
+	// the agent as "the guest stopped answering" about guests that were fine.
+	// The boot now runs OUTSIDE this lock; see EnsureRunning for the claim that
+	// replaces it and awaitBootLocked for how teardown stays safe.
+	// Refs: MGIT-122, ADR-009 (amendment), NFR-17.6
 	mu     sync.Mutex
 	byTask map[string]*sandboxReg
 }
@@ -137,6 +147,26 @@ type sandboxReg struct {
 	booted       bool
 	lastActivity time.Time // last boot/resume/exec; idle-suspend deadline runs from here
 	expiresAt    time.Time // TTL deadline (registration time + TTL); zero = no TTL
+	// boot is non-nil for exactly as long as a boot is in flight for this
+	// registration. It is the claim that replaces "the service mutex is held
+	// across Launch": set under the lock before the lock is dropped, cleared
+	// under the lock when the boot settles. Refs: MGIT-122
+	boot *bootAttempt
+}
+
+// bootAttempt is one in-flight VM boot, shared by every caller that arrives for
+// the same task while it runs.
+//
+// It carries the whole outcome, not just a signal, for two reasons. A caller
+// that merely waited and then re-read the registration could observe a boot
+// that failed and start its own — N callers against a broken backend would
+// become N launches. And publishing info/err BEFORE done is closed makes the
+// channel close the happens-before edge, so waiters read them without the lock.
+// Refs: MGIT-122
+type bootAttempt struct {
+	done chan struct{}     // closed once info/err are final
+	info model.SandboxInfo // the booted sandbox (valid when err is nil)
+	err  error             // the boot's failure, shared with every waiter
 }
 
 // NewSandboxService wires the service. All dependencies are required
@@ -343,7 +373,20 @@ func createdEvent(id string, opts model.SandboxLaunchOptions, digest string) *mo
 // (the first exec triggers this) and returns the running info. Policy
 // defaults fill any unset resource limits. A boot failure leaves the
 // registration intact (not booted) so the next attempt can retry.
-// Refs: FR-17.9, FR-17.10
+//
+// THE LOCK IS NOT HELD ACROSS THE BOOT. It is taken to decide what this call
+// is — already running, joining a boot someone else started, or starting one —
+// and taken again to record the outcome. In between, the VM boots with the
+// mutex free, so a sibling sandbox's exec is answered in milliseconds instead
+// of queueing behind a minute of boot and expiring on the client's socket
+// deadline (MGIT-122).
+//
+// Three windows that narrowing could have opened are closed rather than
+// tolerated: two callers for the SAME task converge on one bootAttempt (never
+// two VMs); a teardown arriving mid-boot waits for it (awaitBootLocked) instead
+// of dropping a registration whose VM is about to exist; and a policy staged
+// during the boot is refused, because the launch has already taken its options
+// (pendingRegLocked). Refs: FR-17.9, FR-17.10, MGIT-122
 func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*model.SandboxInfo, error) {
 	policy, err := s.policy.Load(ctx)
 	if err != nil {
@@ -351,25 +394,65 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	reg, ok := s.byTask[taskID]
 	if !ok {
+		s.mu.Unlock()
 		return nil, fmt.Errorf("%w: task %q", model.ErrSandboxNotFound, taskID)
 	}
 	if reg.booted {
 		info := reg.info
+		s.mu.Unlock()
 		return &info, nil
 	}
-
+	if inFlight := reg.boot; inFlight != nil {
+		s.mu.Unlock()
+		return joinBoot(ctx, inFlight)
+	}
+	// This call owns the boot. Resolve the effective options under the lock and
+	// take a COPY: nothing may read reg.opts through a boot it is not holding
+	// the lock for, and the copy is what the VM is actually launched with.
 	applyPolicyDefaults(&reg.opts, policy)
-	launched, err := s.manager.Launch(ctx, reg.opts)
+	opts := reg.opts
+	attempt := &bootAttempt{done: make(chan struct{})}
+	reg.boot = attempt
+	s.mu.Unlock()
+
+	launched, bootErr := s.runBoot(ctx, opts)
+	return s.settleBoot(ctx, reg, attempt, launched, bootErr)
+}
+
+// joinBoot waits for a boot another caller started and returns ITS outcome.
+//
+// The waiter does not retry a failed boot: the winner already attempted it, and
+// N callers each re-launching against a backend that has just refused is a boot
+// storm, not a recovery. A canceled caller leaves the boot running — it belongs
+// to the registration, not to whoever happened to trigger it. Refs: MGIT-122
+func joinBoot(ctx context.Context, attempt *bootAttempt) (*model.SandboxInfo, error) {
+	select {
+	case <-attempt.done:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("sandbox ensure-running: waiting for an in-flight boot: %w", ctx.Err())
+	}
+	if attempt.err != nil {
+		return nil, attempt.err
+	}
+	info := attempt.info
+	return &info, nil
+}
+
+// runBoot launches the VM and brings up its host-side controls, holding NO
+// lock — this is the long part (a full boot) that used to serialize the daemon.
+// Every failure fails closed, rolling back whatever it had already brought up,
+// so the registration is left un-booted and retryable.
+// Refs: FR-17.7, FR-17.8, FR-17.12, SEC-04, SEC-05, SEC-09, MGIT-122
+func (s *SandboxService) runBoot(ctx context.Context, opts model.SandboxLaunchOptions) (*model.SandboxInfo, error) {
+	launched, err := s.manager.Launch(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox ensure-running: %w", err)
 	}
 	// Start host egress enforcement (the allowlist proxy + DNS) before the
 	// sandbox is considered up, so an allowlist guest never runs without its
-	// host-side controls. A failure rolls the VM back (fail closed); none/
-	// open are no-ops in the controller. Refs: FR-17.7, FR-17.8, SEC-04
+	// host-side controls. none/open are no-ops in the controller.
 	if s.egress != nil {
 		if egErr := s.egress.StartEgress(ctx, *launched); egErr != nil {
 			return nil, errors.Join(
@@ -383,9 +466,7 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 		// stays admitted — otherwise it is silently denied for the rest of the
 		// sandbox's life while RecordDenial still treats it as live and
 		// suppresses re-prompting (F-D). On first boot the grant set is empty,
-		// so this is a no-op. A replay failure fails closed (roll the VM and its
-		// egress back); the registration stays un-booted and retryable.
-		// Refs: FR-17.12, SEC-05
+		// so this is a no-op.
 		if s.capRep != nil {
 			if repErr := s.capRep.ReplayGrants(ctx, launched.ID); repErr != nil {
 				s.egress.StopEgress(launched.ID)
@@ -399,11 +480,9 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 	}
 	// Open the one-way published ports (SEC-09) once the VM and its egress are
 	// up: each binds a 127.0.0.1 host listener forwarding INTO the guest. A
-	// bind failure fails the boot closed (roll the VM and its egress back) so
-	// no half-published sandbox runs; the registration stays un-booted and
-	// retryable. None requested is a no-op. Refs: SEC-09, FR-17.8
-	if s.ports != nil && len(reg.opts.PublishPorts) > 0 {
-		if pubErr := s.ports.StartPublish(ctx, *launched, reg.opts.PublishPorts); pubErr != nil {
+	// bind failure fails the boot closed so no half-published sandbox runs.
+	if s.ports != nil && len(opts.PublishPorts) > 0 {
+		if pubErr := s.ports.StartPublish(ctx, *launched, opts.PublishPorts); pubErr != nil {
 			if s.egress != nil {
 				s.egress.StopEgress(launched.ID)
 			}
@@ -414,48 +493,107 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 			)
 		}
 	}
+	return launched, nil
+}
+
+// settleBoot re-takes the lock, records the boot's outcome on the registration
+// and publishes it to every caller waiting on the attempt.
+//
+// reg is still the map's entry for this task, and is guaranteed to be: the only
+// paths that remove a registration (Remove, Land, the TTL sweep) refuse to act
+// on one with a boot in flight, so no teardown can have run in the window this
+// function closes. Refs: MGIT-122, FR-17.9
+func (s *SandboxService) settleBoot(ctx context.Context, reg *sandboxReg, attempt *bootAttempt,
+	launched *model.SandboxInfo, bootErr error) (*model.SandboxInfo, error) {
+	s.mu.Lock()
+	// info/err are final BEFORE done is closed, and the close is what publishes
+	// them: waiters read them off this happens-before edge without the lock.
+	defer func() {
+		reg.boot = nil
+		close(attempt.done)
+		s.mu.Unlock()
+	}()
+	if bootErr != nil {
+		attempt.err = bootErr
+		return nil, bootErr
+	}
+	if err := s.recordBootLocked(ctx, reg, launched); err != nil {
+		attempt.err = err
+		return nil, err
+	}
+	attempt.info = reg.info
+	info := reg.info
+	return &info, nil
+}
+
+// recordBootLocked audits the boot, makes it durable, and marks the
+// registration running. Either bookkeeping failure rolls the VM back: a booted
+// VM that the audit trail or the durable registry does not describe must never
+// keep running (FR-17.18, MGIT-102). Caller holds the lock.
+// Refs: FR-17.9, FR-17.18, NFR-17.3, R-H212, SEC-09, MGIT-102
+func (s *SandboxService) recordBootLocked(ctx context.Context, reg *sandboxReg, launched *model.SandboxInfo) error {
 	if auditErr := s.events.AppendSandboxEvent(ctx, &model.SandboxEvent{
-		SandboxID: launched.ID, TaskID: taskID, EventType: model.EventResumed,
+		SandboxID: launched.ID, TaskID: reg.info.TaskID, EventType: model.EventResumed,
 	}); auditErr != nil {
-		// A booted-but-unaudited VM must never survive (an unaudited
-		// sandbox is an audit-trail gap, FR-17.18). Roll back the VM we
-		// just launched (and its egress) before returning; the registration
-		// stays un-booted and retryable. Errors are joined so none is swallowed.
-		return nil, errors.Join(
+		return errors.Join(
 			fmt.Errorf("sandbox ensure-running: audit: %w", auditErr),
 			s.rollbackBoot(ctx, launched.ID))
 	}
-	// Record the boot durably: a registry still saying `created` for a running
-	// VM would send the next daemon down the un-verified path and leave the VM
-	// unaccounted. A failure here is treated exactly like the audit failure
-	// above — roll the VM back rather than run one the durable record does not
-	// describe. Refs: MGIT-102
 	if stateErr := s.setPersistedState(ctx, launched.ID, model.StateRunning); stateErr != nil {
-		return nil, errors.Join(stateErr, s.rollbackBoot(ctx, launched.ID))
+		return errors.Join(stateErr, s.rollbackBoot(ctx, launched.ID))
 	}
 	reg.info = *launched
 	// The backend's SandboxInfo does not carry the published-port mappings
 	// (they are a service-level concern); restore them so List/Status keep
-	// reporting them after boot. Refs: SEC-09
+	// reporting them after boot. Likewise the effective resource caps: not
+	// every backend echoes them back, and a sandbox that stopped reporting its
+	// ceiling the moment it booted would hide it at exactly the point a build
+	// runs into it. Refs: SEC-09, R-H212
 	reg.info.PublishPorts = reg.opts.PublishPorts
-	// Likewise the effective resource caps: not every backend echoes them
-	// back, and a sandbox that stopped reporting its ceiling the moment it
-	// booted would hide it at exactly the point a build runs into it.
-	// Refs: R-H212
 	reg.info.CPUs, reg.info.MemoryMB, reg.info.DiskQuotaMB = reg.opts.CPUs, reg.opts.MemoryMB, reg.opts.DiskQuotaMB
 	reg.booted = true
 	// Record activity and the TTL deadline from the service clock (not the
-	// backend's), so idle-suspend and TTL reap are deterministic. The
-	// effective TTL was filled into opts by applyPolicyDefaults above.
-	// Refs: NFR-17.3, FR-17.9
+	// backend's), so idle-suspend and TTL reap are deterministic.
 	now := s.clock().UTC()
 	reg.lastActivity = now
 	if reg.opts.TTL > 0 {
 		reg.expiresAt = now.Add(reg.opts.TTL)
 		reg.info.ExpiresAt = reg.expiresAt
 	}
-	info := reg.info
-	return &info, nil
+	return nil
+}
+
+// awaitBootLocked returns taskID's registration with NO boot in flight,
+// dropping and re-taking the lock while it waits. Caller holds the lock on
+// entry and holds it on return, on every path including cancellation.
+//
+// This is what keeps the narrower boundary from becoming a lost VM. A teardown
+// that ran mid-boot would delete the registration and append its terminal event
+// while a VM was still being created for it: the VM would survive with nothing
+// tracking it (the MGIT-103 shape), and the audit trail would record `resumed`
+// after `destroyed` — a life that continues after it ended, which is exactly
+// what the fleet soak's invariant I5 refuses. Waiting is bounded by the boot,
+// and is per-task: a teardown of one sandbox never waits on another's boot.
+// Refs: MGIT-122, MGIT-103, FR-17.18
+func (s *SandboxService) awaitBootLocked(ctx context.Context, taskID string) (*sandboxReg, error) {
+	for {
+		reg, ok := s.byTask[taskID]
+		if !ok {
+			return nil, fmt.Errorf("%w: task %q", model.ErrSandboxNotFound, taskID)
+		}
+		inFlight := reg.boot
+		if inFlight == nil {
+			return reg, nil
+		}
+		s.mu.Unlock()
+		select {
+		case <-inFlight.done:
+			s.mu.Lock()
+		case <-ctx.Done():
+			s.mu.Lock()
+			return nil, fmt.Errorf("sandbox: waiting for task %q's boot to settle: %w", taskID, ctx.Err())
+		}
+	}
 }
 
 // rollbackBoot undoes a boot whose bookkeeping failed: it closes the published
@@ -542,13 +680,17 @@ func (s *SandboxService) Status(_ context.Context, taskID string) (*model.Sandbo
 // A booted VM is stopped and removed first (the dangerous direction — a
 // stranded running VM — is closed before the audit), then a destroyed
 // event is appended, then the registration is dropped. A backend or audit
-// failure leaves the sandbox registered and retryable. Refs: FR-17.9, FR-17.18
+// failure leaves the sandbox registered and retryable.
+//
+// A remove that arrives while THIS task's VM is booting waits for the boot to
+// settle and then tears down what it produced, rather than racing it and
+// leaving the VM behind (awaitBootLocked). Refs: FR-17.9, FR-17.18, MGIT-122
 func (s *SandboxService) Remove(ctx context.Context, taskID string, force bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	reg, ok := s.byTask[taskID]
-	if !ok {
-		return fmt.Errorf("%w: task %q", model.ErrSandboxNotFound, taskID)
+	reg, err := s.awaitBootLocked(ctx, taskID)
+	if err != nil {
+		return err
 	}
 	if err := s.teardownLocked(ctx, reg, model.EventDestroyed, force); err != nil {
 		return err
