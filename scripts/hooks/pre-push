@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#
+# pre-push: refuse a branch that carries another branch's commits.
+#
+# This is where the MGIT-142 tripwire fires, and the timing is the point. The
+# incident it exists for (9abf4ce: a one-file CI branch that inherited 531
+# lines across six files from an unmerged task branch) was visible in the pull
+# request's own diff and merged anyway. A check that runs at review time is a
+# check that competes with a reviewer's attention; this one runs before the
+# branch reaches the remote, so the pull request never gets to exist.
+#
+# Install:  make install-hooks     (sets core.hooksPath to scripts/hooks)
+# Bypass:   git push --no-verify   (the CI backstop still checks the PR)
+#
+# Refs: MGIT-142
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+zero='0000000000000000000000000000000000000000'
+status=0
+
+if ! command -v go >/dev/null 2>&1; then
+	echo "pre-push: Go is not on PATH, so the branch-scope check did not run." >&2
+	echo "          CI still checks it on the pull request. Refs: MGIT-142" >&2
+	exit 0
+fi
+
+# stdin carries one line per ref being pushed: <local ref> <local sha> <remote ref> <remote sha>
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+	[ "$local_sha" = "$zero" ] && continue # a deletion pushes nothing to check
+	case "$local_ref" in
+	refs/heads/*) ;;
+	*) continue ;;
+	esac
+	branch=${local_ref#refs/heads/}
+	if ! (cd "$root" && go run ./scripts/branchguard --repo "$root" --branch "$branch"); then
+		status=1
+	fi
+done
+
+exit "$status"

@@ -187,6 +187,33 @@ lint-native:
 security-scan:
 	govulncheck ./...
 
+## branch-check: Refuse a branch that carries another branch's commits (BRANCH=, BASE=)
+# The MGIT-142 tripwire, runnable by hand. It normally runs itself from the
+# pre-push hook; this target is for checking a branch you are not standing on
+# (BRANCH=feat/x) or declaring a deliberate stack (BASE=fix/parent).
+.PHONY: branch-check
+branch-check:
+	@go run ./scripts/branchguard \
+		$(if $(BRANCH),--branch $(BRANCH)) $(if $(BASE),--base $(BASE)) \
+		&& echo "branch scope: clean"
+
+## branch-survey: Run the branch-scope rule over EVERY branch and count refusals
+# The measurement that keeps the guard honest: a tripwire that fires on
+# legitimate work is switched off within a week, so the rule is judged by what
+# it does to this repository's real branches. Refs: MGIT-142, MGIT-131
+.PHONY: branch-survey
+branch-survey:
+	@go run ./scripts/branchguard --survey
+
+## install-hooks: Point git at the versioned hooks in scripts/hooks
+# core.hooksPath is per-clone local config, so a fresh clone needs this once.
+# Refs: MGIT-142
+.PHONY: install-hooks
+install-hooks:
+	@chmod +x scripts/hooks/*
+	@git config core.hooksPath scripts/hooks
+	@echo "core.hooksPath = scripts/hooks (pre-push branch-scope check active)"
+
 ## bench: Run benchmarks
 .PHONY: bench
 bench:

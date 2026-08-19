@@ -56,6 +56,34 @@ jobs:
       - name: Test coverage
         run: make test-cover
 
+  # The BACKSTOP for the MGIT-142 branch-scope tripwire, not the tripwire
+  # itself. The guard's real position is the pre-push hook (scripts/hooks/
+  # pre-push), which fires before the pull request exists; this job repeats it
+  # for the pushes that skipped the hook -- a fresh clone that never ran `make
+  # install-hooks`, or a `git push --no-verify`. It needs the full history and
+  # every remote branch, because the question it answers is whether some OTHER
+  # unmerged branch's commits are sitting underneath this one. Refs: MGIT-142
+  branch-scope:
+    name: Branch scope
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.6"
+
+      - name: Fetch every branch, so an inherited one can be recognized
+        run: git fetch --no-tags --prune origin "+refs/heads/*:refs/remotes/origin/*"
+
+      - name: Check the head branch's scope
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: go run ./scripts/branchguard --branch "origin/$HEAD_REF" --base origin/main
+
   # The libkrun backend is opt-in at build time on Linux (-tags libkrun) and
   # the default on macOS (ADR-010's GA backend split); the pure-Go `test` job
   # above never compiles its cgo binding on either platform. macOS 14 runner:
