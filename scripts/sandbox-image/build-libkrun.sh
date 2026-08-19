@@ -76,7 +76,17 @@ for attempt in 1 2 3; do
 		echo "ERROR: libkrunfw failed 3 times -- treat this as a real outage, not a flake" >&2
 		exit 1
 	fi
-	echo "WARNING: libkrunfw build failed on attempt $attempt/3 (often a truncated kernel download); retrying" >&2
+	# DISCARD THE TARBALL BEFORE RETRYING. The first version of this retry
+	# assumed make would refetch a partial download; it does not. A truncated
+	# tarball satisfies the download target's existence check, so every later
+	# attempt re-extracts the SAME corrupt file and dies identically at the
+	# extract step -- turning a retry into three deterministic failures wearing
+	# the costume of a transient. Observed: `curl: (18) transfer closed` on one
+	# run, then `tar: Error is not recoverable` three times on the next.
+	# Removing it makes each attempt a genuinely fresh fetch, which is what the
+	# retry was always supposed to be. Refs: MGIT-119
+	rm -f "$work/libkrunfw"/tarballs/*.tar.* 2>/dev/null || true
+	echo "WARNING: libkrunfw build failed on attempt $attempt/3 (often a truncated kernel download); discarded any partial tarball and retrying" >&2
 	sleep $((attempt * 30))
 done
 (cd "$work/libkrunfw" && make PREFIX="$prefix" install)
