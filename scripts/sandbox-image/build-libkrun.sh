@@ -55,7 +55,30 @@ fi
 # `cd dir && make`, NOT `make -C dir`: libkrunfw recurses into the kernel build
 # with $(MAKE) $(MAKEFLAGS), and with -C the propagated MAKEFLAGS made that
 # recursive call literally invoke `make w -j...` ("No rule to make target 'w'").
-(cd "$work/libkrunfw" && make -j"$jobs")
+# RETRY the libkrunfw build, because its first act is to download a ~141 MB
+# kernel tarball from a third-party host, and a truncated transfer there is not
+# a defect in this repository. Observed twice in a row on 2026-08-19:
+#   curl: (18) transfer closed with 30852240 bytes remaining to read
+#   curl: (18) transfer closed with 124175504 bytes remaining to read
+# make is resumable here -- a partial tarball is removed and refetched, and
+# already-built objects are kept -- so a retry costs the download, not the
+# compile. The reason to absorb it rather than re-run the job by hand is that a
+# job going red on someone else's CDN teaches the team to re-run reds without
+# reading them, and this repository has already had a real failure sit on main
+# because a red was misread as noise. Three attempts, widening pause; a genuine
+# outage still fails, loudly, and says to read it as one. Refs: MGIT-119
+for attempt in 1 2 3; do
+	if (cd "$work/libkrunfw" && make -j"$jobs"); then
+		[ "$attempt" -gt 1 ] && echo "libkrunfw built on attempt $attempt"
+		break
+	fi
+	if [ "$attempt" -eq 3 ]; then
+		echo "ERROR: libkrunfw failed 3 times -- treat this as a real outage, not a flake" >&2
+		exit 1
+	fi
+	echo "WARNING: libkrunfw build failed on attempt $attempt/3 (often a truncated kernel download); retrying" >&2
+	sleep $((attempt * 30))
+done
 (cd "$work/libkrunfw" && make PREFIX="$prefix" install)
 ldconfig
 
