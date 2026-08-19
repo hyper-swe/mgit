@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/hyper-swe/mgit/internal/buildinfo"
 	"github.com/hyper-swe/mgit/internal/model"
 )
 
@@ -70,6 +71,11 @@ type Config struct {
 	// addressed sandbox's binding (SEC-10); that accept path is wired in
 	// MGIT-11.10.10. Refs: FR-17.27, SEC-10
 	PeerBinder *PeerBinder
+	// Version is the daemon's own build string (buildinfo.String()), stated in
+	// the version handshake and named in a mismatch message. New fills it in
+	// when it is empty; it is a Config field only so a test can pin it.
+	// Refs: MGIT-136, MGIT-83
+	Version string
 	// PeerUID reads kernel-asserted peer credentials for one
 	// connection. Nil selects the platform mechanism (SO_PEERCRED /
 	// LOCAL_PEERCRED); injectable so foreign-UID rejection is testable
@@ -112,6 +118,9 @@ func New(cfg Config) (*Daemon, error) {
 		return nil, fmt.Errorf("sandboxd: logger must not be nil")
 	case cfg.Clock == nil:
 		return nil, fmt.Errorf("sandboxd: clock must not be nil")
+	}
+	if cfg.Version == "" {
+		cfg.Version = buildinfo.String()
 	}
 	if cfg.IdleGrace <= 0 {
 		cfg.IdleGrace = defaultIdleGrace
@@ -330,7 +339,7 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn, authed chan<- st
 	if _, err := conn.Write([]byte(greeting)); err != nil {
 		return
 	}
-	d.serveRequest(ctx, conn)
+	d.serveHandshake(ctx, conn)
 }
 
 // authenticate verifies the peer's kernel-asserted UID matches the

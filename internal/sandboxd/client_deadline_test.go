@@ -69,6 +69,19 @@ func (s *slowServer) start(t *testing.T) string {
 		if _, err := conn.Write([]byte(greeting)); err != nil {
 			return
 		}
+		// The client states its wire version before any verb (MGIT-136).
+		// Answer it exactly as the real daemon does, so these tests exercise
+		// the deadline phase they are about and not the handshake.
+		hello, err := controlproto.ReadRequest(conn)
+		if err != nil || hello.Kind != controlproto.KindHello {
+			return
+		}
+		if err := controlproto.WriteResponse(conn, &controlproto.Response{
+			Hello: &controlproto.HelloResult{
+				Protocol: controlproto.ProtocolVersion, Version: "slow-server"},
+		}); err != nil {
+			return
+		}
 		req, err := controlproto.ReadRequest(conn)
 		if err != nil {
 			return

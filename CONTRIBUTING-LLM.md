@@ -831,6 +831,48 @@ These patterns are absolutely forbidden in mgit. They indicate a misunderstandin
 | `:memory:` SQLite databases in tests | Data lost between test runs, non-deterministic | Use `t.TempDir()` for isolated temp databases |
 | Hardcoded file paths | Breaks in different environments, untestable | Use config struct or injected path |
 | Importing upward in dependency chain | Circular imports, architectural confusion | Refactor to move logic down (to lower layers) |
+| Changing `internal/controlproto` or `internal/execwire` without bumping `controlproto.ProtocolVersion` | The wire has no forward compatibility, so an unversioned change silently breaks one direction | Bump `ProtocolVersion` in the SAME commit (see §9.1) |
+
+---
+
+#### 9.1 The CLI↔daemon wire is versioned — bump it in the same commit
+
+`internal/controlproto` and `internal/execwire` are the wire between `mgit`
+and `mgit-sandboxd`. **Neither has any forward compatibility**, by
+construction: requests *and* responses decode with
+`json.DisallowUnknownFields`, and the exec frame tags are a closed set. There
+is no field a peer can ignore and no frame it can skip.
+
+So **any** of these is a wire change:
+
+- a new field on `controlproto.Request` or `controlproto.Response`
+- a new request kind, or a new `execwire` frame kind
+- a changed meaning for any existing field, kind or tag
+
+and every wire change **MUST** bump `controlproto.ProtocolVersion` in the same
+commit. The peers exchange that number in the handshake immediately after the
+greeting and refuse to transact unless it matches **exactly**
+(`controlproto.Compatible`). The rule and its rationale are normative in
+`IDD-FR17-SANDBOX-PROTOCOL.md` §8.
+
+Why this is enforced rather than trusted: four wire additions landed without
+it, and each broke a version direction silently — `PolicyResult.Pending`
+(MGIT-109), `Response.ErrorCode` (MGIT-109), `Response.Synced` (MGIT-76) and
+the exec liveness beat (MGIT-133). The last one was measured reporting a pure
+wire mismatch to the operator as **in-guest memory exhaustion** (MGIT-136),
+which is the misdiagnosis class this project has now fixed four times
+(MGIT-104, MGIT-108, MGIT-118, MGIT-136).
+
+Two things follow for a release:
+
+1. A wire change is a **same-release change** for both binaries. They ship in
+   one archive and one Homebrew formula, so this holds in practice — but say
+   so in the release notes anyway, because a daemon left running across an
+   upgrade is the one way to end up mixed.
+2. A mismatch must always be reported as a mismatch. Never let one reach a
+   guest-shaped failure path: `classifyGuestFailure` settles
+   `phaseVersionSkew` before every other signal, and a test asserts the
+   negative (`TestWriteGuestFailure_VersionSkew_NeverReachesTheMemoryAdvisory`).
 
 ---
 

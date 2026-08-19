@@ -71,9 +71,12 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 // answer (MGIT-104). But a DAEMON that stopped answering is asked nothing: it
 // has just demonstrated it cannot answer, so the question would hang for the
 // whole control-plane timeout before yielding a diagnosis that never needed
-// it. Refs: MGIT-133, MGIT-104, R-H212
+// it. A daemon refused for VERSION SKEW is asked nothing for a different
+// reason: it would answer, but the answer would be another refusal, and there
+// is no sandbox in the story to describe anyway (MGIT-136).
+// Refs: MGIT-136, MGIT-133, MGIT-104, R-H212
 func execFailure(cmd *cobra.Command, cl sandboxClient, task string, err error) error {
-	if isDaemonStall(err) {
+	if isDaemonStall(err) || isVersionSkew(err) {
 		defer writeGuestFailureAdvisory(cmd.Context(), cmd.ErrOrStderr(),
 			&model.SandboxInfo{TaskID: task}, err)
 		return printErr(cmd.ErrOrStderr(), err)

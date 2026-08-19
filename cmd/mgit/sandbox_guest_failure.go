@@ -42,6 +42,15 @@ const (
 	// lost mid-command with a memory-cap advisory attached, which is the
 	// MGIT-118 misdiagnosis rebuilt on a new cause. Refs: MGIT-133, MGIT-118
 	phaseDaemonStalled
+	// phaseVersionSkew: the CLI and the mgit-sandboxd it reached speak
+	// different control-plane wire versions, so the two never transacted. This
+	// is the strongest "not the guest" of the three: no command was sent, no
+	// VM was consulted, and there is no sandbox in the story at all. It is a
+	// separate phase for the same reason phaseDaemonStalled is — mgit 0.5.0
+	// has no such phase, and its classifier duly reports a wire mismatch as a
+	// guest lost mid-command with a memory-cap advisory (MGIT-136).
+	// Refs: MGIT-136, MGIT-118
+	phaseVersionSkew
 )
 
 // vmStartMarkers are console-log markers that appear ONLY when the VMM itself
@@ -87,10 +96,18 @@ func classifyGuestFailure(err error, ent entitlementState) guestFailure {
 		return guestFailure{phase: phaseLostServing}
 	}
 	text := err.Error()
-	// A daemon that stopped answering is settled FIRST and on its own: it is
-	// the one failure here that carries no evidence about the guest, and every
-	// branch below would otherwise reach a guest-shaped conclusion from it.
-	// Refs: MGIT-133
+	// A version mismatch is settled BEFORE everything, including the daemon
+	// stall. The two are ordered, not merely both first: a skew means the
+	// peers never agreed to transact, so any other signal riding along in the
+	// same message — a console tail, a wrapped transport error, even the stall
+	// sentinel — is describing something that did not happen. Refs: MGIT-136
+	if isVersionSkew(err) {
+		return guestFailure{phase: phaseVersionSkew}
+	}
+	// A daemon that stopped answering is settled next and on its own: it is
+	// the one remaining failure here that carries no evidence about the guest,
+	// and every branch below would otherwise reach a guest-shaped conclusion
+	// from it. Refs: MGIT-133
 	if isDaemonStall(err) {
 		return guestFailure{phase: phaseDaemonStalled}
 	}
@@ -119,6 +136,21 @@ func classifyGuestFailure(err error, ent entitlementState) guestFailure {
 func isDaemonStall(err error) bool {
 	return err != nil && (errors.Is(err, model.ErrSandboxDaemonUnresponsive) ||
 		strings.Contains(err.Error(), model.ErrSandboxDaemonUnresponsive.Error()))
+}
+
+// isVersionSkew reports whether a failure is the two HOST binaries disagreeing
+// about the wire, rather than anything that happened to a sandbox.
+//
+// It is matched by text as well as by errors.Is because a refused exec reaches
+// the CLI through the daemon's result frame, which carries a string and no
+// error identity — and a mismatch that arrives without identity would fall
+// through to the guest default, which is the whole defect. A nil or unrelated
+// error is NEVER a mismatch: silence and transport faults say nothing about a
+// version, and guessing here would send a reader to upgrade binaries that are
+// fine. Refs: MGIT-136
+func isVersionSkew(err error) bool {
+	return err != nil && (errors.Is(err, model.ErrSandboxVersionSkew) ||
+		strings.Contains(err.Error(), model.ErrSandboxVersionSkew.Error()))
 }
 
 // vmStartFailure returns the guest console line identifying a VM-start
@@ -193,6 +225,8 @@ func writeGuestFailureAdvisory(ctx context.Context, w io.Writer, info *model.San
 // Refs: MGIT-104, MGIT-133
 func writeGuestFailure(w io.Writer, info *model.SandboxInfo, f guestFailure) {
 	switch f.phase {
+	case phaseVersionSkew:
+		writeVersionSkew(w)
 	case phaseDaemonStalled:
 		writeDaemonStall(w, info)
 	case phaseLostServing:
@@ -200,6 +234,23 @@ func writeGuestFailure(w io.Writer, info *model.SandboxInfo, f guestFailure) {
 	default:
 		writeStartFailure(w, info, f)
 	}
+}
+
+// writeVersionSkew reports a control-plane version mismatch.
+//
+// It names no sandbox and reads no state off one, deliberately: the CLI never
+// spoke to the daemon, so any sandbox it might name is a guess, and naming one
+// is what invites the reader back toward a guest-shaped explanation. The
+// remedy itself was already printed — it travels inside the error this follows,
+// single-sourced in controlproto.SkewMessage — so this adds only what that
+// message cannot say: that NOTHING ran, and therefore that nothing about a
+// guest or its memory cap is implicated. Refs: MGIT-136, MGIT-118
+func writeVersionSkew(w io.Writer) {
+	_, _ = fmt.Fprintf(w, "\nmgit: %s, so nothing ran — your command was never sent to a sandbox "+
+		"and no guest was contacted.\n", model.ErrSandboxVersionSkew.Error())
+	_, _ = fmt.Fprint(w, "This is a fault of the two host binaries, not of your workload and not of a "+
+		"sandbox: do not resize anything and do not reshape the build. Upgrade both as shown above, "+
+		"then confirm with `mgit --version` and `mgit-sandboxd --version`.\n")
 }
 
 // writeDaemonStall reports a daemon that stopped answering, and — as much as

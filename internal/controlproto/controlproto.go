@@ -55,6 +55,10 @@ const (
 	// KindExport brings a guest-built artifact out to a host-named path
 	// (MGIT-73). 'F' for file, because 'P' and 'E' are already spoken for.
 	KindExport byte = 'F'
+	// KindHello ('V') is the version handshake. It is DECLARED in handshake.go,
+	// beside the compatibility rule it serves, but it is a request kind like
+	// every other one here — adding a kind means reading both places, and
+	// TestHello_KindTagIsUnique asserts the whole set is distinct. Refs: MGIT-136
 )
 
 // Ceilings enforced before allocation (the daemon supervises all VMs; a
@@ -204,6 +208,11 @@ type Request struct {
 	PolicySet  *PolicyArgs `json:"policy_set,omitempty"`
 	PolicyShow *TaskRef    `json:"policy_show,omitempty"`
 	Export     *ExportArgs `json:"export,omitempty"`
+	// Hello states the client's wire version before any verb is transacted.
+	// It is the FIRST frame a current client sends on every connection; a
+	// peer that sends anything else first is, by construction, a build from
+	// before the handshake existed. Refs: MGIT-136
+	Hello *HelloArgs `json:"hello,omitempty"`
 }
 
 // LandResult summarizes a completed land.
@@ -239,13 +248,17 @@ type Response struct {
 	Policy *PolicyResult             `json:"policy,omitempty"` // policy set/show
 	// Exported reports one completed artifact export (MGIT-73).
 	Exported *model.ArtifactExportResult `json:"exported,omitempty"`
+	// Hello is the daemon's half of the version handshake. Only a client
+	// that sent a hello ever receives one, so adding this field cannot reach
+	// a pre-handshake client's strict decoder. Refs: MGIT-136
+	Hello *HelloResult `json:"hello,omitempty"`
 }
 
 // validKind reports whether k is a known request kind.
 func validKind(k byte) bool {
 	switch k {
 	case KindLaunch, KindExec, KindLand, KindList, KindRemove, KindStatus, KindGrants, KindGrant,
-		KindSync, KindPolicySet, KindPolicyShow, KindExport:
+		KindSync, KindPolicySet, KindPolicyShow, KindExport, KindHello:
 		return true
 	default:
 		return false
@@ -306,6 +319,7 @@ func (req *Request) Validate() error {
 		KindPolicySet:  req.PolicySet != nil,
 		KindPolicyShow: req.PolicyShow != nil,
 		KindExport:     req.Export != nil,
+		KindHello:      req.Hello != nil,
 	}
 	for k, present := range set {
 		if present && k != req.Kind {
@@ -347,6 +361,8 @@ func (req *Request) Validate() error {
 		return requireTask(req.PolicyShow)
 	case KindExport:
 		return validateExport(req.Export)
+	case KindHello:
+		return validateHello(req.Hello)
 	case KindList:
 		return nil // no payload
 	default:

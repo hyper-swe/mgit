@@ -96,23 +96,39 @@ const execRelayChunkBytes = 64 << 10
 // daemon. A greet-only build (no service wired) serves nothing.
 // Refs: FR-17.34, MGIT-11.10.8
 func (d *Daemon) serveRequest(ctx context.Context, conn net.Conn) {
-	if d.cfg.Service == nil {
+	req, ok := d.readRequest(conn)
+	if !ok {
 		return
 	}
+	// A hello where a verb belongs is not a verb. The handshake happens once,
+	// before anything is transacted, and repeating it is malformed traffic
+	// rather than a second chance to renegotiate. Refs: MGIT-136
+	if req.Kind == controlproto.KindHello {
+		d.cfg.Logger.Warn("sandboxd rejected request",
+			"event", "request_rejected", "error", "hello after the handshake")
+		d.writeResponse(conn, &controlproto.Response{Error: "invalid request"})
+		return
+	}
+	d.dispatch(ctx, conn, req)
+}
+
+// readRequest reads and validates exactly one control frame under a read
+// deadline, reporting whether one was obtained. A clean EOF is the benign
+// greeting-probe close (activation health check) and is silent; anything else
+// is a malformed/oversized/slow client, which fails closed with an audited
+// rejection and a best-effort reply. Refs: FR-17.34, MGIT-11.10.8
+func (d *Daemon) readRequest(conn net.Conn) (*controlproto.Request, bool) {
 	_ = conn.SetReadDeadline(d.cfg.Clock().Add(controlproto.DefaultRequestTimeout))
 	req, err := controlproto.ReadRequest(conn)
 	if err != nil {
-		// A clean EOF is the benign greeting-probe close (activation health
-		// check). Anything else is a malformed/oversized/slow client: fail
-		// closed, audit the rejection, reply best-effort.
 		if !errors.Is(err, io.EOF) {
 			d.cfg.Logger.Warn("sandboxd rejected request",
 				"event", "request_rejected", "error", err.Error())
 			d.writeResponse(conn, &controlproto.Response{Error: "invalid request"})
 		}
-		return
+		return nil, false
 	}
-	d.dispatch(ctx, conn, req)
+	return req, true
 }
 
 // dispatch routes one validated request to the service and replies. Exec

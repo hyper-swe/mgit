@@ -57,6 +57,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: `mgit` and `mgit-sandboxd` must now be upgraded TOGETHER
+  (MGIT-136).** The CLI↔daemon control plane has gained a version handshake,
+  and a mixed pair is refused with a message naming both builds and the
+  command to fix it, instead of failing later as something it is not.
+
+  Upgrading only one side — most easily, upgrading the binaries while the
+  previous release's daemon is still running — now produces:
+
+  ```
+  mgit CLI and daemon differ — upgrade both.
+    mgit CLI:      control protocol 2, 0.6.0 (commit: …)
+    mgit-sandboxd: control protocol 1, build not reported (too old to say)
+  ```
+
+  followed by one upgrade command per install route and `pkill -f
+  mgit-sandboxd` to release the stale daemon. **After upgrading, stop any
+  running `mgit-sandboxd`**; the next command starts the new one.
+
+  This is a deliberate trade. `internal/controlproto` decodes requests *and*
+  responses with `DisallowUnknownFields` and the exec frame tags are a closed
+  set, so the wire has no forward compatibility and every addition to it has
+  silently broken one version direction — `PolicyResult.Pending` and
+  `Response.ErrorCode` (MGIT-109), `Response.Synced` (MGIT-76), and the
+  MGIT-133 liveness beat. The last was measured reporting a pure wire mismatch
+  to the operator as **in-guest memory exhaustion**, which is the misdiagnosis
+  class this project has now fixed four times (MGIT-104, MGIT-108, MGIT-118,
+  MGIT-136). A refusal that says what it is beats a pair that works until it
+  silently does not. The rule is normative in
+  `IDD-FR17-SANDBOX-PROTOCOL.md` §8: `controlproto.ProtocolVersion` is bumped
+  in the same commit as any wire change, and compatibility is exact equality.
+
+  Compatibility of the FILE formats, the store, and every non-sandbox verb is
+  unaffected — this is the CLI↔daemon socket only.
+
 - **BREAKING: `mgit log --task-id <ID> --json` emits an object**
   `{"task_id", "commits", "cadence"}` instead of a bare array of commit
   records. Callers reading the array should read `.commits`. Plain
