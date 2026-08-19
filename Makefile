@@ -243,23 +243,40 @@ verify-archive:
 preflight:
 	@echo "=== mgit preflight checks ==="
 	@echo ""
-	@echo "[1/8] Linting..."
+	@echo "[1/9] Linting..."
 	@golangci-lint run ./... && echo "  PASS" || (echo "  FAIL"; exit 1)
-	@echo "[2/8] Tests with race detector..."
+	@echo "[2/9] Tests with race detector..."
 	@go test ./... -race -count=1 && echo "  PASS" || (echo "  FAIL"; exit 1)
-	@echo "[3/8] Test coverage..."
+	@echo "[3/9] Test coverage..."
 	@$(MAKE) test-cover
-	@echo "[4/8] Vulnerability scan..."
+	@echo "[4/9] Vulnerability scan..."
 	@govulncheck ./... && echo "  PASS" || (echo "  FAIL"; exit 1)
-	@echo "[5/8] Build binary..."
+	@echo "[5/9] Build binary..."
 	@$(MAKE) build && echo "  PASS" || (echo "  FAIL"; exit 1)
-	@echo "[6/8] Binary smoke test..."
+	@echo "[6/9] Binary smoke test..."
 	@./$(BINARY_PATH) --version && echo "  PASS"
-	@echo "[7/8] Anti-stub check..."
+	@echo "[7/9] Anti-stub check..."
 	@grep -rn '"not yet implemented"\|"not implemented"\|"integration pending"' \
 		--include='*.go' --exclude='*_test.go' . && (echo "  FAIL: stubs found"; exit 1) || echo "  PASS"
-	@echo "[8/8] Release archive contents..."
+	@echo "[8/9] Release archive contents..."
 	@$(MAKE) verify-archive >/dev/null && echo "  PASS" || (echo "  FAIL"; exit 1)
+	@echo "[9/9] Branch-scope hook installed..."
+	@# REPORTS, NEVER REWRITES. core.hooksPath is the contributor's own git
+	@# config; installing it unasked would touch what this check was not aimed
+	@# at, the same overreach as a `pkill` that stops every repository's daemon.
+	@# It also does NOT fail the preflight: an uninstalled hook is a weaker local
+	@# posture, not a broken build, and a gate that hard-fails on posture gets
+	@# bypassed within a week -- the reasoning that gave MGIT-131's size guard a
+	@# recorded override rather than an absolute. CI's "Branch scope" job is the
+	@# backstop either way; the hook is what catches it BEFORE a PR exists.
+	@if [ "$$(git config --get core.hooksPath 2>/dev/null)" = "scripts/hooks" ]; then \
+		echo "  PASS"; \
+	else \
+		echo "  NOT INSTALLED (not a failure): the branch-scope tripwire will not"; \
+		echo "  run on push from this clone, so a branch carrying another branch's"; \
+		echo "  commits is caught only by CI, after the pull request already exists."; \
+		echo "  Install it:  make install-hooks"; \
+	fi
 	@echo ""
 	@echo "=== All preflight checks passed ==="
 
