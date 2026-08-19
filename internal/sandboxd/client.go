@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hyper-swe/mgit/internal/buildinfo"
 	"github.com/hyper-swe/mgit/internal/controlproto"
 	"github.com/hyper-swe/mgit/internal/execwire"
 	"github.com/hyper-swe/mgit/internal/model"
@@ -38,6 +39,9 @@ type Client struct {
 	// frames, never the command's duration. It is armed only once the daemon
 	// has proved it beats. Refs: MGIT-133
 	stallTimeout time.Duration
+	// version is this CLI's own build string, stated in the version handshake
+	// and named on both sides of a mismatch message. Refs: MGIT-136, MGIT-83
+	version string
 }
 
 // NewClient returns a control-plane client for the daemon at socketPath.
@@ -47,31 +51,64 @@ func NewClient(socketPath string, clock func() time.Time) *Client {
 		clock:          clock,
 		requestTimeout: controlproto.DefaultRequestTimeout,
 		stallTimeout:   execwire.StallTimeout,
+		version:        buildinfo.String(),
 	}
 }
 
-// dialGreeted dials the daemon and consumes its liveness greeting,
-// returning a connection ready to carry one request. A socket that does
-// not greet is rejected (squatter defense). The caller closes the conn.
+// dialGreeted dials the daemon, consumes its liveness greeting, and settles
+// the wire version before returning a connection ready to carry one request. A
+// socket that does not greet is rejected (squatter defense); a daemon that
+// greets but speaks a different protocol is refused HERE, ahead of every verb
+// and ahead of every failure path that could describe it as something else.
+//
+// Both gates sit before any verb deliberately. The greeting proves the peer is
+// the daemon; the handshake proves it is THIS daemon. Doing the second later —
+// once an exec stream is open, say — is what produced MGIT-136: the mismatch
+// surfaced as an unreadable frame and was classified as a lost guest.
 //
 // The greeting deadline is cleared before returning. What follows is a
 // REQUEST, and its budget starts when that request is written — inheriting
 // this one would silently charge the response for however long the greeting
-// took. Refs: MGIT-122
+// took. Refs: MGIT-122, MGIT-136
 func (c *Client) dialGreeted(ctx context.Context) (net.Conn, error) {
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "unix", c.socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: dial daemon: %w", err)
 	}
+	// Cancellation must end the greeting and the handshake too, not only the
+	// request that follows them. Both are socket reads, and a caller that gave
+	// up should not be held in either for the whole control-plane timeout.
+	// Refs: MGIT-122, MGIT-136
+	stop := watchCancel(ctx, conn)
+	defer stop()
 	_ = conn.SetReadDeadline(c.clock().Add(c.requestTimeout))
 	buf := make([]byte, len(greeting))
 	if _, err := io.ReadFull(conn, buf); err != nil || string(buf) != greeting {
 		_ = conn.Close()
-		return nil, fmt.Errorf("sandbox client: daemon did not greet (not running, or a squatter holds the socket)")
+		return nil, canceledOr(ctx,
+			fmt.Errorf("sandbox client: daemon did not greet (not running, or a squatter holds the socket)"))
+	}
+	if err := c.handshake(conn); err != nil {
+		_ = conn.Close()
+		return nil, canceledOr(ctx, err)
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 	return conn, nil
+}
+
+// canceledOr reports the caller's own withdrawal as such.
+//
+// watchCancel expires the connection rather than closing it, so a cancellation
+// arrives at these reads as an ordinary deadline error — which, left alone,
+// would be reported as a fact about the daemon (a squatter socket, or a
+// version mismatch). Neither is true of a caller that pressed Ctrl-C, and both
+// send the reader to fix something that is not broken. Refs: MGIT-122, MGIT-136
+func canceledOr(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("sandbox client: canceled: %w", ctxErr)
+	}
+	return err
 }
 
 // expireNow is any instant safely in the past: setting it as a deadline makes

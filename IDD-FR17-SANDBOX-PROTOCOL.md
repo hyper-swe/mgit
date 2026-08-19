@@ -362,6 +362,128 @@ lives in a released binary and cannot be fixed from this side. **MGIT-136
 tracks giving the control plane a forward-compatible seam** so the next
 addition does not face the same choice.
 
-Until then, an addition to this wire is a **same-release change**. The
-two binaries ship and install together (`mgit-sandboxd` is located beside
-`mgit`), which is what makes that assumption hold in practice.
+**MGIT-136 closes this**, and §8 is the rule that replaces the paragraph
+above: the peers now state their wire versions before they transact, an
+addition to this wire is a **same-release change** enforced by a version
+number rather than by convention, and a mixed pair is refused with a
+message that names both builds instead of failing later as something it
+is not.
+
+---
+
+## 8. Control-plane version handshake — *MGIT-136* (normative)
+
+### 8.1 Why a handshake and not a negotiation
+
+`controlproto` has no forward-compatible seam and cannot cheaply be given
+one: requests **and** responses decode with `DisallowUnknownFields`, so a
+new field in either direction breaks the opposite peer, and the exec
+stream's frame tags are a closed set, so a new frame kind is an
+"unexpected exec frame" to an older client. There is no field a peer can
+ignore and no frame it can skip.
+
+So the peers do not negotiate capabilities. They state versions, compare
+them, and refuse to transact when they differ — early, and before any
+failure classifier can reach a guest-shaped conclusion about it.
+
+### 8.2 Sequence (normative)
+
+```
+daemon  -> "ok mgit-sandboxd\n"                    greeting, UNCHANGED
+client  -> KindHello 'V' {protocol, version}       first frame, always
+daemon  -> Response{Hello{protocol, version}}      (+ error when they differ)
+client  -> one verb                                only if the versions match
+```
+
+Peer-UID authentication is unchanged and still precedes every byte of
+this. The greeting still precedes the handshake, so the squatter defense
+and the activation liveness probe (`dialOK`) are untouched.
+
+### 8.3 Why the version is not in the greeting line
+
+The greeting is a fixed 17-byte constant that an mgit ≤ 0.5.x client
+reads with `io.ReadFull` and compares exactly. Both ways of putting a
+version in it were measured against the shipped v0.5.0 binary:
+
+| change | what a 0.5.x client does |
+|---|---|
+| append bytes after the greeting | accepts the greeting, then reads our bytes as its own response length (`message 1886545268 bytes exceeds 1048576 cap`) or as its first exec frame |
+| change bytes inside the greeting | rejects it, spawns its own daemon, and fails every verb with `sandbox daemon unavailable … not dialable after spawn` |
+
+Neither is legible, and no single eager byte sequence can be: after the
+greeting an old client's next read depends on the verb it is about to
+send — a length-prefixed control response for every verb, an `execwire`
+frame stream for exec. The daemon only learns which when the request
+arrives, so the version is exchanged in the frame after the greeting.
+
+### 8.4 Compatibility rule (normative)
+
+**Exact equality.** A peer may transact iff its `protocol` equals this
+build's `controlproto.ProtocolVersion`. Anything else — one below, one
+above, or absent — is refused.
+
+`ProtocolVersion` is **2**. Protocol **1** is assigned by observation to
+every build that predates the handshake (mgit ≤ 0.5.x): such a peer never
+states a version, and the absence of a hello is what identifies it.
+
+`ProtocolVersion` MUST be bumped **in the same commit** as any wire
+change: a new request field, a new response field, a new request kind, a
+new exec frame kind, or a changed meaning for any of them. It is not a
+release number and does not track one.
+
+A minimum-supported-version rule was considered and rejected. It is a
+promise that a range of builds interoperates, and this codec cannot keep
+that promise: the next added field breaks the range the moment it is
+used. A range that cannot be honoured is worse than lockstep, because it
+turns a clean refusal into a pair that works until it silently does not —
+which is the entire history in §7.6. Lockstep is also the deployment
+reality: both binaries ship in one archive and one Homebrew formula and
+are installed together.
+
+### 8.5 Refusing a pre-handshake peer
+
+A peer that sends a verb where its hello belongs speaks protocol 1. It is
+refused **in the shape that verb's client is waiting for**:
+
+| request kind | refusal |
+|---|---|
+| `KindExec` | an `execwire` stderr frame carrying the whole message, then a terminal result frame (`exit_code: -1`) naming the skew |
+| every other kind | one `controlproto.Response` with the message in `error` |
+
+This is what lets an mgit 0.5.x operator read the real reason. It also
+means an old `mgit run` and an old `mgit sandbox exec` cannot reach their
+memory-cap advisory: `run` fails while listing sandboxes, and `sandbox
+exec` only prints that advisory when a follow-up `Status` call succeeds,
+which it no longer does.
+
+### 8.6 The message (normative content, not wording)
+
+Single-sourced in `controlproto.SkewMessage`, produced identically by
+both peers, and it MUST:
+
+- open with `model.ErrSandboxVersionSkew`'s text, so the conclusion
+  survives a crossing that carries only a string (an exec result frame
+  has no place for an error identity);
+- name **which side is which build** — the CLI's and the daemon's, with
+  their protocol numbers — because the fix depends on which is behind and
+  because MGIT-132 asks for exactly those fields in a bug report;
+- name a command per install route this project actually ships:
+  `install.sh`, `brew upgrade hyper-swe/tap/mgit`, `go install …`, and a
+  clone build; plus `pkill -f mgit-sandboxd` to release a daemon left
+  running across an upgrade, and `mgit --version` / `mgit-sandboxd
+  --version` to confirm;
+- say **nothing** about a guest, a sandbox, or a memory cap. A mismatch
+  is a fact about two host binaries. Pointing at the cap is the
+  MGIT-118 misdiagnosis, and MGIT-136 was the fourth route into it.
+
+### 8.7 What is, and is not, evidence of a version
+
+A transport failure — a closed socket, a timeout, an undecodable reply —
+says **nothing** about a peer's version and is reported as itself. Only a
+daemon that *answered* is judged: an answer with no `hello` in it comes
+from a build that does not know the verb (pre-handshake), and an answer
+with a different protocol number says so directly.
+
+On the CLI side the mismatch is settled in `classifyGuestFailure` as
+`phaseVersionSkew`, **ahead of** `phaseDaemonStalled` and ahead of every
+guest phase, so it can never fall through to the memory-cap advisory.

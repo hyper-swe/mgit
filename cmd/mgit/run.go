@@ -68,6 +68,14 @@ func runExec(cmd *cobra.Command, connect connectFunc, getwd func() (string, erro
 	args, env []string, timeout time.Duration) error {
 	cl, dir, sb, err := resolveRun(cmd.Context(), connect, getwd)
 	if err != nil {
+		// A version mismatch is refused while resolving the sandbox — the
+		// handshake precedes every verb — so it never reaches the exec path
+		// below, and would otherwise print without the one line that matters
+		// most to an agent reading it: nothing ran, so resize nothing.
+		// Refs: MGIT-136
+		if isVersionSkew(err) {
+			defer writeGuestFailureAdvisory(cmd.Context(), cmd.ErrOrStderr(), nil, err)
+		}
 		return printRunErr(cmd.ErrOrStderr(), err)
 	}
 	// argv as a list — no host shell — and only explicit --env injections;

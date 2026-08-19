@@ -130,7 +130,8 @@ func dispatchConfig(t *testing.T, svc SandboxDispatcher) (Config, *syncBuffer) {
 	return cfg, logs
 }
 
-// dialAuthed dials the daemon, consumes the greeting, and returns the live
+// dialAuthed dials the daemon, consumes the greeting, performs the version
+// handshake, and returns the live
 // connection ready to carry one control request.
 func dialAuthed(t *testing.T, socketPath string) net.Conn {
 	t.Helper()
@@ -141,6 +142,18 @@ func dialAuthed(t *testing.T, socketPath string) net.Conn {
 	require.NoError(t, err)
 	require.Equal(t, greeting, string(buf), "greeting precedes any request")
 	require.NoError(t, conn.SetDeadline(time.Now().Add(2*time.Second)))
+	// The version handshake precedes any VERB (MGIT-136): a daemon serves
+	// nothing to a peer that has not stated a compatible wire version, so
+	// every dispatch test speaks it exactly as the real client does.
+	require.NoError(t, controlproto.WriteRequest(conn, &controlproto.Request{
+		Kind: controlproto.KindHello,
+		Hello: &controlproto.HelloArgs{
+			Protocol: controlproto.ProtocolVersion, Version: "dispatch-test"},
+	}))
+	hello, err := controlproto.ReadResponse(conn)
+	require.NoError(t, err)
+	require.NotNil(t, hello.Hello, "the daemon answers the handshake with its own version")
+	require.Empty(t, hello.Error)
 	return conn
 }
 
@@ -448,7 +461,9 @@ func TestDaemon_GreetOnly_NoServiceServesNothing(t *testing.T) {
 	defer cancel()
 	done := runDaemon(ctx, t, cfg)
 
-	conn := dialAuthed(t, cfg.SocketPath)
+	// The greeting only — a greet-only daemon does not answer the version
+	// handshake either, so dialAuthed's exchange would have nothing to read.
+	conn := dialGreetedOnly(t, cfg.SocketPath)
 	defer func() { _ = conn.Close() }()
 	// No request is served: a read returns EOF once the handler returns.
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))

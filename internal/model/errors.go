@@ -207,6 +207,24 @@ var (
 	// class MGIT-118 is named for. Refs: MGIT-133, MGIT-118
 	ErrSandboxDaemonUnresponsive = errors.New("sandbox daemon stopped answering (no liveness beat)")
 
+	// ErrSandboxVersionSkew reports that the mgit CLI and the mgit-sandboxd it
+	// reached speak different control-plane wire versions, so NOTHING was
+	// transacted between them. It is a fact about two HOST binaries: no command
+	// was sent, no guest was contacted, and nothing about a sandbox — least of
+	// all its memory cap — is implicated.
+	//
+	// It is a distinct sentinel for the same reason ErrSandboxDaemonUnresponsive
+	// is: the CLI's failure classifier has to settle it BEFORE any phase that
+	// could reach the memory-cap advisory. A version mismatch reported through
+	// the generic exec path arrives dressed as a guest lost mid-command — which
+	// is how MGIT-136 was found, the fourth route into the MGIT-118
+	// misdiagnosis and the reason the version handshake exists.
+	//
+	// Its text is the opening of controlproto.SkewMessage, so the same
+	// conclusion survives a crossing where only a string does (an exec result
+	// frame carries no error identity). Refs: MGIT-136, MGIT-118
+	ErrSandboxVersionSkew = errors.New("mgit CLI and daemon differ")
+
 	// ErrSandboxCeilingExceeded indicates a launch would exceed the
 	// host-wide concurrency or memory ceiling; the launch fails fast
 	// rather than degrading the host (SEC-09). Refs: FR-17.26
