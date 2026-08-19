@@ -123,6 +123,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A launch refused for want of HOST capacity is no longer reported as the
+  GUEST running out of memory (MGIT-118).** A sandbox refused by the aggregate
+  fleet ceiling printed the correct refusal — "this launch is not too big; free
+  capacity" — and then, two lines below it, a second paragraph claiming "the
+  guest stopped answering mid-command", naming this sandbox's cap, and offering
+  a remedy that **doubled** its `--memory-mb`. No VM had been started at all,
+  and raising the sandbox's memory makes a host-wide refusal *more* likely, not
+  less: an agent following the last, most actionable-looking paragraph frees one
+  sandbox's worth of capacity and then asks for twice as much, so the loop
+  oscillates instead of converging. Reproduced live on macOS/libkrun with an
+  819 MB ceiling and 512 MB sandboxes; the refusal now reads
+
+  ```
+  mgit: the host refused to admit this sandbox (task C-2), so no VM was started
+  and no command ran — this is the HOST's capacity, not a fault of your workload
+  or of a guest.
+  ```
+
+  and the freeing-then-retry it advises was measured converging on the first
+  attempt.
+
+  The larger half of the fix is the **default**. `phaseLostServing` — the one
+  phase that carries the MGIT-95 memory-cap advisory — was what the classifier
+  said when it did not recognize a failure, and four separate causes had to be
+  carved out of it by name after each was reported to a user as in-guest memory
+  exhaustion: a VM that never booted (MGIT-104), this ceiling refusal, a stalled
+  daemon (MGIT-133) and a wire-version mismatch (MGIT-136). A default that
+  asserts a specific diagnosis is wrong every time reality adds a case, so every
+  phase now requires positive evidence of its own — `phaseLostServing` included,
+  via the transport markers only a guest that *had* answered can produce — and
+  anything else is reported as unidentified: the evidence, where to look next,
+  and no cause. That branch is the zero value, so a phase nobody assigned cannot
+  diagnose anything either. A client-side socket timeout on a healthy sandbox
+  (MGIT-122) lands there now instead of in the memory advisory.
+
+  The MGIT-95 advisory is unchanged where it is right: a signal exit (137/134)
+  and a guest genuinely lost mid-command still name the cap in force and still
+  carry "do not reshape the build to fit the sandbox".
+  `scripts/e2e/sandbox_fleet_soak.sh` phase 3 asserts this as a hard invariant —
+  it was the last `known_defect` in that gate, which now reports a clean PASS.
+
 - **Concurrent `mgit work` no longer times out on the repo lock (MGIT-120).**
   `mgit work` held the repo-wide exclusive lock for its whole lifetime — across
   a full working-tree fingerprint, the worktree materialization *and* the
