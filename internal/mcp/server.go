@@ -440,7 +440,16 @@ func (s *Server) squashTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return mcp.NewToolResultText(squashed.Message), nil
+	// The task ID and micro-commit count are reported as RESULT METADATA rather
+	// than read out of the message. They used to appear only because a
+	// caller-supplied message had a summary appended to it, which MGIT-106
+	// stopped doing: growing bytes onto a message someone else wrote made the
+	// record say something the caller did not write. An MCP caller still needs
+	// to know which task was squashed and how much it absorbed, so it is stated
+	// here, where it is metadata, instead of being smuggled into the message.
+	// Refs: MGIT-106, MGIT-105
+	return mcp.NewToolResultText(fmt.Sprintf(
+		"squashed task %s\n%s", taskID, squashed.Message)), nil
 }
 
 // statusTool reports the working-tree status as JSON, matching `mgit status`:
