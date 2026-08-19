@@ -304,24 +304,39 @@ func TestClient_RoundTrip_ContextCanceled_ReturnsPromptly(t *testing.T) {
 }
 
 // TestExec_ChattyLongCommand_OutputAloneKeepsItAlive pins that OUTPUT rearms
-// the idle deadline, not only heartbeats.
+// the stall deadline, not only heartbeats.
 //
-// WHY THIS EXISTS BESIDE THE SILENT PIN. The deadline this guards was an IDLE
-// one — measured per read, reset by whatever arrives — so the two shapes fail
-// for different reasons and only one of them is covered by the silent test:
+// WHAT THIS GUARDS, stated carefully because the history was twice reported
+// wrong and the second report was the wrong one. The deadline MGIT-122 removed
+// was ABSOLUTE: it killed a command at 30.0s whether it was silent or emitting
+// on stdout or stderr. A reading that it was per-read (idle) was relayed from
+// timings alone and has since been retracted — three long "survivals" cited as
+// evidence turned out to have run DETACHED, never exposed to the wall at any
+// duration.
+//
+// So this test is NOT a regression test for old behavior. It pins the NEW
+// rearming semantics MGIT-133 introduces, where the deadline bounds SILENCE and
+// any frame resets it:
 //
 //	silent + long   dies unless BEATS arrive        (TestDaemon_Exec_SilentLongCommand…)
 //	chatty + long   dies unless OUTPUT also rearms  (this test)
 //
-// The distinction is not hypothetical. The integrating lane's pre-fix corpus
-// has three execs at 157s, 218s and 306s that SUCCEEDED, and exactly one death:
-// silent, at 30.0s, with zero output. Whatever reached them arrived in time to
-// rearm. So a regression that rearms on beats but not on output would pass the
-// silent pin — the beats keep coming — while breaking every streaming caller,
-// and it would look like a heartbeat bug rather than a deadline bug.
+// The gap is real even though the old defect was not this shape: a change that
+// rearms on heartbeats but not on output would pass the silent pin — the beats
+// keep coming — while breaking any caller whose frames are its own output, and
+// it would present as a heartbeat bug rather than a deadline bug.
+//
+// Note that on today's daemon nothing reaches the client mid-command: the guest
+// leg streams into a bytes.Buffer (backend/microvm/manager.go) and the result is
+// relayed only on completion (sandboxd/dispatch.go), so this shape cannot yet
+// occur in production. That makes this a guard for a future streaming relay
+// rather than a live invariant — and it is worth keeping precisely because the
+// day that relay lands, nothing else would catch a beats-only rearm.
 //
 // This peer sends NO beats at all, so the only thing that can keep the stream
-// alive is its output. Refs: MGIT-133, MGIT-122, R-H269
+// alive is its output. Verified load-bearing against a mutant that arms the
+// deadline once before the read loop instead of before every read.
+// Refs: MGIT-133, MGIT-122, R-H269, R-H273
 func TestExec_ChattyLongCommand_OutputAloneKeepsItAlive(t *testing.T) {
 	// Six intervals of chatter across a window several times the stall bound,
 	// with no beat in it: if only beats rearmed, this could not survive.
