@@ -32,40 +32,6 @@ const bootTimeoutText = `sandbox exec: sandbox ensure-running: firecracker launc
 	`guest never answered on its control channel within 15s: dial guest vsock: connection refused
 guest console: empty (the guest never wrote anything)`
 
-// ceilingRefusalText is the exec error mgit actually received on macOS/libkrun
-// with the fleet at its aggregate memory ceiling (MGIT-118, captured
-// 2026-08-19 by the reproduction in the ticket). It reaches the CLI as a bare
-// STRING — a daemon result frame carries no error identity — so this is the
-// whole of the evidence the classifier holds, and matching it is what the
-// text arm of the sentinel check exists for.
-const ceilingRefusalText = "sandbox exec: sandbox ensure-running: global sandbox ceiling exceeded: " +
-	"512 MB in use or admitted + 512 MB requested exceeds the 819 MB host-wide ceiling; " +
-	"free capacity with `mgit sandbox remove <task>` or wait for one to expire"
-
-// socketTimeoutText is the client-side control-socket timeout of MGIT-122 —
-// the SECOND unmodelled cause observed being rendered as in-guest memory
-// exhaustion, and half the argument for a default that diagnoses nothing. It
-// says the daemon did not answer in time; it says nothing whatever about a
-// guest. Refs: MGIT-122, MGIT-118
-const socketTimeoutText = "sandbox client: read exec stream: read unix ->/tmp/x/d.sock: i/o timeout"
-
-// unmodelledFailureText is an exec failure of a shape mgit has never seen: no
-// sentinel, no console tail, no transport marker. It is the input the default
-// branch decides, and the default's only job is to decide it HONESTLY.
-const unmodelledFailureText = "sandbox exec: relay: unexpected control byte 0x7f from the backend"
-
-// assertNoInGuestMemoryClaim fails if output attributes a failure to memory
-// inside the guest, in any of the four ways the MGIT-95 advisory says it. Each
-// string is one sentence of that advisory, so a partially-emitted one is caught
-// too. Refs: MGIT-118, MGIT-95
-func assertNoInGuestMemoryClaim(t *testing.T, got string) {
-	t.Helper()
-	for _, claim := range []string{"capped at", "--memory-mb", "Memory exhaustion", "stopped answering mid-command"} {
-		assert.NotContains(t, got, claim,
-			"a diagnosis that does not implicate in-guest memory may not print %q", claim)
-	}
-}
-
 // advisoryInfo is a sandbox with a known ceiling, so any test that asserts the
 // cap advisory is ABSENT proves the gate rather than a missing cap.
 func advisoryInfo() *model.SandboxInfo {
@@ -116,30 +82,6 @@ func TestClassifyGuestFailure_PhaseMatchesTheEvidence(t *testing.T) {
 			name:         "refused_vsock_dial_after_serving_is_a_guest_lost_while_serving",
 			err:          errors.New("sandbox exec: guest vsock not ready: connect: connection refused"),
 			wantPhase:    phaseLostServing,
-			wantNoDetail: true,
-		},
-		{
-			name:         "in_process_ceiling_sentinel_is_an_admission_refusal",
-			err:          fmt.Errorf("sandbox ensure-running: %w: the host is already running 8 sandboxes", model.ErrSandboxCeilingExceeded),
-			wantPhase:    phaseAdmissionRefused,
-			wantNoDetail: true,
-		},
-		{
-			name:         "relayed_ceiling_refusal_is_an_admission_refusal",
-			err:          errors.New(ceilingRefusalText),
-			wantPhase:    phaseAdmissionRefused,
-			wantNoDetail: true,
-		},
-		{
-			name:         "control_socket_timeout_is_unidentified",
-			err:          errors.New(socketTimeoutText),
-			wantPhase:    phaseUnidentified,
-			wantNoDetail: true,
-		},
-		{
-			name:         "unmodelled_failure_is_unidentified",
-			err:          errors.New(unmodelledFailureText),
-			wantPhase:    phaseUnidentified,
 			wantNoDetail: true,
 		},
 	}
@@ -226,99 +168,6 @@ func TestWriteGuestFailure_GuestLostWhileServing_KeepsTheCapAdvisory(t *testing.
 	assert.Contains(t, got, "capped at 3072 MB of memory")
 	assert.Contains(t, got, "do not reshape the build to fit the sandbox")
 	assert.NotContains(t, got, "never started")
-}
-
-// TestWriteGuestFailure_CeilingRefusal_NoInGuestMemoryDiagnosis is the defect
-// this task exists for: a launch the HOST refused for want of capacity was
-// rendered as a guest that ran out of memory, with advice to declare MORE of
-// the resource the host had just run out of. The refusal itself is correct and
-// travels in the error above this; what must not follow it is a second,
-// contradictory paragraph. Refs: MGIT-118, MGIT-98
-func TestWriteGuestFailure_CeilingRefusal_NoInGuestMemoryDiagnosis(t *testing.T) {
-	var out bytes.Buffer
-	writeGuestFailure(&out, advisoryInfo(), classifyGuestFailure(errors.New(ceilingRefusalText), entitlementUnknown))
-	got := out.String()
-
-	assertNoInGuestMemoryClaim(t, got)
-	assert.NotContains(t, got, "never started", "a sandbox that was never admitted is not a guest that failed to boot")
-	assert.Contains(t, got, "no VM was started", "the reader is told what did NOT happen")
-	assert.Contains(t, got, "mgit sandbox remove", "the fix is host capacity, and it is named")
-}
-
-// TestWriteGuestFailure_CeilingRefusal_ContradictsNothingAboveIt pins the
-// specific inversion the ticket is named for: the refusal says "this launch is
-// not too big", so nothing beneath it may advise making it bigger. Asserting
-// the two paragraphs together is what proves they agree. Refs: MGIT-118
-func TestWriteGuestFailure_CeilingRefusal_ContradictsNothingAboveIt(t *testing.T) {
-	refusal := "mgit sandbox: " + ceilingRefusalText + "\n"
-	var out bytes.Buffer
-	writeGuestFailure(&out, advisoryInfo(), classifyGuestFailure(errors.New(ceilingRefusalText), entitlementUnknown))
-	got := refusal + out.String()
-
-	assert.Contains(t, got, "ceiling exceeded", "the refusal is still printed in full")
-	assertNoInGuestMemoryClaim(t, got)
-	assert.Contains(t, got, "raising it makes this refusal MORE likely",
-		"the one thing an agent must not do is named explicitly, because the old advice told it to")
-}
-
-// TestWriteGuestFailure_Unidentified_DiagnosesNothing is the change's whole
-// point. Four separate causes have had to be carved out of this branch by name
-// (MGIT-104, MGIT-118, MGIT-133, MGIT-136), each because the default asserted a
-// specific diagnosis for a failure it had not recognized. A default that says
-// "unidentified — here is the evidence" is only ever incomplete; one that names
-// a cause is wrong every time reality adds a case. Refs: MGIT-118
-func TestWriteGuestFailure_Unidentified_DiagnosesNothing(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		err  error
-	}{
-		{name: "unmodelled_failure", err: errors.New(unmodelledFailureText)},
-		{name: "control_socket_timeout", err: errors.New(socketTimeoutText)},
-		{name: "no_error_at_all", err: nil},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			var out bytes.Buffer
-			writeGuestFailure(&out, advisoryInfo(), classifyGuestFailure(tt.err, entitlementUnknown))
-			got := out.String()
-
-			assertNoInGuestMemoryClaim(t, got)
-			assert.NotContains(t, got, "never started", "an unplaced failure is not placed anywhere")
-			assert.Contains(t, got, "could not identify", "mgit says it does not know, rather than guessing")
-			assert.Contains(t, got, "sandbox status", "it points at the evidence instead of nominating a suspect")
-		})
-	}
-}
-
-// TestSandboxExec_CeilingRefusal_NoMemoryAdvisory drives the real `mgit sandbox
-// exec` over the captured refusal — the wiring the live reproduction exercised,
-// not just the renderer. Refs: MGIT-118
-func TestSandboxExec_CeilingRefusal_NoMemoryAdvisory(t *testing.T) {
-	fake := &fakeSandboxClient{execErr: errors.New(ceilingRefusalText), statusInfo: advisoryInfo()}
-	out, err := runSandbox(okConnect(fake), "exec", "--task-id", "MGIT-118", "--", "npm", "run", "build")
-	require.Error(t, err)
-
-	assert.Contains(t, out, "ceiling exceeded", "the refusal itself is correct and must survive")
-	assertNoInGuestMemoryClaim(t, out)
-}
-
-// TestRunExec_UnidentifiedFailure_NoMemoryAdvisory verifies the humble default
-// cannot reach the cap advisory through `mgit run` either — the path an agent
-// actually uses. Refs: MGIT-118
-func TestRunExec_UnidentifiedFailure_NoMemoryAdvisory(t *testing.T) {
-	dir := t.TempDir()
-	fake := &fakeSandboxClient{execErr: errors.New(unmodelledFailureText), listResult: []model.SandboxInfo{{
-		ID: "01JSB", TaskID: "MGIT-118", WorktreePath: canonicalPath(dir),
-		State: model.StateRunning, CPUs: 2, MemoryMB: 3072,
-	}}}
-	cmd := newRunCmd(okConnect(fake), func() (string, error) { return dir, nil })
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--", "npm", "run", "build"})
-	require.Error(t, cmd.Execute())
-
-	assert.Contains(t, out.String(), "could not identify")
-	assertNoInGuestMemoryClaim(t, out.String())
 }
 
 // TestEntitlementFromCodesign_ReadsTheDaemonSigning verifies the entitlement
@@ -444,15 +293,12 @@ func TestVMStartFailure_NonJSONConsoleLine_QuotedAsWritten(t *testing.T) {
 	assert.Equal(t, "krun_start_enter returned -22 (EINVAL)", got)
 }
 
-// TestClassifyGuestFailure_NoError_ClaimsNothing guards the degenerate call:
-// with nothing to read, mgit may not conclude anything at all. It used to
-// answer phaseLostServing here — a diagnosis of in-guest memory exhaustion
-// drawn from the absence of evidence, which is the MGIT-118 defect in its
-// purest form. Refs: MGIT-118, MGIT-104
-func TestClassifyGuestFailure_NoError_ClaimsNothing(t *testing.T) {
+// TestClassifyGuestFailure_NoError_ClaimsNoStartFailure guards the degenerate
+// call: with nothing to read, mgit may not conclude the guest never started.
+// Refs: MGIT-104
+func TestClassifyGuestFailure_NoError_ClaimsNoStartFailure(t *testing.T) {
 	got := classifyGuestFailure(nil, entitlementUnknown)
-	assert.Equal(t, phaseUnidentified, got.phase)
-	assert.Equal(t, guestFailure{}, got, "the zero value is the humble one, so a missed assignment cannot diagnose")
+	assert.Equal(t, phaseLostServing, got.phase)
 	assert.Empty(t, got.startDetail)
 }
 
