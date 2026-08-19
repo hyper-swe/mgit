@@ -160,12 +160,14 @@ func (p Peer) build() string {
 //     checkout build. A remedy that names a command the reader has no way to
 //     run is the defect one level up (MGIT-132), and "upgrade both" is not
 //     actionable on its own.
+//  4. The FINAL action is aimed at the side that is actually stale, and only
+//     that side — see staleSideRemedy.
 //
 // It says nothing whatsoever about the guest or its memory cap: a version
 // mismatch is a fact about two host binaries, and pointing at the sandbox's
 // memory is the MGIT-118/MGIT-136 mistake this whole ticket exists to end.
 //
-// Refs: MGIT-136, MGIT-132, MGIT-118
+// Refs: MGIT-138, MGIT-136, MGIT-132, MGIT-118
 func SkewMessage(cli, daemon Peer) string {
 	var b strings.Builder
 	// The headline IS the sentinel's text, so a mismatch that crosses the wire
@@ -182,12 +184,55 @@ func SkewMessage(cli, daemon Peer) string {
 			"  go install:   go install github.com/hyper-swe/mgit/cmd/mgit@latest && \\\n" +
 			"                go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest\n" +
 			"  from a clone: go build -o <bindir>/mgit ./cmd/mgit && \\\n" +
-			"                go build -o <bindir>/mgit-sandboxd ./cmd/mgit-sandboxd\n" +
-			"Then stop the daemon still running the old build, so the new one takes the socket:\n" +
-			"  pkill -f mgit-sandboxd\n" +
-			"Confirm both, and quote both in any bug report:  mgit --version; mgit-sandboxd --version",
-	)
+			"                go build -o <bindir>/mgit-sandboxd ./cmd/mgit-sandboxd\n")
+	b.WriteString(staleSideRemedy(cli, daemon))
+	b.WriteString(
+		"Confirm both, and quote both in any bug report:  mgit --version; mgit-sandboxd --version")
 	return b.String()
+}
+
+// staleSideRemedy renders the closing action for the side that is actually
+// behind — and only for that side.
+//
+// The handshake exchanges BOTH versions, so every peer rendering this message
+// already knows which binary is stale. Until MGIT-138 neither used it: both
+// ends closed with "stop the daemon still running the old build: pkill -f
+// mgit-sandboxd". That is exact when the DAEMON is the old half. It is
+// superfluous when the CLI is — the direction verified live, where the daemon
+// was already the new build — and it sends the reader after a process that is
+// not the problem while the actual fix (upgrade the CLI) goes unstated.
+//
+// A remedy aimed at the wrong side is a mild member of the misdiagnosis family
+// this project has now closed four routes into (MGIT-104, MGIT-108, MGIT-118,
+// MGIT-136). Harmless is not the same as right, and the information needed to
+// be right was already on the wire.
+//
+// Equal protocol numbers are not a mismatch and cannot reach here (Compatible
+// is equality, and this message is rendered only when it fails). If one ever
+// did, NEITHER side is named stale — an unaimed remedy beats a guessed one.
+// Refs: MGIT-138, MGIT-136, MGIT-132
+func staleSideRemedy(cli, daemon Peer) string {
+	switch {
+	case daemon.Protocol < cli.Protocol:
+		// SCOPED TO THIS REPO, deliberately. A bare `pkill -f mgit-sandboxd`
+		// matches EVERY repository's daemon on the host, not just the stale one
+		// this message is about: sockets are keyed per repo root, so a developer
+		// with several mgit checkouts loses unrelated daemons and the microVMs
+		// they are supervising. Telling a reader to do that is the same defect
+		// this message exists to avoid -- a remedy that damages what it was not
+		// aimed at -- and it is the exact hazard this project's own working
+		// rules forbid ("never kill by name alone"). Refs: MGIT-141, MGIT-138
+		return "Then stop the stale daemon. It is the one serving THIS repository, so scope the\n" +
+			"kill to it rather than to every mgit daemon on the host:\n" +
+			"  pkill -f \"mgit-sandboxd.*--repo-root $(git rev-parse --show-toplevel)\"\n" +
+			"A bare `pkill -f mgit-sandboxd` would also stop other repositories' daemons and\n" +
+			"the sandboxes they are running.\n"
+	case cli.Protocol < daemon.Protocol:
+		return "The stale half here is the mgit CLI: the running mgit-sandboxd is already the newer\n" +
+			"build, so there is no old daemon to stop — upgrading the CLI is the whole fix.\n"
+	default:
+		return ""
+	}
 }
 
 // validateHello bounds a hello before its version can reach the compatibility

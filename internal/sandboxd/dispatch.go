@@ -381,10 +381,12 @@ func (d *Daemon) writeResponse(conn net.Conn, resp *controlproto.Response) {
 // has ended — so without the beats a client cannot tell a twenty-minute build
 // from a daemon that stopped answering, and MGIT-122 established that killing
 // the first to catch the second is not an acceptable trade. The FIRST beat is
-// written before the service is called, so it also serves as this daemon's
-// capability advertisement: a daemon predating MGIT-133 never sends it, and a
-// client that never sees one falls back to waiting unbounded rather than
-// accusing it. Refs: FR-17.11, MGIT-11.10.8, MGIT-133, MGIT-122
+// written before the service is called — before any lazy boot and before any
+// guest work — so the client's very first idle window is judgeable: a peer that
+// got past the version handshake has stated it speaks this beat, so silence in
+// that window is a wedged daemon, not a slow command. That is what let MGIT-138
+// delete the client's "perhaps it is only an old daemon" escape hatch.
+// Refs: FR-17.11, MGIT-11.10.8, MGIT-138, MGIT-136, MGIT-133, MGIT-122
 func (d *Daemon) serveExec(ctx context.Context, conn net.Conn, args *controlproto.ExecArgs) {
 	if !d.writeHeartbeat(conn) {
 		return // the client is already gone; there is nothing to serve

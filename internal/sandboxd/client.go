@@ -390,19 +390,29 @@ func (c *Client) Shell(_ context.Context, _ string, _ io.Reader, _, _ io.Writer)
 // daemon can produce. Every frame — beat, output, result — rearms it, so the
 // clock measures the gap between frames and never the command.
 //
-// A daemon that has NOT beaten by the time that deadline first fires is not
-// accused of anything. It is an mgit-sandboxd older than MGIT-133, which emits
-// no beats at all, or (far less likely) a current one that stalled inside the
-// first window; either way there is no liveness signal to judge, so the
-// deadline is dropped, MGIT-122's unbounded wait is restored, and the caller is
-// told plainly which of those two facts it is looking at. Treating "never
-// beat" as "wedged" would break every mixed-version pair — an upgraded CLI
-// against the long-lived daemon the previous release left running is the
-// ordinary case, not an exotic one. Refs: MGIT-133, MGIT-122
+// SILENCE ON THIS STREAM IS ALWAYS JUDGEABLE, and that is the handshake's
+// doing. This loop is reached only after the peer stated
+// controlproto.ProtocolVersion, which covers MGIT-133's liveness beat, and the
+// daemon writes its FIRST beat before it calls the service (serveExec). A peer
+// here therefore owes a beat inside the first window whatever the command is
+// doing, so a window of silence is a daemon that promised beats and stopped
+// answering — a stall, reported as one.
+//
+// MGIT-138 removed the third reading this loop used to carry ("no beat yet
+// means a daemon older than MGIT-133: drop the deadline, wait unbounded, say
+// why"). The version handshake made its stated case unreachable — a daemon
+// predating MGIT-133 also predates the handshake and is refused at
+// dialGreeted, pinned by
+// TestClient_Handshake_PreMGIT133Daemon_RefusedBeforeTheFrameLoop — and in the
+// one case that DID still reach it, a current daemon wedged before its first
+// beat, it was wrong twice: it told the operator the daemon was old when it was
+// hung, and it restored the unbounded wait MGIT-122 and MGIT-133 exist to end.
+// A peer that legitimately cannot beat is a wire change, and a wire change
+// bumps the protocol number and is refused one layer up.
+// Refs: MGIT-138, MGIT-136, MGIT-133, MGIT-122
 func (c *Client) relayFrames(ctx context.Context, conn net.Conn, stdout, stderr io.Writer) (int, error) {
-	stall, beating := c.stallTimeout, false
 	for {
-		c.armStall(conn, stall)
+		c.armStall(conn)
 		kind, payload, err := execwire.ReadFrame(conn)
 		if err != nil {
 			// Cancellation reaches this read AS an expired deadline —
@@ -417,18 +427,12 @@ func (c *Client) relayFrames(ctx context.Context, conn net.Conn, stdout, stderr 
 			if !errors.Is(err, os.ErrDeadlineExceeded) {
 				return -1, fmt.Errorf("sandbox client: read exec stream: %w", err)
 			}
-			if beating {
-				return -1, stalledDaemonError(stall)
-			}
-			writeNoLivenessNotice(stderr, stall)
-			stall = 0
-			continue
+			return -1, stalledDaemonError(c.stallTimeout)
 		}
 		switch kind {
 		case execwire.FrameHeartbeat:
-			// Proof of life, and — on the first one — proof that silence from
-			// this daemon is meaningful. Carries no data by construction.
-			beating = true
+			// Proof of life, carrying no data by construction: rearming the
+			// idle deadline above is a beat's entire effect.
 		case execwire.FrameStdout:
 			if _, err := stdout.Write(payload); err != nil {
 				return -1, fmt.Errorf("sandbox client: write stdout: %w", err)
@@ -452,15 +456,11 @@ func (c *Client) relayFrames(ctx context.Context, conn net.Conn, stdout, stderr 
 	}
 }
 
-// armStall sets the idle deadline for the next frame read, or clears it when
-// the stream has been declared unjudgeable (stall == 0). Clearing is explicit
-// so the absence of a deadline reads as a decision, not an oversight.
-func (c *Client) armStall(conn net.Conn, stall time.Duration) {
-	if stall <= 0 {
-		_ = conn.SetReadDeadline(time.Time{})
-		return
-	}
-	_ = conn.SetReadDeadline(c.clock().Add(stall))
+// armStall sets the idle deadline for the next frame read. It is armed before
+// EVERY read and never cleared: after MGIT-138 there is no peer on this stream
+// whose silence cannot be judged. Refs: MGIT-138, MGIT-133
+func (c *Client) armStall(conn net.Conn) {
+	_ = conn.SetReadDeadline(c.clock().Add(c.stallTimeout))
 }
 
 // stalledDaemonError names the daemon as the suspect, and says why the command
@@ -481,16 +481,6 @@ func stalledDaemonError(stall time.Duration) error {
 		"  memory. Your command may still be running inside the guest.\n"+
 		"  Check with `mgit sandbox list`: if that hangs too, the daemon is wedged",
 		model.ErrSandboxDaemonUnresponsive, stall, execwire.HeartbeatInterval)
-}
-
-// writeNoLivenessNotice tells the caller, once, that this daemon offers no
-// liveness signal — so a wait that goes on forever is understood as "nothing
-// here can tell you whether it is stuck", not as a promise that it is fine.
-// Refs: MGIT-133
-func writeNoLivenessNotice(w io.Writer, stall time.Duration) {
-	_, _ = fmt.Fprintf(w, "mgit: this mgit-sandboxd sends no liveness beats (it predates MGIT-133), "+
-		"so after %s of silence mgit cannot tell a working command from a stalled daemon. "+
-		"Waiting without a stall check; restart the daemon from a current install to get one.\n", stall)
 }
 
 // ExportArtifact copies a guest-built path out of a task's sandbox to a

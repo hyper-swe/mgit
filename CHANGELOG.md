@@ -91,6 +91,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Compatibility of the FILE formats, the store, and every non-sandbox verb is
   unaffected — this is the CLI↔daemon socket only.
 
+  Two follow-ups reconcile that handshake with what it made unreachable
+  (MGIT-138):
+
+  - **A silent exec stream is now always a daemon stall.** MGIT-133 read a
+    stream carrying no liveness beat as "an `mgit-sandboxd` older than
+    MGIT-133": the stall deadline was dropped, the unbounded wait restored,
+    and a notice printed. A daemon that old is now refused at the handshake
+    and never reaches the exec stream, and the one case that still could —
+    a current daemon wedged before its first beat — was answered wrongly by
+    that fallback twice over: it named the daemon *old* when it was *hung*,
+    and it reinstated the unbounded wait MGIT-122 and MGIT-133 exist to end.
+    A peer that reaches the stream has stated it speaks the beat, and the
+    daemon emits its first one before any guest work begins, so silence is
+    now reported as `ErrSandboxDaemonUnresponsive` whether or not a beat
+    came first.
+  - **The mismatch message aims its closing action at the stale side.**
+    Both peers exchange both versions, but both used to end with `pkill -f
+    mgit-sandboxd` regardless. That is exact when the daemon is the old
+    half; when the CLI is the old half it sent the reader after a process
+    that was already current. That line is now rendered only when the
+    daemon is behind; when the CLI is behind the message says so and names
+    upgrading the CLI as the whole fix. Both builds, every install route,
+    and the closing `mgit --version; mgit-sandboxd --version` are unchanged
+    in both directions.
+
 - **BREAKING: `mgit log --task-id <ID> --json` emits an object**
   `{"task_id", "commits", "cadence"}` instead of a bare array of commit
   records. Callers reading the array should read `.commits`. Plain

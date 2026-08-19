@@ -189,11 +189,16 @@ func TestDaemon_Exec_SilentLongCommand_KeepsBeatingAndCompletes(t *testing.T) {
 	require.NoError(t, <-done)
 }
 
-// TestDaemon_Exec_FirstFrameIsABeat pins the capability advertisement.
+// TestDaemon_Exec_FirstFrameIsABeat pins what makes the client's very first
+// idle window judgeable.
 //
-// The first beat goes out BEFORE the service is called, so its presence is how
-// a client learns this daemon speaks liveness at all — and its absence is how
-// it recognizes an older one. Refs: MGIT-133
+// The first beat goes out BEFORE the service is called — before any lazy boot,
+// before any guest work — so a client that got past the handshake is owed one
+// immediately, whatever the command is about to do. That is the fact MGIT-138
+// leaned on when it deleted the client's "no beat yet, so perhaps this daemon
+// is simply old" escape hatch: if this frame stopped being first, silence in
+// the first window would stop meaning a wedge.
+// Refs: MGIT-138, MGIT-133
 func TestDaemon_Exec_FirstFrameIsABeat(t *testing.T) {
 	skipUnsupportedHostIPC(t)
 	svc := &slowExecDispatcher{duration: time.Millisecond, result: &model.ExecResult{}}
@@ -208,8 +213,8 @@ func TestDaemon_Exec_FirstFrameIsABeat(t *testing.T) {
 	kind, payload, err := execwire.ReadFrame(conn)
 	require.NoError(t, err)
 	assert.Equal(t, byte(execwire.FrameHeartbeat), kind,
-		"the exec stream must open with a beat; a client cannot otherwise tell a "+
-			"current daemon from one that predates MGIT-133")
+		"the exec stream must open with a beat; without it a client cannot tell a "+
+			"daemon still setting up from one that has wedged")
 	assert.Empty(t, payload)
 
 	cancel()
@@ -304,8 +309,8 @@ func TestExec_DaemonWedges_ClientNamesTheDaemon(t *testing.T) {
 	assert.Contains(t, msg, "liveness beat")
 	assert.NotContains(t, strings.ToLower(msg), "out of memory",
 		"a daemon stall must never be reported as in-guest memory exhaustion (MGIT-118)")
-	assert.NotContains(t, msg, "predates MGIT-133",
-		"a daemon that beat and then stopped is wedged, not old")
+	assert.Empty(t, stderr.String(),
+		"a wedge is an error; nothing is written over the caller's own stream")
 
 	cancel()
 	<-done
