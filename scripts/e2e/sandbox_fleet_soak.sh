@@ -565,11 +565,14 @@ if [ "$ceiling_hit" = "1" ]; then
 	# stopped answering", "declare more memory") points the reader -- and an
 	# agent under progress pressure -- at exactly the wrong fix: raising this
 	# sandbox's --memory-mb makes a host-wide refusal MORE likely, not less.
-	# Same defect class as MGIT-104, in the phase it did not cover.
+	# Same defect class as MGIT-104, in the phase it did not cover. Hard since
+	# MGIT-118 landed: the classifier now models admission refusal as its own
+	# phase, so any of these four strings reappearing is a regression, not a
+	# known gap. All four are asserted because they are four sentences of ONE
+	# advisory -- a partially emitted one is the same misdiagnosis.
 	case "$ceiling_msg" in
-	*"stopped answering mid-command"* | *"--memory-mb"*)
-		known_defect "MGIT-118" \
-			"a fleet-ceiling refusal is rendered as an in-guest memory-exhaustion diagnosis advising a LARGER --memory-mb; the refusal itself is correct, the advice inverts the fix"
+	*"stopped answering mid-command"* | *"--memory-mb"* | *"capped at"* | *"Memory exhaustion"*)
+		_e2e_fail "INVARIANT I6 (CEILING) BROKE: a fleet-ceiling refusal was rendered as an in-guest memory-exhaustion diagnosis advising a LARGER --memory-mb — the refusal itself is correct, but the advice beneath it inverts the fix and an agent reads the last paragraph (MGIT-118 regression). Full message: $ceiling_msg"
 		;;
 	*)
 		pass "I6: the refusal is not misdiagnosed as in-guest memory exhaustion"
