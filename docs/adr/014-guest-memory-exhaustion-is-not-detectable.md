@@ -121,3 +121,45 @@ with `codesign --display --entitlements -` (the same check
 `scripts/e2e/sandbox_posture.sh` gates on) and, when the hypervisor entitlement
 is absent, names it with the signing command. "Cannot tell" is a first-class
 verdict: an unprobeable daemon is never reported as unsigned.
+
+## Amendment (MGIT-118, 2026-08-19): no phase is reached by elimination
+
+MGIT-104's amendment gated the advisory on evidence but left "lost while
+serving" as the branch every *unrecognized* failure fell into — so the phase
+carrying the advisory was also the classifier's answer for "I do not know". Four
+causes then had to be carved out of it one at a time, each after a user was told
+their guest had run out of memory:
+
+| Cause | Ticket | What it actually was |
+|---|---|---|
+| VM never booted | MGIT-104 | an unsigned daemon that could not create a VM |
+| fleet ceiling refusal | MGIT-118 | the HOST out of capacity; no VM attempted |
+| daemon stall | MGIT-133 | `mgit-sandboxd` stopped beating; the guest may still be working |
+| wire-version mismatch | MGIT-136 | two host binaries that never transacted |
+
+A default that asserts a specific diagnosis is wrong every time reality adds a
+case; a default that reports the evidence and names no cause is only ever
+incomplete. So the classifier is inverted: **every** phase — `lost while
+serving` included — is now reached only by evidence that positively supports it,
+and anything else is `unidentified`.
+
+| Phase | Evidence | What is printed |
+|---|---|---|
+| admission refused | `ErrSandboxCeilingExceeded`, by `errors.Is` or by text | that no VM was started, that this sandbox's size is not the problem and raising it makes the refusal *more* likely, and that the fix is host capacity. No cap advisory. |
+| lost while serving | a transport failure only a guest that HAD answered can produce: `EOF`, `connection reset`, `broken pipe`, `use of closed network connection`, `connection refused` | the MGIT-95 cap advisory, unchanged. |
+| unidentified (default) | none of the above | the phase is not named, no cause is claimed, and the reader is pointed at the error itself, `mgit sandbox status` and `mgit sandbox list`. No cap advisory. |
+
+`unidentified` is deliberately the **zero value** of the phase type, so a phase
+nobody assigned cannot diagnose anything either, and a phase added without a
+renderer degrades to the honest report rather than to whatever sat in the
+default branch.
+
+What this costs is real and accepted: a genuine mid-command loss whose transport
+error uses wording not in the marker list is reported as unidentified, and the
+reader loses the cap advisory on a failure where it would have been right. That
+is the cheaper error. A missing diagnosis costs a reader one `mgit sandbox
+status`; a confident wrong one — measured twice — costs an afternoon of
+shrinking a build that was never too large. `mgit sandbox exec`'s exit-code path
+(a signal death, 137/134/-1) is unaffected and still names the cap directly.
+
+The advisory is still not weakened. Only the set of things that can reach it is.
