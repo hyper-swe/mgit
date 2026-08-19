@@ -113,6 +113,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		"agentadapter": true, // cooperative agent-harness routing config (FR-17, MGIT-11.11.1)
 		"packaging":    true, // release/distribution config regression guards (MGIT-44)
 		"buildinfo":    true, // ldflags-stamped build metadata both shipped binaries report (MGIT-83)
+		"branchguard":  true, // pre-push branch-scope check for this repo's own branches (MGIT-142)
 	}
 
 	entries, err := os.ReadDir(filepath.Join(root, "internal"))

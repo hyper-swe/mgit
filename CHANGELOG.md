@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A branch that carries another branch's commits is refused before its pull
+  request exists (MGIT-142).** `git checkout -b` silently inherits whatever
+  branch you are standing on, and on 2026-08-19 that put `9abf4ce` on main
+  describing a 24-line change to one shell script while actually carrying 531
+  lines across six files from an unmerged task branch. The diff showed all six
+  files and the PR was merged anyway, so the fix is mechanical rather than
+  attentional: `scripts/hooks/pre-push` (installed by `make install-hooks`)
+  refuses the push, naming the parent branch, the commits, and the files they
+  bring into the diff; CI repeats the check on every pull request as a backstop.
+
+  The rule is deliberately the cheap one — *a branch may not carry commits that
+  belong to another unmerged branch* — and needs no ticket metadata, no declared
+  file list and no per-task plumbing. It was measured before it was wired to
+  anything: over all 54 branches in this repository (41 of them merged pull
+  request heads) it refuses exactly one, the incident, with zero false
+  positives. A deliberate stack declares its parent for one run
+  (`make branch-check BASE=…`), or records why permanently with a
+  `Branch-Scope-Override:` commit trailer that travels in the history the
+  reviewer reads. Developer tooling only: no shipped binary changes.
+
 - **`mgit log --task-id` labels a task's commit trail as process history or
   post-hoc packaging (MGIT-110).** Measured across five real sub-agent runs on
   this repo, agents treat `mgit commit` as a final packaging step: MGIT-102's

@@ -17,7 +17,41 @@ git clone https://github.com/hyper-swe/mgit.git
 cd mgit
 go mod download
 go build -o mgit ./cmd/mgit/
+make install-hooks   # once per clone — see "Branch scope" below
 ```
+
+### Branch scope: cut every branch from `main`
+
+`git checkout -b` inherits whatever branch you are standing on. On 2026-08-19 a
+branch cut for a **one-file** CI change was cut while standing on an unmerged
+task branch, so it carried that task's work too: `9abf4ce` landed on main saying
+"ci: retry the libkrunfw build" while actually carrying 531 lines across six
+files. Every gate was green and the diff was there for anyone to read; nothing
+mechanically checked where the branch had started.
+
+`make install-hooks` points `core.hooksPath` at `scripts/hooks`, whose `pre-push`
+hook refuses to push a branch that carries commits belonging to another unmerged
+branch, naming the parent branch and the files it brought along. It runs before
+the branch reaches the remote, so the pull request never gets to exist. CI
+repeats the check on every pull request as a backstop for clones that never ran
+`make install-hooks`.
+
+```bash
+make branch-check                       # check the branch you are on
+make branch-check BRANCH=feat/x         # check another one
+make branch-check BASE=fix/parent       # declare a deliberate stack for this run
+make branch-survey                      # run the rule over every branch and count refusals
+```
+
+If the stack is deliberate and must ship that way, record why — the reason
+travels in the history the reviewer reads on the pull request:
+
+```bash
+git commit --amend --trailer "Branch-Scope-Override: <why this branch needs its parent>"
+```
+
+The check is `internal/branchguard`; its package doc explains the rule and why it
+is the cheap one. Refs: MGIT-142.
 
 ### Running Tests
 
