@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`mgit squash` and `mgit merge` take `-m` and `-F`, so a message with
+  backticks or `$(...)` never goes through the shell (MGIT-106).** Both verbs
+  had only `--message` — no shorthand, no file — so composing anything richer
+  than a single clause meant `--message "$(cat msg.txt)"`, which hands the
+  shell responsibility for an audit artifact whose failure modes are silent
+  truncation and mangling rather than a loud refusal. That mattered more here
+  than it did for `mgit commit` (MGIT-105): the squash message is the one
+  message that leaves mgit's store for the user's **real** git via `--to-git`,
+  so a quoting accident there escapes into a repository mgit does not own.
+
+  Both now accept `-m/--message` inline or `--file/-F <path>`, which reads the
+  message as bytes verbatim (`-` reads stdin). The two are mutually exclusive
+  and passing both is refused **naming both flags** — silently preferring one
+  would leave the caller believing it recorded something the record does not
+  say. An unreadable or empty file fails before the repository is opened, so a
+  failed `-F` squashes nothing, merges nothing and leaves nothing staged.
+
+  Verified end to end rather than by unit test alone: a message carrying
+  backticks, both quote kinds, `$(...)`, a tab, consecutive blank lines and a
+  trailing blank line comes back out of `squash -F … --to-git` with the same
+  SHA-256 it went in with, and `git am` on that patch records the caller's
+  subject line exactly — git strips the `[PATCH]`/`[squashed]` envelope, so no
+  mgit marker reaches the reviewer's history.
+
+  `mgit rollback --reason` deliberately did **not** get the same treatment: a
+  reason is interpolated into a generated one-line summary, not recorded as a
+  message, so a byte-identity promise there would be a lie. The rationale is
+  recorded at the flag.
+
+### Changed
+
+- **A squash message you supply is now recorded verbatim (MGIT-106).**
+  `mgit squash --message`/`-F` previously had mgit's own micro-commit summary
+  appended to it, so the recorded message said more than the caller wrote —
+  the same defect class the message-file flags exist to close, and what stood
+  between `squash -F` and byte identity. The summary still trails the message
+  mgit generates for itself when you supply none; `mgit log --task-id <ID>`
+  remains the full provenance either way.
+
+- **`mgit commit` no longer accepts `--m` as a long flag (MGIT-106).** `-m` was
+  registered as a second flag named `m` rather than as `--message`'s shorthand,
+  which incidentally made `--m MSG` work. All three verbs now share one binder,
+  so `-m` and `--message` are one flag. `-m` and `--message` are unaffected;
+  only the undocumented `--m` spelling is gone.
+
 - **A branch that carries another branch's commits is refused before its pull
   request exists (MGIT-142).** `git checkout -b` silently inherits whatever
   branch you are standing on, and on 2026-08-19 that put `9abf4ce` on main

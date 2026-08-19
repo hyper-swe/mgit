@@ -358,7 +358,7 @@ The everyday surface:
 | `mgit log --task-id ID` | View a task's step-by-step history, with the evidence label saying whether it *is* one |
 | `mgit rollback --task-id ID [--commit HASH]` | Revert a task: an append-only revert commit that also restores the working tree |
 | `mgit audit --task-id ID` | Replay who did what, when, from the append-only audit trail |
-| `mgit squash --task-id ID [--to-git]` | Consolidate a task's micro-commits into one reviewable commit |
+| `mgit squash --task-id ID [--to-git]` | Consolidate a task's micro-commits into one reviewable commit; `-m MSG` or `-F FILE` (`-F -` for stdin) sets its message — the one message that reaches the user's real git, so `-F` records it verbatim with no shell in the way |
 | `mgit sandbox land --task-id ID` | Pull, host-verify, and land the sandbox's changes into your repo |
 
 All commands support `--json` for structured output. `mgit run` and `mgit sandbox land` are the only sandbox-gated commands; see [Enable the sandbox](#enable-the-sandbox). Without a sandbox, land a task with `mgit squash --task-id ID --to-git | git apply`.
@@ -384,7 +384,7 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 
 | Command | Description |
 |---------|-------------|
-| `mgit squash --task-id ID [--to-git \| --to-main]` | Consolidate micro-commits into one |
+| `mgit squash --task-id ID [--to-git \| --to-main]` | Consolidate micro-commits into one. `-m MSG` inline, or `-F FILE` / `-F -` to read the message verbatim from a file or stdin; a message you supply is recorded exactly as given, with nothing appended |
 | `mgit rollback --task-id ID [--commit HASH]` | Revert a task: an append-only revert commit that also restores the working tree (a step's hash resolves its task) |
 | `mgit verify [--task-id ID] [--fix]` | Verify commit chain and index integrity |
 | `mgit audit [--task-id ID] [--since --until]` | View the audit trail |
@@ -456,7 +456,7 @@ The guest's worktree is a **staged copy**, not a live view of yours — that is 
 | `mgit add [files...] [--all]` | Stage files |
 | `mgit diff [--from --to \| --task-id \| --staged]` | Show differences between commits, tasks, or staged files |
 | `mgit checkout BRANCH` | Switch branches (blocks on uncommitted changes) |
-| `mgit merge BRANCH [--squash \| --no-ff]` | Merge with fast-forward, squash, or no-ff strategy |
+| `mgit merge BRANCH [--squash \| --no-ff]` | Merge with fast-forward, squash, or no-ff strategy (`-m MSG`, or `-F FILE` / `-F -` for the merge message verbatim) |
 | `mgit cherry-pick HASH [--no-commit \| --onto]` | Apply a commit's changes to the current or target branch (conflict-safe, provenance-tagged) |
 | `mgit restore [FILE] --commit HASH [--all]` | Restore a file, or with `--all` the whole working tree, from a checkpoint commit |
 | `mgit gc [--aggressive]` | Pack loose objects and report space saved |

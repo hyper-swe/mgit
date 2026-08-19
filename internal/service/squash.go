@@ -166,10 +166,18 @@ func (s *SquashService) planSquash(ctx context.Context, req SquashRequest) (*squ
 	// Merge diffs: last write wins per path.
 	plan.diffs = mergeDiffs(allDiffs)
 
-	plan.message = req.Message
-	if plan.message == "" {
-		plan.message = fmt.Sprintf("[%s] Squashed from %d micro-commits", req.TaskID, len(records))
+	// A caller-supplied message is recorded VERBATIM. Appending mgit's own
+	// micro-commit summary to it would make the record say something the caller
+	// did not write, which is the defect class MGIT-105/106 exist to close — and
+	// the squash message is the one message that leaves this store for the
+	// user's real git via --to-git, so `squash -F file` must land those bytes
+	// and no others. The summary is provenance for the message mgit generates
+	// itself, where nothing was supplied to contradict. Refs: FR-7, MGIT-106
+	if req.Message != "" {
+		plan.message = req.Message
+		return plan, nil
 	}
+	plan.message = fmt.Sprintf("[%s] Squashed from %d micro-commits", req.TaskID, len(records))
 	if len(summaries) > 0 {
 		plan.message = plan.message + "\n\n" + strings.Join(summaries, "\n")
 	}
