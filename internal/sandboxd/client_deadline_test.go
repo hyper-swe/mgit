@@ -40,6 +40,11 @@ type slowServer struct {
 	// -version pair a client must not mistake for a wedge.
 	beats     int
 	beatEvery time.Duration
+	// chatterEvery, when non-zero, streams chatterCount stdout frames at that
+	// interval BEFORE the reply and WITHOUT any beat. It models a peer whose
+	// liveness signal is the command's own output rather than a heartbeat.
+	chatterEvery time.Duration
+	chatterCount int
 }
 
 // start serves exactly one connection and returns its socket path.
@@ -73,6 +78,12 @@ func (s *slowServer) start(t *testing.T) string {
 				time.Sleep(s.beatEvery)
 			}
 			if err := execwire.WriteHeartbeat(conn); err != nil {
+				return
+			}
+		}
+		for i := 0; i < s.chatterCount; i++ {
+			time.Sleep(s.chatterEvery)
+			if err := execwire.WriteFrame(conn, execwire.FrameStdout, []byte("tick\n")); err != nil {
 				return
 			}
 		}
@@ -290,4 +301,46 @@ func TestClient_RoundTrip_ContextCanceled_ReturnsPromptly(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("a canceled round trip stayed blocked in the response read")
 	}
+}
+
+// TestExec_ChattyLongCommand_OutputAloneKeepsItAlive pins that OUTPUT rearms
+// the idle deadline, not only heartbeats.
+//
+// WHY THIS EXISTS BESIDE THE SILENT PIN. The deadline this guards was an IDLE
+// one — measured per read, reset by whatever arrives — so the two shapes fail
+// for different reasons and only one of them is covered by the silent test:
+//
+//	silent + long   dies unless BEATS arrive        (TestDaemon_Exec_SilentLongCommand…)
+//	chatty + long   dies unless OUTPUT also rearms  (this test)
+//
+// The distinction is not hypothetical. The integrating lane's pre-fix corpus
+// has three execs at 157s, 218s and 306s that SUCCEEDED, and exactly one death:
+// silent, at 30.0s, with zero output. Whatever reached them arrived in time to
+// rearm. So a regression that rearms on beats but not on output would pass the
+// silent pin — the beats keep coming — while breaking every streaming caller,
+// and it would look like a heartbeat bug rather than a deadline bug.
+//
+// This peer sends NO beats at all, so the only thing that can keep the stream
+// alive is its output. Refs: MGIT-133, MGIT-122, R-H269
+func TestExec_ChattyLongCommand_OutputAloneKeepsItAlive(t *testing.T) {
+	// Six intervals of chatter across a window several times the stall bound,
+	// with no beat in it: if only beats rearmed, this could not survive.
+	const stall = 150 * time.Millisecond
+	srv := &slowServer{
+		chatterEvery: stall / 3,
+		chatterCount: 6,
+		execFrames:   []byte("done\n"),
+	}
+	client := NewClient(srv.start(t), time.Now)
+	client.stallTimeout = stall
+
+	var stdout, stderr bytes.Buffer
+	res, err := client.Exec(context.Background(), "MGIT-133",
+		model.ExecRequest{Command: []string{"build"}}, &stdout, &stderr)
+	require.NoError(t, err,
+		"a command whose own output kept arriving was killed anyway: the idle "+
+			"deadline is being rearmed by beats only, which breaks every streaming caller")
+	assert.Equal(t, 0, res, "a completed command reports its exit code")
+	assert.Contains(t, stdout.String(), "done",
+		"the final output must survive the chatter that preceded it")
 }
