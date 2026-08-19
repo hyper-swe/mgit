@@ -24,10 +24,24 @@ import (
 )
 
 // Frame kinds carried in the 1-byte frame header.
+//
+// EVERY VALUE HERE MUST BE UNIQUE. Two parallel branches once collided on a
+// control-plane tag and it surfaced only when they met (MGIT-73);
+// TestFrameKinds_AreUnique_NoTagCollision is what says so here.
 const (
 	FrameStdout = 'O' // a chunk of the child's stdout
 	FrameStderr = 'E' // a chunk of the child's stderr
 	FrameResult = 'R' // the terminal result frame (ResultFrame JSON)
+	// FrameHeartbeat is a HOST-GENERATED liveness beat the daemon writes
+	// while an exec is outstanding. It is the only frame on this stream the
+	// guest neither produces nor influences: the guest cannot forge one,
+	// because the guest's frames are read on a different connection and
+	// relayed as stdout/stderr/result only (SEC-05).
+	//
+	// It carries no payload. A beat asserts exactly one thing — "the daemon
+	// is still able to answer for this exec" — and any payload would invite a
+	// reader to conclude something about the guest from it. Refs: MGIT-133
+	FrameHeartbeat = 'H'
 
 	// MaxRequestBytes caps an inbound exec request (argv + env). The guest
 	// peer is untrusted, so the reader enforces this before allocating.
@@ -40,6 +54,33 @@ const (
 
 	frameHeaderLen = 5 // 1 type byte + 4-byte big-endian length
 )
+
+// Liveness timing, single-sourced here so the daemon that beats and the
+// client that judges the silence cannot drift apart. Refs: FR-17.11.1, MGIT-133
+const (
+	// HeartbeatInterval is how often a serving daemon beats while an exec is
+	// outstanding. It bounds SILENCE, never the command: a beat is emitted
+	// whether the guest has produced output or not, so a build that prints
+	// nothing for an hour keeps the stream alive for that hour.
+	HeartbeatInterval = 5 * time.Second
+
+	// HeartbeatMisses is how many consecutive beats may go missing before a
+	// client concludes the daemon has stalled. More than one, because a beat
+	// is gated on the daemon answering for its own state and a busy daemon
+	// (a concurrent teardown holds the sandbox registry) can legitimately
+	// skip one; small, because a wedged daemon must be caught in seconds.
+	HeartbeatMisses = 3
+
+	// StallTimeout is the idle deadline a client arms between frames: the
+	// longest silence a beating daemon can produce before it is judged
+	// stalled. It bounds the GAP between frames, not the exec.
+	StallTimeout = HeartbeatInterval * HeartbeatMisses
+)
+
+// WriteHeartbeat writes one liveness beat (daemon -> client). Refs: MGIT-133
+func WriteHeartbeat(w io.Writer) error {
+	return WriteFrame(w, FrameHeartbeat, nil)
+}
 
 // ResourceUsage is the child's CPU usage, reported host-ward.
 type ResourceUsage struct {

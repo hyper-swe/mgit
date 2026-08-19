@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,6 +82,59 @@ func TestFrame_RoundTrip(t *testing.T) {
 			assert.Equal(t, len(tc.payload), len(payload))
 		})
 	}
+}
+
+// TestFrameKinds_AreUnique_NoTagCollision pins every frame tag against every
+// other one.
+//
+// Two parallel branches once both reached for the same control-plane tag and it
+// surfaced only when they met (MGIT-73). On THIS channel a duplicate would be
+// worse than a mis-dispatch: a liveness beat sharing a byte with stdout would
+// be written into the caller's output, and a beat sharing a byte with the
+// result frame would end the stream early. The tags are declared in one place
+// and this test is the thing that says so. Refs: MGIT-133, MGIT-73
+func TestFrameKinds_AreUnique_NoTagCollision(t *testing.T) {
+	kinds := map[string]byte{
+		"FrameStdout":    FrameStdout,
+		"FrameStderr":    FrameStderr,
+		"FrameResult":    FrameResult,
+		"FrameHeartbeat": FrameHeartbeat,
+	}
+	seen := make(map[byte]string, len(kinds))
+	for name, kind := range kinds {
+		if prior, dup := seen[kind]; dup {
+			t.Fatalf("frame tag %#x is used by both %s and %s: the two are "+
+				"indistinguishable on the wire", kind, prior, name)
+		}
+		seen[kind] = name
+	}
+	assert.Len(t, seen, len(kinds))
+}
+
+// TestHeartbeat_RoundTrip verifies a beat reads back as a heartbeat frame with
+// no payload — the beat says only "the daemon is still answering", and carries
+// nothing about the guest (SEC-05). Refs: MGIT-133
+func TestHeartbeat_RoundTrip(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, WriteHeartbeat(&buf))
+
+	kind, payload, err := ReadFrame(&buf)
+	require.NoError(t, err)
+	assert.Equal(t, byte(FrameHeartbeat), kind)
+	assert.Empty(t, payload, "a beat carries no data; anything here would be guest-influenced content")
+}
+
+// TestHeartbeatTiming_StallExceedsInterval pins the relationship the whole
+// mechanism rests on: a client must tolerate more than one interval of silence
+// before it accuses the daemon, or an ordinary scheduling hiccup reads as a
+// wedge. Refs: MGIT-133
+func TestHeartbeatTiming_StallExceedsInterval(t *testing.T) {
+	assert.Positive(t, HeartbeatInterval)
+	assert.GreaterOrEqual(t, HeartbeatMisses, 2,
+		"a single missed beat must not be enough to declare a stall")
+	assert.Equal(t, HeartbeatInterval*time.Duration(HeartbeatMisses), StallTimeout)
+	assert.Less(t, StallTimeout, time.Minute,
+		"a wedged daemon must be caught in seconds, not minutes (MGIT-133)")
 }
 
 // TestReadFrame_EOF verifies a clean end-of-stream surfaces as io.EOF so

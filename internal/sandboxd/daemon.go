@@ -55,6 +55,11 @@ type Config struct {
 	// nil the verb reports itself unserved — the honest answer for a backend
 	// that cannot export rather than a silently weaker transfer. Refs: MGIT-73, ADR-011
 	Exporter ArtifactExporter
+	// HeartbeatInterval is how often the daemon writes a liveness beat on an
+	// outstanding exec stream. Zero selects execwire.HeartbeatInterval — the
+	// cadence the client judges silence against — and it is overridable only
+	// so tests can compress it without waiting real seconds. Refs: MGIT-133
+	HeartbeatInterval time.Duration
 	// MaxConns bounds concurrent in-flight connections; beyond it the
 	// daemon rejects fast (accept-then-close) rather than spawning an
 	// unbounded number of goroutines. Refs: MGIT-11.10.8 (security audit)

@@ -145,12 +145,16 @@ func dialAuthed(t *testing.T, socketPath string) net.Conn {
 }
 
 // readExec drains an exec frame stream into stdout, stderr, and the result.
+// A liveness beat is not data and is not output: it is checked for emptiness
+// and dropped, which is exactly what the real client does (MGIT-133).
 func readExec(t *testing.T, conn net.Conn) (stdout, stderr []byte, result execwire.ResultFrame) {
 	t.Helper()
 	for {
 		kind, payload, err := execwire.ReadFrame(conn)
 		require.NoError(t, err)
 		switch kind {
+		case execwire.FrameHeartbeat:
+			require.Empty(t, payload, "a liveness beat carries no payload")
 		case execwire.FrameStdout:
 			stdout = append(stdout, payload...)
 		case execwire.FrameStderr:

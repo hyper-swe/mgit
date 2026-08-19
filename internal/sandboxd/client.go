@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -33,6 +34,10 @@ type Client struct {
 	// read) rather than once at dial. It deliberately does NOT bound the exec
 	// frame stream; see Exec. Refs: MGIT-122
 	requestTimeout time.Duration
+	// stallTimeout bounds SILENCE on the exec frame stream — the gap between
+	// frames, never the command's duration. It is armed only once the daemon
+	// has proved it beats. Refs: MGIT-133
+	stallTimeout time.Duration
 }
 
 // NewClient returns a control-plane client for the daemon at socketPath.
@@ -41,6 +46,7 @@ func NewClient(socketPath string, clock func() time.Time) *Client {
 		socketPath:     socketPath,
 		clock:          clock,
 		requestTimeout: controlproto.DefaultRequestTimeout,
+		stallTimeout:   execwire.StallTimeout,
 	}
 }
 
@@ -290,18 +296,25 @@ func (c *Client) EgressPolicy(ctx context.Context, taskID string) (*controlproto
 // supervisor-level failure (the guest could not start the command) is
 // returned as an error with a -1 exit code.
 //
-// NO WALL CLOCK BOUNDS THE FRAME STREAM, and that is the contract, not an
-// omission. The daemon relays the command's output only once the command has
-// finished, so any deadline on this read is a cap on how long a build, test run
-// or install may take — a control-plane timeout deciding a workload's lifetime.
-// It used to be exactly that: the deadline armed at dial ended every exec at
-// 30 s, and the failure was rendered to the agent as in-guest memory
+// NO WALL CLOCK BOUNDS THE COMMAND, and that is the contract, not an omission.
+// The daemon relays the command's output only once the command has finished, so
+// a deadline measured over this whole read is a cap on how long a build, test
+// run or install may take — a control-plane timeout deciding a workload's
+// lifetime. It used to be exactly that: the deadline armed at dial ended every
+// exec at 30 s, and the failure was rendered to the agent as in-guest memory
 // exhaustion (MGIT-122, and the diagnosis defect MGIT-118).
 //
-// What bounds the wait instead: the per-exec timeout and the sandbox TTL, which
-// the daemon enforces guest-side; a dead daemon, whose socket closes and ends
-// the read at once; and ctx, wired to the connection here so a caller that
-// gives up is never left blocked. Refs: FR-17.11, MGIT-122
+// What IS bounded is SILENCE. The daemon beats on this stream while the exec is
+// outstanding, so the gap between frames — not their span — is the deadline: a
+// build that prints nothing for an hour keeps arriving beats and lives, while a
+// daemon that stalls falls silent and is named as the suspect within seconds.
+// A daemon that never beats at all is an older one, and is waited on unbounded
+// rather than accused (see relayFrames).
+//
+// Also bounding the wait: the per-exec ExecRequest.Timeout and the sandbox TTL,
+// which the daemon enforces guest-side; a dead daemon, whose socket closes and
+// ends the read at once; and ctx, wired to the connection here so a caller that
+// gives up is never left blocked. Refs: FR-17.11, FR-17.11.1, MGIT-122, MGIT-133
 func (c *Client) Exec(ctx context.Context, taskID string, req model.ExecRequest, stdout, stderr io.Writer) (int, error) {
 	conn, err := c.dialGreeted(ctx)
 	if err != nil {
@@ -317,10 +330,7 @@ func (c *Client) Exec(ctx context.Context, taskID string, req model.ExecRequest,
 	}); err != nil {
 		return -1, fmt.Errorf("sandbox client: send exec: %w", err)
 	}
-	// Explicit, so the absence of a deadline reads as a decision: the command
-	// owns this stream's duration from here.
-	_ = conn.SetReadDeadline(time.Time{})
-	return relayFrames(conn, stdout, stderr)
+	return c.relayFrames(ctx, conn, stdout, stderr)
 }
 
 // Shell attaches an interactive session to a task's sandbox (T2
@@ -338,13 +348,50 @@ func (c *Client) Shell(_ context.Context, _ string, _ io.Reader, _, _ io.Writer)
 
 // relayFrames copies the daemon's exec frame stream to the writers and
 // returns the exit code from the terminal result frame.
-func relayFrames(conn net.Conn, stdout, stderr io.Writer) (int, error) {
+//
+// It arms an IDLE deadline before every read: the longest silence a beating
+// daemon can produce. Every frame — beat, output, result — rearms it, so the
+// clock measures the gap between frames and never the command.
+//
+// A daemon that has NOT beaten by the time that deadline first fires is not
+// accused of anything. It is an mgit-sandboxd older than MGIT-133, which emits
+// no beats at all, or (far less likely) a current one that stalled inside the
+// first window; either way there is no liveness signal to judge, so the
+// deadline is dropped, MGIT-122's unbounded wait is restored, and the caller is
+// told plainly which of those two facts it is looking at. Treating "never
+// beat" as "wedged" would break every mixed-version pair — an upgraded CLI
+// against the long-lived daemon the previous release left running is the
+// ordinary case, not an exotic one. Refs: MGIT-133, MGIT-122
+func (c *Client) relayFrames(ctx context.Context, conn net.Conn, stdout, stderr io.Writer) (int, error) {
+	stall, beating := c.stallTimeout, false
 	for {
+		c.armStall(conn, stall)
 		kind, payload, err := execwire.ReadFrame(conn)
 		if err != nil {
-			return -1, fmt.Errorf("sandbox client: read exec stream: %w", err)
+			// Cancellation reaches this read AS an expired deadline —
+			// watchCancel expires the connection rather than closing it — so
+			// the caller's own withdrawal must be ruled out before the error
+			// is read as anything about the daemon. Without this check a
+			// Ctrl-C on a non-beating daemon was silently swallowed and the
+			// loop waited forever. Refs: MGIT-122, MGIT-133
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return -1, fmt.Errorf("sandbox client: exec canceled: %w", ctxErr)
+			}
+			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				return -1, fmt.Errorf("sandbox client: read exec stream: %w", err)
+			}
+			if beating {
+				return -1, stalledDaemonError(stall)
+			}
+			writeNoLivenessNotice(stderr, stall)
+			stall = 0
+			continue
 		}
 		switch kind {
+		case execwire.FrameHeartbeat:
+			// Proof of life, and — on the first one — proof that silence from
+			// this daemon is meaningful. Carries no data by construction.
+			beating = true
 		case execwire.FrameStdout:
 			if _, err := stdout.Write(payload); err != nil {
 				return -1, fmt.Errorf("sandbox client: write stdout: %w", err)
@@ -366,6 +413,47 @@ func relayFrames(conn net.Conn, stdout, stderr io.Writer) (int, error) {
 			return -1, fmt.Errorf("sandbox client: unexpected exec frame %#x", kind)
 		}
 	}
+}
+
+// armStall sets the idle deadline for the next frame read, or clears it when
+// the stream has been declared unjudgeable (stall == 0). Clearing is explicit
+// so the absence of a deadline reads as a decision, not an oversight.
+func (c *Client) armStall(conn net.Conn, stall time.Duration) {
+	if stall <= 0 {
+		_ = conn.SetReadDeadline(time.Time{})
+		return
+	}
+	_ = conn.SetReadDeadline(c.clock().Add(stall))
+}
+
+// stalledDaemonError names the daemon as the suspect, and says why the command
+// is not one.
+//
+// The wording is load-bearing. An exec that dies mid-flight is otherwise always
+// read as a guest failure, and MGIT-118 is what that costs: an agent told its
+// build had exhausted guest memory spent the next hour shrinking a build that
+// was never the problem. A stall here is a statement about the daemon, so the
+// message says so first, gives the reader the reasoning rather than an
+// assertion, and points at a check that distinguishes the two.
+// Refs: MGIT-133, MGIT-118
+func stalledDaemonError(stall time.Duration) error {
+	return fmt.Errorf("%w: no liveness beat for %s while the command was still running.\n"+
+		"  The DAEMON is the suspect — not your command, and not the guest. mgit-sandboxd beats\n"+
+		"  every %s on an open exec stream however long the command takes, so silence means the\n"+
+		"  daemon stopped answering, NOT that the build is slow and NOT that the guest ran out of\n"+
+		"  memory. Your command may still be running inside the guest.\n"+
+		"  Check with `mgit sandbox list`: if that hangs too, the daemon is wedged",
+		model.ErrSandboxDaemonUnresponsive, stall, execwire.HeartbeatInterval)
+}
+
+// writeNoLivenessNotice tells the caller, once, that this daemon offers no
+// liveness signal — so a wait that goes on forever is understood as "nothing
+// here can tell you whether it is stuck", not as a promise that it is fine.
+// Refs: MGIT-133
+func writeNoLivenessNotice(w io.Writer, stall time.Duration) {
+	_, _ = fmt.Fprintf(w, "mgit: this mgit-sandboxd sends no liveness beats (it predates MGIT-133), "+
+		"so after %s of silence mgit cannot tell a working command from a stalled daemon. "+
+		"Waiting without a stall check; restart the daemon from a current install to get one.\n", stall)
 }
 
 // ExportArtifact copies a guest-built path out of a task's sandbox to a
