@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -36,8 +35,9 @@ type slowServer struct {
 	execFrames []byte
 	execExit   int
 	// beats is how many liveness beats precede the reply, at beatEvery. Zero
-	// makes this peer an mgit-sandboxd that PREDATES MGIT-133 — the mixed
-	// -version pair a client must not mistake for a wedge.
+	// makes this peer a daemon that handshook at the current protocol — so it
+	// has stated it speaks the beat — and then owed one it never sent, which
+	// since MGIT-138 is a wedge and nothing else.
 	beats     int
 	beatEvery time.Duration
 	// chatterEvery, when non-zero, streams chatterCount stdout frames at that
@@ -206,42 +206,44 @@ func TestClient_Exec_ContextCanceled_ReturnsPromptly(t *testing.T) {
 	}
 }
 
-// TestClient_Exec_OlderDaemonNeverBeats_WaitsAndSaysWhy is the mixed-version
-// pair, and it is the ordinary one: an upgraded CLI talking to the long-lived
-// daemon the previous release left running.
+// TestClient_Exec_VersionedPeerNeverBeats_ReportsTheDaemon is the case MGIT-138
+// settled, and the reason the "this daemon is simply older" fallback had to go.
 //
-// That daemon emits no liveness beat, ever. Reading its silence as a wedge
-// would break every such pair — and the pair is not exotic, it is what an
-// upgrade looks like until the daemon idles out. So the client drops the stall
-// deadline, waits as MGIT-122 established, and states plainly that it has no
-// signal to judge by rather than implying the wait is known to be healthy.
-// Refs: MGIT-133, MGIT-122
-func TestClient_Exec_OlderDaemonNeverBeats_WaitsAndSaysWhy(t *testing.T) {
+// This peer completed the handshake at THIS build's protocol, so it has stated
+// that it speaks the liveness beat — protocol 2 covers MGIT-133's beat — and
+// the daemon writes its first beat before it calls the service. A peer that
+// then says nothing for a whole stall window is not an old build: an old build
+// cannot reach this loop at all, which
+// TestClient_Handshake_PreMGIT133Daemon_RefusedBeforeTheFrameLoop pins. It is a
+// daemon that owed a beat and did not send it — a wedge — and the caller must
+// be told that rather than left waiting unbounded on it, which is exactly what
+// the old fallback did while naming the wrong cause.
+// Refs: MGIT-138, MGIT-136, MGIT-133, MGIT-122
+func TestClient_Exec_VersionedPeerNeverBeats_ReportsTheDaemon(t *testing.T) {
 	skipUnsupportedHostIPC(t)
-	// No beats, and a reply well past the stall deadline: an old daemon
-	// running a command that outlives the window.
+	// Handshakes at the current protocol, never beats, and would answer only
+	// well past the stall deadline.
 	srv := &slowServer{replyDelay: 600 * time.Millisecond, execFrames: []byte("done\n"), execExit: 5}
 	client := NewClient(srv.start(t), time.Now)
 	client.stallTimeout = 100 * time.Millisecond
 
 	var stdout, stderr bytes.Buffer
-	code, err := client.Exec(context.Background(), "MGIT-133",
+	code, err := client.Exec(context.Background(), "MGIT-138",
 		model.ExecRequest{Command: []string{"go", "test", "./..."}}, &stdout, &stderr)
 
-	require.NoError(t, err, "a daemon that never beats was accused of stalling; "+
-		"every mixed-version pair would fail this way")
-	assert.Equal(t, "done\n", stdout.String())
-	assert.Equal(t, 5, code)
-	assert.Contains(t, stderr.String(), "predates MGIT-133",
-		"the caller was left waiting with no explanation of why nothing bounds the wait")
-	assert.Equal(t, 1, strings.Count(stderr.String(), "predates MGIT-133"),
-		"the notice repeated; it is a one-time statement about the daemon, not a ticker")
+	require.ErrorIs(t, err, model.ErrSandboxDaemonUnresponsive,
+		"a versioned peer that never beat was excused instead of reported")
+	assert.Equal(t, -1, code)
+	assert.Contains(t, err.Error(), "DAEMON", "the daemon is not named as the suspect")
+	assert.Empty(t, stderr.String(),
+		"a stall is an error, not an advisory printed over the command's own output")
+	assert.Empty(t, stdout.String(), "the wait ended before the late reply could arrive")
 }
 
 // TestClient_Exec_BeatsThenSilence_ReportsTheDaemon covers the transition the
 // whole mechanism turns on: a daemon that HAS beaten has proved its silence is
-// meaningful, so silence after that is a stall — not an old daemon, and not a
-// slow build. Refs: MGIT-133
+// meaningful, so silence after that is a stall — and, since MGIT-138, so is
+// silence before it. Refs: MGIT-138, MGIT-133
 func TestClient_Exec_BeatsThenSilence_ReportsTheDaemon(t *testing.T) {
 	skipUnsupportedHostIPC(t)
 	srv := &slowServer{beats: 3, beatEvery: 30 * time.Millisecond, silent: true}
@@ -253,8 +255,8 @@ func TestClient_Exec_BeatsThenSilence_ReportsTheDaemon(t *testing.T) {
 		model.ExecRequest{Command: []string{"make"}}, &stdout, &stderr)
 
 	require.ErrorIs(t, err, model.ErrSandboxDaemonUnresponsive)
-	assert.NotContains(t, stderr.String(), "predates MGIT-133",
-		"a daemon that beat and then stopped is wedged, not old")
+	assert.Empty(t, stderr.String(),
+		"a wedged daemon is reported as an error; nothing is written to the caller's stream")
 }
 
 // TestClient_Exec_Canceled_IsNotReportedAsAStall guards a trap the stall check
@@ -347,9 +349,11 @@ func TestClient_RoundTrip_ContextCanceled_ReturnsPromptly(t *testing.T) {
 // day that relay lands, nothing else would catch a beats-only rearm.
 //
 // This peer sends NO beats at all, so the only thing that can keep the stream
-// alive is its output. Verified load-bearing against a mutant that arms the
-// deadline once before the read loop instead of before every read.
-// Refs: MGIT-133, MGIT-122, R-H269, R-H273
+// alive is its output — and since MGIT-138 removed the beat-less escape hatch,
+// that is now the ONLY thing: a window with no frame of any kind in it is a
+// stall. Verified load-bearing against a mutant that arms the deadline once
+// before the read loop instead of before every read.
+// Refs: MGIT-138, MGIT-133, MGIT-122, R-H269, R-H273
 func TestExec_ChattyLongCommand_OutputAloneKeepsItAlive(t *testing.T) {
 	// Six intervals of chatter across a window several times the stall bound,
 	// with no beat in it: if only beats rearmed, this could not survive.

@@ -165,7 +165,13 @@ func TestDaemon_PreHandshakeClient_NonExecVerb_RefusalIsDecodable(t *testing.T) 
 			assert.Contains(t, resp.Error, model.ErrSandboxVersionSkew.Error())
 			assert.Contains(t, resp.Error, "control protocol 1", "the peer is named as pre-handshake")
 			assert.Contains(t, resp.Error, "0.6.0 (commit: deadbee)")
-			assert.Contains(t, resp.Error, "pkill -f mgit-sandboxd")
+			// The stale half of THIS pair is the client, and this daemon is
+			// the new build serving the refusal. So the remedy is to upgrade
+			// the CLI, and the reader must not be sent to kill a daemon that
+			// is already current (MGIT-138).
+			assert.Contains(t, resp.Error, "The stale half here is the mgit CLI")
+			assert.NotContains(t, resp.Error, "pkill",
+				"a daemon refusing an OLD CLI told the reader to kill itself")
 			assert.Empty(t, svc.statusTask, "no verb is served to an unversioned peer")
 			assert.Contains(t, logs.String(), "version_skew", "the refusal is audited")
 
@@ -278,6 +284,9 @@ func TestClient_Handshake_LegacyDaemon_ReportsOldDaemon_NotAStall(t *testing.T) 
 	assert.ErrorIs(t, err, model.ErrSandboxVersionSkew)
 	assert.Contains(t, err.Error(), "control protocol 1", "the daemon is named as pre-handshake")
 	assert.Contains(t, err.Error(), "upgrade both")
+	// Here the DAEMON is the stale half, so stopping it is exactly the fix
+	// and the remedy names it (MGIT-138).
+	assert.Contains(t, err.Error(), "pkill -f mgit-sandboxd")
 	assert.NotContains(t, err.Error(), "did not greet",
 		"a greeted daemon that is merely old is not reported as a squatter")
 	assert.NotErrorIs(t, err, model.ErrSandboxDaemonUnresponsive,
@@ -320,6 +329,10 @@ func TestClient_Handshake_FutureDaemon_NamesBothSides(t *testing.T) {
 	assert.ErrorIs(t, err, model.ErrSandboxVersionSkew)
 	assert.Contains(t, err.Error(), "9.9.9 (commit: future)")
 	assert.Contains(t, err.Error(), "brew upgrade hyper-swe/tap/mgit")
+	// The stale half is this CLI, so the remedy says so and does NOT send the
+	// reader after a daemon that is newer than it is (MGIT-138).
+	assert.Contains(t, err.Error(), "The stale half here is the mgit CLI")
+	assert.NotContains(t, err.Error(), "pkill")
 }
 
 // TestClient_Handshake_Exec_SkewNeverReachesTheFrameLoop verifies an exec
@@ -345,6 +358,48 @@ func TestClient_Handshake_Exec_SkewNeverReachesTheFrameLoop(t *testing.T) {
 	assert.NotContains(t, err.Error(), "unexpected exec frame",
 		"the skew is settled before any frame is read")
 	assert.Empty(t, errOut.String())
+}
+
+// TestClient_Handshake_PreMGIT133Daemon_RefusedBeforeTheFrameLoop is the pin
+// that makes MGIT-138's removal safe, and it is the whole justification for it.
+//
+// The client no longer carries a "this daemon sends no beats, so drop the
+// deadline and wait unbounded" fallback. The reason that is safe is the
+// handshake: a daemon old enough to emit no beat is older than MGIT-133, and
+// therefore older than the handshake, so it never reaches relayFrames. This
+// peer proves it the hard way — it refuses the hello exactly as mgit 0.5.x does
+// and then serves a PERFECTLY GOOD beat-less exec (output, then a zero exit) on
+// the same connection. The removed fallback existed to consume precisely that
+// stream. If the handshake ever stopped covering this peer, those frames would
+// be read and the exec would succeed here instead of being refused.
+// Refs: MGIT-138, MGIT-136, MGIT-133
+func TestClient_Handshake_PreMGIT133Daemon_RefusedBeforeTheFrameLoop(t *testing.T) {
+	skipUnsupportedHostIPC(t)
+	socket := legacyDaemonSocket(t, func(conn net.Conn) {
+		// mgit 0.5.x's answer to a request kind it does not know.
+		_, _ = controlproto.ReadRequest(conn)
+		_ = controlproto.WriteResponse(conn, &controlproto.Response{Error: "invalid request"})
+		// Then serve the exec the way a pre-MGIT-133 daemon would: no beat,
+		// ever, and a clean successful result.
+		_ = execwire.WriteFrame(conn, execwire.FrameStdout, []byte("built\n"))
+		payload, err := json.Marshal(execwire.ResultFrame{Result: execwire.Result{ExitCode: 0}})
+		require.NoError(t, err)
+		_ = execwire.WriteFrame(conn, execwire.FrameResult, payload)
+	})
+
+	cl := NewClient(socket, time.Now)
+	var out, errOut strings.Builder
+	code, err := cl.Exec(context.Background(), "MGIT-138",
+		model.ExecRequest{Command: []string{"make"}}, &out, &errOut)
+
+	require.Error(t, err, "a beat-less pre-handshake daemon served an exec; "+
+		"the client would need the removed no-liveness fallback to survive it")
+	assert.ErrorIs(t, err, model.ErrSandboxVersionSkew,
+		"the refusal must be the version mismatch, settled at the handshake")
+	assert.Equal(t, -1, code)
+	assert.Empty(t, out.String(), "the client read the old daemon's beat-less frame stream")
+	assert.NotErrorIs(t, err, model.ErrSandboxDaemonUnresponsive,
+		"a build too old to beat is refused as old, never accused of stalling")
 }
 
 // TestHandshake_SkewText_CrossesTheWireIntact verifies the daemon's refusal

@@ -326,12 +326,23 @@ between frames.
   `phaseDaemonStalled` and prints **no** memory-cap advisory — a
   daemon-side stall reported as a guest lost mid-command is MGIT-118's
   misdiagnosis on a new cause.
-- **Never beat** → an `mgit-sandboxd` predating MGIT-133. The stall
-  deadline is dropped, MGIT-122's unbounded wait is restored, and a
-  one-line notice states that no liveness signal is available. It is
-  **not** reported as a wedge: an upgraded CLI against the long-lived
-  daemon the previous release left running is the ordinary mixed-version
-  pair, and accusing it would break every one of them.
+- **Never beat** → the same verdict, and this is MGIT-138's change. A
+  peer only reaches this loop by completing the §8 handshake at this
+  build's protocol, which *covers* the beat, and the daemon writes its
+  first beat before it calls the service — so a peer here owes one inside
+  the first window whatever the command is doing. Silence is therefore a
+  daemon that promised beats and stopped answering.
+
+  MGIT-133 read this case as "an `mgit-sandboxd` predating MGIT-133":
+  the deadline was dropped, MGIT-122's unbounded wait restored, and a
+  one-line notice printed. MGIT-136 made that reading unreachable — a
+  daemon too old to beat is too old to handshake and is refused at
+  `dialGreeted` — and in the one case that still reached it, a current
+  daemon wedged before its first beat, it was wrong twice: it named the
+  daemon *old* when it was *hung*, and it reinstated the unbounded wait
+  §7 exists to end. A peer that legitimately cannot beat is a wire
+  change, and a wire change bumps `ProtocolVersion` and is refused one
+  layer up. The fallback, the notice, and the `beating` flag are gone.
 - **Cancellation** → `watchCancel` expires the connection rather than
   closing it, so a Ctrl-C reaches the read as `os.ErrDeadlineExceeded`
   too. The context is checked first; the caller's own withdrawal is
@@ -339,11 +350,15 @@ between frames.
 
 ### 7.6 Compatibility
 
-The first beat is written **before** the service is called, so its
-presence is this daemon's capability advertisement and its absence
-identifies an older one (§7.5). That covers **new CLI → old daemon**,
-which is the common mixed pair: the daemon is long-lived, so an upgrade
-leaves the previous release's daemon serving until it idles out.
+The first beat is written **before** the service is called, so a client
+that got past the handshake is owed one immediately (§7.5). MGIT-133
+shipped that beat as a *capability advertisement* — its absence
+identified an older daemon — which is how **new CLI → old daemon**, the
+common mixed pair, was kept working: the daemon is long-lived, so an
+upgrade leaves the previous release's daemon serving until it idles out.
+Since MGIT-136 that pair is settled at the handshake instead, and the
+first beat's remaining job is to make the client's first idle window
+judgeable (MGIT-138).
 
 The other direction breaks, and the choice was forced. This control
 plane has **no capability negotiation available at all**: `controlproto`
@@ -459,7 +474,7 @@ which it no longer does.
 ### 8.6 The message (normative content, not wording)
 
 Single-sourced in `controlproto.SkewMessage`, produced identically by
-both peers, and it MUST:
+both peers for the same pair of versions, and it MUST:
 
 - open with `model.ErrSandboxVersionSkew`'s text, so the conclusion
   survives a crossing that carries only a string (an exec result frame
@@ -469,9 +484,19 @@ both peers, and it MUST:
   because MGIT-132 asks for exactly those fields in a bug report;
 - name a command per install route this project actually ships:
   `install.sh`, `brew upgrade hyper-swe/tap/mgit`, `go install …`, and a
-  clone build; plus `pkill -f mgit-sandboxd` to release a daemon left
-  running across an upgrade, and `mgit --version` / `mgit-sandboxd
-  --version` to confirm;
+  clone build; and end with `mgit --version` / `mgit-sandboxd --version`
+  to confirm and to quote in a bug report (MGIT-132);
+- **aim its closing action at the side that is actually stale, and only
+  that side** (MGIT-138). Both versions are on the wire, so both peers
+  know which binary is behind. When the DAEMON is the older half,
+  `pkill -f mgit-sandboxd` releases the daemon left running across the
+  upgrade and the message says so. When the CLI is the older half — the
+  direction verified live, an mgit 0.5.0 CLI meeting a current daemon —
+  that line MUST NOT appear: there is no stale daemon to stop, and
+  upgrading the CLI is the whole fix. Equal protocol numbers are not a
+  mismatch and cannot reach this message; if one ever did, NEITHER side
+  is named stale. A remedy aimed at the wrong side is a mild member of
+  the misdiagnosis family below, and harmless is not the same as right;
 - say **nothing** about a guest, a sandbox, or a memory cap. A mismatch
   is a fact about two host binaries. Pointing at the cap is the
   MGIT-118 misdiagnosis, and MGIT-136 was the fourth route into it.

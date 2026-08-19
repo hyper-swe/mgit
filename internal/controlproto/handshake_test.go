@@ -114,7 +114,9 @@ func TestProtocolVersion_IsAheadOfLegacy(t *testing.T) {
 // TestSkewMessage_NamesBothSidesAndTheRemedy is the message contract: a reader
 // must learn which side is which version and what command to run, without
 // interpreting a version number or hunting for install instructions
-// (MGIT-132). Refs: MGIT-136, MGIT-132
+// (MGIT-132). The pair here is the DAEMON-stale direction, which is the one
+// that ends in `pkill`; the CLI-stale direction is asserted separately.
+// Refs: MGIT-138, MGIT-136, MGIT-132
 func TestSkewMessage_NamesBothSidesAndTheRemedy(t *testing.T) {
 	msg := SkewMessage(Peer{Protocol: 2, Version: "0.6.0 (commit: aaa)"},
 		Peer{Protocol: 1, Version: "0.5.0 (commit: bbb)"})
@@ -141,6 +143,145 @@ func TestSkewMessage_NamesBothSidesAndTheRemedy(t *testing.T) {
 	}
 }
 
+// TestSkewMessage_StaleSide_DecidesTheClosingRemedy is MGIT-138's second half.
+//
+// Both peers exchange both versions, so both already know which binary is
+// behind — and both used to print the same closing line regardless: "stop the
+// daemon still running the old build: pkill -f mgit-sandboxd". Exact when the
+// daemon is stale; superfluous when the CLI is, which is the direction verified
+// live (an mgit 0.5.0 CLI meeting a current daemon), where it sends the reader
+// after a process that is not the problem and leaves the real fix unsaid.
+//
+// The NEGATIVE is the assertion that matters here: a remedy aimed at the wrong
+// side is a mild member of the misdiagnosis family this project has closed four
+// routes into (MGIT-104, MGIT-108, MGIT-118, MGIT-136), so the pkill line must
+// be ABSENT — not merely accompanied by better advice — when the CLI is the old
+// half. Refs: MGIT-138, MGIT-136, MGIT-132
+func TestSkewMessage_StaleSide_DecidesTheClosingRemedy(t *testing.T) {
+	tests := []struct {
+		name          string
+		cli, daemon   Peer
+		wantPkill     bool
+		wantSubstring string
+	}{
+		{
+			name:          "daemon_is_stale",
+			cli:           Peer{Protocol: 2, Version: "0.6.0 (commit: aaa)"},
+			daemon:        Peer{Protocol: LegacyProtocol},
+			wantPkill:     true,
+			wantSubstring: "It is the one serving THIS repository",
+		},
+		{
+			name:          "cli_is_stale",
+			cli:           Peer{Protocol: LegacyProtocol},
+			daemon:        Peer{Protocol: 2, Version: "0.6.0 (commit: bbb)"},
+			wantPkill:     false,
+			wantSubstring: "The stale half here is the mgit CLI",
+		},
+		{
+			name:          "cli_is_stale_by_a_future_daemon",
+			cli:           Peer{Protocol: 2, Version: "0.6.0"},
+			daemon:        Peer{Protocol: 3, Version: "0.7.0"},
+			wantPkill:     false,
+			wantSubstring: "upgrading the CLI is the whole fix",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := SkewMessage(tt.cli, tt.daemon)
+			assert.Contains(t, msg, tt.wantSubstring)
+			if tt.wantPkill {
+				assert.Contains(t, msg, "--repo-root $(git rev-parse --show-toplevel)",
+					"the daemon is the stale half and the reader is not told to replace it")
+				// The kill must be SCOPED. A bare `pkill -f mgit-sandboxd` matches
+				// every repository's daemon on the host, since sockets are keyed per
+				// repo root — so the remedy would stop unrelated daemons and the
+				// microVMs they supervise. A remedy that damages what it was not
+				// aimed at is the same defect class this message exists to avoid,
+				// and it is what this project's own working rules forbid. This
+				// asserts the bare form appears ONLY inside the sentence warning
+				// against it. Refs: MGIT-141, MGIT-138
+				bare := strings.Count(msg, "pkill -f mgit-sandboxd\n")
+				assert.Zero(t, bare,
+					"the remedy tells the reader to run an unscoped pkill, which stops "+
+						"every repo's daemon, not the stale one this message is about")
+				assert.Contains(t, msg, "would also stop other repositories' daemons",
+					"the unscoped form is mentioned without warning what it does")
+				return
+			}
+			assert.NotContains(t, msg, "pkill",
+				"the CLI is the stale half, so the reader was sent after a daemon that is "+
+					"already current — a remedy aimed at the wrong side")
+			assert.NotContains(t, msg, "stop the daemon",
+				"nothing about the running daemon needs stopping when the CLI is the old half")
+		})
+	}
+}
+
+// TestSkewMessage_EqualProtocols_NameNeitherSideStale covers the one input
+// staleSideRemedy has no answer for.
+//
+// Equal protocol numbers are not a mismatch — Compatible is equality, and this
+// message is rendered only when it fails — so this pair cannot reach the
+// message in production. The branch is not there to handle a peer; it is there
+// so the aiming rule is TOTAL: with no evidence of which side is behind, the
+// message states neither rather than picking one. Naming a stale side from
+// numbers that say nothing is precisely the wrong-side remedy MGIT-138 removed.
+// Refs: MGIT-138
+func TestSkewMessage_EqualProtocols_NameNeitherSideStale(t *testing.T) {
+	msg := SkewMessage(Peer{Protocol: 2, Version: "0.6.0 (commit: aaa)"},
+		Peer{Protocol: 2, Version: "0.6.0 (commit: bbb)"})
+
+	assert.NotContains(t, msg, "pkill", "the daemon was named stale on no evidence")
+	assert.NotContains(t, msg, "The stale half here is the mgit CLI",
+		"the CLI was named stale on no evidence")
+	// The rest of the message is unaffected: it still names both builds and
+	// still ends with the confirm line.
+	assert.Contains(t, msg, "0.6.0 (commit: aaa)")
+	assert.Contains(t, msg, "0.6.0 (commit: bbb)")
+	assert.True(t, strings.HasSuffix(msg, "mgit --version; mgit-sandboxd --version"))
+}
+
+// TestSkewMessage_BothDirections_KeepEveryOtherGuarantee holds the rest of the
+// contract steady across the split: whichever side is stale, the message still
+// names BOTH builds, still lists only install routes this project has, and
+// still ends with the two --version commands MGIT-132 asks bug reports to
+// quote. Refs: MGIT-138, MGIT-136, MGIT-132
+func TestSkewMessage_BothDirections_KeepEveryOtherGuarantee(t *testing.T) {
+	directions := map[string]string{
+		"daemon_is_stale": SkewMessage(
+			Peer{Protocol: 2, Version: "0.6.0 (commit: aaa)"},
+			Peer{Protocol: 1, Version: "0.5.0 (commit: bbb)"}),
+		"cli_is_stale": SkewMessage(
+			Peer{Protocol: 1, Version: "0.5.0 (commit: bbb)"},
+			Peer{Protocol: 2, Version: "0.6.0 (commit: aaa)"}),
+	}
+	for name, msg := range directions {
+		t.Run(name, func(t *testing.T) {
+			for _, want := range []string{
+				"CLI and daemon differ", "upgrade both",
+				"0.6.0 (commit: aaa)", "0.5.0 (commit: bbb)",
+				"mgit CLI:", "mgit-sandboxd:",
+				"install.sh",
+				"brew upgrade hyper-swe/tap/mgit",
+				"go install github.com/hyper-swe/mgit/cmd/mgit@latest",
+				"go build -o",
+			} {
+				assert.Contains(t, msg, want, "the message must still name %q", want)
+			}
+			assert.True(t, strings.HasSuffix(msg,
+				"mgit --version; mgit-sandboxd --version"),
+				"MGIT-132's confirm-and-quote line must remain the last thing the reader sees")
+			// Routes this project does NOT have: naming one is the defect
+			// MGIT-132 is about, one level up.
+			assert.NotContains(t, msg, "make install",
+				"there is no make install target")
+			assert.NotContains(t, msg, "make build",
+				"make build builds only the CLI; it cannot fix a mixed pair")
+		})
+	}
+}
+
 // TestSkewMessage_UnknownPeerVersion_StillReadable verifies the message stays
 // honest when a pre-handshake peer could not state its build: it says the
 // protocol it must be speaking rather than inventing a version. Refs: MGIT-136
@@ -154,11 +295,17 @@ func TestSkewMessage_UnknownPeerVersion_StillReadable(t *testing.T) {
 // TestSkewMessage_NeverMentionsMemory is the negative this ticket exists for.
 // Four times now a version or host-side fault has been reported to an agent as
 // in-guest memory exhaustion (MGIT-104, MGIT-108, MGIT-118, MGIT-136); the
-// skew text must not add a fifth route by so much as naming the cap.
-// Refs: MGIT-136, MGIT-118
+// skew text must not add a fifth route by so much as naming the cap. Asserted
+// in BOTH stale directions, since MGIT-138 made them different strings.
+// Refs: MGIT-138, MGIT-136, MGIT-118
 func TestSkewMessage_NeverMentionsMemory(t *testing.T) {
-	msg := strings.ToLower(SkewMessage(Peer{Protocol: 2, Version: "a"}, Peer{Protocol: 1, Version: "b"}))
-	for _, forbidden := range []string{"memory", "memory-mb", "out of memory", "oom"} {
-		assert.NotContains(t, msg, forbidden)
+	for _, msg := range []string{
+		SkewMessage(Peer{Protocol: 2, Version: "a"}, Peer{Protocol: 1, Version: "b"}),
+		SkewMessage(Peer{Protocol: 1, Version: "b"}, Peer{Protocol: 2, Version: "a"}),
+	} {
+		lower := strings.ToLower(msg)
+		for _, forbidden := range []string{"memory", "memory-mb", "out of memory", "oom", "capped at"} {
+			assert.NotContains(t, lower, forbidden)
+		}
 	}
 }
