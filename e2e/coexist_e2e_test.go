@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,6 +49,17 @@ func snapshotProjectGit(t *testing.T, dir string) map[string]string {
 		rel, rerr := filepath.Rel(root, p)
 		if rerr != nil {
 			return rerr
+		}
+		// Skip git's OWN transient locks. This snapshot exists to prove mgit
+		// never writes into the project's .git, and a lock file git creates for
+		// itself is not evidence about mgit. `objects/maintenance.lock` appeared
+		// in the BEFORE snapshot and was gone by the AFTER one on a release
+		// preflight run -- git's background maintenance ran between them -- and
+		// failed a guarantee mgit had not broken. A test that reports someone
+		// else's write as ours is worse than no test: it spends the credibility
+		// of the assertion that matters most in this file. Refs: MGIT-14
+		if strings.HasSuffix(rel, ".lock") {
+			return nil
 		}
 		data, rerr := os.ReadFile(p) //nolint:gosec // test path under .git
 		if rerr != nil {
