@@ -5,7 +5,16 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.0] - 2026-08-20
+## [0.6.1] - 2026-08-20
+
+> **0.6.0 was tagged and never published, and is superseded by this release.**
+> Its preflight failed on a coexistence assertion that mgit had not broken —
+> git's own background maintenance wrote `objects/maintenance.lock` between the
+> test's before and after snapshots, and the test attributed that write to us.
+> The tag was deleted rather than moved: a tag that never points twice makes
+> drift impossible rather than detected, which is the same rule this release
+> applies to the guest base's digest. No artifact was ever published under it.
+
 
 The substrate release. Cut because sandbox execution became mandatory for every
 agent lane, and v0.5.0 could not carry that: on it, **any command running longer
