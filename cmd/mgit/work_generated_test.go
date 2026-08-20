@@ -31,7 +31,7 @@ func TestWorkSetup_OpenPosture_RecordsGeneratedClaudeMd(t *testing.T) {
 }
 
 // TestWorkSetup_ContainedPosture_RecordsEveryGeneratedFile proves the full
-// routing wiring — settings, Codex directive, Cursor rule, .envrc — is recorded
+// routing wiring — settings, hooks, Codex directive, Cursor rule, .envrc — is recorded
 // too, so none of it can be bulk staged. Refs: MGIT-80, MGIT-11.11.1, MGIT-11.11.3
 func TestWorkSetup_ContainedPosture_RecordsEveryGeneratedFile(t *testing.T) {
 	adder := &fakeWorktreeAdder{}
@@ -45,6 +45,11 @@ func TestWorkSetup_ContainedPosture_RecordsEveryGeneratedFile(t *testing.T) {
 	assert.ElementsMatch(t, []string{
 		"CLAUDE.md", ".claude/settings.json", "AGENTS.md",
 		".cursor/rules/mgit-sandbox.mdc", ".envrc",
+		// The enforcement hooks (MGIT-149) are mgit's scaffolding too. If they
+		// were not recorded, `mgit commit -a` would sweep mgit's own routing
+		// config into the task branch and the patch that lands in the user's
+		// repository — the MGIT-80 defect, reintroduced by the fix.
+		".codex/hooks.json", ".cursor/hooks.json",
 	}, got, "every generated agent file is recorded as mgit's own")
 
 	// Every recorded path really is on disk — the record is a claim about what
