@@ -46,7 +46,7 @@ func assertShimRoutes(t *testing.T, shimDir, logPath, cmd string, args ...string
 func TestAdapter_CodexRoutesViaShim(t *testing.T) {
 	wt := t.TempDir()
 	bin, logPath := fakeMgit(t)
-	require.NoError(t, WriteCodexAdapter(wt, bin))
+	require.NoError(t, WriteCodexAdapter(wt, bin, SandboxEnv{}))
 
 	agents, err := os.ReadFile(filepath.Join(wt, "AGENTS.md")) //nolint:gosec // test-owned temp path
 	require.NoError(t, err)
@@ -92,7 +92,7 @@ func TestAdapter_GenericPathShimRoutes(t *testing.T) {
 func TestAdapter_CooperativeNotice(t *testing.T) {
 	wt := t.TempDir()
 	bin, _ := fakeMgit(t)
-	require.NoError(t, WriteCodexAdapter(wt, bin))
+	require.NoError(t, WriteCodexAdapter(wt, bin, SandboxEnv{}))
 	require.NoError(t, WriteCursorAdapter(wt, bin))
 
 	for _, p := range []string{
@@ -126,7 +126,7 @@ func TestAdapter_BypassBlockedAtLandWithoutAttestation(t *testing.T) {
 func TestInstallCooperativeAdapters_WritesAll(t *testing.T) {
 	wt := t.TempDir()
 	bin, _ := fakeMgit(t)
-	require.NoError(t, InstallCooperativeAdapters(wt, bin))
+	require.NoError(t, InstallCooperativeAdapters(wt, bin, SandboxEnv{}))
 
 	for _, rel := range []string{
 		"AGENTS.md",
@@ -156,7 +156,7 @@ func TestWriteAdapters_FailOnUnwritableWorktree(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "afile")
 	require.NoError(t, os.WriteFile(file, []byte("x"), 0o600))
 	bin, _ := fakeMgit(t)
-	assert.Error(t, WriteCodexAdapter(file, bin))
+	assert.Error(t, WriteCodexAdapter(file, bin, SandboxEnv{}))
 	assert.Error(t, WriteCursorAdapter(file, bin))
 	assert.Error(t, WriteGenericAdapter(file, bin))
 }
@@ -170,4 +170,49 @@ func TestShim_UsesInvokedName(t *testing.T) {
 
 	assertShimRoutes(t, ShimDir(wt), logPath, "node", "-v")
 	assertShimRoutes(t, ShimDir(wt), logPath, "python3", "-c", "print(1)")
+}
+
+// TestRenderCodexDirective_CarriesTheSamePostureAsClaudeMd pins the fix for
+// FEAT-3.71: an AGENTS.md-reading agent must learn what it is isolated by, not
+// merely be routed through it.
+//
+// Before this, AGENTS.md got routing shims and nothing else — so its commands
+// went into the sandbox while it learned nothing about the memory cap, the
+// network mode, or the caps paragraph. That last omission is the one with a
+// receipt: MGIT-95 exists because an agent met an invisible ~1.94 GB ceiling,
+// could not see it, and reshaped a production bundler config to fit a sandbox
+// limit rather than reporting it.
+//
+// The assertion is deliberately SHARED-SOURCE rather than literal: it requires
+// the AGENTS.md block to contain what CLAUDE.md's own renderers produce for the
+// same env. A copy of the wording would satisfy a literal assertion and then
+// drift; this cannot, because both sides are rendered from renderResources and
+// renderNetwork. Refs: MGIT-95, FEAT-3.71
+func TestRenderCodexDirective_CarriesTheSamePostureAsClaudeMd(t *testing.T) {
+	env := SandboxEnv{
+		WorktreePath: "/tmp/wt",
+		NetworkMode:  "allowlist",
+		Allowlist:    []string{"example.com:443"},
+		CPUs:         2,
+		MemoryMB:     512,
+	}
+	agents := RenderCodexDirective("/tmp/wt/.mgit/shims", env)
+
+	// The posture sections, from the very renderers CLAUDE.md uses.
+	assert.Contains(t, agents, renderResources(env),
+		"AGENTS.md omits the resource ceiling CLAUDE.md states: an agent reading it "+
+			"cannot tell what it is capped at")
+	assert.Contains(t, agents, renderNetwork(env),
+		"AGENTS.md omits the egress posture CLAUDE.md states")
+
+	// The specific line whose absence has already cost a consumer a production
+	// config change. Asserted by its own words as well as by shared source,
+	// because this is the sentence the ticket exists for.
+	assert.Contains(t, agents, "do not reshape the project to fit this guest",
+		"the MGIT-95 instruction did not reach the AGENTS.md agent family")
+	assert.Contains(t, agents, "512 MB of memory")
+
+	// And it is still a marked block, so it stays mgit-owned and re-renderable.
+	assert.Contains(t, agents, claudeMdBeginMarker)
+	assert.Contains(t, agents, claudeMdEndMarker)
 }

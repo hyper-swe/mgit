@@ -35,8 +35,22 @@ func routingNarrative(shimDir string) string {
 }
 
 // RenderCodexDirective renders the AGENTS.md section for Codex. Refs: MGIT-11.11.3
-func RenderCodexDirective(shimDir string) string {
-	return claudeMdBeginMarker + "\n## Sandbox environment\n\n" + routingNarrative(shimDir) + "\n" + claudeMdEndMarker
+func RenderCodexDirective(shimDir string, env SandboxEnv) string {
+	// The POSTURE sections come from the same renderers CLAUDE.md uses, not from
+	// a parallel copy. An AGENTS.md-reading agent used to get the routing shims
+	// and nothing else: its commands went into the sandbox while it learned
+	// nothing about the memory cap, the network mode, or the identical-path
+	// mount — on exactly the runs where isolation is real.
+	//
+	// The costly omission was the caps paragraph. MGIT-95 exists because an
+	// agent met an invisible ~1.94 GB ceiling, could not see it, and reshaped a
+	// production bundler config to fit a sandbox limit. The line that prevents
+	// that recurrence must reach every agent family, so it is SHARED here rather
+	// than restated: one renderer means the text cannot drift between families.
+	// Refs: MGIT-95, MGIT-11.11.3
+	return claudeMdBeginMarker + "\n## Sandbox environment\n\n" +
+		routingNarrative(shimDir) + "\n" +
+		renderResources(env) + renderNetwork(env) + claudeMdEndMarker
 }
 
 // RenderCursorRule renders the Cursor rules (.mdc) file body. Refs: MGIT-11.11.3
@@ -57,12 +71,12 @@ func RenderEnvrc(shimDir string) string {
 
 // WriteCodexAdapter installs the routing shims and upserts the AGENTS.md
 // directive for Codex. Refs: MGIT-11.11.3
-func WriteCodexAdapter(worktreePath, mgitBin string) error {
+func WriteCodexAdapter(worktreePath, mgitBin string, env SandboxEnv) error {
 	if err := InstallShims(ShimDir(worktreePath), mgitBin, DefaultShimCommands()); err != nil {
 		return err
 	}
 	path := worktreeFilePath(worktreePath, AgentsMdFile)
-	return upsertMarkedFile(path, claudeMdBeginMarker, claudeMdEndMarker, RenderCodexDirective(ShimDir(worktreePath)))
+	return upsertMarkedFile(path, claudeMdBeginMarker, claudeMdEndMarker, RenderCodexDirective(ShimDir(worktreePath), env))
 }
 
 // WriteCursorAdapter installs the routing shims and writes the Cursor rules
@@ -92,11 +106,23 @@ func WriteGenericAdapter(worktreePath, mgitBin string) error {
 	return upsertMarkedFile(path, envrcBeginMarker, envrcEndMarker, RenderEnvrc(ShimDir(worktreePath)))
 }
 
+// UpsertAgentsMd re-renders AGENTS.md's marked block with a KNOWN sandbox
+// posture. The cooperative adapters are installed at wiring time, before the
+// microVM exists, so their first render carries routing but a zero SandboxEnv.
+// This is the second pass, called once the sandbox is real — the AGENTS.md
+// counterpart of UpsertClaudeMd, so both agent families learn the same facts at
+// the same moment. Refs: MGIT-95, MGIT-11.11.3
+func UpsertAgentsMd(worktreePath string, env SandboxEnv) error {
+	path := worktreeFilePath(worktreePath, AgentsMdFile)
+	return upsertMarkedFile(path, claudeMdBeginMarker, claudeMdEndMarker,
+		RenderCodexDirective(ShimDir(worktreePath), env))
+}
+
 // InstallCooperativeAdapters writes the Codex, Cursor, and generic
 // adapters into a worktree (shims are installed once; idempotent).
 // Refs: MGIT-11.11.3
-func InstallCooperativeAdapters(worktreePath, mgitBin string) error {
-	if err := WriteCodexAdapter(worktreePath, mgitBin); err != nil {
+func InstallCooperativeAdapters(worktreePath, mgitBin string, env SandboxEnv) error {
+	if err := WriteCodexAdapter(worktreePath, mgitBin, env); err != nil {
 		return err
 	}
 	if err := WriteCursorAdapter(worktreePath, mgitBin); err != nil {

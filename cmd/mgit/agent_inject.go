@@ -40,7 +40,7 @@ func injectAgentAdapters(warn io.Writer, worktreePath string, contained bool) {
 		_, _ = fmt.Fprintf(warn, "warning: could not write Claude sandbox routing config (%v); "+
 			"agent commands will prompt instead of auto-routing\n", err)
 	}
-	if err := agentadapter.InstallCooperativeAdapters(worktreePath, currentMgitBin()); err != nil {
+	if err := agentadapter.InstallCooperativeAdapters(worktreePath, currentMgitBin(), agentadapter.SandboxEnv{}); err != nil {
 		_, _ = fmt.Fprintf(warn, "warning: could not install cooperative agent adapters (%v)\n", err)
 	}
 }
@@ -83,8 +83,16 @@ func writeSandboxEnvDoc(warn io.Writer, info *model.SandboxInfo) {
 		_, _ = fmt.Fprintf(warn, "warning: could not update CLAUDE.md sandbox section (%v)\n", err)
 		return
 	}
+	// AGENTS.md gets the SAME posture, from the same renderers. Without this an
+	// AGENTS.md-reading agent is routed into the sandbox while learning nothing
+	// about it — including the line that stops it reshaping the project to fit a
+	// guest it cannot see (MGIT-95). A warning rather than a hard failure: the
+	// worktree is already usable, and losing the doc must not lose the sandbox.
+	if err := agentadapter.UpsertAgentsMd(info.WorktreePath, env); err != nil {
+		_, _ = fmt.Fprintf(warn, "warning: could not update AGENTS.md sandbox section (%v)\n", err)
+	}
 	if err := gitstore.RecordGeneratedPaths(info.WorktreePath,
-		[]string{agentadapter.ClaudeMdFile}); err != nil {
+		[]string{agentadapter.ClaudeMdFile, agentadapter.AgentsMdFile}); err != nil {
 		_, _ = fmt.Fprintf(warn, "warning: could not record mgit's generated CLAUDE.md (%v); "+
 			"it may be swept into commits by `mgit commit -a`\n", err)
 	}

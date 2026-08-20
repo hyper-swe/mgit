@@ -53,7 +53,7 @@ func TestGeneratedWorktreeFiles_ContainedPosture_MatchesWhatTheAdaptersWrite(t *
 
 	require.NoError(t, UpsertClaudeMd(wt, SandboxEnv{WorktreePath: wt, NetworkMode: "none"}))
 	require.NoError(t, WriteClaudeSettings(wt, "mgit sandbox claude-hook"))
-	require.NoError(t, InstallCooperativeAdapters(wt, "mgit"))
+	require.NoError(t, InstallCooperativeAdapters(wt, "mgit", SandboxEnv{}))
 
 	assert.ElementsMatch(t, filesUnder(t, wt), GeneratedWorktreeFiles(true),
 		"GeneratedWorktreeFiles(contained) must list exactly the files the adapters write")
