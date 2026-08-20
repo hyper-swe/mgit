@@ -172,7 +172,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 			}
 			if image == "" {
 				var err error
-				if image, err = repoGuestBaseRef(); err != nil {
+				if image, err = repoGuestBaseRef(cmd.OutOrStdout()); err != nil {
 					return err
 				}
 			}

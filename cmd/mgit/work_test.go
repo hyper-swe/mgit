@@ -48,6 +48,14 @@ func (f *fakeWorktreeAdder) add(_ context.Context, opts model.WorktreeAddOptions
 // fresh deps struct, capturing the human/warn output.
 func runWorkSetup(t *testing.T, adder *fakeWorktreeAdder, opts workOptions, connect connectFunc) (string, *model.WorktreeInfo, error) {
 	t.Helper()
+	// A nil connector means the test is not exercising the sandbox leg. Run it
+	// from a directory with no mgit repository above it, so guest-base
+	// resolution fails deterministically instead of finding whatever repo the
+	// test binary happens to have been started in — base resolution walks
+	// UPWARDS (MGIT-57/MGIT-147). Refs: MGIT-147
+	if connect == nil {
+		t.Chdir(t.TempDir())
+	}
 	var out bytes.Buffer
 	deps := workDeps{
 		addWorktree:     adder.add,

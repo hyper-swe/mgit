@@ -158,17 +158,24 @@ func sandboxImageAddCmd() *cobra.Command {
 
 // sandboxHostRoot returns the per-repo host config root (<repo>/.mgit/
 // sandbox) that holds images.lock and the trust root — the same root the
-// daemon is launched with. It requires the current directory to be an mgit
-// repository. Refs: FR-17.13
+// daemon is launched with.
+//
+// It resolves through sandboxRepoRoot, so it agrees with the daemon in the
+// two places a naive "look in the current directory" answer diverges: a
+// SUBDIRECTORY of the repo, and a LINKED WORKTREE, whose sandbox is owned by
+// the parent repo (MGIT-57). A base registered into a worktree's own lock
+// would be invisible to the daemon reading the parent's — "this repo has no
+// guest base" for a base just composed. Refs: FR-17.13, MGIT-57, MGIT-147
 func sandboxHostRoot() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("get working directory: %w", err)
 	}
-	if fi, statErr := os.Stat(filepath.Join(cwd, ".mgit")); statErr != nil || !fi.IsDir() {
-		return "", fmt.Errorf("not an mgit repository (no .mgit in %s)", cwd)
+	repoRoot, err := sandboxRepoRoot(cwd)
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(cwd, ".mgit", "sandbox"), nil
+	return filepath.Join(repoRoot, ".mgit", "sandbox"), nil
 }
 
 // printTrustRootAuditor satisfies images.TrustRootAuditor by printing the

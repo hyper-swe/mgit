@@ -106,7 +106,7 @@ func TestSandboxBaseFrom_InjectionOutranksTheImagesOwnFiles(t *testing.T) {
 		filepath.Join("sbin", "mgit-guest"),
 		filepath.Join("bin", "mgit"),
 	} {
-		got, rerr := os.ReadFile(filepath.Join(repo, ".mgit", "sandbox", "base", p)) //nolint:gosec // test temp path
+		got, rerr := os.ReadFile(filepath.Join(cachedBaseDir(t, repo), p)) //nolint:gosec // test temp path
 		require.NoError(t, rerr)
 		assert.NotContains(t, string(got), "IMPOSTOR",
 			"%s came from the image; the guest supervisor must always be ours", p)
@@ -233,18 +233,87 @@ func TestBundledGuestBinDir_FindsAHomebrewStyleLayout(t *testing.T) {
 }
 
 // TestBundledGuestBinDir_PrefersTheAdjacentLayout keeps the archive's own
-// layout authoritative when both exist — that is the one the running binary
-// actually shipped with.
+// layout authoritative when both channels have a complete pair — that is the
+// one the running binary actually shipped with.
 func TestBundledGuestBinDir_PrefersTheAdjacentLayout(t *testing.T) {
 	prefix := t.TempDir()
 	exePath := filepath.Join(prefix, "bin", "mgit")
-	require.NoError(t, os.MkdirAll(filepath.Join(prefix, "bin", guestBinSubdir), 0o750))
-	require.NoError(t, os.MkdirAll(filepath.Join(prefix, "libexec", guestBinSubdir), 0o750))
+	require.NoError(t, os.MkdirAll(filepath.Dir(exePath), 0o750))
 	require.NoError(t, os.WriteFile(exePath, []byte("host-mgit"), 0o600))
+	writeGuestPair(t, filepath.Join(prefix, "bin", guestBinSubdir), "archive")
+	writeGuestPair(t, filepath.Join(prefix, "libexec", guestBinSubdir), "brewed")
 
 	got := bundledGuestBinDir(exePath)
 
 	resolved, err := filepath.EvalSymlinks(filepath.Join(prefix, "bin", guestBinSubdir))
 	require.NoError(t, err)
 	assert.Equal(t, resolved, got)
+}
+
+// writeGuestPair lays a complete guest pair into a channel's directory.
+func writeGuestPair(t *testing.T, dir, marker string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	for _, n := range guestPair {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, n), []byte(marker+"-"+n), 0o600))
+	}
+}
+
+// A HALF-POPULATED CHANNEL MUST NOT WIN THE LOOKUP.
+//
+// The guest-pair layout is channel-dependent, and a directory that exists but
+// holds only one of the two used to be selected and then fail deep inside
+// injection with a bare "no such file or directory" naming a path the user
+// never typed. Refs: MGIT-147
+func TestBundledGuestBinDir_SkipsAChannelMissingHalfThePair(t *testing.T) {
+	prefix := t.TempDir()
+	exePath := filepath.Join(prefix, "bin", "mgit")
+	require.NoError(t, os.MkdirAll(filepath.Dir(exePath), 0o750))
+	require.NoError(t, os.WriteFile(exePath, []byte("host-mgit"), 0o600))
+
+	// The archive-style directory has only the host CLI, not the supervisor.
+	adjacent := filepath.Join(prefix, "bin", guestBinSubdir)
+	require.NoError(t, os.MkdirAll(adjacent, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(adjacent, "mgit"), []byte("half"), 0o600))
+	// The Homebrew-style one is complete.
+	writeGuestPair(t, filepath.Join(prefix, "libexec", guestBinSubdir), "brewed")
+
+	got := bundledGuestBinDir(exePath)
+
+	resolved, err := filepath.EvalSymlinks(filepath.Join(prefix, "libexec", guestBinSubdir))
+	require.NoError(t, err)
+	assert.Equal(t, resolved, got, "an incomplete channel must be skipped, not selected and then failed on")
+}
+
+// THE FAILURE MUST NAME THE CHANNELS, NOT ONE HARDCODED PATH.
+//
+// "Guest binaries ship in libexec/guest" is wrong as a general statement: the
+// release archive puts them in guest/, install.sh and Homebrew in
+// $PREFIX/libexec/guest, and `go install` ships NEITHER — which is the gap
+// that blocks composing at all. A user hitting this must be told which
+// channel was expected and what was actually found. Refs: MGIT-147
+func TestInjectGuestBinaries_MissingPair_NamesEveryChannelAndWhatWasFound(t *testing.T) {
+	t.Chdir(t.TempDir()) // outside the module, so the source build cannot work
+	prefix := t.TempDir()
+	exePath := filepath.Join(prefix, "bin", "mgit")
+	require.NoError(t, os.MkdirAll(filepath.Dir(exePath), 0o750))
+	require.NoError(t, os.WriteFile(exePath, []byte("host-mgit"), 0o600))
+	// A half-populated Homebrew-style directory: present, but not usable.
+	brewed := filepath.Join(prefix, "libexec", guestBinSubdir)
+	require.NoError(t, os.MkdirAll(brewed, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(brewed, "mgit"), []byte("half"), 0o600))
+
+	err := injectGuestBinaries(t.TempDir(), "", exePath)
+
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, "release archive", "the archive channel must be named")
+	assert.Contains(t, msg, "install.sh / Homebrew", "the install.sh/Homebrew channel must be named")
+	assert.Contains(t, msg, "go install", "the channel that ships neither must be named")
+	assert.Contains(t, msg, filepath.Join(prefix, "bin", guestBinSubdir),
+		"the archive-relative path we looked at must be shown")
+	assert.Contains(t, msg, brewed, "the libexec path we looked at must be shown")
+	assert.Contains(t, msg, "missing mgit-guest",
+		"a directory that exists but lacks half the pair must say which half")
+	assert.Contains(t, msg, "not found", "a channel with nothing there must say so")
 }

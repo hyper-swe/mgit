@@ -284,10 +284,60 @@ mgit sandbox base from debian:12        # pull, compose, inject, pin, sign
 ```
 
 That pulls a public OCI image straight from its registry — no Docker, no
-container runtime, no daemon — extracts it into `.mgit/sandbox/base`, injects
-`mgit` and `mgit-guest`, then pins the composed tree by content digest and
-signs it into `images.lock`. `mgit run` and `mgit work --sandbox` use it
-automatically from then on; you never retype the digest.
+container runtime, no daemon — composes it, injects `mgit` and `mgit-guest`,
+then pins the composed tree by content digest and signs it into `images.lock`.
+`mgit run` and `mgit work --sandbox` use it automatically from then on; you
+never retype the digest.
+
+**The bytes do not live in your repository.** A base is hundreds of megabytes
+and thousands of files; unpacked into `.mgit/sandbox/base` it was walked by
+every host test command that walks the tree — one pilot's `gofmt -l .` red-lit
+on 757 files that were mgit's, not theirs. Composed bases live in a
+machine-wide, content-addressed cache instead:
+
+| | |
+|---|---|
+| Linux | `$XDG_CACHE_HOME/mgit/bases` (default `~/.cache/mgit/bases`) |
+| macOS | `~/Library/Caches/mgit/bases` |
+| override | `MGIT_BASE_CACHE=/absolute/path` |
+
+Your repository keeps the pinned **digest** and no base bytes. The cache is
+keyed by that digest, so:
+
+- **several repos and agents on one machine share one copy.** The second repo
+  to compose the same base pays a hash, not a re-unpack;
+- **a recompose cannot disturb what someone else pinned.** Different bytes
+  hash differently, so they land in a NEW entry beside the old one. Before
+  this, recomposing in one worktree invalidated every other worktree's pin on
+  the machine;
+- **two agents composing the same base at once** end up with one complete
+  entry, never a half-written one: each composes privately and publishes with
+  an atomic rename, and the loser of the race simply drops its copy.
+
+If a pinned base is missing from the cache — a fresh machine, or a cleaned
+cache — launching fails closed and names the digest, the cache it searched,
+what it was composed from, and the command that puts it back. mgit does not
+re-fetch it silently, because a tag can resolve to a different image than the
+one you pinned (see below), so a silent re-fetch could only fail the same
+check or boot something you did not choose.
+
+**Upgrading from an older mgit?** An in-tree `.mgit/sandbox/base` is moved
+into the cache on the next `mgit sandbox base from` or the next launch, and
+the move is announced. The digest is preserved, so whatever you had pinned
+keeps resolving.
+
+### A tag is a name that can point twice
+
+`mgit sandbox base from golang:1.26-bookworm` resolves that tag to a digest
+ONCE, pins the digest, and records the tag alongside as provenance. This
+matters: the same tag resolved to two different images a day apart in the
+field, and with a tag as the identity nobody could say whether upstream had
+moved or the composition had changed.
+
+Re-composing the same tag onto different bytes therefore produces a new cache
+entry and says what changed, naming both digests — it never replaces the old
+one. Every composition is appended to `.mgit/sandbox/base-provenance.jsonl`,
+which `images.lock` cannot express because it holds one entry per name.
 
 **Pick the image your task's toolchain needs.** The base IS the environment
 your agent works in, so start from something that already carries it:

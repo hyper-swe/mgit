@@ -1,17 +1,19 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mgit/internal/sandboxd/basecache"
 	"github.com/hyper-swe/mgit/internal/sandboxd/guestbase"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 )
@@ -42,7 +44,13 @@ func sandboxBaseCmd() *cobra.Command {
 		Long: "The guest base is a Linux userspace tree shared read-only into every\n" +
 			"sandbox for this repository. Point mgit at a tree you built or extracted,\n" +
 			"and it is pinned by content digest and signed into images.lock so it\n" +
-			"cannot change under a running task without being noticed.",
+			"cannot change under a running task without being noticed.\n\n" +
+			"A composed base lives in a machine-wide, content-addressed cache — under\n" +
+			"XDG_CACHE_HOME on Linux, ~/Library/Caches on macOS, or MGIT_BASE_CACHE —\n" +
+			"never inside your repository. Your repo keeps the pinned digest and no\n" +
+			"bytes, every repo on the machine shares one copy of identical bytes, and\n" +
+			"recomposing publishes a NEW entry rather than rewriting the one somebody\n" +
+			"else pinned.",
 	}
 	cmd.AddCommand(sandboxBaseSetCmd(), sandboxBaseFromCmd())
 	return cmd
@@ -51,46 +59,16 @@ func sandboxBaseCmd() *cobra.Command {
 // sandboxBaseSetCmd validates a userspace tree, injects mgit + mgit-guest
 // into it, and registers it as this repo's pinned, signed guest base.
 func sandboxBaseSetCmd() *cobra.Command {
-	var name, guestBinDir string
+	var opts composeOptions
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "set <dir>",
 		Short: "Use a directory as this repo's guest base (validates, injects mgit, pins and signs it)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			baseDir, err := filepath.Abs(args[0])
-			if err != nil {
-				return fmt.Errorf("base set: %w", err)
-			}
-			hostRoot, err := sandboxHostRoot()
+			ref, baseDir, err := setRepoGuestBase(cmd, args[0], opts)
 			if err != nil {
 				return err
-			}
-			// The signing key stays host-side and never enters a guest (SEC-01).
-			// First run has no trust root, and telling a user to go and make
-			// one — after mgit told them to run THIS command — is guidance
-			// that leads into a second wall. An existing key is reused, never
-			// rotated. Refs: MGIT-65, FR-17.38
-			priv, err := images.EnsureSigningKey(cmd.Context(), hostRoot,
-				printTrustRootAuditor{w: cmd.OutOrStdout()})
-			if err != nil {
-				return fmt.Errorf("base %s: %w", "set", err)
-			}
-			if err := validateBaseTree(baseDir); err != nil {
-				return err
-			}
-			// Inject BEFORE pinning: the digest must cover the binaries we
-			// added, or the pin would describe a tree that never boots.
-			if err := injectGuestBinaries(baseDir, guestBinDir, hostExecutablePath()); err != nil {
-				return err
-			}
-			entry, err := images.BuildBaseEntry(baseDir)
-			if err != nil {
-				return fmt.Errorf("base set: %w", err)
-			}
-			ref, err := images.Register(hostRoot, name, entry, priv)
-			if err != nil {
-				return fmt.Errorf("base set: %w", err)
 			}
 			if asJSON {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]string{"image_ref": ref})
@@ -99,12 +77,58 @@ func sandboxBaseSetCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&name, "name", "base", "name to register the base under in images.lock")
-	cmd.Flags().StringVar(&guestBinDir, "guest-bin-dir", "",
+	cmd.Flags().StringVar(&opts.name, "name", "base", "name to register the base under in images.lock")
+	cmd.Flags().StringVar(&opts.guestBinDir, "guest-bin-dir", "",
 		"directory holding linux builds of mgit and mgit-guest to inject; "+
 			"defaults to the ones shipped with this install")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output the digest-pinned reference as JSON")
 	return cmd
+}
+
+// setRepoGuestBase pins a directory the USER owns as this repo's guest base.
+//
+// Unlike `base from`, nothing is copied: the tree stays where the operator put
+// it and images.lock records its path alongside the digest. That is the
+// bring-your-own contract — which is also why a tree inside the repository is
+// refused rather than quietly relocated. Refs: MGIT-61.15, MGIT-147
+func setRepoGuestBase(cmd *cobra.Command, dir string, opts composeOptions) (ref, baseDir string, err error) {
+	baseDir, err = filepath.Abs(dir)
+	if err != nil {
+		return "", "", fmt.Errorf("base set: %w", err)
+	}
+	hostRoot, err := sandboxHostRoot()
+	if err != nil {
+		return "", "", err
+	}
+	if err := refuseInRepoBaseTree(baseDir, hostRoot); err != nil {
+		return "", "", err
+	}
+	// The signing key stays host-side and never enters a guest (SEC-01). First
+	// run has no trust root, and telling a user to go and make one — after mgit
+	// told them to run THIS command — is guidance that leads into a second
+	// wall. An existing key is reused, never rotated. Refs: MGIT-65, FR-17.38
+	priv, err := images.EnsureSigningKey(cmd.Context(), hostRoot,
+		printTrustRootAuditor{w: cmd.OutOrStdout()})
+	if err != nil {
+		return "", "", fmt.Errorf("base set: %w", err)
+	}
+	if err := validateBaseTree(baseDir); err != nil {
+		return "", "", err
+	}
+	// Inject BEFORE pinning: the digest must cover the binaries we added, or
+	// the pin would describe a tree that never boots.
+	if err := injectGuestBinaries(baseDir, opts.guestBinDir, hostExecutablePath()); err != nil {
+		return "", "", err
+	}
+	entry, err := images.BuildBaseEntry(baseDir)
+	if err != nil {
+		return "", "", fmt.Errorf("base set: %w", err)
+	}
+	ref, err = images.Register(hostRoot, opts.name, entry, priv)
+	if err != nil {
+		return "", "", fmt.Errorf("base set: %w", err)
+	}
+	return ref, baseDir, nil
 }
 
 // validateBaseTree rejects a tree that could not boot, naming what is missing
@@ -136,176 +160,6 @@ func validateBaseTree(baseDir string) error {
 	return nil
 }
 
-// injectGuestBinaries installs mgit-guest and the mgit CLI, built for the
-// guest's platform, into the base tree.
-//
-// They are injected by US rather than taken from the base, for two reasons.
-// mgit-guest MUST be PID 1 — whatever entrypoint a base image declares is
-// irrelevant to us, and an image shipping its own /sbin/mgit-guest must never
-// end up mediating exec, land and the control plane. And the versions must
-// match the host's, or the wire protocol can disagree across the boundary.
-// Injection therefore runs AFTER extraction, overwriting whatever was there.
-//
-// Three sources, in order: the directory the operator named, the linux builds
-// shipped beside this install, and finally a cross-build from source. The
-// middle one is what makes `brew install mgit` sufficient — mgit-guest is
-// guest-only and is never on a host PATH. Refs: MGIT-61.15, FR-17.11
-func injectGuestBinaries(baseDir, guestBinDir, exePath string) error {
-	return injectGuestBinariesWith(baseDir, resolveGuestBinaries(guestBinDir, exePath), buildGuestBinary)
-}
-
-// guestBinarySource is where the linux guest binaries are coming from: a
-// directory to copy them out of, or — when dir is empty — a cross-build from
-// an mgit source checkout. `from` describes it in the terms a user would.
-type guestBinarySource struct {
-	dir  string
-	from string
-}
-
-// resolveGuestBinaries applies the lookup order, which is fixed and is the
-// whole point: what the operator named, then what this install shipped, then
-// a source checkout.
-//
-// The source build is LAST because it is the only one that cannot work on a
-// user's machine — it needs a Go toolchain and the mgit source, and a `brew
-// install` has neither. It is also the fallback that hid two release blockers:
-// tests run from inside the checkout cross-built the binaries on the spot, so
-// nobody noticed the archive-relative lookup finding nothing.
-// Refs: MGIT-65, MGIT-61.15, FR-17.11
-func resolveGuestBinaries(explicitDir, exePath string) guestBinarySource {
-	if explicitDir != "" {
-		return guestBinarySource{dir: explicitDir, from: "--guest-bin-dir " + explicitDir}
-	}
-	if dir := bundledGuestBinDir(exePath); dir != "" {
-		return guestBinarySource{dir: dir, from: "the binaries shipped with this install (" + dir + ")"}
-	}
-	return guestBinarySource{from: "a source checkout (nothing else was available)"}
-}
-
-// injectGuestBinariesWith installs the guest pair from a resolved source,
-// cross-building only when the source names no directory. build is injected so
-// a test can prove the fallback did NOT fire.
-func injectGuestBinariesWith(baseDir string, src guestBinarySource, build func(pkg, out string) error) error {
-	targets := []struct{ name, pkg, dest string }{
-		{name: "mgit-guest", pkg: "./cmd/mgit-guest", dest: filepath.Join("sbin", "mgit-guest")},
-		{name: "mgit", pkg: "./cmd/mgit", dest: filepath.Join("bin", "mgit")},
-	}
-	for _, tgt := range targets {
-		out := filepath.Join(baseDir, tgt.dest)
-		if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
-			return fmt.Errorf("guest base: %w", err)
-		}
-		if src.dir != "" {
-			if err := copyGuestBinary(filepath.Join(src.dir, tgt.name), out); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := build(tgt.pkg, out); err != nil {
-			return fmt.Errorf(
-				"guest base: %w\n\n"+
-					"The guest needs LINUX builds of mgit and mgit-guest. This install "+
-					"ships none beside it (expected a `guest` directory next to the mgit "+
-					"binary), and building them here needs an mgit source checkout and a "+
-					"Go toolchain. Either reinstall from a release archive, or supply "+
-					"them with --guest-bin-dir <dir> containing `mgit` and `mgit-guest` "+
-					"built for linux/%s", err, guestArch())
-		}
-	}
-	return nil
-}
-
-// copyGuestBinary installs an operator-supplied guest binary into the tree,
-// executable. It is the path that works without a Go toolchain or the mgit
-// source — a host install carries neither.
-func copyGuestBinary(src, dst string) error {
-	data, err := os.ReadFile(src) //nolint:gosec // operator-supplied path
-	if err != nil {
-		return fmt.Errorf("base set: read guest binary %s: %w", src, err)
-	}
-	//nolint:gosec // the guest supervisor and CLI must be executable
-	if err := os.WriteFile(dst, data, 0o755); err != nil {
-		return fmt.Errorf("base set: install %s: %w", dst, err)
-	}
-	return nil
-}
-
-// bundledGuestBinDir returns the directory of the guest binaries shipped with
-// this install, or "" when there are none.
-//
-// The release archive lays them out in a guest/ directory beside the host
-// binary. The name carries no architecture because it needs none: libkrun uses
-// hardware virtualization, so the guest architecture always equals the host's,
-// and each archive ships only its own. Refs: MGIT-61.15, MGIT-44
-func bundledGuestBinDir(exePath string) string {
-	if exePath == "" {
-		return ""
-	}
-	// Resolve symlinks first. The ordinary way to put mgit on PATH is to
-	// extract the archive and symlink the binary into /usr/local/bin, and
-	// macOS reports the SYMLINK's path as the executable — so looking beside
-	// it lands in /usr/local/bin, which ships no guest binaries, and the
-	// source fallback then fails on a machine with no Go. Refs: MGIT-65
-	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
-		exePath = resolved
-	}
-	binDir := filepath.Dir(exePath)
-	// Two layouts, in preference order. The archive puts guest/ beside the
-	// binary. Homebrew links binaries into <prefix>/bin and keeps non-PATH
-	// helpers in <prefix>/libexec — a guest/ inside bin/ would be linked onto
-	// PATH, which is precisely where mgit-guest must never be.
-	for _, dir := range []string{
-		filepath.Join(binDir, guestBinSubdir),
-		filepath.Join(binDir, "..", "libexec", guestBinSubdir),
-	} {
-		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
-			if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-				return resolved
-			}
-			return filepath.Clean(dir)
-		}
-	}
-	return ""
-}
-
-// guestBinSubdir is where a release install keeps the linux guest binaries,
-// relative to the host binary. It is a name the archive layout and this
-// lookup must agree on; a packaging test pins both ends. Refs: MGIT-61.15
-const guestBinSubdir = "guest"
-
-// hostExecutablePath is os.Executable with the error folded into the empty
-// string: a host that cannot name its own binary simply has no bundled guest
-// binaries, which the caller already handles.
-func hostExecutablePath() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	return exe
-}
-
-// buildGuestBinary cross-compiles one guest binary from an mgit source
-// checkout — the developer convenience, used when no prebuilt directory was
-// supplied. It fails when run outside the module, which is why the caller
-// turns that into an actionable message.
-func buildGuestBinary(pkg, out string) error {
-	// No context: this is a one-shot developer-convenience build driven by an
-	// interactive command, not a lifecycle the caller owns.
-	//nolint:gosec,noctx // G204: fixed argv; out derives from the operator's own base dir
-	build := exec.Command("go", "build", "-trimpath", "-buildvcs=false",
-		"-ldflags=-s -w -buildid=", "-o", out, pkg)
-	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+guestArch(), "CGO_ENABLED=0")
-	if combined, err := build.CombinedOutput(); err != nil {
-		return fmt.Errorf("build %s for the guest: %w: %s", pkg, err, strings.TrimSpace(string(combined)))
-	}
-	return nil
-}
-
-// guestArch is the Linux architecture the guest runs, which matches the
-// host's: libkrun uses hardware virtualization, so there is no emulation to
-// cross architectures with. Refs: MGIT-61.15
-func guestArch() string { return runtime.GOARCH }
-
 // sandboxBaseFromCmd composes this repo's guest base from an OCI image.
 //
 // The user pulls the image, so mgit redistributes nothing — no kernel, no
@@ -317,9 +171,14 @@ func sandboxBaseFromCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "from <oci-ref>",
 		Short: "Compose this repo's guest base from an OCI image (e.g. debian:12, node:22-slim)",
-		Long: "Pulls a public OCI image, extracts its layers into this repo's guest base,\n" +
-			"injects mgit and mgit-guest, then pins the composed tree by content digest\n" +
-			"and signs it into images.lock.\n\n" +
+		Long: "Pulls a public OCI image, composes its layers into a guest base in this\n" +
+			"machine's base cache, injects mgit and mgit-guest, then pins the composed\n" +
+			"tree by content digest and signs that digest into this repo's images.lock.\n" +
+			"No base bytes are written inside the repository.\n\n" +
+			"The tag is resolved to a digest ONCE and recorded as provenance: a tag can\n" +
+			"point twice, a digest cannot. Re-composing the same tag onto different\n" +
+			"bytes produces a new cache entry and says what changed; it never replaces\n" +
+			"what you had pinned.\n\n" +
 			"The image supplies the Linux userspace your agent's toolchain needs; mgit\n" +
 			"supplies the supervisor and the CLI. Because YOU pull the image, mgit\n" +
 			"redistributes nothing.\n\n" +
@@ -330,80 +189,15 @@ func sandboxBaseFromCmd() *cobra.Command {
 			"the base contains.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ref, err := guestbase.ParseRef(args[0])
+			opts := composeOptions{name: name, guestBinDir: guestBinDir, plainHTTP: plainHTTP}
+			res, err := composeBaseFromImage(cmd, args[0], opts)
 			if err != nil {
 				return err
-			}
-			hostRoot, err := sandboxHostRoot()
-			if err != nil {
-				return err
-			}
-			// First run has no trust root, and telling a user to go and make
-			// one — after mgit told them to run THIS command — is guidance
-			// that leads into a second wall. An existing key is reused, never
-			// rotated. Refs: MGIT-65, FR-17.38
-			priv, err := images.EnsureSigningKey(cmd.Context(), hostRoot,
-				printTrustRootAuditor{w: cmd.OutOrStdout()})
-			if err != nil {
-				return fmt.Errorf("base %s: %w", "from", err)
-			}
-
-			baseDir := filepath.Join(hostRoot, "base")
-			// Start from an empty tree: re-composing must not silently
-			// inherit files from whatever was there before, or the pinned
-			// digest would describe a mixture nobody can reproduce.
-			if err := os.RemoveAll(baseDir); err != nil {
-				return fmt.Errorf("base from: clear %s: %w", baseDir, err)
-			}
-
-			out := cmd.OutOrStdout()
-			resolved, err := guestbase.Pull(cmd.Context(), ref, baseDir, guestbase.PullOptions{
-				PlainHTTP: plainHTTP,
-				Progress:  func(msg string) { _, _ = fmt.Fprintf(out, "  %s\n", msg) },
-			})
-			if err != nil {
-				return err
-			}
-
-			// Images vary in which empty mount points they ship, and this
-			// directory is one WE composed — so creating them is part of
-			// composing, not a reason to reject an otherwise good image.
-			// `base set` refuses instead, because there the tree is the
-			// user's and mgit has no business writing into it.
-			if err := ensureGuestMountDirs(baseDir); err != nil {
-				return err
-			}
-			if err := assertLinuxUserspace(baseDir, resolved); err != nil {
-				return err
-			}
-			if err := validateBaseTree(baseDir); err != nil {
-				return err
-			}
-			if warning := checkLibcCoherence(baseDir); warning != "" {
-				_, _ = fmt.Fprintf(out, "  warning: %s\n", warning)
-			}
-			if err := injectGuestBinaries(baseDir, guestBinDir, hostExecutablePath()); err != nil {
-				return err
-			}
-
-			entry, err := images.BuildBaseEntry(baseDir)
-			if err != nil {
-				return fmt.Errorf("base from: %w", err)
-			}
-			// Provenance: record WHERE it came from alongside WHAT is pinned.
-			// The tree digest is what boot verifies; the OCI reference is how
-			// a human traces it back.
-			entry.Source = resolved.String()
-			pinnedRef, err := images.Register(hostRoot, name, images.Sign(name, entry, priv), priv)
-			if err != nil {
-				return fmt.Errorf("base from: %w", err)
 			}
 			if asJSON {
-				return json.NewEncoder(out).Encode(map[string]string{
-					"image_ref": pinnedRef, "source": resolved.String(),
-				})
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(composeJSON(res))
 			}
-			_, _ = fmt.Fprintf(out, "Registered guest base %s\n  from %s\n", pinnedRef, resolved)
+			reportComposition(cmd.OutOrStdout(), res)
 			return nil
 		},
 	}
@@ -415,6 +209,151 @@ func sandboxBaseFromCmd() *cobra.Command {
 		"talk to the registry over http (local mirrors and tests only)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output the digest-pinned reference as JSON")
 	return cmd
+}
+
+// composeBaseFromImage pulls an OCI image into a private staging tree in the
+// machine-wide cache, finishes it into a bootable guest base, and publishes it
+// under its content digest.
+//
+// NOTHING IS COMPOSED INSIDE THE REPOSITORY. The staging tree lives in the
+// cache so publishing is a rename, and the repository ends up holding a
+// digest and no bytes. Refs: MGIT-147, MGIT-61.15
+func composeBaseFromImage(cmd *cobra.Command, refArg string, opts composeOptions) (composeResult, error) {
+	ref, err := guestbase.ParseRef(refArg)
+	if err != nil {
+		return composeResult{}, err
+	}
+	env, err := openComposeEnv(cmd)
+	if err != nil {
+		return composeResult{}, err
+	}
+
+	staging, err := env.cache.Stage()
+	if err != nil {
+		return composeResult{}, err
+	}
+	published := false
+	defer func() {
+		if !published {
+			_ = env.cache.Discard(staging)
+		}
+	}()
+
+	resolved, err := guestbase.Pull(cmd.Context(), ref, staging, guestbase.PullOptions{
+		PlainHTTP: opts.plainHTTP,
+		Progress:  func(msg string) { _, _ = fmt.Fprintf(env.out, "  %s\n", msg) },
+	})
+	if err != nil {
+		return composeResult{}, err
+	}
+	if err := finishComposedTree(staging, resolved, opts, env.out); err != nil {
+		return composeResult{}, err
+	}
+
+	cached, err := env.cache.Commit(staging, images.TreeDigest)
+	if err != nil {
+		return composeResult{}, err
+	}
+	published = true
+	return registerComposedBase(env.hostRoot, cached, resolved.String(), opts,
+		signWith(env.priv), func() time.Time { return time.Now().UTC() })
+}
+
+// composeEnv is everything a composition needs before it touches a registry:
+// where to register, where to stage, what to sign with, and where to report.
+type composeEnv struct {
+	hostRoot string
+	cache    *basecache.Cache
+	priv     ed25519.PrivateKey
+	out      io.Writer
+}
+
+// openComposeEnv resolves that environment, migrating an older mgit's in-tree
+// base out of the repository on the way. Refs: MGIT-147, MGIT-65, FR-17.38
+func openComposeEnv(cmd *cobra.Command) (composeEnv, error) {
+	hostRoot, err := sandboxHostRoot()
+	if err != nil {
+		return composeEnv{}, err
+	}
+	out := cmd.OutOrStdout()
+	cache, err := openBaseCache()
+	if err != nil {
+		return composeEnv{}, err
+	}
+	// An older mgit left its base inside the repo; take it out before adding
+	// another.
+	if err := migrateInTreeBase(hostRoot, cache, out); err != nil {
+		return composeEnv{}, err
+	}
+	// First run has no trust root, and telling a user to go and make one —
+	// after mgit told them to run THIS command — is guidance that leads into a
+	// second wall. An existing key is reused, never rotated.
+	priv, err := images.EnsureSigningKey(cmd.Context(), hostRoot, printTrustRootAuditor{w: out})
+	if err != nil {
+		return composeEnv{}, fmt.Errorf("base from: %w", err)
+	}
+	return composeEnv{hostRoot: hostRoot, cache: cache, priv: priv, out: out}, nil
+}
+
+// finishComposedTree turns freshly extracted image layers into a bootable
+// guest base: mount points, sanity checks, and our own binaries on top.
+func finishComposedTree(staging string, source fmt.Stringer, opts composeOptions, out io.Writer) error {
+	// Images vary in which empty mount points they ship, and this directory is
+	// one WE composed — so creating them is part of composing, not a reason to
+	// reject an otherwise good image. `base set` refuses instead, because
+	// there the tree is the user's and mgit has no business writing into it.
+	if err := ensureGuestMountDirs(staging); err != nil {
+		return err
+	}
+	if err := assertLinuxUserspace(staging, source); err != nil {
+		return err
+	}
+	if err := validateBaseTree(staging); err != nil {
+		return err
+	}
+	if warning := checkLibcCoherence(staging); warning != "" {
+		_, _ = fmt.Fprintf(out, "  warning: %s\n", warning)
+	}
+	// Inject BEFORE the digest is taken: the pin must cover the binaries we
+	// added, or it would describe a tree that never boots.
+	return injectGuestBinaries(staging, opts.guestBinDir, hostExecutablePath())
+}
+
+// signWith adapts a signing key to the signFunc the compose flow takes.
+func signWith(priv ed25519.PrivateKey) signFunc {
+	return func(hostRoot, name string, entry images.Entry) (string, error) {
+		ref, err := images.Register(hostRoot, name, entry, priv)
+		if err != nil {
+			return "", fmt.Errorf("base %s: %w", name, err)
+		}
+		return ref, nil
+	}
+}
+
+// refuseInRepoBaseTree refuses to pin a base that lives inside the repository.
+//
+// A pinned in-repo tree is the defect MGIT-147 removes, wearing a different
+// hat: hundreds of megabytes that every host test command walking the repo
+// trips over, and bytes that any commit or clean could move under a pin. It
+// is refused rather than copied because `base set` means "use THIS tree", and
+// quietly using a copy somewhere else would make the command a liar.
+// Refs: MGIT-147
+func refuseInRepoBaseTree(baseDir, hostRoot string) error {
+	repoRoot := filepath.Dir(filepath.Dir(hostRoot))
+	// A path Rel cannot express (a different volume) is outside by definition,
+	// so it is folded into the same answer rather than raised.
+	rel, relErr := filepath.Rel(repoRoot, baseDir)
+	outside := relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	if outside {
+		return nil
+	}
+	return fmt.Errorf(
+		"guest base %s is inside the repository %s.\n\n"+
+			"A base is hundreds of megabytes and thousands of files; inside the repo it is "+
+			"walked by every test command that walks your tree (`gofmt -l .`, `go vet ./...`, "+
+			"a linter), and mgit would be breaking your repo's own checks.\n\n"+
+			"Either move the tree outside the repository and re-run this, or let mgit compose "+
+			"and cache one for you:\n  mgit sandbox base from debian:12", baseDir, repoRoot)
 }
 
 // ensureGuestMountDirs creates the empty mount points the in-guest supervisor
@@ -511,11 +450,21 @@ const defaultGuestBaseName = "base"
 // registered base is used automatically, and its ABSENCE fails closed: mgit
 // ships no default base (we redistribute no kernel and no userspace), and
 // guessing one would silently boot something the user never chose.
-// Refs: MGIT-61.15, FR-17.17
-func repoGuestBaseRef() (string, error) {
+// A launch is also where a repository still carrying an in-tree base from an
+// older mgit gets it moved out — the first sandbox command a user runs after
+// upgrading, and the last moment before those bytes matter again.
+// Refs: MGIT-61.15, FR-17.17, MGIT-147
+func repoGuestBaseRef(out io.Writer) (string, error) {
 	hostRoot, err := sandboxHostRoot()
 	if err != nil {
 		return "", err
+	}
+	if cache, cacheErr := openBaseCache(); cacheErr == nil {
+		// Best-effort: a repo that cannot be migrated must still be able to
+		// boot the base it has, which is still resolvable by its pinned path.
+		if migErr := migrateInTreeBase(hostRoot, cache, out); migErr != nil {
+			_, _ = fmt.Fprintf(out, "  warning: %v\n", migErr)
+		}
 	}
 	ref, err := images.PinnedRef(hostRoot, defaultGuestBaseName)
 	if errors.Is(err, images.ErrNoSuchImage) {
