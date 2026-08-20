@@ -216,7 +216,7 @@ func launchWorkSandbox(ctx context.Context, out io.Writer, deps workDeps, opts w
 		// No --image means "this repo's base" — the digest is the base's, not
 		// something the user should ever have to carry between commands.
 		var err error
-		if image, err = repoGuestBaseRef(); err != nil {
+		if image, err = repoGuestBaseRef(out); err != nil {
 			_, _ = fmt.Fprintf(out, "sandbox not launched: %v\n", err)
 			return
 		}

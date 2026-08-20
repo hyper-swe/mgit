@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd/basecache"
 )
 
 // lockFileName is the host-owned image pin file (FR-17.13, FR-17.36).
@@ -66,12 +67,40 @@ type Store struct {
 	hostRoot string
 	clock    func() time.Time
 	trustPub ed25519.PublicKey
+	// baseCache locates a cached guest base by its digest (MGIT-147). It may
+	// be nil — a host that cannot even name its cache directory still serves
+	// every path-pinned image — in which case baseCacheErr says why, and only
+	// a cache-backed base fails.
+	baseCache    BaseLocator
+	baseCacheErr string
 }
 
-// NewStore opens a Store rooted at hostRoot. It requires the trust
-// root (GenerateTrustRoot must have run): without a verification key,
-// no image can be verified, so the store fails closed.
+// NewStore opens a Store rooted at hostRoot, using this machine's default
+// guest-base cache. It requires the trust root (GenerateTrustRoot must have
+// run): without a verification key, no image can be verified, so the store
+// fails closed.
+//
+// A base cache that cannot be LOCATED is not fatal here: the daemon must
+// still start and still serve path-pinned images, and a launch that actually
+// needs the cache then fails naming the reason. Refs: MGIT-147, FR-17.10
 func NewStore(hostRoot string, clock func() time.Time) (*Store, error) {
+	cache, cacheErr := basecache.Open()
+	if cacheErr != nil {
+		store, err := NewStoreWithBaseCache(hostRoot, clock, nil)
+		if err != nil {
+			return nil, err
+		}
+		store.baseCacheErr = cacheErr.Error()
+		return store, nil
+	}
+	return NewStoreWithBaseCache(hostRoot, clock, cache)
+}
+
+// NewStoreWithBaseCache opens a Store against an explicit base locator. A nil
+// locator means "no guest-base cache in this process", which fails closed for
+// a cache-backed base and changes nothing for every other image.
+// Refs: MGIT-147
+func NewStoreWithBaseCache(hostRoot string, clock func() time.Time, cache BaseLocator) (*Store, error) {
 	if hostRoot == "" {
 		return nil, fmt.Errorf("images: host root must not be empty")
 	}
@@ -82,7 +111,13 @@ func NewStore(hostRoot string, clock func() time.Time) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{hostRoot: hostRoot, clock: clock, trustPub: pub}, nil
+	store := &Store{hostRoot: hostRoot, clock: clock, trustPub: pub}
+	if cache != nil {
+		store.baseCache = cache
+	} else {
+		store.baseCacheErr = "no guest-base cache was configured for this process"
+	}
+	return store, nil
 }
 
 // Resolve verifies and locates the image named by a digest-pinned
@@ -117,9 +152,19 @@ func (s *Store) Resolve(imageRef string) (ResolvedImage, error) {
 		return ResolvedImage{}, fmt.Errorf("%w: image %q signature does not verify against the trust root",
 			model.ErrVerificationFailed, name)
 	}
+	// Where the bytes are: as pinned for a rootfs file or a bring-your-own
+	// base directory, or derived from the digest for a cached guest base,
+	// where identity IS the path (MGIT-147).
+	rootfsPath, err := s.locateBase(name, entry)
+	if err != nil {
+		return ResolvedImage{}, err
+	}
 	// The root content must hash to its pinned digest (FR-17.17): a repointed
 	// path is caught here. It may be a rootfs FILE or a guest base DIRECTORY.
-	if err := verifyContentDigest(entry.RootfsPath, entry.Digest); err != nil {
+	// This stays in place for a cached base too — cheaper to reason about,
+	// since a mismatch there can only mean the cache itself was corrupted or
+	// written into, but never skipped.
+	if err := verifyContentDigest(rootfsPath, entry.Digest); err != nil {
 		return ResolvedImage{}, err
 	}
 	// A libkrun guest base carries NO kernel — libkrunfw supplies one — so an
@@ -143,7 +188,7 @@ func (s *Store) Resolve(imageRef string) (ResolvedImage, error) {
 
 	return ResolvedImage{
 		KernelPath: entry.KernelPath,
-		RootfsPath: entry.RootfsPath,
+		RootfsPath: rootfsPath,
 		Cmdline:    entry.Cmdline,
 	}, nil
 }

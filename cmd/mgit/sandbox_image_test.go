@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mgit/internal/sandboxd/basecache"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 )
 
@@ -36,6 +37,10 @@ func newRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".mgit"), 0o700))
+	// A guest base is composed into the MACHINE-WIDE cache (MGIT-147), so a
+	// test that composes one must be pointed at its own cache — never the
+	// developer's real one, which it would otherwise fill and prune.
+	t.Setenv(basecache.EnvRoot, t.TempDir())
 	return dir
 }
 

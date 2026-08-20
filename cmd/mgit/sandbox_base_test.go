@@ -188,11 +188,12 @@ func TestSandboxBaseFrom_ComposesFromAnOCIImage(t *testing.T) {
 	// traced back to the image it came from.
 	assert.Contains(t, out, "acme/base", "the OCI source must be recorded, got %q", out)
 
-	// Real images vary in which empty mount points they ship, and this
-	// directory is one WE composed — so creating them is our job, not a
-	// reason to reject a perfectly good image.
+	// Real images vary in which empty mount points they ship, and the tree
+	// is one WE composed — so creating them is our job, not a reason to
+	// reject a perfectly good image.
+	cached := cachedBaseDir(t, repo)
 	for _, dir := range guestBaseMountDirs {
-		assert.DirExists(t, filepath.Join(repo, ".mgit", "sandbox", "base", dir),
+		assert.DirExists(t, filepath.Join(cached, dir),
 			"base from must create the guest mount point /%s", dir)
 	}
 }
@@ -389,6 +390,21 @@ func fakeMultiArchImageServer(t *testing.T, files map[string]string, arches ...s
 // (kind "") or an index over per-architecture manifests (kind "index").
 func serveImage(t *testing.T, files map[string]string, kind string, arches ...string) (*httptest.Server, string) {
 	t.Helper()
+	content := buildImageContent(t, files, kind, arches...)
+	srv := httptest.NewServer(imageMux(func() imageContent { return content }))
+	return srv, strings.TrimPrefix(srv.URL, "http://") + "/acme/base:v1"
+}
+
+// imageContent is one image's addressable bytes: its blobs, and the manifests
+// reachable by tag ("v1") or by digest.
+type imageContent struct {
+	blobs     map[string][]byte
+	manifests map[string][]byte
+}
+
+// buildImageContent assembles the blobs and manifests for a set of files.
+func buildImageContent(t *testing.T, files map[string]string, kind string, arches ...string) imageContent {
+	t.Helper()
 	blobs := map[string][]byte{}
 	manifests := map[string][]byte{}
 
@@ -451,15 +467,22 @@ func serveImage(t *testing.T, files map[string]string, kind string, arches ...st
 	} else {
 		manifests["v1"] = manifestFor(arches[0])
 	}
+	return imageContent{blobs: blobs, manifests: manifests}
+}
 
+// imageMux serves whatever content the supplied accessor returns at the time
+// of the request — so a test can move a tag onto different bytes mid-flight,
+// which is what an upstream tag move looks like from here. Refs: MGIT-147
+func imageMux(current func() imageContent) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
+		content := current()
 		path := strings.TrimPrefix(r.URL.Path, "/v2/")
 		key := path[strings.LastIndex(path, "/")+1:]
 		if strings.Contains(path, "/manifests/") {
-			doc, ok := manifests[strings.TrimPrefix(key, "sha256:")]
+			doc, ok := content.manifests[strings.TrimPrefix(key, "sha256:")]
 			if !ok {
-				doc, ok = manifests[key]
+				doc, ok = content.manifests[key]
 			}
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
@@ -472,15 +495,14 @@ func serveImage(t *testing.T, files map[string]string, kind string, arches ...st
 			_, _ = w.Write(doc)
 			return
 		}
-		blob, ok := blobs[key]
+		blob, ok := content.blobs[key]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		_, _ = w.Write(blob)
 	})
-	srv := httptest.NewServer(mux)
-	return srv, strings.TrimPrefix(srv.URL, "http://") + "/acme/base:v1"
+	return mux
 }
 
 // TestSandboxBase_WithNoTrustRoot_CreatesOneRatherThanSendingTheUserAway
