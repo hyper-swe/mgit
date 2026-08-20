@@ -102,6 +102,9 @@ var (
 
 	// ErrWorktreeNotFound indicates a worktree does not exist.
 	ErrWorktreeNotFound = errors.New("worktree not found")
+	// ErrSnapshotNotFound is returned when no passive worktree snapshot
+	// matches the given ID. Refs: MGIT-110
+	ErrSnapshotNotFound = errors.New("snapshot not found")
 
 	// ErrWorktreeExists indicates a worktree is already registered at a path.
 	// It is the third of the three FR-16 exclusivity refusals (alongside
