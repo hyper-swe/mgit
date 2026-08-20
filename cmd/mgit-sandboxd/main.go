@@ -210,6 +210,12 @@ func run(args []string, out, logSink io.Writer) int {
 			return 2
 		}
 		dcfg.Service = svc
+		// Passive worktree snapshots (MGIT-110, R-H234). The daemon observes
+		// each supervised task's worktree for quiescence and records the
+		// settled state under its own ref namespace, so an interrupted agent is
+		// recoverable whether or not it checkpointed. It asks nothing of the
+		// agent and writes nothing into the authored trail.
+		dcfg.Watcher = buildSnapshotWatcher(svc, opts.repoRoot, opts.hostRoot, clock, logger)
 		// The same service serves the guest->host artifact export verb: it
 		// resolves task->sandbox, delegates the host-side copy to the backend's
 		// export engine, and records the crossing in the append-only trail. A

@@ -61,6 +61,16 @@ type Config struct {
 	// cadence the client judges silence against — and it is overridable only
 	// so tests can compress it without waiting real seconds. Refs: MGIT-133
 	HeartbeatInterval time.Duration
+	// Watcher performs passive worktree observation on SnapshotInterval, so a
+	// task's work is recoverable whether or not its agent checkpointed. When
+	// nil, no observation runs and the daemon behaves exactly as before.
+	// Refs: MGIT-110, R-H234
+	Watcher WorktreeWatcher
+	// SnapshotInterval is the passive observation cadence. It is deliberately
+	// separate from PollInterval: the idle check is cheap and wants to be
+	// frequent, while an observation walks the worktree and wants not to be.
+	// Zero selects DefaultSnapshotInterval. Refs: MGIT-110
+	SnapshotInterval time.Duration
 	// MaxConns bounds concurrent in-flight connections; beyond it the
 	// daemon rejects fast (accept-then-close) rather than spawning an
 	// unbounded number of goroutines. Refs: MGIT-11.10.8 (security audit)
@@ -176,6 +186,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	ticker := time.NewTicker(d.cfg.PollInterval)
 	defer ticker.Stop()
 
+	// The passive observation cadence, separate from the idle poll above.
+	snapTicker := d.newSnapshotTicker()
+	defer snapTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -202,6 +216,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case <-authed:
 			idleSince = d.cfg.Clock()
 
+		case <-snapTicker.C:
+			d.observeWorktrees(ctx)
+
 		case err := <-acceptDone:
 			// Accept failure (e.g. fd exhaustion) is fatal — but VMs are
 			// NEVER left running unsupervised: drain before exiting.
@@ -224,6 +241,62 @@ func (d *Daemon) Run(ctx context.Context) error {
 				return nil
 			}
 		}
+	}
+}
+
+// WorktreeWatcher performs one passive observation pass over the worktrees
+// this daemon supervises, capturing any that have settled since the last one.
+//
+// It is an interface, and the daemon knows nothing about git: the daemon's job
+// is to provide the CADENCE and to survive whatever the implementation does.
+// Refs: MGIT-110, R-H234
+type WorktreeWatcher interface {
+	Observe(ctx context.Context) error
+}
+
+// DefaultSnapshotInterval is the passive observation cadence. It is long
+// enough that walking a worktree is not a background cost worth noticing, and
+// short enough that an interrupted run loses minutes rather than everything —
+// which is the failure being fixed: thirty minutes of work that survived only
+// as loose files. Refs: MGIT-110, MGIT-109
+const DefaultSnapshotInterval = 90 * time.Second
+
+// newSnapshotTicker returns the observation ticker, or a stopped one when no
+// watcher is wired, so Run's select has a channel that simply never fires.
+func (d *Daemon) newSnapshotTicker() *time.Ticker {
+	interval := d.cfg.SnapshotInterval
+	if interval <= 0 {
+		interval = DefaultSnapshotInterval
+	}
+	t := time.NewTicker(interval)
+	if d.cfg.Watcher == nil {
+		t.Stop()
+	}
+	return t
+}
+
+// observeWorktrees runs one passive observation pass, converting any failure
+// OR PANIC into a log line.
+//
+// Snapshotting is housekeeping; supervising microVMs is not. A watcher that
+// fails must never stop the process holding the VMs, and the panic case is the
+// same law MGIT-107 established for the drain: the daemon is the only thing
+// that can reap those VMs, so it does not get to die over a background chore.
+// Refs: MGIT-110, MGIT-107
+func (d *Daemon) observeWorktrees(ctx context.Context) {
+	if d.cfg.Watcher == nil {
+		return
+	}
+	err := func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic observing worktrees: %v", r)
+			}
+		}()
+		return d.cfg.Watcher.Observe(ctx)
+	}()
+	if err != nil {
+		d.cfg.Logger.Error("sandboxd worktree observation failed", "event", "snapshot_error", "error", err)
 	}
 }
 
