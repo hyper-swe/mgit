@@ -86,7 +86,19 @@ func rollbackCmd() *cobra.Command {
 	}
 
 	bindTaskIDFlag(cmd, &taskID, "Task to rollback (required unless --commit is set)")
-	cmd.Flags().StringVar(&reason, "reason", "", "Reason for rollback")
+	// --reason deliberately gets NO -F counterpart, unlike commit/squash/merge
+	// (MGIT-105, MGIT-106). Those flags carry a message that is recorded as the
+	// commit's message verbatim, so "the bytes you supplied are the bytes on
+	// record" is a contract that can be kept. A reason is not a message: the
+	// service interpolates it into a generated single-line summary,
+	// `[MGIT:<task>] Revert: <reason> (<n> commits)`, so a multi-line reason
+	// would break that line's shape and a byte-identity promise would be a lie.
+	// It also never leaves the store — --to-git exports the SQUASH message, not
+	// a revert's — so the shell exposure that made squash urgent does not apply.
+	// A reason is one clause explaining a backout; it stays short text. If that
+	// ever proves wrong, bindMessageFlags/resolveMessage are one call away.
+	// Refs: FR-8.10, MGIT-106
+	cmd.Flags().StringVar(&reason, "reason", "", "Reason for rollback (short text, recorded in the revert commit's summary line)")
 	cmd.Flags().StringVar(&commitHash, "commit", "", "Rollback by specific commit hash (resolves task ID automatically)")
 	cmd.Flags().StringVar(&toCommit, "to-commit", "", "Alias for --commit")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview without making changes")

@@ -14,13 +14,34 @@ import (
 
 // squashCmd implements mgit squash. Refs: FR-8.11, MGIT-4.2.2
 func squashCmd() *cobra.Command {
-	var taskID, message, toGitOutput string
+	var taskID, message, messageFile, toGitOutput string
 	var dryRun, formatJSON, toGit, toMain, apply bool
 
 	cmd := &cobra.Command{
 		Use:   "squash",
 		Short: "Squash micro-commits for a task",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Long: "Consolidate a task's micro-commits into one commit on its own " +
+			"task/<ID> branch.\n\n" +
+			"The message comes from -m/--message inline, or from --file/-F, which " +
+			"reads it verbatim from a file (or from stdin when the path is -) with " +
+			"no shell involved. The two are mutually exclusive. A message you supply " +
+			"is recorded exactly as given — it is the message a reviewer reads in " +
+			"the user's own git after --to-git, so nothing is appended to it. With " +
+			"no message, mgit generates one summarizing the micro-commits.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Past flag parsing, a failure is a runtime condition, not misuse:
+			// dumping the flag table after it buries the remedy. Refs: MGIT-77
+			cmd.SilenceUsage = true
+
+			// Resolve the message BEFORE the repository is opened or any commit,
+			// branch or patch is written: an unreadable message file must squash
+			// nothing. Refs: MGIT-105, MGIT-106
+			resolved, err := resolveMessage(cmd, "squash", message, messageFile)
+			if err != nil {
+				return err
+			}
+			message = resolved
+
 			if taskID == "" {
 				return fmt.Errorf("--task-id is required")
 			}
@@ -54,22 +75,10 @@ func squashCmd() *cobra.Command {
 				return fmt.Errorf("squash: %w", err)
 			}
 
-			// --to-main: integrate the task's squash into main (FR-7.2 step 5).
-			// The squash lives on its own task branch parented off the task base,
-			// so this fast-forwards main when possible or creates a merge commit
-			// otherwise — main is genuinely advanced, not just checked out.
 			if toMain && !dryRun {
-				if err := app.Branch.SwitchBranch(ctx, "main"); err != nil {
-					return fmt.Errorf("squash --to-main: switch to main: %w", err)
+				if err := promoteSquashToMain(ctx, app, squashed.Branch); err != nil {
+					return err
 				}
-				res, err := app.Merge.Merge(ctx, service.MergeRequest{
-					SourceBranch: squashed.Branch,
-					Strategy:     service.MergeAuto,
-				})
-				if err != nil {
-					return fmt.Errorf("squash --to-main: %w", err)
-				}
-				_, _ = fmt.Fprintf(os.Stdout, "Promoted squash to main (%s): %s\n", res.Status, res.MergedHash)
 			}
 
 			if toGit {
@@ -86,26 +95,14 @@ func squashCmd() *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(squashed)
 			}
 
-			if dryRun {
-				_, _ = fmt.Fprintf(os.Stdout, "[dry-run] Would create squash commit:\n%s\n", squashed.Message)
-			} else {
-				_, _ = fmt.Fprintf(os.Stdout, "[%s] %s\n", squashed.ShortID(), squashed.Message)
-				// Make the resulting branch state unambiguous (MGIT-22): the squash
-				// lands on its own task branch; main is untouched and the originals
-				// are retained until the user promotes (--to-main) or exports
-				// (--to-git). Suppressed when --to-main already promoted it.
-				if !toMain {
-					_, _ = fmt.Fprintf(os.Stdout,
-						"squashed onto %s (main unchanged; --to-main to promote, --to-git to export)\n",
-						squashed.Branch)
-				}
-			}
+			printSquashResult(squashed, dryRun, toMain)
 			return nil
 		},
 	}
 
 	bindTaskIDFlag(cmd, &taskID, "Task to squash (required)")
-	cmd.Flags().StringVar(&message, "message", "", "Custom squash message")
+	bindMessageFlags(cmd, &message, &messageFile, "squash",
+		"Custom squash message (auto-generated from the micro-commits if empty)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview without making changes")
 	cmd.Flags().BoolVar(&formatJSON, "json", false, "Output as JSON")
 	cmd.Flags().BoolVar(&toGit, "to-git", false, "Export squashed commit as git format-patch")
@@ -113,6 +110,44 @@ func squashCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&toMain, "to-main", false, "Fast-forward merge squash commit to main branch")
 	cmd.Flags().BoolVar(&apply, "apply", false, "Alias for --to-git that also writes the patch file")
 	return cmd
+}
+
+// promoteSquashToMain integrates a task's squash into main (FR-7.2 step 5).
+// The squash lives on its own task branch parented off the task base, so this
+// fast-forwards main when possible or creates a merge commit otherwise — main
+// is genuinely advanced, not just checked out. Refs: FR-7.2, MGIT-22
+func promoteSquashToMain(ctx context.Context, app *App, sourceBranch string) error {
+	if err := app.Branch.SwitchBranch(ctx, "main"); err != nil {
+		return fmt.Errorf("squash --to-main: switch to main: %w", err)
+	}
+	res, err := app.Merge.Merge(ctx, service.MergeRequest{
+		SourceBranch: sourceBranch,
+		Strategy:     service.MergeAuto,
+	})
+	if err != nil {
+		return fmt.Errorf("squash --to-main: %w", err)
+	}
+	_, _ = fmt.Fprintf(os.Stdout, "Promoted squash to main (%s): %s\n", res.Status, res.MergedHash)
+	return nil
+}
+
+// printSquashResult reports what the squash did, in the human (non-JSON) form.
+//
+// The trailing note makes the resulting branch state unambiguous (MGIT-22): the
+// squash lands on its own task branch; main is untouched and the originals are
+// retained until the user promotes (--to-main) or exports (--to-git). It is
+// suppressed when --to-main already promoted it. Refs: FR-7, MGIT-22
+func printSquashResult(squashed *model.Commit, dryRun, promoted bool) {
+	if dryRun {
+		_, _ = fmt.Fprintf(os.Stdout, "[dry-run] Would create squash commit:\n%s\n", squashed.Message)
+		return
+	}
+	_, _ = fmt.Fprintf(os.Stdout, "[%s] %s\n", squashed.ShortID(), squashed.Message)
+	if !promoted {
+		_, _ = fmt.Fprintf(os.Stdout,
+			"squashed onto %s (main unchanged; --to-main to promote, --to-git to export)\n",
+			squashed.Branch)
+	}
 }
 
 // squashPatchOptions carries the inputs to --to-git. squashed is the commit

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -38,7 +37,7 @@ func commitCmd() *cobra.Command {
 
 			// Resolve the message BEFORE anything is opened, staged or written:
 			// an unreadable message file must commit nothing. Refs: MGIT-105
-			resolved, err := resolveCommitMessage(cmd, message, messageFile)
+			resolved, err := resolveMessage(cmd, "commit", message, messageFile)
 			if err != nil {
 				return err
 			}
@@ -87,13 +86,8 @@ func commitCmd() *cobra.Command {
 	}
 
 	bindTaskIDFlag(cmd, &taskID, "Task ID (required)")
-	cmd.Flags().StringVar(&message, "message", "", "Commit message (auto-generated if empty)")
-	cmd.Flags().StringVarP(&message, "m", "m", "", "Commit message (shorthand)")
-	// No backticks in this usage string: pflag's UnquoteUsage would read the
-	// backticked span as the flag's value placeholder. Refs: MGIT-105
-	cmd.Flags().StringVarP(&messageFile, "file", "F", "",
-		"Read the commit message verbatim from a file, or from stdin when the path is - "+
-			"(mutually exclusive with -m)")
+	bindMessageFlags(cmd, &message, &messageFile, "commit",
+		"Commit message (auto-generated if empty)")
 	cmd.Flags().StringVar(&agentID, "agent-id", "cli", "Agent ID")
 	cmd.Flags().StringVar(&sessionID, "session-id", "", "Session ID")
 	cmd.Flags().BoolVar(&formatJSON, "json", false, "Output as JSON")
@@ -138,62 +132,6 @@ func resolveCommitTaskID(boundTask, taskID string) (string, error) {
 		return "", errors.New("--task-id is required")
 	}
 	return taskID, nil
-}
-
-// resolveCommitMessage returns the commit message the caller asked to record.
-//
-// -m/--message supplies it inline; --file/-F reads it from a file, or from
-// stdin when the path is "-". A message read from a file is taken as BYTES and
-// recorded verbatim: no trimming, no normalization, no interpretation of the
-// content. Trailing newlines and internal blank lines survive, so the recorded
-// message round-trips byte-identical to the file. That is the point of
-// MGIT-105: a message routed through the shell as -m "$(cat file)" makes the
-// SHELL responsible for the integrity of an audit artifact, and the shell's
-// failure modes are silent truncation and mangling, not a loud refusal.
-// (git-compatible comment stripping would belong behind a -t flag, never here.)
-//
-// Passing both sources is refused naming both flags: silently preferring one
-// would let the caller believe it recorded one thing while the record said
-// another — the same defect class. An empty file is refused for that reason
-// too, because the service would substitute an auto-generated message for the
-// one the caller supplied.
-// Refs: FR-2.9, FR-8.3, MGIT-105
-func resolveCommitMessage(cmd *cobra.Command, inline, path string) (string, error) {
-	if !cmd.Flags().Changed("file") {
-		return inline, nil
-	}
-	if cmd.Flags().Changed("message") || cmd.Flags().Changed("m") {
-		return "", errors.New("--message/-m and --file/-F are mutually exclusive: " +
-			"pass the commit message inline or from a file, not both")
-	}
-	data, err := readCommitMessageFile(cmd, path)
-	if err != nil {
-		return "", err
-	}
-	if len(data) == 0 {
-		return "", fmt.Errorf("--file %s: the commit message is empty — "+
-			"refusing to record an auto-generated message in its place", path)
-	}
-	return string(data), nil
-}
-
-// readCommitMessageFile reads a commit message as raw bytes from path, or from
-// the command's stdin when path is "-". Stdin is the path a programmatic
-// caller uses to avoid a temp file entirely. Any read failure is returned
-// before the repository is touched, so nothing is committed. Refs: FR-2.9, MGIT-105
-func readCommitMessageFile(cmd *cobra.Command, path string) ([]byte, error) {
-	if path == "-" {
-		data, err := io.ReadAll(cmd.InOrStdin())
-		if err != nil {
-			return nil, fmt.Errorf("--file -: read commit message from stdin: %w", err)
-		}
-		return data, nil
-	}
-	data, err := os.ReadFile(path) //nolint:gosec // user-supplied message file path
-	if err != nil {
-		return nil, fmt.Errorf("--file: read commit message from %s: %w", path, err)
-	}
-	return data, nil
 }
 
 // commitError turns a service error into the message a human or agent acts on.
