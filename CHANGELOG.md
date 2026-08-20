@@ -5,6 +5,67 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-08-20
+
+**The in-tree era ends.** A guest base no longer lives inside your repository.
+
+Provisioning used to unpack the base into the repo's own `.mgit/` tree — 175 MB
+and 5,240 files here, 906 MB in a consumer's repo — where any command that walks
+the tree found it. Their `gofmt -l .` red-lit on hundreds of files that were
+mgit's artifact, not theirs. A containment tool that breaks the host
+repository's own test command fails at the worst possible moment: the first
+thing a newly-sandboxed lane runs.
+
+It was also **mutable**, which is the worse half and the one nobody reported:
+recomposing in one worktree silently invalidated the pinned digest for every
+other worktree on the machine.
+
+Now there is one base per **digest**, machine-wide, outside every repository,
+immutable by construction. A repo stores a reference and no bytes. Drift is
+impossible rather than detected. Tags are recorded as provenance, never as
+identity — a base digest was observed changing under an unchanged tag, and a
+digest is what makes that ambiguity unable to matter.
+
+A missing cache entry **fails closed** rather than silently refetching. A
+recompose is not guaranteed to reproduce the pinned digest, because the composed
+tree includes the guest binaries the running mgit build injects; an automatic
+refetch could only fail the same check, or tempt someone into accepting
+different bytes under an old pin.
+
+### Containment: what is enforced, and what is advised
+
+The agent-facing instructions used to tell every agent family that its commands
+run inside a hardware-isolated microVM and "they are contained". That holds for
+**Claude Code**, whose every tool call is routed into the guest by a harness
+hook it cannot bypass. It does **not** hold for Codex, Cursor, or the generic
+adapter, whose only routing mechanism is a PATH shim — and a PATH shim is
+advice. Any process can reset PATH or call an absolute path, after which the
+command runs on the host, uncontained, with no warning. Measured, not inferred.
+
+The instructions now state that split for the family reading them, and hand over
+a check rather than asking for trust:
+
+```
+hostname; whoami        # in the guest: a container name, and root
+                        # on the host: your machine, and your user
+```
+
+**Enforcement for those families is not in this release.** Until it lands, treat
+sandbox execution as enforced for Claude Code and advisory for every other
+family. The wording is corrected now rather than when the mechanism arrives,
+because a containment guarantee with nothing behind it is believed by the
+operator as readily as by the agent — and the more precise the prose, the more
+readily. This block had recently been made *more* detailed and convincing, which
+made it more wrong for most of its readers, not less.
+
+### Also
+
+Every third-party fetch in CI is now guarded — bounded retry, a per-step
+timeout, and a precondition restore between attempts so a retry is a fresh
+attempt rather than the same one repeated against a half-written artifact. The
+exception list is a script that fails on an unguarded fetch, not a document that
+asks to be kept current.
+
 ## [0.6.1] - 2026-08-20
 
 > **0.6.0 was tagged and never published, and is superseded by this release.**
@@ -339,7 +400,7 @@ A content-addressed machine-wide cache is the fix and is next.
 
 ## [0.5.0] - 2026-08-15
 
-> **Update:** the known limitation below (MGIT-112) is FIXED in [Unreleased].
+> **Update:** the known limitation below (MGIT-112) is FIXED in 0.6.1.
 
 The containment-integrity release. Everything below came from USING mgit — a
 consumer's agent walk, an interrupted recovery, and our own dogfooding — rather
