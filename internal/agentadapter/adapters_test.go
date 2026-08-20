@@ -86,10 +86,17 @@ func TestAdapter_GenericPathShimRoutes(t *testing.T) {
 	assertShimRoutes(t, ShimDir(wt), logPath, "make")
 }
 
-// TestAdapter_CooperativeNotice verifies every generated directive states
-// the adapters are cooperative and that the hard guarantee is the land
-// attestation gate. Refs: MGIT-11.11.3
-func TestAdapter_CooperativeNotice(t *testing.T) {
+// TestAdapter_LandGateNoticeInEveryDirective verifies every generated
+// directive names the host-anchored backstop, whatever its routing tier.
+//
+// It used to assert every directive said "cooperative". That is no longer true
+// and must not be asserted: Codex and Cursor now carry harness hooks (MGIT-149),
+// so telling those agents their routing is cooperative would understate a
+// guarantee mgit does provide — and would invite an agent to hand-prefix
+// commands the harness already routes. The word "cooperative" is now pinned to
+// the lane that is actually cooperative, below.
+// Refs: MGIT-11.11.3, MGIT-149
+func TestAdapter_LandGateNoticeInEveryDirective(t *testing.T) {
 	wt := t.TempDir()
 	bin, _ := fakeMgit(t)
 	require.NoError(t, WriteCodexAdapter(wt, bin, SandboxEnv{}))
@@ -102,10 +109,29 @@ func TestAdapter_CooperativeNotice(t *testing.T) {
 		b, err := os.ReadFile(p) //nolint:gosec // test-owned temp path
 		require.NoError(t, err)
 		body := strings.ToLower(string(b))
-		assert.Contains(t, body, "cooperative", "%s states cooperative-not-enforced", p)
 		assert.Contains(t, body, "require_sandbox", "%s names the enforced backstop", p)
 		assert.Contains(t, body, "land", "%s explains the land block", p)
 	}
+}
+
+// The generic/.envrc lane has no harness hook and never will — an unknown
+// harness is unknown. Its directive is where "cooperative" belongs, and it must
+// stay there. Refs: MGIT-149
+func TestAdapter_GenericLaneStillStatesItIsCooperative(t *testing.T) {
+	wt := t.TempDir()
+	bin, _ := fakeMgit(t)
+	require.NoError(t, WriteGenericAdapter(wt, bin))
+
+	generic, ok := LookupFamily("generic")
+	require.True(t, ok)
+	body := strings.ToLower(routingNarrative(ShimDir(wt), generic))
+	assert.Contains(t, body, "cooperative")
+	assert.Contains(t, body, "require_sandbox")
+
+	envrc, err := os.ReadFile(filepath.Join(wt, ".envrc")) //nolint:gosec // test-owned temp path
+	require.NoError(t, err)
+	assert.Contains(t, strings.ToLower(string(envrc)), "cooperative",
+		".envrc must keep saying what it is")
 }
 
 // TestAdapter_BypassBlockedAtLandWithoutAttestation verifies the hard
@@ -234,9 +260,16 @@ func TestRenderCodexDirective_CarriesTheSamePostureAsClaudeMd(t *testing.T) {
 //
 // This asserts the claim matches the mechanism for THIS family, and that the
 // reader is given a way to check rather than asked to trust.
+//
+// MGIT-149 UPDATE: Codex and Cursor have since gained harness hooks and are no
+// longer advisory, so this pin now targets the family that remains advisory —
+// an unknown harness, which by definition has no hook mgit can install. The
+// wording it guards is the wording that lane still gets.
 // Refs: MGIT-149, R-H299
 func TestRoutingNarrative_DoesNotClaimContainmentItCannotEnforce(t *testing.T) {
-	text := routingNarrative("/tmp/wt/.mgit/shims")
+	generic, ok := LookupFamily("generic")
+	require.True(t, ok)
+	text := routingNarrative("/tmp/wt/.mgit/shims", generic)
 
 	assert.Contains(t, text, "COOPERATIVE, not enforced",
 		"the advisory family is told its routing is a guarantee")
