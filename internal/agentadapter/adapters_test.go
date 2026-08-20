@@ -216,3 +216,37 @@ func TestRenderCodexDirective_CarriesTheSamePostureAsClaudeMd(t *testing.T) {
 	assert.Contains(t, agents, claudeMdBeginMarker)
 	assert.Contains(t, agents, claudeMdEndMarker)
 }
+
+// TestRoutingNarrative_DoesNotClaimContainmentItCannotEnforce pins R-H299's
+// copy correction, which shipped AHEAD of the enforcement work it describes.
+//
+// For Codex, Cursor and generic adapters the only routing mechanism is a PATH
+// shim, and a PATH shim is advice: any process can reset PATH or call an
+// absolute path, after which the command runs on the host. Measured on a live
+// worktree, exactly that executed as the host user and wrote to the host
+// filesystem, silently and without refusal (MGIT-149).
+//
+// The old wording opened "Your shell commands run inside a hardware-isolated
+// microVM ... they are contained" — a guarantee with no mechanism behind it,
+// which is the decorative-declaration class at its most dangerous: the agent
+// believes it is contained, the operator believes it is contained, and
+// untrusted code runs on the host.
+//
+// This asserts the claim matches the mechanism for THIS family, and that the
+// reader is given a way to check rather than asked to trust.
+// Refs: MGIT-149, R-H299
+func TestRoutingNarrative_DoesNotClaimContainmentItCannotEnforce(t *testing.T) {
+	text := routingNarrative("/tmp/wt/.mgit/shims")
+
+	assert.Contains(t, text, "COOPERATIVE, not enforced",
+		"the advisory family is told its routing is a guarantee")
+	assert.Contains(t, text, "on the host, uncontained, with no warning",
+		"the consequence of not following the instruction is not stated")
+	assert.Contains(t, text, "hostname; whoami",
+		"the reader is asked to trust the claim with no way to verify it")
+
+	// The specific sentence the old copy led with. Its absence is the fix.
+	assert.NotContains(t, text, "Your shell commands run inside a hardware-isolated",
+		"the unconditional containment guarantee is back, for a family that has "+
+			"no mechanism to enforce it")
+}

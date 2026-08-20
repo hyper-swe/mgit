@@ -27,10 +27,34 @@ func cooperativeNotice() string {
 // routingNarrative is the shared body describing the sandbox + shim to an
 // agent, reused across harness directive formats. Refs: MGIT-11.11.3
 func routingNarrative(shimDir string) string {
-	return "Your shell commands run inside a hardware-isolated **microVM** sandbox bound to " +
-		"this task's worktree, not on the host. They are routed automatically by a PATH shim " +
-		"at `" + shimDir + "` (prepend it to PATH). Run build, install, and test commands " +
-		"freely **without asking for approval** — they are contained.\n\n" +
+	// SAYS WHAT IS TRUE FOR *THIS* FAMILY, WHICH IS NOT WHAT IS TRUE FOR CLAUDE.
+	// This narrative is read by Codex, Cursor and generic adapters, whose only
+	// routing mechanism is the PATH shim below. A PATH shim is ADVICE: any
+	// process can reset PATH or invoke an absolute path, and the command then
+	// runs on the host. Measured on a live worktree, a command run with the shim
+	// directory absent from PATH executed as the host user, on the host, and
+	// wrote to the host filesystem -- silently, with no refusal.
+	//
+	// The previous wording opened "Your shell commands run inside a
+	// hardware-isolated microVM ... they are contained", which is a GUARANTEE.
+	// Stating a containment guarantee that has no mechanism behind it is the
+	// most dangerous member of the decorative-declaration class: the agent
+	// believes it is contained, the operator believes it is contained, and
+	// untrusted code runs on the host. Enforcement for these families is
+	// MGIT-149; this text stops overstating today, ahead of that work.
+	// Refs: MGIT-149, FEAT-3.71, R-H299
+	return "This task has a hardware-isolated **microVM** sandbox bound to its worktree, and a " +
+		"PATH shim at `" + shimDir + "` that routes commands into it.\n\n" +
+		"**Routing here is COOPERATIVE, not enforced.** Prepend that directory to PATH and your " +
+		"commands run in the guest; if you do not, or you invoke a binary by absolute path, your " +
+		"command runs **on the host, uncontained, with no warning**. Claude Code is routed per " +
+		"tool-call by a harness hook and cannot miss it; this agent family has no such hook, so " +
+		"the guarantee is only as good as this instruction being followed.\n\n" +
+		"Verify at any time — inside the guest this prints a container hostname and `root`, on " +
+		"the host it prints your own machine and user:\n\n" +
+		"```\nhostname; whoami\n```\n\n" +
+		"With the shim on PATH, run build, install and test commands freely **without asking for " +
+		"approval** — those are contained.\n\n" +
 		cooperativeNotice()
 }
 
