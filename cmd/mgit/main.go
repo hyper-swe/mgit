@@ -70,6 +70,7 @@ func rootCmd() *cobra.Command {
 		hostOnly(worktreeCmd()),
 		hostOnly(workCmd()),
 		diffCmd(),
+		snapshotCmd(),
 		hostOnly(sandboxCmd()),
 		hostOnly(serveCmd()),
 		hostOnly(runCmd()),
