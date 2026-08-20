@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -36,6 +37,15 @@ type workOptions struct {
 	Image         string   // --image: digest-pinned image (sandbox leg only)
 	Network       string   // --network: none | allowlist | open
 	Allow         []string // --allow: allowlist entries (allowlist mode)
+	// Agent declares WHICH harness will work in this worktree, so provisioning
+	// can state that family's routing tier as a single verdict instead of a
+	// matrix the operator has to interpret. Empty means "unknown — report all".
+	// Refs: MGIT-149
+	Agent string
+	// RequireRouting turns the advisory verdict from a warning into a refusal,
+	// for an operator who needs containment to be a guarantee rather than an
+	// instruction. Off by default: see workRoutingVerdict. Refs: MGIT-149
+	RequireRouting bool
 	// Resources are the per-sandbox caps this task's guest is launched with
 	// (--cpus/--memory-mb/--disk-quota-mb; zero = host policy default). They
 	// belong here and not only on `sandbox launch` because `work --sandbox`
@@ -101,6 +111,10 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	cmd.Flags().StringVar(&opts.Image, "image", "", "digest-pinned image <name>@sha256:<hex>; defaults to this repo's registered guest base")
 	cmd.Flags().StringVar(&opts.Network, "network", model.NetworkModeNone, "sandbox network mode: none | allowlist | open")
 	cmd.Flags().StringArrayVar(&opts.Allow, "allow", nil, "allowlist entry (repeatable; allowlist mode only)")
+	cmd.Flags().StringVar(&opts.Agent, "agent", "",
+		"agent family that will work here ("+strings.Join(agentadapter.FamilyIDs(), " | ")+"); reports that family's routing tier")
+	cmd.Flags().BoolVar(&opts.RequireRouting, "require-routing", false,
+		"refuse to provision if the --agent family's commands cannot be kept off the host")
 	bindResourceFlags(cmd, &opts.Resources)
 }
 
@@ -142,6 +156,13 @@ func runWork(ctx context.Context, app *App, opts workOptions) error {
 // returned WorktreeInfo is the created worktree; an error is returned only
 // when the worktree itself could not be provisioned. Refs: MGIT-34, FR-16
 func workSetup(ctx context.Context, out io.Writer, deps workDeps, opts workOptions) (*model.WorktreeInfo, error) {
+	// Routing flags are validated BEFORE anything is created: a refusal that
+	// leaves a half-provisioned worktree behind is worse than no refusal.
+	// Refs: MGIT-149
+	fam, err := resolveRoutingFamily(opts)
+	if err != nil {
+		return nil, err
+	}
 	wt, err := deps.addWorktree(ctx, model.WorktreeAddOptions{
 		Path: opts.Path, TaskID: opts.TaskID, AgentID: opts.AgentID, Branch: opts.Branch, Base: opts.Base,
 	})
@@ -172,6 +193,13 @@ func workSetup(ctx context.Context, out io.Writer, deps workDeps, opts workOptio
 	}
 	// One machine-parseable line stating containment status (MGIT-47).
 	_, _ = fmt.Fprintln(out, agentadapter.ContainmentStatusLine(posture))
+
+	// Containment status describes the GUEST. It says nothing about whether a
+	// given agent can step around it, and printing it alone is what let an
+	// advisory lane read exactly like an enforced one. Refs: MGIT-149
+	if contained {
+		reportRouting(out, fam, opts.Agent)
+	}
 
 	if opts.LaunchSandbox {
 		launchWorkSandbox(ctx, out, deps, opts, wt)
