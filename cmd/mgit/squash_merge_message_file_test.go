@@ -445,3 +445,62 @@ func TestSquash_MessageFile_GitAm_RecordsTheCallersSubject(t *testing.T) {
 		messageDigest(collapseBlankRuns(landed)),
 		"digest of the landed message must equal the digest of the file")
 }
+
+// TestSquash_CallerMessage_ProvenanceRidesBelowTheSeparator pins BOTH halves of
+// the trade this placement dissolves, in one test, because either half alone is
+// a defect that looks like a success.
+//
+//	half 1  the caller's bytes reach the user's real git UNCHANGED
+//	half 2  the reviewer reading that patch still sees what was collapsed
+//
+// Half 1 alone is MGIT-106 as first written: byte-identical, and a single opaque
+// patch with no record that two micro-commits went into it — the opposite of a
+// receipt for the exact audience this product exists for. Half 2 alone is the
+// defect MGIT-106 closed: a summary appended to a message someone else wrote,
+// making the record say something the caller did not.
+//
+// Git's `---` separator is what makes both true at once: everything between it
+// and the first `diff --git` is discarded by `git am` and read by a human. So
+// this asserts the provenance IS in the patch bytes and IS NOT in the message
+// bytes — the same fact from both sides. Refs: MGIT-106, FR-7
+func TestSquash_CallerMessage_ProvenanceRidesBelowTheSeparator(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, runCLI(t, "init"))
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a\n"), 0o600))
+	require.NoError(t, runCLI(t, "commit", "-a", "--task-id", "PROV-1", "-m", "step one"))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.txt"), []byte("b\n"), 0o600))
+	require.NoError(t, runCLI(t, "commit", "-a", "--task-id", "PROV-1", "-m", "step two"))
+
+	msg := "my own message\n\nwith `backticks` and $(echo x)\n"
+	msgPath := filepath.Join(dir, "msg.txt")
+	require.NoError(t, os.WriteFile(msgPath, []byte(msg), 0o600))
+
+	out := filepath.Join(dir, "out.patch")
+	require.NoError(t, runCLI(t, "squash", "--task-id", "PROV-1", "-F", msgPath,
+		"--to-git", "--to-git-output", out))
+	patch, err := os.ReadFile(out) //nolint:gosec // test-controlled path, same as the sibling assertions in this file
+	require.NoError(t, err)
+	text := string(patch)
+
+	// The separator is the seam the whole design rests on.
+	sep := strings.Index(text, "\n---\n")
+	require.Positive(t, sep, "the patch has no --- separator, so nothing can ride below it")
+	above, below := text[:sep], text[sep:]
+
+	// HALF 2: provenance is present, and present BELOW the separator.
+	assert.Contains(t, below, "Squashed from 2 micro-commits:",
+		"a reviewer reading this patch in their own git cannot tell it collapsed anything")
+	assert.Contains(t, below, "step one")
+	assert.Contains(t, below, "step two")
+
+	// HALF 1: and none of it is in the message region, so `git am` records only
+	// what the caller wrote. Asserted as a negative on the region above the
+	// separator, which is the part git keeps.
+	assert.NotContains(t, above, "Squashed from",
+		"provenance leaked into the message region: git am would record bytes the caller never wrote")
+	assert.NotContains(t, above, "step one")
+	assert.Contains(t, above, "with `backticks` and $(echo x)",
+		"the caller's own body must still be in the message region")
+}

@@ -66,21 +66,23 @@ func (s *SquashService) SquashTask(ctx context.Context, req SquashRequest) (*mod
 	if req.DryRun {
 		// Return what would be created without making changes.
 		return &model.Commit{
-			TaskID:     taskID,
-			Message:    plan.message,
-			FileDiffs:  plan.diffs,
-			CommitType: model.CommitTypeSquash,
+			TaskID:       taskID,
+			Message:      plan.message,
+			SquashedFrom: plan.provenance,
+			FileDiffs:    plan.diffs,
+			CommitType:   model.CommitTypeSquash,
 		}, nil
 	}
 
 	squashCommit := &model.Commit{
-		TaskID:     taskID,
-		AgentID:    "mgit-squash",
-		Message:    plan.message,
-		FileDiffs:  plan.diffs,
-		CommitType: model.CommitTypeSquash,
-		CreatedBy:  "mgit-squash",
-		Branch:     "task/" + req.TaskID,
+		TaskID:       taskID,
+		AgentID:      "mgit-squash",
+		Message:      plan.message,
+		SquashedFrom: plan.provenance,
+		FileDiffs:    plan.diffs,
+		CommitType:   model.CommitTypeSquash,
+		CreatedBy:    "mgit-squash",
+		Branch:       "task/" + req.TaskID,
 	}
 
 	// The squash captures only this task's net changes on a dedicated task
@@ -124,6 +126,9 @@ type squashPlan struct {
 	diffs   []model.FileDiff
 	base    string
 	message string
+	// provenance is the micro-commit list. It rides BELOW the `---` separator
+	// rather than in message, so a caller's bytes stay their own. Refs: MGIT-106
+	provenance []string
 }
 
 // planSquash gathers a task's commits, merges their diffs, verifies the pinned
@@ -173,6 +178,7 @@ func (s *SquashService) planSquash(ctx context.Context, req SquashRequest) (*squ
 	// user's real git via --to-git, so `squash -F file` must land those bytes
 	// and no others. The summary is provenance for the message mgit generates
 	// itself, where nothing was supplied to contradict. Refs: FR-7, MGIT-106
+	plan.provenance = summaries
 	if req.Message != "" {
 		plan.message = req.Message
 		return plan, nil
@@ -287,6 +293,20 @@ func (s *SquashService) mboxHeader(c *model.Commit) string {
 		b.WriteString("\n")
 	}
 	b.WriteString("---\n")
+	// Provenance rides BELOW the separator, which is git's own seam: `git am`
+	// and `git apply` discard everything between `---` and the first `diff
+	// --git`, so these lines never enter the recorded commit message, while a
+	// human reading the patch still sees what the squash absorbed. That is what
+	// lets a caller-supplied message stay byte-identical (MGIT-106) WITHOUT
+	// costing the reviewer in their own git the record of what was collapsed --
+	// a single opaque patch is the opposite of a receipt. Refs: FR-7, MGIT-106
+	if len(c.SquashedFrom) > 0 {
+		fmt.Fprintf(&b, "Squashed from %d micro-commits:\n", len(c.SquashedFrom))
+		for _, line := range c.SquashedFrom {
+			fmt.Fprintf(&b, "%s\n", line)
+		}
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 

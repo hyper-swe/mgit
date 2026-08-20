@@ -48,6 +48,14 @@ type Commit struct {
 	Message   string     `json:"message"`              // Commit message with [MGIT:TASK_ID] prefix
 	FileDiffs []FileDiff `json:"file_diffs,omitempty"` // Array of file changes
 
+	// SquashedFrom lists the micro-commits a squash absorbed, one line each.
+	// It is NOT part of Message and never is: a caller-supplied squash message
+	// is recorded verbatim (MGIT-106), so this provenance rides in the patch
+	// BELOW git's `---` separator, where `git am` discards it and a human
+	// reading the patch still sees it. Empty for an ordinary commit.
+	// Refs: FR-7, MGIT-106
+	SquashedFrom []string `json:"squashed_from,omitempty"`
+
 	// Time
 	CreatedAt time.Time `json:"created_at"` // Creation timestamp (ISO-8601 UTC)
 
