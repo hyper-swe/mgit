@@ -46,7 +46,19 @@ func TestSurvey_ThisRepositoryRealBranches_RefusesOnlyKnownIncidents(t *testing.
 	if err != nil {
 		t.Skipf("survey unavailable in this checkout (shallow clone?): %v", err)
 	}
-	require.NotEmpty(t, results, "a real checkout has branches to survey")
+	// An EMPTY corpus is a property of the clone, not a failure of the rule.
+	// `actions/checkout` fetches a single ref by default, so CI runs this in a
+	// checkout with no local branches and no remote-tracking refs to survey --
+	// which made this test red on main while passing on every developer
+	// machine. The invariant below ("nothing refused that has not recorded
+	// why") is vacuously true over zero branches, so asserting a non-empty
+	// corpus asserted the ENVIRONMENT rather than the rule. Skip loudly instead,
+	// so a CI run cannot read as evidence the corpus was checked.
+	// Refs: MGIT-142
+	if len(results) == 0 {
+		t.Skip("no branches to survey in this checkout (a single-ref CI clone); " +
+			"the corpus invariant is unverified here, not satisfied here")
+	}
 
 	for _, res := range results {
 		if res.Clean() || res.Overridden() {
