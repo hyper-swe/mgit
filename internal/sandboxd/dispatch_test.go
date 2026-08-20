@@ -38,14 +38,31 @@ type fakeDispatcher struct {
 
 	execResult *model.ExecResult
 	listResult []model.SandboxInfo
+	listErr    error
 	syncReport *model.WorktreeSyncReport
 	syncErr    error
 	opErr      error
 	panicOn    string // "register" | "exec" | "list" | "remove" | "status" | "sync"
 }
 
+// maybePanic injects ONE panic for the named op and then disarms itself.
+//
+// It used to panic on every call, which made the injected fault outlive the
+// request under test and fire again during the shutdown drain — where, since
+// MGIT-107, the daemon calls this same service. A permanently-panicking fake
+// tests something no real service does. One shot is what these tests mean:
+// "a handler panicked once; did the daemon survive it?"
+//
+// Disarming happens under the mutex because the daemon reads it from its own
+// goroutine while the test writes. Refs: MGIT-107, MGIT-11.10.8
 func (f *fakeDispatcher) maybePanic(op string) {
-	if f.panicOn == op {
+	f.mu.Lock()
+	armed := f.panicOn == op
+	if armed {
+		f.panicOn = ""
+	}
+	f.mu.Unlock()
+	if armed {
 		panic("induced handler panic in " + op)
 	}
 }
@@ -75,10 +92,18 @@ func (f *fakeDispatcher) Exec(_ context.Context, taskID string, req model.ExecRe
 	return f.execResult, nil
 }
 
+// List honors a DEDICATED listErr rather than the blanket opErr.
+//
+// Shutdown drains through the service now (MGIT-107), and drain begins by
+// listing. A blanket opErr therefore made every "this op returns an error"
+// test also fail its own shutdown, for a reason unrelated to what it was
+// testing. A targeted fault is what these tests meant in the first place;
+// TestDaemonDrain_ServiceListFailure_IsSurfaced covers the drain-list failure
+// deliberately. Refs: MGIT-107
 func (f *fakeDispatcher) List(_ context.Context) ([]model.SandboxInfo, error) {
 	f.maybePanic("list")
-	if f.opErr != nil {
-		return nil, f.opErr
+	if f.listErr != nil {
+		return nil, f.listErr
 	}
 	return f.listResult, nil
 }

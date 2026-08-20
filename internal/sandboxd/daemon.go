@@ -377,6 +377,86 @@ func (d *Daemon) hasSandboxes(ctx context.Context) (bool, error) {
 // FR-17.19). Errors are logged and the drain continues — one stuck
 // sandbox must not strand the rest.
 func (d *Daemon) drain(ctx context.Context) error {
+	if d.cfg.Service != nil {
+		return d.drainViaService(ctx)
+	}
+	return d.drainViaManager(ctx)
+}
+
+// drainViaService tears each sandbox down through the SERVICE, which is the
+// layer that owns teardown semantics: it revokes capability grants, stops
+// egress and published ports, stops and removes the VM, appends the terminal
+// `destroyed` event, and drops the durable row last.
+//
+// It used to call the backend manager directly, and the terminal event lives
+// one layer above the manager — so an orderly shutdown wrote no terminal event
+// at all, and the NEXT daemon found a registration it could not verify and
+// stamped it `killed / unsupervised`. That is the record a daemon CRASH is
+// meant to produce. Since the daemon's own idle exit takes this path, the
+// common case was manufacturing crash records for sandboxes that were torn
+// down deliberately — diluting the signal a real crash should carry.
+//
+// The event is deliberately NOT written here as well. A second writer of the
+// same terminal event is exactly how the two paths drifted apart. Refs: MGIT-107, MGIT-102, FR-17.19
+func (d *Daemon) drainViaService(ctx context.Context) error {
+	sandboxes, err := d.listForDrain(ctx)
+	if err != nil {
+		return fmt.Errorf("sandboxd drain: %w", err)
+	}
+	for _, sb := range sandboxes {
+		// force: a shutdown cannot wait on a guest to exit gracefully.
+		// Best-effort per sandbox — one that cannot be torn down must not
+		// strand the rest, and it must not be recorded as cleanly destroyed
+		// either: the service withholds the terminal event when the stop
+		// fails, so the honest unsupervised record is what that one gets.
+		if err := d.teardownForDrain(ctx, sb.TaskID); err != nil {
+			d.cfg.Logger.Error("sandboxd drain teardown failed", "event", "drain_error",
+				"sandbox_id", sb.ID, "task_id", sb.TaskID, "error", err)
+			continue
+		}
+		d.cfg.Logger.Info("sandboxd drained sandbox", "event", "drained",
+			"sandbox_id", sb.ID, "task_id", sb.TaskID)
+	}
+	return nil
+}
+
+// listForDrain and teardownForDrain call the service with a panic recovered
+// into an error.
+//
+// The request-handling path already recovers per connection; the drain path
+// did not, so a panic in one teardown killed the process MID-SHUTDOWN and
+// every sandbox after it in the list was left running — orphaned VMs, the
+// exact failure the lifeline and Pdeathsig work exists to prevent. Shutdown is
+// the worst moment to lose the loop: there is no later pass. Refs: MGIT-107, FR-17.19
+func (d *Daemon) listForDrain(ctx context.Context) (sandboxes []model.SandboxInfo, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic listing sandboxes to drain: %v", r)
+		}
+	}()
+	return d.cfg.Service.List(ctx)
+}
+
+// teardownForDrain removes one sandbox through the service, converting a panic
+// into an error so the loop continues to the next one. Refs: MGIT-107
+func (d *Daemon) teardownForDrain(ctx context.Context, taskID string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic tearing down task %q: %v", taskID, r)
+		}
+	}()
+	// force: a shutdown cannot wait on a guest to exit gracefully.
+	return d.cfg.Service.Remove(ctx, taskID, true)
+}
+
+// drainViaManager is the fallback for a daemon built without a wired service
+// (backend-only: it greets and supervises but serves no operations —
+// MGIT-11.10.8). Such a daemon still must not leave VMs running at shutdown,
+// so it stops them through the backend. It cannot write a terminal event,
+// because the layer that writes one is precisely what it does not have; that
+// is stated in the log rather than left to look like a clean teardown.
+// Refs: MGIT-107, MGIT-11.10.8
+func (d *Daemon) drainViaManager(ctx context.Context) error {
 	sandboxes, err := d.cfg.Manager.List(ctx)
 	if err != nil {
 		return fmt.Errorf("sandboxd drain: %w", err)
@@ -389,7 +469,8 @@ func (d *Daemon) drain(ctx context.Context) error {
 			d.cfg.Logger.Error("sandboxd drain remove failed", "event", "drain_error", "sandbox_id", sb.ID, "error", err)
 			continue
 		}
-		d.cfg.Logger.Info("sandboxd drained sandbox", "event", "drained", "sandbox_id", sb.ID)
+		d.cfg.Logger.Info("sandboxd drained sandbox (no service wired: no terminal event recorded)",
+			"event", "drained", "sandbox_id", sb.ID)
 	}
 	return nil
 }
