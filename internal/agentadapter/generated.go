@@ -21,6 +21,13 @@ const (
 	AgentsMdFile = "AGENTS.md"
 	// CursorRuleFile is the mgit-owned Cursor rule, written wholesale. Refs: MGIT-11.11.3
 	CursorRuleFile = ".cursor/rules/mgit-sandbox.mdc"
+	// CodexHooksFile is the repo-scoped Codex hooks file carrying the mgit
+	// PreToolUse routing hook. Codex loads hooks from <repo>/.codex/hooks.json,
+	// which is what makes per-worktree enforcement possible. Refs: MGIT-149
+	CodexHooksFile = ".codex/hooks.json"
+	// CursorHooksFile is the repo-scoped Cursor hooks file carrying the mgit
+	// beforeShellExecution refusal hook. Refs: MGIT-149
+	CursorHooksFile = ".cursor/hooks.json"
 	// EnvrcFile is the direnv file whose marked mgit block prepends the shim
 	// dir to PATH. Refs: MGIT-11.11.3
 	EnvrcFile = ".envrc"
@@ -40,7 +47,8 @@ func GeneratedWorktreeFiles(contained bool) []string {
 	if !contained {
 		return []string{ClaudeMdFile}
 	}
-	return []string{ClaudeMdFile, ClaudeSettingsFile, AgentsMdFile, CursorRuleFile, EnvrcFile}
+	return []string{ClaudeMdFile, ClaudeSettingsFile, AgentsMdFile, CursorRuleFile,
+		CodexHooksFile, CursorHooksFile, EnvrcFile}
 }
 
 // ExistingGeneratedFiles narrows GeneratedWorktreeFiles to the paths that
