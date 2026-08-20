@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# fetch-guard-file: every curl in this file targets 127.0.0.1 (or, in the
+# loopback-posture check, this host's own LAN address) and is an ASSERTION
+# against the mgit serve process this script just started -- the product under
+# test, not a third-party supply fetch. There is no CDN, no registry and no
+# mirror to be down. Retrying them would mask exactly the failures the file
+# exists to detect. The one place a bound genuinely matters, waiting for the
+# server to come up, already has one (50 x 0.2s). Refs: MGIT-143
+#
 # REST API + serve/CLI lock-coexistence e2e (MGIT-53).
 #
 # Proves two things against a REAL `mgit serve --api-only` process:

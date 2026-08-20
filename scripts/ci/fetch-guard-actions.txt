@@ -1,0 +1,24 @@
+# Third-party GitHub Actions used by this repo's workflows, and why each one is
+# a DECLARED EXCEPTION to the fetch guard rather than something wrapped by
+# scripts/ci/guard-fetch.sh. Refs: MGIT-143
+#
+# An action downloads its own tooling from inside a JavaScript or composite
+# runtime; there is no shell command for the guard to wrap. What it CAN carry
+# is a reason, once per distinct action rather than once per call site --
+# actions/checkout alone appears nine times, and nine copies of one comment is
+# the ceremony that gets a guard worked around instead of used.
+#
+# Adding an action to a workflow without a line here fails
+# scripts/ci/fetch-inventory.sh. That is the point: the decision is forced,
+# not remembered.
+#
+# format:  <owner>/<repo>[/<path>]   <reason>
+
+actions/checkout	fetches over the GitHub API, on the same host that dispatched the job; @actions/http-client retries 5xx and reset connections itself. Measured n=2544, p50 1s, max 13s -- no observed failure or hang in 298 runs.
+actions/setup-go	downloads the Go toolchain through actions/tool-cache, which retries transient HTTP failures internally and validates the archive before extracting it. Measured n=2038, p50 5s, max 50s.
+actions/cache	best-effort by construction: a cache miss or a failed restore degrades to a slower job, never a failed one, so there is nothing here for a retry to protect. This is the MGIT-119 downloads cache that makes the brew fetch below survivable in the first place.
+golangci/golangci-lint-action	downloads a pinned golangci-lint release through tool-cache (same retrying client as setup-go) and caches it. A failure here is a lint outage, not a corrupted artifact: nothing partial is left on disk for a second attempt to trip over.
+sigstore/cosign-installer	downloads a pinned cosign release (v2.4.1) through tool-cache and verifies it. Release-path only; a failure fails the release before anything is published, which is the correct direction.
+goreleaser/goreleaser-action	downloads goreleaser through tool-cache. Release-path only, same direction of failure as cosign above.
+softprops/action-gh-release	an UPLOAD, not a fetch -- it pushes assets to the release this job just built. It has its own retry on the GitHub API. Listed here because the scanner sees every `uses:`, not because it fetches a dependency.
+peter-evans/repository-dispatch	a single GitHub API POST that triggers the tap update. Nothing is downloaded and nothing is left on disk; the failure mode is "the tap did not update", which is visible in the tap repo rather than recoverable here.

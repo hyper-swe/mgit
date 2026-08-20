@@ -55,7 +55,12 @@ jobs:
 
       - name: Run vulnerability check
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          # The install is a proxy.golang.org fetch; the scan that follows is
+          # local. -t 120 is the floor (worst success 19s, n=136).
+          # Refs: MGIT-143
+          bash scripts/ci/guard-fetch.sh -t 120 -l govulncheck-install \
+            -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
+            go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
       - name: Test coverage
@@ -103,15 +108,16 @@ jobs:
       # The darwin daemon LINKS libkrun (the macOS default backend, ADR-010),
       # and goreleaser's before-hook runs `make check-libkrun-net` to refuse a
       # build against a libkrun without networking support. Both need the
-      # library present on this runner. `brew trust` is required because the
-      # runner's Homebrew refuses to load a formula from a third-party tap
-      # otherwise -- the same three steps ci.yml's libkrun job uses.
-      # Refs: MGIT-61.14, MGIT-61.8, ADR-010
+      # library present on this runner.
+      #
+      # This used to be the same three commands as ci.yml's libkrun job with
+      # the retry left off, so the 2026-08-15 bottle-CDN outage that ci.yml
+      # absorbed would still have taken a RELEASE down -- the guard protecting
+      # the cheap job and not the expensive one. One script now, three call
+      # sites, all three clauses.
+      # Refs: MGIT-143, MGIT-119, MGIT-61.14, MGIT-61.8, ADR-010
       - name: Install libkrun (bottled)
-        run: |
-          brew tap libkrun/krun
-          brew trust libkrun/krun
-          brew install libkrun
+        run: bash scripts/ci/install-libkrun-brew.sh
 
       # goreleaser CGO-builds + entitlement-signs the darwin daemon (post
       # hook in .goreleaser.yaml) and cross-builds the rest.
@@ -168,14 +174,11 @@ jobs:
       # it mgit-sandboxd cannot load (it links libkrun by absolute path), so the
       # daemon liveness check, the mgit/mgit-sandboxd build-agreement check and
       # the NET=1 capability check all skip -- and a gate that skips its most
-      # important assertions is barely a gate. Same three steps release.yml's
-      # build job uses; `brew trust` is required for a third-party tap.
-      # Refs: MGIT-84, MGIT-75, MGIT-61.14
+      # important assertions is barely a gate. The third of the three call
+      # sites that used to be three near-identical copies of these commands.
+      # Refs: MGIT-143, MGIT-84, MGIT-75, MGIT-61.14
       - name: Install libkrun (so the daemon is testable)
-        run: |
-          brew tap libkrun/krun
-          brew trust libkrun/krun
-          brew install libkrun
+        run: bash scripts/ci/install-libkrun-brew.sh
       # The script downloads the just-published archive itself, so nothing here
       # can accidentally test a locally built binary -- the mistake that let the
       # quarantine defect ship once already.

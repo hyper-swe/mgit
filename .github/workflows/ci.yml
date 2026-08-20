@@ -44,8 +44,24 @@ jobs:
 
       - name: Run vulnerability check
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          # The install is a proxy.golang.org fetch; the scan that follows is
+          # local. -t 120 is the floor: this step's worst success in CI history
+          # is 19s (n=136). Refs: MGIT-143
+          bash scripts/ci/guard-fetch.sh -t 120 -l govulncheck-install \
+            -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
+            go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
+
+      # Every third-party fetch reachable from CI is guarded or a declared
+      # exception carrying its reason. This is the tripwire that keeps that
+      # true rather than merely stated -- a new bare `curl` in any workflow or
+      # script fails here. The self-test proves the guard's three clauses
+      # against a fetch that errors, one that hangs, and one that leaves a
+      # corrupt artifact behind. Refs: MGIT-143
+      - name: Fetch guard — inventory + the guard's own three clauses
+        run: |
+          bash scripts/ci/fetch-inventory.sh
+          bash scripts/ci/guard-fetch-selftest.sh
 
       - name: Build binary
         run: make build
@@ -120,34 +136,14 @@ jobs:
           restore-keys: |
             brew-downloads-${{ runner.os }}-libkrun-v1-
 
+      # tap + trust + install, every network step guarded (retry, timeout,
+      # precondition restore). The inline retry loop that used to live here
+      # covered only `brew install` and existed only in this job; the same
+      # three commands in release.yml had no retry at all, so the CDN outage
+      # this absorbed on the PR path would still have taken a release down.
+      # Refs: MGIT-143, MGIT-119
       - name: Install libkrun (bottled)
-        # This runner's Homebrew refuses to load a formula from a
-        # newly-added third-party tap until it's explicitly trusted (first
-        # seen on this job's first real run in Actions, 2026-07-30):
-        # "Refusing to load formula libkrun/krun/libkrun from untrusted tap
-        # libkrun/krun" -- `brew trust` is the exact remedy the error itself
-        # names.
-        run: |
-          brew tap libkrun/krun
-          brew trust libkrun/krun
-          # Retry the install: it pulls bottles from a third-party CDN, and a
-          # download failure there (seen twice on 2026-08-15 --
-          # `Failed to download resource "virglrenderer"`) is not a defect in
-          # this repository. A job that goes red on someone else's CDN teaches
-          # the team to re-run reds without reading them, which is how a REAL
-          # failure eventually gets waved through -- so the transient is
-          # absorbed here rather than in a habit. A persistent outage still
-          # fails, loudly, after the last attempt. Refs: MGIT-119
-          for attempt in 1 2 3; do
-            if brew install libkrun; then
-              echo "libkrun installed (attempt $attempt)"
-              exit 0
-            fi
-            echo "::warning::brew install libkrun failed on attempt $attempt/3"
-            sleep $((attempt * 45))
-          done
-          echo "::error::brew install libkrun failed 3 times -- treat this as a real outage, not a flake"
-          exit 1
+        run: bash scripts/ci/install-libkrun-brew.sh
 
       - name: Build, vet and test the tagged path
         # DYLD_FALLBACK_LIBRARY_PATH: libkrun dlopens libkrunfw by leaf name
@@ -217,7 +213,25 @@ jobs:
     runs-on: ubuntu-latest
     container: ubuntu:20.04
     steps:
+      # DECLARED EXCEPTION to the MGIT-143 fetch guard, and the only one in
+      # this repository that is an ordering problem rather than a judgement.
+      # This step runs BEFORE actions/checkout, so scripts/ci/guard-fetch.sh
+      # does not exist on disk yet. Moving checkout first would make it fall
+      # back to the REST tarball path (a bare ubuntu:20.04 has no git, which is
+      # what this very step installs), and re-validating that is not what this
+      # ticket is for -- MGIT-144 carries it.
+      #
+      # Clause 2 is still served, natively: timeout-minutes converts a hang
+      # into a failure. 5 minutes is the MGIT-143 rule applied to this step's
+      # own history -- worst SUCCESSFUL run 56s across n=256, 4x that rounded
+      # up the ladder. Clauses 1 and 3 are NOT served here; a failure is a red
+      # to re-run by hand, and the log will say apt failed rather than
+      # pretending three attempts were made.
+      # fetch-guard: runs before actions/checkout, so the guard script is not
+      # on disk yet; clause 2 is served by timeout-minutes below, clauses 1
+      # and 3 are not served. Refs: MGIT-143, MGIT-144
       - name: Install build prerequisites
+        timeout-minutes: 5
         run: |
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -227,9 +241,17 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # -t 120 is the floor: this step's worst success is 5s (n=246). The
+      # restore is the load-bearing part -- `curl: (18) transfer closed` leaves
+      # a TRUNCATED /tmp/go.tgz, and without removing it the retry re-extracts
+      # the same corrupt archive and dies identically at `tar`, which is the
+      # exact failure MGIT-119 spent three attempts and a confident diagnosis
+      # on. Refs: MGIT-143 clause 3
       - name: Install Go
         run: |
-          curl -fsSL https://go.dev/dl/go1.26.6.linux-amd64.tar.gz -o /tmp/go.tgz
+          bash scripts/ci/guard-fetch.sh -t 120 -l go-toolchain-tarball \
+            -c 'rm -f /tmp/go.tgz' -- \
+            curl -fsSL https://go.dev/dl/go1.26.6.linux-amd64.tar.gz -o /tmp/go.tgz
           tar -C /usr/local -xzf /tmp/go.tgz
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
 
@@ -239,11 +261,21 @@ jobs:
         # panics if the musl target isn't installed -- caught on this job's
         # first real run in Actions (2026-07-30); a local container repro
         # in an earlier session evidently pre-had this target cached.
+        #
+        # Three fetches, three guards: the installer script, the toolchain the
+        # installer downloads, and the musl target. -t 120 is the floor; this
+        # step's worst success is 26s (n=246). Refs: MGIT-143
         run: |
-          curl -sSf https://sh.rustup.rs -o /tmp/rustup.sh
-          sh /tmp/rustup.sh -y --default-toolchain stable
+          bash scripts/ci/guard-fetch.sh -t 120 -l rustup-installer \
+            -c 'rm -f /tmp/rustup.sh' -- \
+            curl -sSf https://sh.rustup.rs -o /tmp/rustup.sh
+          bash scripts/ci/guard-fetch.sh -t 120 -l rustup-toolchain \
+            -c 'rm -rf "$HOME/.rustup" "$HOME/.cargo"' -- \
+            sh /tmp/rustup.sh -y --default-toolchain stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          "$HOME/.cargo/bin/rustup" target add "$(uname -m)-unknown-linux-musl"
+          bash scripts/ci/guard-fetch.sh -t 120 -l rustup-musl-target \
+            -c none:'rustup unpacks a component into a temp directory and moves it into place only once the download is complete and hash-checked; a failed target add leaves the toolchain exactly as it was' -- \
+            "$HOME/.cargo/bin/rustup" target add "$(uname -m)-unknown-linux-musl"
 
       - name: Build the PINNED libkrunfw + libkrun (NET=1; ~4-5 min)
         # The recipe moved into a script so a developer can run the runner's

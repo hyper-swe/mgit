@@ -24,7 +24,14 @@ if [ -z "$url" ] || [ -z "$want" ]; then
 fi
 
 echo "fetching firecracker kernel ($ARCH): $url"
-curl -fsSL "$url" -o "$OUT"
+# -t 120 is the MGIT-143 floor: the enclosing CI step ("Build the guest image")
+# has a worst SUCCESSFUL run of 22s across n=131, and 4x that is under the
+# floor. The restore is not theoretical -- `curl: (18) transfer closed` leaves a
+# TRUNCATED $OUT behind, and without removing it every later attempt re-fails
+# the sha256 check below on the same corrupt bytes. Refs: MGIT-143 clause 3
+"$HERE/../ci/guard-fetch.sh" -t 120 -l firecracker-kernel \
+	-c "rm -f '$OUT'" -- \
+	curl -fsSL "$url" -o "$OUT"
 got="$(shasum -a 256 "$OUT" | cut -d' ' -f1)"
 if [ "$got" != "$want" ]; then
 	echo "FATAL: firecracker kernel sha256 mismatch ($ARCH): got $got, pinned $want" >&2

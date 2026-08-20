@@ -34,7 +34,14 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 echo "fetching firecracker VMM ($ARCH): $url"
-curl -fsSL "$url" -o "$tmp/fc.tgz"
+# -t 120 is the MGIT-143 floor: this step's worst SUCCESSFUL run is 3s across
+# n=131, and 4x that is far below the floor. The restore removes a truncated
+# download between attempts. The EXIT trap above does not cover this: it fires
+# when the script exits, which is exactly not when a retry needs the partial
+# gone. Refs: MGIT-143 clause 3
+"$HERE/../ci/guard-fetch.sh" -t 120 -l firecracker-vmm \
+	-c "rm -f '$tmp/fc.tgz'" -- \
+	curl -fsSL "$url" -o "$tmp/fc.tgz"
 got="$(shasum -a 256 "$tmp/fc.tgz" | cut -d' ' -f1)"
 if [ "$got" != "$want" ]; then
 	echo "FATAL: firecracker VMM sha256 mismatch ($ARCH): got $got, pinned $want" >&2

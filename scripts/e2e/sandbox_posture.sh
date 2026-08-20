@@ -115,6 +115,13 @@ elif [ -n "${MGIT_GUEST_KERNEL:-}" ] && [ -n "${MGIT_GUEST_ROOTFS:-}" ]; then
 else
 	oci_ref="${MGIT_GUEST_OCI_REF:-debian:12}"
 	echo "== compose guest base from $oci_ref (libkrun, OCI) in the scratch repo =="
+	# fetch-guard: `mgit sandbox base from` pulls an OCI image through the
+	# product's own registry client (internal/sandboxd/guestbase/pull.go),
+	# which already bounds a whole pull at 15 minutes -- clause 2, in Go. It
+	# has no retry and no precondition restore, and wrapping the CLI here
+	# would guard the wrong layer: a retry outside the client cannot clear the
+	# half-written blob cache inside it. MGIT-145 carries that work.
+	# Refs: MGIT-143, MGIT-145
 	MGIT_GUEST_IMAGE="$(mgit sandbox base from "$oci_ref" --json |
 		sed -n 's/.*"image_ref":"\([^"]*\)".*/\1/p')"
 	[ -n "$MGIT_GUEST_IMAGE" ] || _e2e_fail "sandbox base from produced no reference"
