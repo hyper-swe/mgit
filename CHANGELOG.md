@@ -5,7 +5,41 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-08-20
+
+The substrate release. Cut because sandbox execution became mandatory for every
+agent lane, and v0.5.0 could not carry that: on it, **any command running longer
+than 30 seconds was killed** — the daemon buffers output and relays it on
+completion, so a silent test suite died at exactly 30.0s. A lane told to run its
+tests in a sandbox would have concluded the substrate could not run tests.
+
+### Upgrading — read this first
+
+**Install from a release archive, not `go install`.** The Linux guest binaries
+(`mgit`, `mgit-guest`) ship only in `libexec/guest/`, and `mgit sandbox base
+from <image>` cannot compose a guest base without them.
+
+**Remove any older `mgit-sandboxd` from your PATH.** The CLI spawns whichever
+daemon it finds first, and a stale Homebrew copy can precede a fresh install.
+This release refuses a mismatched pair loudly instead of misbehaving quietly
+(see the handshake below), but a refusal you do not know how to clear is still
+friction:
+
+    brew uninstall mgit        # if an older tap copy is shadowing the install
+    which -a mgit mgit-sandboxd    # both must resolve to the same install
+
+**CLI and daemon must now match.** The control protocol carries a version and a
+mixed pair is refused, naming both builds and the upgrade routes. This is a
+deliberate break: this codec has no negotiation seam, so a version range would
+be a promise it could not keep.
+
+### Known limitation
+
+**The guest base unpacks in-tree** at `.mgit/sandbox/base/` (~900 MB per repo).
+It is gitignored, so there is no commit risk, but a test command that walks the
+tree (`gofmt -l .`, linters, file counts) will see it. It is also MUTABLE:
+recomposing it in one worktree invalidates the pinned digest for every other.
+A content-addressed machine-wide cache is the fix and is next.
 
 ### Added
 
