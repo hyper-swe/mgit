@@ -238,8 +238,15 @@ type Config struct {
 	// read-only into the guest plan (FR-17.14). Only used when a provisioner
 	// is wired. Refs: FR-17.14
 	SensitivePaths []string
-	Logger         *slog.Logger
-	Clock          func() time.Time
+	// NetworkModeCheck reports whether this platform can ENFORCE a network
+	// mode, so an unenforceable one is refused when the operator configures it
+	// rather than when the VM is created minutes later (lazy provisioning,
+	// FR-17.9/17.10). A backend MUST pass the same function its boot path
+	// calls, so the two answers cannot drift. Nil accepts every mode — the
+	// behavior of a backend that has not declared anything. Refs: MGIT-111, SEC-04
+	NetworkModeCheck func(mode string) error
+	Logger           *slog.Logger
+	Clock            func() time.Time
 	// GuestReadyTimeout bounds how long the first exec after a lazy launch
 	// waits for the guest's control vsock to accept a connection. A launched
 	// VM is StateRunning as soon as the VMM is up, but the guest userspace
@@ -537,6 +544,16 @@ func (m *Manager) newSandboxInfo(id string, opts model.SandboxLaunchOptions) mod
 		info.ExpiresAt = now.Add(opts.TTL)
 	}
 	return info
+}
+
+// SupportsNetworkMode reports whether this backend can ENFORCE mode,
+// satisfying model.NetworkModeEnforcer so the service can refuse an
+// unenforceable mode at registration. Refs: MGIT-111, SEC-04
+func (m *Manager) SupportsNetworkMode(mode string) error {
+	if m.cfg.NetworkModeCheck == nil {
+		return nil
+	}
+	return m.cfg.NetworkModeCheck(mode)
 }
 
 // List returns every supervised sandbox.

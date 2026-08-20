@@ -257,6 +257,16 @@ func (s *SandboxService) Register(ctx context.Context, opts model.SandboxLaunchO
 	}
 	applyPolicyDefaults(&opts, policy)
 
+	// Refuse a network mode this backend cannot ENFORCE, here at the operator's
+	// boundary rather than minutes later when the VM is created. The backend
+	// answers with its own reason, from the same function its boot path uses,
+	// so registration and launch cannot disagree. Refs: MGIT-111, SEC-04
+	if enforcer, ok := s.manager.(model.NetworkModeEnforcer); ok {
+		if err := enforcer.SupportsNetworkMode(opts.Network.Mode); err != nil {
+			return nil, fmt.Errorf("sandbox register: %w", err)
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkExclusivity(opts.TaskID, opts.WorktreePath); err != nil {

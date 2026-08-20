@@ -385,6 +385,31 @@ type ExecResult struct {
 	ExitCode int    `json:"exit_code"`
 }
 
+// NetworkModeEnforcer is an OPTIONAL SandboxManager extension by which a
+// backend declares the network modes it can actually ENFORCE.
+//
+// It exists because the two facts had drifted apart in time. vzf and the
+// container backend both refuse an unenforceable allowlist rather than
+// approximating it (SEC-04) — but they refuse it when the VM is CREATED, and
+// provisioning is lazy (FR-17.9/17.10), so `sandbox launch --network
+// allowlist` registered happily and reported "created". The operator had
+// configured containment that could never exist and would not learn so until
+// first use.
+//
+// Nothing runs uncontained either way: the boot fails closed. What this moves
+// is the moment of DIAGNOSIS, from first use back to configuration time, which
+// is where an operator can still act on it.
+//
+// A backend that does not implement it is unaffected — the check is an
+// extension, not a new obligation. Implementations MUST delegate to the same
+// function their boot path uses, so the answer given at registration cannot
+// drift from the one enforced at launch. Refs: MGIT-111, SEC-04, FR-17.7, FR-17.8
+type NetworkModeEnforcer interface {
+	// SupportsNetworkMode returns nil when this backend can enforce mode, or
+	// an error naming what it cannot enforce and what to use instead.
+	SupportsNetworkMode(mode string) error
+}
+
 // SandboxManager abstracts microVM lifecycle per platform backend.
 // Mirrors WorktreeManager (ADR-004); backends live in mgit-sandboxd.
 // The verb set is fixed by FR-17.15; prune (FR-17.2, FR-17.9) is a
