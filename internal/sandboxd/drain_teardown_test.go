@@ -56,7 +56,15 @@ func (r *drainRecorder) Remove(_ context.Context, taskID string, force bool) err
 	r.forced = append(r.forced, force)
 	return nil
 }
-func (r *drainRecorder) Status(context.Context, string) (*model.SandboxInfo, error) {
+func (r *drainRecorder) Status(_ context.Context, taskID string) (*model.SandboxInfo, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.tasks {
+		if r.tasks[i].TaskID == taskID {
+			info := r.tasks[i]
+			return &info, nil
+		}
+	}
 	return nil, model.ErrSandboxNotFound
 }
 func (r *drainRecorder) SyncWorktree(context.Context, string, model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error) {

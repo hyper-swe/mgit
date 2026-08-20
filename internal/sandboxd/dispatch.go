@@ -254,6 +254,30 @@ func (d *Daemon) serveSync(ctx context.Context, conn net.Conn, args *controlprot
 	d.writeResponse(conn, resp)
 }
 
+// policyUnservedReason explains, in CONTAINMENT terms, why this daemon serves
+// no live egress-policy verbs.
+//
+// The old reply was "controlproto kind 0x51 not served by this daemon". That
+// describes the daemon's wiring; it does not tell an operator the fact that
+// matters before they run untrusted code — that this backend enforces no live
+// allowlist, so there is no policy here to show or change. Those are different
+// facts, and only the second is actionable. Refs: MGIT-111, MGIT-104, SEC-04
+func (d *Daemon) policyUnservedReason(ctx context.Context, taskID string) error {
+	backend := "this build's sandbox backend"
+	if d.cfg.Service != nil && taskID != "" {
+		if info, err := d.cfg.Service.Status(ctx, taskID); err == nil && info.Backend != "" {
+			backend = info.Backend
+		}
+	}
+	return fmt.Errorf(
+		"no live egress allowlist is enforced on %s, so there is no policy to show or change: "+
+			"this daemon has no egress enforcer wired, and a sandbox on this backend cannot enforce "+
+			"an allowlist at all. Launch with --network none for no egress, or use a backend that "+
+			"enforces one (libkrun on macOS, firecracker on Linux). This is a refusal, not a failure "+
+			"to reach the daemon: nothing was changed",
+		backend)
+}
+
 // servePolicySet replaces a running sandbox's egress allowlist. An empty entry
 // list is a full revoke.
 //
@@ -263,8 +287,7 @@ func (d *Daemon) serveSync(ctx context.Context, conn net.Conn, args *controlprot
 // this verb can tell. Refs: MGIT-72, SEC-04
 func (d *Daemon) servePolicySet(ctx context.Context, conn net.Conn, args *controlproto.PolicyArgs) {
 	if d.cfg.Policy == nil || d.cfg.Service == nil {
-		d.reply(conn, &controlproto.Response{},
-			fmt.Errorf("controlproto kind %#x not served by this daemon", controlproto.KindPolicySet))
+		d.reply(conn, &controlproto.Response{}, d.policyUnservedReason(ctx, args.TaskID))
 		return
 	}
 	info, err := d.cfg.Service.Status(ctx, args.TaskID)
@@ -291,8 +314,7 @@ func (d *Daemon) servePolicySet(ctx context.Context, conn net.Conn, args *contro
 // Refs: MGIT-72
 func (d *Daemon) servePolicyShow(ctx context.Context, conn net.Conn, ref *controlproto.TaskRef) {
 	if d.cfg.Policy == nil || d.cfg.Service == nil {
-		d.reply(conn, &controlproto.Response{},
-			fmt.Errorf("controlproto kind %#x not served by this daemon", controlproto.KindPolicyShow))
+		d.reply(conn, &controlproto.Response{}, d.policyUnservedReason(ctx, ref.TaskID))
 		return
 	}
 	info, err := d.cfg.Service.Status(ctx, ref.TaskID)
