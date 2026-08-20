@@ -81,7 +81,10 @@ func NewManagerWithLand(cfg Config) (*microvm.Manager, microvm.GuestDialer, erro
 		}
 	}
 	mgr, err := microvm.NewManager(microvm.Config{
-		Backend:          model.BackendVZF,
+		Backend: model.BackendVZF,
+		// The SAME function CreateVM calls, so what registration refuses and
+		// what the boot refuses cannot drift apart. Refs: MGIT-111, SEC-04
+		NetworkModeCheck: refuseUnenforceableNetwork,
 		WorkDir:          cfg.WorkDir,
 		Resolve:          cfg.Resolve,
 		Hypervisor:       hv,

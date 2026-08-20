@@ -431,6 +431,15 @@ func (m *Manager) newID() (string, error) {
 	return id.String(), nil
 }
 
+// SupportsNetworkMode reports whether this backend can ENFORCE mode, so an
+// unenforceable one is refused at registration rather than at launch. It asks
+// networkArg — the same function the launch path uses — so registration and
+// launch cannot give different answers. Refs: MGIT-111, SEC-04
+func (m *Manager) SupportsNetworkMode(mode string) error {
+	_, err := networkArg(mode)
+	return err
+}
+
 // networkArg maps the FR-17.7 mode onto the rootless runtime. The
 // allowlist mode is refused, not approximated: the runtime cannot do
 // IP/flow-layer default-deny, and silently mapping allowlist to an
