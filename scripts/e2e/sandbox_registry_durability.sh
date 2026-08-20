@@ -121,6 +121,22 @@ kill_repo_daemon() {
 	_e2e_fail "daemon $pid survived SIGKILL"
 }
 
+# term_repo_daemon SIGTERMs this repo's daemon and waits for it to go. This is
+# the ORDERLY twin of kill_repo_daemon: SIGTERM runs the drain, which is also
+# the path the daemon's own idle exit takes -- the COMMON way a daemon stops.
+# Refs: MGIT-107
+term_repo_daemon() {
+	local pid
+	pid="$(repo_daemon_pid)"
+	[ -n "$pid" ] || return 1
+	kill -TERM "$pid" 2>/dev/null || true
+	for _ in $(seq 1 100); do
+		kill -0 "$pid" 2>/dev/null || return 0
+		sleep 0.1
+	done
+	_e2e_fail "daemon $pid did not exit within 10s of SIGTERM"
+}
+
 # child_pids prints the direct child pids of a pid — for a sandbox daemon,
 # its VM processes (the `__krun-vm` re-exec child on libkrun, the firecracker
 # VMM on Linux). ps rather than pgrep -P: identical output on macOS and Linux.
@@ -244,6 +260,50 @@ out="$(mgit sandbox status "$TASK" 2>&1)" || code=$?
 [ "$code" != "0" ] && assert_contains "$out" "not found" \
 	"a genuinely destroyed sandbox stays destroyed across a restart" ||
 	_e2e_fail "status resurrected a removed sandbox: $out"
+
+# --- the ORDERLY shutdown: SIGTERM must read as destroyed, not killed -------
+# MGIT-107. `Daemon.drain` reached the BACKEND manager directly, while the
+# terminal `destroyed` event is written one layer up by the service. So a
+# deliberate shutdown left NO terminal event, the next daemon found a
+# registration it could not verify, and stamped it `killed / unsupervised` --
+# the record a daemon CRASH is meant to produce. Since the daemon's own idle
+# exit takes this path too, the common case was manufacturing crash records.
+#
+# This is the twin of the SIGKILL case above, and the pair is the point: the
+# same script now shows the two shutdown modes producing two DIFFERENT trails.
+# A sandbox that never booted still earns a terminal event, which is why this
+# runs here rather than only in the optional live phase.
+echo "== SIGTERM (the orderly path): the trail must end in 'destroyed' =="
+TERM_TASK="REG-TERM"
+mgit work wt-term --task-id "$TERM_TASK" --sandbox --image "$SYNTH_IMAGE" >/dev/null
+trail="$(events "$TERM_TASK")"
+[ "$trail" = "created" ] && pass "registered $TERM_TASK; trail is '$trail'" ||
+	_e2e_fail "expected 'created' before shutdown, got '$trail'"
+
+term_repo_daemon
+[ -z "$(repo_daemon_pid)" ] && pass "the daemon exited on SIGTERM (drain ran)" ||
+	_e2e_fail "the daemon is still running; the orderly shutdown was not exercised"
+
+trail="$(events "$TERM_TASK")"
+[ "$trail" = "created destroyed" ] &&
+	pass "an orderly shutdown reads as an orderly teardown: '$trail'" ||
+	_e2e_fail "expected 'created destroyed' after SIGTERM, got '$trail' -- a clean shutdown is recording itself as a crash (MGIT-107)"
+
+case "$trail" in
+*killed*) _e2e_fail "a deliberate shutdown stamped 'killed': '$trail' -- this is the MGIT-107 defect" ;;
+*) pass "no 'killed' event: a clean stop is distinguishable from a crash" ;;
+esac
+
+rows="$(sqlite3 "$db" "SELECT COUNT(*) FROM sandboxes WHERE task_id = '$TERM_TASK'")"
+[ "$rows" = "0" ] && pass "the drained sandbox left no live registry row" ||
+	_e2e_fail "a drained sandbox left $rows live registry row(s) -- the next daemon would reconcile it"
+
+# And it stays destroyed: the next daemon must not resurrect or re-stamp it.
+code=0
+out="$(mgit sandbox status "$TERM_TASK" 2>&1)" || code=$?
+[ "$code" != "0" ] && assert_contains "$out" "not found" \
+	"a cleanly drained sandbox stays destroyed across a restart" ||
+	_e2e_fail "status resurrected a drained sandbox: $out"
 
 # --- optional: live reconciliation of a booted sandbox ----------------------
 # Everything above concerns a sandbox that never claimed a VM. This phase covers
