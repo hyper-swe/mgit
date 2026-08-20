@@ -72,6 +72,8 @@ echo "    ok: \`brew list --versions libkrun\` and \`brew --prefix libkrun\` bot
 # The other half of the precondition: the gate has to be armed. If the
 # libkrun/krun tap were already trusted here, a reintroduced dependency would
 # resolve fine and this check would go green on a machine no user resembles.
+# fetch-guard: `brew tap` with no arguments LISTS the taps already on disk.
+# It makes no network request. Refs: MGIT-143
 if "$BREW" tap | grep -qx "libkrun/krun"; then
   echo "FAIL: the libkrun/krun tap is present on this machine." >&2
   echo "      A fresh user does not have it; with it tapped (and possibly" >&2
@@ -107,6 +109,8 @@ SHA="$(shasum -a 256 "$WORK/mgit.tar.gz" | cut -d' ' -f1)"
 # police, is the repo's formula verbatim.
 # --------------------------------------------------------------------------
 echo "==> Serving brew/mgit.rb from scratch tap $TAP"
+# fetch-guard: `tap-new --no-git` creates an empty local tap directory. No
+# remote is contacted -- that is what --no-git means here. Refs: MGIT-143
 "$BREW" tap-new "$TAP" --no-git >/dev/null
 TAP_FORMULA_DIR="$("$BREW" --repository "$TAP")/Formula"
 mkdir -p "$TAP_FORMULA_DIR"
@@ -134,7 +138,14 @@ fi
 # fetches, runs the formula's install block and links the result.
 # --------------------------------------------------------------------------
 echo "==> brew install $FORMULA"
-if ! "$BREW" install "$FORMULA"; then
+# The formula's own archive is a file:// URL, but resolving and installing its
+# DEPENDENCIES pulls bottles from the same third-party CDN that returned 504
+# for half an hour on 2026-08-15. -t 300 is the MGIT-143 rule applied to this
+# step's history: worst SUCCESSFUL run 65s across n=111, 4x that up the ladder.
+# Refs: MGIT-143, MGIT-119
+if ! "$REPO_ROOT/scripts/ci/guard-fetch.sh" -t 300 -l brew-install-mgit-formula \
+  -c none:'brew verifies the checksum of everything it reuses and keeps a partial download as .incomplete, which it resumes rather than re-extracting' -- \
+  "$BREW" install "$FORMULA"; then
   echo >&2
   echo "FAIL: \`brew install\` failed on a machine without libkrun." >&2
   echo "      If the error above mentions an untrusted tap or an unavailable" >&2

@@ -98,7 +98,13 @@ archive="${MGIT_SMOKE_ARCHIVE:-}"
 if [ -z "$archive" ]; then
 	command -v gh >/dev/null 2>&1 || _e2e_fail "gh is required to download the release (or set MGIT_SMOKE_ARCHIVE)"
 	echo "== downloading $TAG darwin/arm64 archive =="
-	gh release download "$TAG" -p 'mgit_*_darwin_arm64.tar.gz' -D "$WORK" >/dev/null
+	# -t 300 is the MGIT-143 rule on this step's history (worst success 62s,
+	# n=135). The restore matters: a half-written archive left in $WORK would
+	# be picked up by the `find` below and fail `tar` identically on every
+	# attempt. Refs: MGIT-143 clause 3
+	"$(dirname "$0")/../ci/guard-fetch.sh" -t 300 -l release-archive-download \
+		-c "rm -f '$WORK'/mgit_*_darwin_arm64.tar.gz" -- \
+		gh release download "$TAG" -p 'mgit_*_darwin_arm64.tar.gz' -D "$WORK" >/dev/null
 	archive="$(find "$WORK" -name 'mgit_*_darwin_arm64.tar.gz' -maxdepth 1 | head -1)"
 fi
 [ -n "$archive" ] && [ -f "$archive" ] || _e2e_fail "no darwin/arm64 archive for $TAG"
@@ -264,6 +270,12 @@ if ! command -v curl >/dev/null 2>&1; then
 	skip_note "curl not present — cannot make an anonymous request"
 else
 	# -H bypasses any ambient credential helper; a 404 here means private.
+	#
+	# fetch-guard: this curl IS the assertion, not a supply fetch -- it asks
+	# whether the tap is reachable WITHOUT credentials (MGIT-66). Retrying it
+	# would blur the very signal it exists to read, and it already carries its
+	# own bound via `|| echo 000` plus curl's default connect timeout.
+	# Refs: MGIT-143
 	code="$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization:' \
 		https://raw.githubusercontent.com/hyper-swe/homebrew-tap/main/Formula/mgit.rb || echo 000)"
 	if [ "$code" = "200" ]; then

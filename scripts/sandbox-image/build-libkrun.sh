@@ -47,59 +47,75 @@ export BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:--resource-dir=/usr/
 work="${LIBKRUN_BUILD_DIR:-$(mktemp -d)}"
 jobs="$(nproc 2>/dev/null || echo 2)"
 
+# Every network step below goes through the ONE guard: bounded retry, a
+# per-attempt timeout, and a precondition restore between attempts. This file
+# is where clause 3 was learned the hard way, so it is also where the
+# generalized version earns its keep. Refs: MGIT-143, MGIT-119
+GUARD="$here/../ci/guard-fetch.sh"
+
+# -t 1800 for every step here. The MGIT-143 rule is 4x the slowest SUCCESSFUL
+# observation of the call site; the enclosing CI step ("Build the PINNED
+# libkrunfw + libkrun") has a worst success of 905s across n=195, and 4x that
+# (3620s) is brought to 1800s by the rule's cap so three attempts still fit the
+# job budget. The cap is safe HERE specifically because this step's duration is
+# dominated by a kernel COMPILE rather than by a transfer: 1800s is still 2x
+# the slowest run ever recorded and ~100x the ~141 MB download it is really
+# guarding.
+BOUND="${MGIT_LIBKRUN_BUILD_TIMEOUT:-1800}"
+
 echo "== libkrunfw $LIBKRUNFW_VERSION (compiles a guest kernel; the slow step) =="
+# The `[ ! -d ]` skip below is the SAME existence-check trap that made the
+# kernel-tarball retry fail three times identically: a clone that dies part-way
+# leaves the directory behind, and every later attempt would then skip the
+# clone and build from a half-populated tree. So the restore removes it, and
+# the two are read together rather than separately.
 if [ ! -d "$work/libkrunfw" ]; then
-	git clone --depth 1 --branch "$LIBKRUNFW_VERSION" \
+	"$GUARD" -t "$BOUND" -l libkrunfw-clone -c "rm -rf '$work/libkrunfw'" -- \
+		git clone --depth 1 --branch "$LIBKRUNFW_VERSION" \
 		https://github.com/containers/libkrunfw.git "$work/libkrunfw"
 fi
 # `cd dir && make`, NOT `make -C dir`: libkrunfw recurses into the kernel build
 # with $(MAKE) $(MAKEFLAGS), and with -C the propagated MAKEFLAGS made that
 # recursive call literally invoke `make w -j...` ("No rule to make target 'w'").
-# RETRY the libkrunfw build, because its first act is to download a ~141 MB
-# kernel tarball from a third-party host, and a truncated transfer there is not
-# a defect in this repository. Observed twice in a row on 2026-08-19:
+#
+# This build is guarded because its first act is to download a ~141 MB kernel
+# tarball from a third-party host, and a truncated transfer there is not a
+# defect in this repository. Observed twice in a row on 2026-08-19:
 #   curl: (18) transfer closed with 30852240 bytes remaining to read
 #   curl: (18) transfer closed with 124175504 bytes remaining to read
-# make is resumable here -- a partial tarball is removed and refetched, and
-# already-built objects are kept -- so a retry costs the download, not the
-# compile. The reason to absorb it rather than re-run the job by hand is that a
-# job going red on someone else's CDN teaches the team to re-run reds without
-# reading them, and this repository has already had a real failure sit on main
-# because a red was misread as noise. Three attempts, widening pause; a genuine
-# outage still fails, loudly, and says to read it as one. Refs: MGIT-119
-for attempt in 1 2 3; do
-	if (cd "$work/libkrunfw" && make -j"$jobs"); then
-		[ "$attempt" -gt 1 ] && echo "libkrunfw built on attempt $attempt"
-		break
-	fi
-	if [ "$attempt" -eq 3 ]; then
-		echo "ERROR: libkrunfw failed 3 times -- treat this as a real outage, not a flake" >&2
-		exit 1
-	fi
-	# DISCARD THE TARBALL BEFORE RETRYING. The first version of this retry
-	# assumed make would refetch a partial download; it does not. A truncated
-	# tarball satisfies the download target's existence check, so every later
-	# attempt re-extracts the SAME corrupt file and dies identically at the
-	# extract step -- turning a retry into three deterministic failures wearing
-	# the costume of a transient. Observed: `curl: (18) transfer closed` on one
-	# run, then `tar: Error is not recoverable` three times on the next.
-	# Removing it makes each attempt a genuinely fresh fetch, which is what the
-	# retry was always supposed to be. Refs: MGIT-119
-	rm -f "$work/libkrunfw"/tarballs/*.tar.* 2>/dev/null || true
-	echo "WARNING: libkrunfw build failed on attempt $attempt/3 (often a truncated kernel download); discarded any partial tarball and retrying" >&2
-	sleep $((attempt * 30))
-done
+#
+# THE RESTORE IS THE POINT, and it is the clause this file taught the rest of
+# the repo. The first version of this retry said make would refetch a partial
+# download. It does not: a truncated tarball satisfies the download target's
+# existence check, so every later attempt re-extracted the SAME corrupt file
+# and died identically at the extract step -- three deterministic failures
+# wearing the costume of a transient, announced by a message that said "treat
+# this as a real outage, not a flake". Loud, well-worded, and honest about the
+# wrong thing. Discarding the tarball is what makes attempt 2 an attempt.
+# Already-built objects are kept, so a real retry costs the download, not the
+# compile. Refs: MGIT-143 clause 3, MGIT-119
+"$GUARD" -t "$BOUND" -l libkrunfw-build \
+	-c "rm -f '$work/libkrunfw'/tarballs/*.tar.*" -- \
+	sh -c "cd '$work/libkrunfw' && make -j'$jobs'"
 (cd "$work/libkrunfw" && make PREFIX="$prefix" install)
 ldconfig
 
 echo "== libkrun $LIBKRUN_VERSION (NET=1) =="
+# Same existence-check trap as libkrunfw's clone above; same restore.
 if [ ! -d "$work/libkrun" ]; then
-	git clone --depth 1 --branch "$LIBKRUN_VERSION" \
+	"$GUARD" -t "$BOUND" -l libkrun-clone -c "rm -rf '$work/libkrun'" -- \
+		git clone --depth 1 --branch "$LIBKRUN_VERSION" \
 		https://github.com/containers/libkrun.git "$work/libkrun"
 fi
 # NET=1 is not optional: without a virtio-net device libkrun falls back to TSI
 # and the guest gets the host's network with no policy at all (ADR-010).
-(cd "$work/libkrun" && make NET=1 -j"$jobs")
+#
+# Guarded because this build resolves and downloads crates from crates.io --
+# the same third-party-transfer exposure as the tarball above, just wearing
+# cargo's clothes.
+"$GUARD" -t "$BOUND" -l libkrun-build \
+	-c none:'cargo verifies every downloaded crate against its checksum and discards a partial, so no corrupt artifact survives to satisfy a later existence check; the build tree is kept deliberately, which is what makes a retry cost the fetch rather than the compile' -- \
+	sh -c "cd '$work/libkrun' && make NET=1 -j'$jobs'"
 (cd "$work/libkrun" && make PREFIX="$prefix" install)
 ldconfig
 

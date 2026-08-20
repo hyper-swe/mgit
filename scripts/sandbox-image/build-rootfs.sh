@@ -47,6 +47,21 @@ arm64) busybox_image="$BUSYBOX_ARM64"; builder_image="$BUILDER_ARM64" ;;
 *) echo "FATAL: no pins for arch $ARCH" >&2; exit 2 ;;
 esac
 echo "extracting busybox from ${busybox_image}"
+# -t 600 for both image pulls below. No COLD pull is measured in CI history:
+# the enclosing step ("Build the guest image") has a worst SUCCESSFUL run of
+# 22s across n=131, but that is with the runner's docker daemon already holding
+# these layers. A bound derived from 22s would fire the first time someone runs
+# this on a clean machine -- the fires-on-a-working-fetch failure the MGIT-143
+# rule exists to avoid. 600s is taken from the largest transfer this repo HAS
+# measured, the ~141 MB kernel tarball inside the 905s libkrunfw step, and is
+# to be revised the moment a cold pull is measured. Refs: MGIT-143
+GUARD="$HERE/../ci/guard-fetch.sh"
+PULL_BOUND="${MGIT_ROOTFS_PULL_TIMEOUT:-600}"
+PULL_RESTORE_REASON='docker stores layers content-addressed and discards a partial download rather than committing it, so a failed pull leaves nothing behind that a later existence check could mistake for a complete image'
+"$GUARD" -t "$PULL_BOUND" -l busybox-image-pull -c "none:$PULL_RESTORE_REASON" -- \
+	docker pull "$busybox_image"
+# fetch-guard: the image is already local, pulled by the guarded `docker pull`
+# above; this only makes a container from layers on disk.
 cid="$(docker create "$busybox_image")"
 docker cp "$cid:/bin/busybox" "$stage/busybox" >/dev/null
 docker rm "$cid" >/dev/null
@@ -54,6 +69,13 @@ docker rm "$cid" >/dev/null
 # 3) Assemble the tree + pack ext4 in the pinned builder (deterministic). The
 # arch-specific builder digest selects the arch (docker emulates if cross), so
 # no --platform (which is unreliable with a multi-arch index digest).
+"$GUARD" -t "$PULL_BOUND" -l builder-image-pull -c "none:$PULL_RESTORE_REASON" -- \
+	docker pull "$builder_image"
+# fetch-guard: the builder image is already local (guarded pull above). The
+# apt-get inside the container below runs in the GUEST filesystem, where
+# scripts/ci/guard-fetch.sh does not exist and cannot be mounted without
+# perturbing the reproducible build this script exists to produce; a failure
+# there fails the step honestly. Refs: MGIT-143, MGIT-144
 docker run --rm \
 	-e "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" \
 	-e "ROOTFS_UUID=$ROOTFS_UUID" \
@@ -62,6 +84,12 @@ docker run --rm \
 	-v "$(dirname "$OUT"):/out" \
 	"$builder_image" bash -euo pipefail -c '
 		export DEBIAN_FRONTEND=noninteractive
+		# fetch-guard: this runs INSIDE the pinned builder container, where
+		# scripts/ci/guard-fetch.sh does not exist. Mounting it in would add a
+		# bind mount to a build whose entire purpose is byte-reproducibility,
+		# so the reason is declared instead and a failure here fails the step
+		# honestly. The image is digest-pinned, so its apt sources are fixed.
+		# Refs: MGIT-143, MGIT-144
 		apt-get update -qq
 		apt-get install -y -qq e2fsprogs >/dev/null
 		root="$(mktemp -d)"
