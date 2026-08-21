@@ -5,6 +5,95 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-08-22
+
+**The release of things that failed silently.** Every headline entry here is a
+failure that gave its user the wrong signpost, or none at all.
+
+### A crash became a refusal
+
+`mgit sandbox sync` died with `sync classification failed: read response: EOF`
+— four times across three work items on a walk. The cause, three hops:
+a control response over 1 MiB was **refused and never written**, the daemon
+logged that to itself, and the deferred close handed the caller a bare EOF. So
+the only record of what happened lived inside the daemon, and the client learned
+neither the cause nor a next step.
+
+That is now a legible refusal naming the size, the cap and what to narrow. The
+over-size case is a sentinel rather than a message, because a daemon has to tell
+it from a dead connection — one can still be answered, the other cannot — and
+matching on prose breaks the moment the prose improves.
+
+The classification itself is **bounded by construction**: it carries full counts
+always, and marks itself truncated when the path lists were shortened. So an
+unmarked report means exactly one thing — nothing was dropped. The asymmetry is
+deliberate. A silently shortened list of diverged paths would be *believed*,
+which is worse than the crash it replaces, because a crash is not believed.
+
+A worktree carrying a host-side `node_modules` is the ordinary case that broke
+it: 20,000 diverged paths is far more than 1 MiB of JSON holds.
+
+### The guest could not resolve localhost
+
+The guest shipped **no `/etc/hosts` at all** — absent, not incomplete — so every
+`localhost` lookup fell through to DNS, and under the default deny-all egress
+that lookup cannot succeed. vitest, vite, jest, dev servers, anything that binds
+or dials a local port: in practice every JS project, failing inside a sandbox
+that was working exactly as designed.
+
+mgit composes its guest userspace from an OCI image, and images ship no hosts
+file because the *runtime* writes one. Docker does. Podman does. mgit is the
+runtime here and did not. Nothing was deleted — the file was never created.
+
+The error made it worse than it had to be: `EAI_AGAIN` says *DNS*, so it points
+at the egress policy and sends the reader somewhere else entirely.
+
+Now written at guest init, before the NIC and regardless of network mode —
+loopback resolution is not a network feature, and deny-all is precisely the mode
+that needs it. An image with its own table keeps it untouched.
+
+### Found by walking the product
+
+- **A nested `.git` bricked a repository.** The working-tree walk excluded `.git`
+  by its top-level component only, so a vendored checkout or a git fixture under
+  test data — `testdata/inner/.git/HEAD` — was absorbed into the base. Every
+  later `mgit work` then died inside go-git's tree walker, which refuses `.git`
+  as a path component: a correct guard firing on content that should never have
+  reached it. Reported as a `/tmp`-versus-home failure; it is neither, and the
+  same repo fails identically under `$HOME` with no symlink in the path.
+  A repository already in that state now gets told what happened and how to
+  recover, instead of a chain of internal verb names.
+
+- **The toolchain was invisible.** A base that installs its toolchain outside the
+  distro's default directories had it unreachable — `go: command not found`
+  inside a sandbox that contained Go. An OCI image already declares its own PATH;
+  mgit now believes the image rather than carrying opinions about toolchains.
+  Only PATH is taken, whole or not at all.
+
+- **Two verbs disagreed about where they were.** `mgit run` started in the
+  worktree, `mgit sandbox exec` in `/`. Both defensible alone, neither decided.
+  The sandbox is bound to a worktree; that is the answer, and it is now given by
+  the service so every client gets the same one.
+
+- **A graceful shutdown wrote the audit trail of a crash.** The drain reached the
+  backend directly, while the terminal `destroyed` event is written a layer
+  above, so an orderly stop left no terminal event and the next daemon stamped it
+  `killed / unsupervised`. Since the daemon's own idle exit takes that path, the
+  common case was manufacturing crash records.
+
+- **Containment was enforced for one agent family and advised for the rest.**
+  Codex and Cursor have gained shell hooks; both are now enforced. Only an
+  unknown harness remains advisory, and it says so.
+
+- **Recovery stopped depending on the agent's diligence.** Passive worktree
+  snapshots record a settled worktree with no agent discipline at all, under
+  their own ref namespace as orphan commits — unreachable from any task branch,
+  so squash and land exclude them by construction rather than by rule.
+
+- **An unenforceable network mode is refused when you configure it**, not
+  minutes later at first use, and the egress-policy verbs now name the
+  containment fact rather than a wire frame tag.
+
 ## [0.6.2] - 2026-08-20
 
 **The in-tree era ends.** A guest base no longer lives inside your repository.
