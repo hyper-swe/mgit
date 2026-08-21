@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -203,4 +204,44 @@ func TestSandboxSync_Force_DoesNotAdviseForcingAgain(t *testing.T) {
 		"a successful forced sync must not advise forcing again")
 	assert.NotContains(t, out, "conflict    src/app.go",
 		"an overwritten path no longer blocks anything")
+}
+
+// A report from an OLDER daemon carries no totals. Reading them blindly would
+// print "0 updated" beside a list of updates — a silently wrong count, which
+// is the class of failure MGIT-160 exists to remove, reintroduced by its own
+// fix. Caught by an existing test when the totals were first read blindly.
+// Refs: MGIT-160
+func TestSyncCounts_ReportWithoutTotals_CountsTheListInstead(t *testing.T) {
+	legacy := &model.WorktreeSyncReport{
+		Updated:    []string{"a.txt", "b.txt"},
+		Deleted:    []string{"c.txt"},
+		Overridden: []string{"d.txt"},
+	}
+	got := syncCounts(legacy)
+	assert.Contains(t, got, "2 updated")
+	assert.Contains(t, got, "1 deleted")
+	assert.Contains(t, got, "1 overwritten")
+}
+
+// A bounded report reports its TOTALS, not the shortened lists. Refs: MGIT-160
+func TestSyncCounts_BoundedReport_ReportsTheFullTotals(t *testing.T) {
+	bounded := &model.WorktreeSyncReport{
+		Updated: []string{"a.txt"}, UpdatedTotal: 40000,
+		Deleted: []string{}, DeletedTotal: 12,
+		Truncated: true,
+	}
+	got := syncCounts(bounded)
+	assert.Contains(t, got, "40000 updated", "the bounded list must not become the count")
+	assert.Contains(t, got, "12 deleted")
+}
+
+// And a truncated listing says so. Refs: MGIT-160
+func TestWriteSyncTruncation_SaysWhenTheListIsPartial(t *testing.T) {
+	var buf bytes.Buffer
+	writeSyncTruncation(&buf, &model.WorktreeSyncReport{Truncated: true})
+	assert.Contains(t, buf.String(), "truncated")
+
+	buf.Reset()
+	writeSyncTruncation(&buf, &model.WorktreeSyncReport{})
+	assert.Empty(t, buf.String(), "a complete listing must say nothing")
 }
