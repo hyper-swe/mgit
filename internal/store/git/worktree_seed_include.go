@@ -152,8 +152,7 @@ func (r *Repository) matchSeedFiles(glob string) ([]string, error) {
 		if rel == "." {
 			return nil
 		}
-		top := strings.SplitN(rel, "/", 2)[0]
-		if excludedRoots[top] {
+		if isExcludedPath(rel) {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
