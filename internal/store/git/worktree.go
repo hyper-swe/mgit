@@ -412,7 +412,7 @@ func (ws *WorktreeStore) MaterializeBranchTo(_ context.Context, branchName, dest
 	}
 	target, err := flattenTree(tree)
 	if err != nil {
-		return fmt.Errorf("materialize branch %s: flatten tree: %w", branchName, err)
+		return fmt.Errorf("materialize branch %s: %w", branchName, err)
 	}
 
 	// Validate every path BEFORE writing anything: one escaping path aborts the
