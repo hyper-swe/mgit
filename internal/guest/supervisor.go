@@ -44,7 +44,23 @@ type Supervisor struct {
 
 // NewSupervisor returns a supervisor with the default clean base env.
 func NewSupervisor(logger *slog.Logger) *Supervisor {
-	return &Supervisor{BaseEnv: defaultBaseEnv(), Logger: logger}
+	return NewSupervisorForRoot(logger, "/")
+}
+
+// NewSupervisorForRoot returns a supervisor whose base env honors the PATH the
+// base declared for itself at guestRoot, falling back to the built-in default
+// when it declared none.
+//
+// The clean base env stays clean: the host environment is still never read
+// (SEC-01), and only PATH is taken from the base. What changes is that a base
+// which installs its toolchain outside the distro's default directories — a
+// golang image puts Go at /usr/local/go/bin — is no longer invisible to the
+// commands mgit runs in it. Refs: MGIT-152, SEC-01, FR-17.3
+func NewSupervisorForRoot(logger *slog.Logger, guestRoot string) *Supervisor {
+	return &Supervisor{
+		BaseEnv: baseEnvWith(defaultBaseEnv(), DeclaredGuestPath(guestRoot)),
+		Logger:  logger,
+	}
 }
 
 // GuestModeEnv marks a process as running inside a sandbox guest. The mgit
