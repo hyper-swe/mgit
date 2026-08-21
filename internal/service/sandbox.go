@@ -633,6 +633,25 @@ func (s *SandboxService) Exec(ctx context.Context, taskID string, req model.Exec
 	if err != nil {
 		return nil, err
 	}
+	// Default the working directory to the task's worktree.
+	//
+	// Two verbs answered "where am I" differently, and it was an accident of
+	// two code paths rather than a decision: `mgit run` sends the host cwd
+	// (valid in the guest because the worktree is mounted at the identical
+	// path), while `sandbox exec` sent no Dir at all, so the child inherited
+	// PID 1's cwd and landed in "/". The sandbox is BOUND to a worktree, that
+	// worktree is the only directory the binding implies, and "/" is not a
+	// choice anyone made.
+	//
+	// It is defaulted HERE rather than in one CLI verb so every client gets
+	// the same answer — the MCP surface and anything else speaking the control
+	// plane included. A caller that names a directory keeps it: `mgit run`
+	// legitimately sends a SUBDIRECTORY of the worktree, and promoting that to
+	// the root would move the user's shell out from under them.
+	// Refs: MGIT-152, FR-17.11
+	if req.Dir == "" {
+		req.Dir = info.WorktreePath
+	}
 	// A positive per-exec timeout bounds this single command (the
 	// ExecRequest.Timeout contract; zero leaves the sandbox TTL to govern).
 	// Deriving it here — after the boot, which the timeout must not bound —
