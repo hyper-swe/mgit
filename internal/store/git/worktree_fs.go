@@ -21,11 +21,32 @@ import (
 // which is sacrosanct and must never be read or written by mgit).
 // Refs: MGIT-14.3, MGIT-14.4, ADR-001 (amendment 2026-06-22)
 
-// excludedRoots are top-level directories mgit must never traverse or touch:
-// its own store and the project's git repository.
-var excludedRoots = map[string]bool{
+// excludedNames are directory names mgit must never traverse or touch, AT ANY
+// DEPTH: its own store, and a git repository.
+//
+// Depth matters, and checking only the top level was a real defect. A `.git`
+// at the root was excluded correctly while `testdata/inner/.git/HEAD` — a
+// vendored checkout, a sub-project, a git fixture under test data — had a top
+// component of `testdata` and so was walked, hashed and absorbed into the
+// base. The damage then surfaced somewhere else entirely: every later
+// `mgit work` on that repo died inside go-git's tree walker, which refuses
+// `.git` as a path component. Refs: MGIT-157, MGIT-14.3, MGIT-14.4
+var excludedNames = map[string]bool{
 	mgitDirName: true,
 	".git":      true,
+}
+
+// isExcludedPath reports whether any component of a slash-separated relative
+// path is an excluded directory name. A `.git` is a repository boundary
+// wherever it sits — content under one belongs to that repository, not to this
+// project — so the test is per-component, not per-prefix. Refs: MGIT-157
+func isExcludedPath(rel string) bool {
+	for _, part := range strings.Split(rel, "/") {
+		if excludedNames[part] {
+			return true
+		}
+	}
+	return false
 }
 
 // headFiles returns a flat map of every file path → blobEntry (hash + mode)
@@ -106,8 +127,10 @@ func (r *Repository) listWorkingFiles() ([]string, error) {
 		if rel == "." {
 			return nil
 		}
-		top := strings.SplitN(rel, "/", 2)[0]
-		if excludedRoots[top] {
+		// Excluded AT ANY DEPTH, not just at the root: a nested .git is another
+		// repository's boundary, and everything under it is that repository's,
+		// never this project's content. Refs: MGIT-157
+		if excludedNames[d.Name()] {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -270,8 +293,7 @@ func validateRelPath(rel string) error {
 	if filepath.IsAbs(rel) || strings.HasPrefix(clean, "../") || clean == ".." {
 		return fmt.Errorf("path escapes project root: %s", rel)
 	}
-	top := strings.SplitN(clean, "/", 2)[0]
-	if excludedRoots[top] {
+	if isExcludedPath(clean) {
 		return fmt.Errorf("path is in an excluded directory: %s", rel)
 	}
 	return nil

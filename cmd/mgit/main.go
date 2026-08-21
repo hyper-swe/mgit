@@ -40,6 +40,19 @@ func rootCmd() *cobra.Command {
 		Use:     "mgit",
 		Short:   "micro git — a checkpointed, sandboxed working substrate for LLM coding agents",
 		Version: versionString(),
+		// A RUNTIME failure must not drag the usage/flag dump behind it. A
+		// worktree that could not be materialized printed its error and then
+		// twenty lines of flags, which pushes the one line that matters off the
+		// top of a terminal and implies the user mistyped something.
+		//
+		// Silencing is armed HERE, at the moment the command's own work
+		// begins, rather than on the command struct. Setting SilenceUsage
+		// declaratively also suppresses usage for genuine usage errors — bad
+		// flags, wrong argument count — which is where the dump is exactly
+		// what a reader wants. Cobra validates arguments before this hook
+		// runs, so those errors still print usage and everything after it
+		// does not. Refs: MGIT-157
+		PersistentPreRun: func(cmd *cobra.Command, _ []string) { cmd.SilenceUsage = true },
 	}
 
 	root.AddCommand(

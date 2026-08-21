@@ -214,7 +214,11 @@ func flattenTree(tree *object.Tree) (map[string]blobEntry, error) {
 			if err == io.EOF { //nolint:errorlint // go-git returns the bare sentinel, never wrapped
 				break
 			}
-			return nil, fmt.Errorf("walk tree: %w", err)
+			// Diagnose rather than relay. go-git reports only the offending
+			// COMPONENT (".git"), never the path it sat on, so an unaided
+			// caller can only pass along a chain of internal verbs ending in a
+			// string the user cannot act on. Refs: MGIT-157
+			return nil, describeUnreadableTree(tree, err)
 		}
 		if entry.Mode == filemode.Dir {
 			continue
@@ -222,4 +226,67 @@ func flattenTree(tree *object.Tree) (map[string]blobEntry, error) {
 		out[name] = blobEntry{hash: entry.Hash, mode: entry.Mode}
 	}
 	return out, nil
+}
+
+// describeUnreadableTree turns a failed tree walk into something a user can
+// act on.
+//
+// The failure this exists for produced chains like "materialize source:
+// materialize branch task/X: flatten tree: walk tree: invalid path component:
+// \".git\"" and "auto-resync base: sync: stage working tree: add all: walk
+// tree: ...". Every noun in those is an mgit or go-git implementation detail,
+// and the one fact that would help — your recorded tree contains another
+// repository's .git — appears in neither, because go-git reports only the
+// offending COMPONENT and not the path it sat on.
+//
+// It lives here rather than at one call site so every reader of a tree gets
+// the same diagnosis; two of the three affected paths were found only by
+// running the failure again after fixing the first. Refs: MGIT-157
+func describeUnreadableTree(tree *object.Tree, err error) error {
+	offenders := findExcludedTreePaths(tree, "")
+	if len(offenders) == 0 {
+		return fmt.Errorf("reading the recorded tree failed: %w", err)
+	}
+	shown := offenders
+	if len(shown) > 3 {
+		shown = shown[:3]
+	}
+	more := ""
+	if len(offenders) > len(shown) {
+		more = fmt.Sprintf(" (and %d more)", len(offenders)-len(shown))
+	}
+	return fmt.Errorf(
+		"this repository's recorded tree contains %s%s, which belongs to another repository "+
+			"nested inside your project. mgit never tracks one, and a tree holding it cannot be "+
+			"read back or written to a worktree. The tree was recorded before that exclusion "+
+			"existed; new commits cannot produce one. To recover, record a clean base: move "+
+			"`.mgit` aside and run `mgit init`. The nested repository can stay exactly where "+
+			"it is — mgit now skips it, and your own history is untouched",
+		strings.Join(shown, ", "), more)
+}
+
+// findExcludedTreePaths descends a tree WITHOUT go-git's path validation and
+// returns every path whose components include an excluded directory name. It
+// runs only on the failure path, so it costs nothing in the normal case.
+// Refs: MGIT-157
+func findExcludedTreePaths(tree *object.Tree, prefix string) []string {
+	var out []string
+	for _, e := range tree.Entries {
+		path := e.Name
+		if prefix != "" {
+			path = prefix + "/" + e.Name
+		}
+		if excludedNames[e.Name] {
+			out = append(out, path)
+			continue
+		}
+		if e.Mode == filemode.Dir {
+			sub, subErr := tree.Tree(e.Name)
+			if subErr != nil {
+				continue // unreadable subtree: nothing more this diagnosis can say
+			}
+			out = append(out, findExcludedTreePaths(sub, path)...)
+		}
+	}
+	return out
 }
