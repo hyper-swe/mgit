@@ -55,6 +55,66 @@ type WorktreeSyncReport struct {
 	// counts alone do not, such as a sandbox that has not booted yet and so
 	// has nothing to propagate into.
 	Detail string `json:"detail,omitempty"`
+	// Truncated records that the path lists above are SHORTER than what was
+	// found, and the *Total counts say by how much.
+	//
+	// It exists so a shortened list can never be mistaken for a complete one.
+	// A caller acting on "these 500 paths differ" when 40,000 do has been
+	// misled by its own tooling — which is worse than the crash this bounding
+	// replaced, because a crash is not believed and a wrong answer is.
+	// An UNMARKED report therefore means exactly one thing: nothing was
+	// dropped. Refs: MGIT-160
+	Truncated bool `json:"truncated,omitempty"`
+	// The full counts, always populated whether or not the lists were
+	// shortened, so a reader never has to infer a total from a list length.
+	UpdatedTotal    int `json:"updated_total,omitempty"`
+	DeletedTotal    int `json:"deleted_total,omitempty"`
+	OverriddenTotal int `json:"overridden_total,omitempty"`
+	ConflictsTotal  int `json:"conflicts_total,omitempty"`
+}
+
+// SyncReportPathLimit is how many paths of each kind a report carries.
+//
+// A classification that can only answer for small trees is not a
+// classification: a worktree holding a host-side node_modules enumerates tens
+// of thousands of paths, and the whole answer was silently dropped for
+// exceeding the control-response limit (MGIT-160). The limit is chosen so that
+// every list, at realistic path lengths, fits well inside that budget with the
+// rest of the report — not so that a typical case squeaks under it.
+const SyncReportPathLimit = 500
+
+// Bound returns a copy of the report whose path lists carry at most limit
+// entries each, with the full counts preserved and Truncated set when anything
+// was dropped.
+//
+// Bounding happens at the MODEL, not at one call site, so every producer and
+// transport of a report inherits the same guarantee — and a new caller cannot
+// forget it. Refs: MGIT-160
+func (r WorktreeSyncReport) Bound(limit int) WorktreeSyncReport {
+	out := r
+	out.UpdatedTotal = len(r.Updated)
+	out.DeletedTotal = len(r.Deleted)
+	out.OverriddenTotal = len(r.Overridden)
+	out.ConflictsTotal = len(r.Conflicts)
+	if limit <= 0 {
+		return out
+	}
+	out.Updated, out.Truncated = capPaths(r.Updated, limit, out.Truncated)
+	out.Deleted, out.Truncated = capPaths(r.Deleted, limit, out.Truncated)
+	out.Overridden, out.Truncated = capPaths(r.Overridden, limit, out.Truncated)
+	if len(r.Conflicts) > limit {
+		out.Conflicts, out.Truncated = r.Conflicts[:limit], true
+	}
+	return out
+}
+
+// capPaths shortens a list to limit, reporting whether anything was dropped
+// (never clearing a truncation another list already recorded).
+func capPaths(in []string, limit int, already bool) ([]string, bool) {
+	if len(in) <= limit {
+		return in, already
+	}
+	return in[:limit], true
 }
 
 // Changed reports whether the guest's tree was altered (or, on a dry run,

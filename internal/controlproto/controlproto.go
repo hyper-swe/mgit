@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -436,6 +437,14 @@ func validateExport(e *ExportArgs) error {
 	return e.Export.Validate()
 }
 
+// ErrResponseTooLarge means a verb's answer exceeded MaxResponseBytes and was
+// therefore never written. It is a SENTINEL rather than prose because the
+// daemon must tell this failure from a dead connection: the first can still be
+// answered with a small refusal, the second cannot be answered at all — and
+// matching on a message would break the moment the message improves.
+// Refs: MGIT-160, R-H233
+var ErrResponseTooLarge = errors.New("control response too large to send")
+
 // WriteResponse frames and writes a response.
 func WriteResponse(w io.Writer, resp *Response) error {
 	payload, err := json.Marshal(resp)
@@ -443,7 +452,11 @@ func WriteResponse(w io.Writer, resp *Response) error {
 		return fmt.Errorf("controlproto: encode response: %w", err)
 	}
 	if len(payload) > MaxResponseBytes {
-		return fmt.Errorf("controlproto: response %d bytes exceeds %d cap", len(payload), MaxResponseBytes)
+		return fmt.Errorf("%w: this verb's answer is %d bytes, over the %d-byte control-response "+
+			"limit, so it could not be sent. Nothing was applied. Narrow what you asked for — "+
+			"for a worktree sync, exclude large generated trees such as node_modules from the "+
+			"worktree, or ask for a summary rather than a full path list",
+			ErrResponseTooLarge, len(payload), MaxResponseBytes)
 	}
 	if err := writeLenPrefixed(w, payload); err != nil {
 		return fmt.Errorf("controlproto: write response: %w", err)

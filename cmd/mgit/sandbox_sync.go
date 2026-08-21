@@ -104,6 +104,7 @@ func writeSyncReport(w io.Writer, task string, report *model.WorktreeSyncReport)
 		_, _ = fmt.Fprintf(w, "Synced host worktree into task %s's sandbox: %s\n", task, syncCounts(report))
 	}
 	writeSyncPaths(w, report)
+	writeSyncTruncation(w, report)
 }
 
 // writeSyncDryRun renders the projection headline, which says plainly whether
@@ -119,11 +120,44 @@ func writeSyncDryRun(w io.Writer, task string, report *model.WorktreeSyncReport)
 
 // syncCounts summarizes a report's classes in one line.
 func syncCounts(report *model.WorktreeSyncReport) string {
-	out := fmt.Sprintf("%d updated, %d deleted", len(report.Updated), len(report.Deleted))
-	if len(report.Overridden) > 0 {
-		out += fmt.Sprintf(", %d overwritten (un-landed guest changes destroyed)", len(report.Overridden))
+	// The TOTALS, not the list lengths: on a large tree the lists are bounded
+	// and would under-report. Refs: MGIT-160
+	updated := reportTotal(report.UpdatedTotal, len(report.Updated))
+	deleted := reportTotal(report.DeletedTotal, len(report.Deleted))
+	overridden := reportTotal(report.OverriddenTotal, len(report.Overridden))
+	out := fmt.Sprintf("%d updated, %d deleted", updated, deleted)
+	if overridden > 0 {
+		out += fmt.Sprintf(", %d overwritten (un-landed guest changes destroyed)", overridden)
 	}
 	return out
+}
+
+// reportTotal takes whichever of the declared total and the list length is
+// larger.
+//
+// The totals are new (MGIT-160), so a report from an OLDER daemon carries
+// none, and reading them blindly would print "0 updated" beside a list of
+// updates — a silently wrong count, which is the exact class of failure this
+// work exists to remove, reintroduced by its own fix. Taking the larger is
+// safe in both directions: it can never under-report a bounded list, and it
+// can never invent a total a peer did not send. Refs: MGIT-160
+func reportTotal(declared, listed int) int {
+	if declared > listed {
+		return declared
+	}
+	return listed
+}
+
+// writeSyncTruncation states that the listing below is partial, when it is.
+// Silence here would let a shortened list read as the whole story — the one
+// outcome worse than the crash this replaced, because a wrong answer is
+// believed and a crash is not. Refs: MGIT-160
+func writeSyncTruncation(w io.Writer, report *model.WorktreeSyncReport) {
+	if !report.Truncated {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "  ... listing truncated to %d paths per class; the counts above are complete.\n",
+		model.SyncReportPathLimit)
 }
 
 // writeSyncPaths lists every path the report names, so "2 updated" is never

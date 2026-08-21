@@ -246,6 +246,16 @@ func (d *Daemon) serveGrant(ctx context.Context, conn net.Conn, args *controlpro
 // Refs: MGIT-76, ADR-011
 func (d *Daemon) serveSync(ctx context.Context, conn net.Conn, args *controlproto.SyncArgs) {
 	report, err := d.cfg.Service.SyncWorktree(ctx, args.TaskID, args.Sync)
+	// Bound the report before it crosses the wire. A worktree holding a
+	// host-side node_modules classifies tens of thousands of paths, and the
+	// whole answer used to be dropped for exceeding the response limit — the
+	// caller got EOF and the reason stayed in the daemon log. The bounded form
+	// carries full COUNTS and marks itself truncated, so it is always sendable
+	// and never mistakable for a complete list. Refs: MGIT-160
+	if report != nil {
+		bounded := report.Bound(model.SyncReportPathLimit)
+		report = &bounded
+	}
 	resp := &controlproto.Response{Synced: report}
 	if err != nil {
 		d.cfg.Logger.Warn("sandboxd op failed", "event", "op_error", "error", err.Error())
@@ -385,8 +395,35 @@ func (d *Daemon) armWriteDeadline(conn net.Conn) {
 // writeResponse sends one control response under a write deadline.
 func (d *Daemon) writeResponse(conn net.Conn, resp *controlproto.Response) {
 	d.armWriteDeadline(conn)
-	if err := controlproto.WriteResponse(conn, resp); err != nil {
-		d.cfg.Logger.Warn("sandboxd write response failed",
+	err := controlproto.WriteResponse(conn, resp)
+	if err == nil {
+		return
+	}
+	d.cfg.Logger.Warn("sandboxd write response failed",
+		"event", "write_error", "error", err.Error())
+
+	// A response that cannot be SENT must still be a response.
+	//
+	// WriteResponse refuses anything over its size cap and writes NOTHING, so
+	// this used to log and return — and the handler's deferred close then gave
+	// the caller a bare "read response: EOF". Nothing on the wire, the only
+	// record of the cause inside the daemon, and a client error naming neither
+	// the cause nor a next step. A crash where a refusal belonged.
+	//
+	// Retrying with a SMALL error is the whole fix: the refusal is built from
+	// nothing but a size and a cap, so it cannot fail the same way the payload
+	// did. A second failure here is a dead connection, not an over-size one,
+	// and there is nothing further to say into it. Refs: MGIT-160
+	if !errors.Is(err, controlproto.ErrResponseTooLarge) {
+		return
+	}
+	d.armWriteDeadline(conn)
+	// No ErrorCode: the code vocabulary is a validated closed set, and
+	// failureCode's own rule is that a code never gets invented at a call
+	// site. Giving this failure a stable token is worth doing deliberately,
+	// with the set, rather than smuggling one in here.
+	if err := controlproto.WriteResponse(conn, &controlproto.Response{Error: err.Error()}); err != nil {
+		d.cfg.Logger.Warn("sandboxd could not send the over-size refusal either",
 			"event", "write_error", "error", err.Error())
 	}
 }
