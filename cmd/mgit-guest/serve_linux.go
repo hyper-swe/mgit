@@ -150,6 +150,10 @@ func worktreeMountPath() string {
 // var so tests can point it somewhere other than the real /etc.
 var guestResolvPath = guestnet.DefaultResolvPath
 
+// guestHostsPath is where the guest's static name table is written; a var so
+// tests can point it at a temp file. Refs: MGIT-159
+var guestHostsPath = guestnet.DefaultHostsPath
+
 // configureGuestNetwork gives eth0 its address, netmask and default route and
 // points the resolver at the gateway, from the descriptor the host sent over
 // the same boot-token channel as every other descriptor.
@@ -161,6 +165,18 @@ var guestResolvPath = guestnet.DefaultResolvPath
 // deny. That indistinguishability is exactly what let v0.4.0 ship with guest
 // egress entirely non-functional. Refs: MGIT-68, FR-17.7, FR-17.8, SEC-07
 func configureGuestNetwork(logger *slog.Logger) error {
+	// Loopback resolution FIRST, and unconditionally — before the NIC, and
+	// regardless of network mode. It is not a network feature: it is what lets
+	// the guest resolve localhost WITHOUT asking the network at all, which is
+	// exactly what a deny-all sandbox needs and exactly what was missing.
+	// A failure here is reported but never fatal: a guest that can still run
+	// commands is better than one that refuses to boot over its name table.
+	// Refs: MGIT-159, SEC-04
+	if err := guestnet.EnsureHosts(guestHostsPath); err != nil {
+		logger.Error("mgit-guest could not write the static name table; localhost "+
+			"resolution will fall through to DNS and fail under deny-all egress",
+			"event", "hosts_error", "path", guestHostsPath, "error", err)
+	}
 	return guestnet.Apply(guestboot.ParseGuestNetwork(bootTokens()), guestnet.Deps{
 		Link:       guestnet.NewLinker(),
 		ResolvPath: guestResolvPath,
