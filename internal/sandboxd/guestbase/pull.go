@@ -116,6 +116,23 @@ func Pull(ctx context.Context, ref Ref, destDir string, opts PullOptions) (Ref, 
 			return Ref{}, err
 		}
 	}
+
+	// Record the PATH the image declared for itself, so a toolchain it
+	// installed outside the distro's default directories is visible to
+	// commands run in it. A config we cannot read is not fatal: the base is
+	// complete without it and the guest falls back to its built-in default,
+	// which is exactly the behavior every base had before. Refs: MGIT-152
+	cfg, err := c.fetchImageConfig(ctx, ref, manifest.Config)
+	if err != nil {
+		c.reportf("image config unreadable (%v); the guest will use its default PATH", err)
+		return resolved, nil
+	}
+	if declared := pathFromImageConfig(cfg); declared != "" {
+		if err := writeDeclaredEnv(destDir, declared); err != nil {
+			return Ref{}, err
+		}
+		c.reportf("image declares PATH=%s", declared)
+	}
 	return resolved, nil
 }
 

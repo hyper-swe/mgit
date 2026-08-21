@@ -37,7 +37,9 @@ func run(args []string, logSink io.Writer) int {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(logSink, nil))
-	supervisor := guest.NewSupervisor(logger)
+	// Honor the PATH this base declared for itself. mgit-guest runs as PID 1
+	// inside the guest, so "/" IS the composed base's root. Refs: MGIT-152
+	supervisor := guest.NewSupervisorForRoot(logger, "/")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
