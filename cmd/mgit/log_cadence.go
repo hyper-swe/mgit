@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/hyper-swe/mgit/internal/model"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
@@ -23,8 +25,25 @@ import (
 // Refs: MGIT-110, R-H234, FR-4
 type taskLogJSON struct {
 	TaskID  string                 `json:"task_id"`
-	Commits []index.CommitRecord   `json:"commits"`
+	Commits []taskLogCommitJSON    `json:"commits"`
 	Cadence *model.CadenceEvidence `json:"cadence"`
+}
+
+// taskLogCommitJSON is one commit in the --json trail: every field the index
+// records, plus the SUBJECT read from the commit object.
+//
+// The embedded record keeps the existing shape byte-for-byte, so an
+// integration reading `commits[].commit_hash` today is unaffected; `subject`
+// is additive. It exists because a machine reader deserves the same facts as a
+// human one — a trail whose JSON could only report positions would leave an
+// integrator re-deriving messages one `mgit show` at a time, which is the
+// friction this view exists to remove. Refs: MGIT-155
+type taskLogCommitJSON struct {
+	index.CommitRecord
+	// Subject is empty when the commit object could not be read. Absent rather
+	// than invented: a machine reader can tell "no subject recorded" from "the
+	// subject is the empty string" only if we never fabricate one.
+	Subject string `json:"subject,omitempty"`
 }
 
 // cadenceTokenDoc documents the stable tokens on `mgit log --help`, where an
@@ -70,19 +89,100 @@ func runTaskLog(ctx context.Context, app *App, taskID string, asJSON bool) error
 	}
 
 	if asJSON {
-		if records == nil {
-			records = []index.CommitRecord{}
+		commits := make([]taskLogCommitJSON, 0, len(records))
+		for _, r := range records {
+			commits = append(commits, taskLogCommitJSON{
+				CommitRecord: r, Subject: subjectFor(ctx, app, r.CommitHash),
+			})
 		}
 		return json.NewEncoder(os.Stdout).Encode(taskLogJSON{
-			TaskID: taskID, Commits: records, Cadence: cadence,
+			TaskID: taskID, Commits: commits, Cadence: cadence,
 		})
 	}
 
 	for _, r := range records {
-		_, _ = fmt.Fprintf(os.Stdout, "%s [%s] pos=%d\n", shortHash(r.CommitHash), r.TaskID, r.Position)
+		_, _ = fmt.Fprintln(os.Stdout,
+			taskLogLine(shortHash(r.CommitHash), r.TaskID, subjectFor(ctx, app, r.CommitHash)))
 	}
 	printCadence(os.Stdout, cadence)
 	return nil
+}
+
+// subjectWidth bounds a subject so one commit stays one line. A trail is read
+// by scanning it, and a wrapped 200-character subject destroys that.
+const subjectWidth = 72
+
+// taskLogLine renders one line of a task's trail.
+//
+// It carries the SUBJECT, not the index position. `mgit log --task-id` is the
+// reviewer's view of what an agent did, and it printed `pos=0 pos=1 pos=2` —
+// which communicates nothing about the work and made the reviewer run
+// `mgit show` once per commit, exactly the friction this view exists to
+// remove. It also undercut the cadence label printed beneath it, which
+// characterizes commits the reader could not identify.
+//
+// A missing subject is STATED rather than left blank: a blank would read as a
+// commit with an empty message, which is a different fact. Refs: MGIT-155, MGIT-110
+func taskLogLine(shortHash, taskID, subject string) string {
+	if subject == "" {
+		subject = "(message unavailable)"
+	}
+	return fmt.Sprintf("%s [%s] %s", shortHash, taskID, subject)
+}
+
+// subjectFor reads a commit's subject from the commit OBJECT — the
+// authoritative copy — rather than from a new index column.
+//
+// No schema change and no second copy of the message: a duplicate could drift
+// from the original, and the trail would then describe commits that no longer
+// say what it claims. An unreadable object yields "" and is reported as an
+// absence by taskLogLine. Refs: MGIT-155
+func subjectFor(ctx context.Context, app *App, hash string) string {
+	c, err := gitstore.NewCommitStore(app.Repo).GetCommit(ctx, hash)
+	if err != nil || c == nil {
+		return ""
+	}
+	return commitSubject(c.Message)
+}
+
+// stripTaskMarker removes a leading `[MGIT:<task>] ` marker.
+//
+// Only that exact shape, and only at the front: a subject that merely mentions
+// a bracketed token keeps it, because rewriting a message beyond its known
+// prefix would be editing the author's words rather than de-duplicating our
+// own. Refs: MGIT-155
+func stripTaskMarker(line string) string {
+	if !strings.HasPrefix(line, "[MGIT:") {
+		return line
+	}
+	end := strings.Index(line, "] ")
+	if end < 0 {
+		return line
+	}
+	return strings.TrimSpace(line[end+2:])
+}
+
+// commitSubject is the first non-empty line of a commit message, bounded to
+// one line's worth, with the task marker stripped.
+//
+// mgit embeds the task in the message as `[MGIT:<task>] <subject>`, and the
+// log line already carries the task in its own column — so leaving the marker
+// in printed it twice on every line, which is noise in exactly the column a
+// reviewer is scanning. Caught by reading real output, not by a unit test.
+// Refs: MGIT-155
+func commitSubject(message string) string {
+	for _, line := range strings.Split(message, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		line = stripTaskMarker(line)
+		if len(line) > subjectWidth {
+			return line[:subjectWidth-1] + "\u2026"
+		}
+		return line
+	}
+	return ""
 }
 
 // printCadence writes the evidence footer. The verdict token leads the line so

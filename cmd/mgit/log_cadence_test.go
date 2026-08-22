@@ -63,7 +63,11 @@ func TestLog_TaskID_EndBurstTrail_LabelsItPackagedPostHoc(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, model.CadencePackagedPostHoc,
 		"the reviewer reading the trail must see the label attached to it")
-	assert.Contains(t, out, "pos=0", "the commit listing is still there")
+	// The listing is still there, and now says what each commit WAS. It used to
+	// assert "pos=0", which is what a reviewer never came for (MGIT-155).
+	assert.Contains(t, out, "step one", "the commit listing is still there, with subjects")
+	assert.Contains(t, out, "step two")
+	assert.NotContains(t, out, "pos=", "the index position is not the reviewer's business")
 }
 
 // TestLog_TaskID_JSON_CarriesTheStableToken pins the machine-readable shape.
