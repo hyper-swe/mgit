@@ -436,8 +436,32 @@ func (d *Daemon) authenticate(conn net.Conn) bool {
 	return true
 }
 
-// hasSandboxes reports whether any sandbox is registered.
+// hasSandboxes reports whether any sandbox is REGISTERED — which is a
+// service-layer fact, and was being asked of the backend.
+//
+// The backend knows only BOOTED VMs. With lazy provisioning (FR-17.9/17.10 —
+// the documented default of `mgit work --sandbox`), a task that is registered
+// but not yet used has no VM at all, so the daemon reported itself idle and
+// exited while a live task was bound to it. Everything the daemon does
+// CONTINUOUSLY stopped there: passive worktree snapshots (MGIT-110) were the
+// first such thing to notice, and the window they lost is unrecoverable work.
+//
+// The doc comment already said "registered" while the code asked the backend;
+// the two had simply drifted, and nothing made them disagree out loud. Same
+// layering shape as MGIT-107's drain — the daemon reaching past the service
+// for an answer that is true of the backend and false of the system.
+//
+// A service-less build (backend-only, MGIT-11.10.8) still asks the backend:
+// it has no registry to consult, and supervising a running VM is the most it
+// can know. Refs: MGIT-154, MGIT-107, MGIT-110, FR-17.9, FR-17.10, NFR-17.6
 func (d *Daemon) hasSandboxes(ctx context.Context) (bool, error) {
+	if d.cfg.Service != nil {
+		registered, err := d.cfg.Service.List(ctx)
+		if err != nil {
+			return false, err
+		}
+		return len(registered) > 0, nil
+	}
 	sandboxes, err := d.cfg.Manager.List(ctx)
 	if err != nil {
 		return false, err
