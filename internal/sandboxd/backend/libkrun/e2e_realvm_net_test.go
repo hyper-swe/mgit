@@ -228,19 +228,43 @@ func TestE2E_Libkrun_RealVM_Allowlist_DNSResolvesAllowlistedName(t *testing.T) {
 }
 
 // TestE2E_Libkrun_RealVM_OpenMode_ReachesRawIP proves open mode: a raw IP with
-// no name and no allowlist entry is reachable, with real bytes back. This is
-// the exact symptom HyperSwe reported as ENETUNREACH. Refs: MGIT-68, FR-17.7
+// no name and no allowlist entry is REACHABLE. That is the exact symptom
+// HyperSwe reported as ENETUNREACH, and it is the whole of mgit's property
+// here.
+//
+// It asserts reachability and deliberately NOT that the destination sends
+// application bytes back. Those are two different claims, and only the first
+// is ours: whether 1.1.1.1 answers on port 80 is Cloudflare's business, varies
+// by PoP and over time, and once reddened main on a commit that changed only
+// CHANGELOG.md (MGIT-161). A completed TCP handshake already proves everything
+// the ENETUNREACH regression could break — the packet left the guest, crossed
+// the NAT, and a real host on the internet answered.
+//
+// So CONNECTED-NO-DATA passes. Do not re-tighten this to require bytes: that
+// is how it became a gate that asserted someone else's behavior.
+// Refs: MGIT-68, MGIT-161, FR-17.7
 func TestE2E_Libkrun_RealVM_OpenMode_ReachesRawIP(t *testing.T) {
 	requireRealVM(t)
 	requireHostInternet(t)
 
 	probe := netProbeVM(t, model.NetworkModeOpen, nil)
 	out := probe("dial", netE2ERawIP)
-	if !strings.Contains(out, "PROBE-RESULT DIAL = ALLOWED") {
-		t.Fatalf("open mode could not reach a raw IP (%s) — the ENETUNREACH HyperSwe "+
+	if !rawIPReachable(out) {
+		t.Fatalf("open mode could not REACH a raw IP (%s) — the ENETUNREACH HyperSwe "+
 			"reported; got: %s\ninterfaces: %s", netE2ERawIP, out, probe("ifaces"))
 	}
 	t.Logf("REAL VM PASS (open): guest reached a raw IP with no allowlist entry\n%s", out)
+}
+
+// rawIPReachable reports whether the probe got a TCP connection to the raw IP,
+// whether or not the peer then sent anything.
+//
+// CONNECTED-NO-DATA is a reachability success: the handshake completed. Only a
+// refusal or an unreachable network is a failure of the property under test.
+// Refs: MGIT-161
+func rawIPReachable(probeOutput string) bool {
+	return strings.Contains(probeOutput, "PROBE-RESULT DIAL = ALLOWED") ||
+		strings.Contains(probeOutput, "PROBE-RESULT DIAL = CONNECTED-NO-DATA")
 }
 
 // TestE2E_Libkrun_RealVM_OpenMode_ResolvesThroughTheGateway closes the hole

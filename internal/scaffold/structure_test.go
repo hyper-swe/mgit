@@ -114,6 +114,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		"packaging":    true, // release/distribution config regression guards (MGIT-44)
 		"buildinfo":    true, // ldflags-stamped build metadata both shipped binaries report (MGIT-83)
 		"branchguard":  true, // pre-push branch-scope check for this repo's own branches (MGIT-142)
+		"doctor":       true, // standing checks converting closed incidents (MGIT-162, R-H300)
 	}
 
 	entries, err := os.ReadDir(filepath.Join(root, "internal"))
