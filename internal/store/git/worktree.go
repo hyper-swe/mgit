@@ -463,3 +463,27 @@ func (ws *WorktreeStore) Clean(ctx context.Context) error {
 	}
 	return nil
 }
+
+// RecordedNestedRepos returns the nested-repository paths present in the
+// branch's recorded tree.
+//
+// It answers at REST what MGIT-157 could previously only discover by failing:
+// a .git absorbed into the tree breaks every later `mgit work`, and nothing
+// surfaced it until then. It reuses the same walk the failure diagnosis uses,
+// so the check and the error can never disagree about what counts.
+// Refs: MGIT-162, MGIT-157
+func (ws *WorktreeStore) RecordedNestedRepos(_ context.Context) ([]string, error) {
+	head, err := ws.repo.currentRef()
+	if err != nil {
+		return nil, fmt.Errorf("nested-repo scan: %w", err)
+	}
+	commit, err := ws.repo.repo.CommitObject(head.Hash())
+	if err != nil {
+		return nil, fmt.Errorf("nested-repo scan: load commit: %w", err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("nested-repo scan: load tree: %w", err)
+	}
+	return findExcludedTreePaths(tree, ""), nil
+}

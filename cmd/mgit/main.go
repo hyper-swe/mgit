@@ -84,6 +84,7 @@ func rootCmd() *cobra.Command {
 		hostOnly(workCmd()),
 		diffCmd(),
 		snapshotCmd(),
+		hostOnly(doctorCmd(productionSandboxConnect)),
 		hostOnly(sandboxCmd()),
 		hostOnly(serveCmd()),
 		hostOnly(runCmd()),
