@@ -486,7 +486,25 @@ jobs:
           [ -r /dev/kvm ] && [ -w /dev/kvm ] \
             || { echo "FATAL: /dev/kvm not usable — the Linux libkrun gate cannot run"; exit 1; }
 
+      # The pinned kernel tarball, cached across runs.
+      #
+      # libkrunfw downloads ~145 MB from a third party before it compiles
+      # anything, on every run. A transfer to a rented runner was therefore on
+      # the critical path of the whole repository, and a network hiccup there
+      # blocked an unrelated PR three times in a row. The tarball is PINNED, so
+      # its identity is its content, so it is cacheable by construction; the
+      # build verifies its digest whether the bytes came from the cache or the
+      # network, so this can only make the run faster, never weaker.
+      # Refs: MGIT-163, MGIT-147
+      - name: Cache the pinned libkrunfw kernel tarball
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mgit-libkrun
+          key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}
+
       - name: Build the PINNED libkrunfw + libkrun (NET=1)
+        env:
+          MGIT_LIBKRUN_CACHE: ~/.cache/mgit-libkrun
         run: bash scripts/sandbox-image/build-libkrun.sh /usr/local
 
       - name: Build mgit + the libkrun-linked mgit-sandboxd
