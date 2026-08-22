@@ -63,6 +63,81 @@ GUARD="$here/../ci/guard-fetch.sh"
 # guarding.
 BOUND="${MGIT_LIBKRUN_BUILD_TIMEOUT:-1800}"
 
+# ---------------------------------------------------------------------------
+# The pinned kernel tarball, cached across runs.
+#
+# libkrunfw's build downloads a ~145 MB kernel tarball from a third party
+# before it compiles anything, on EVERY run. That put a transfer to a rented
+# runner on the critical path of the whole repository: a network hiccup there
+# blocked an unrelated PR three times in a row, with the guard doing everything
+# a guard can and the fetch simply unable to succeed.
+#
+# The tarball is PINNED, so its identity is its content, and content-addressed
+# things are cacheable by construction — the same argument that moved guest
+# bases out of repositories (MGIT-147), applied to CI.
+#
+# A cached copy is VERIFIED, never trusted: the digest is checked on the way in
+# and on the way out, so a truncated or tampered cache entry is discarded and
+# refetched rather than compiled. Caching must not weaken the thing it speeds
+# up. Refs: MGIT-163, MGIT-147
+# ---------------------------------------------------------------------------
+
+# sha256_of prints the SHA-256 of a file, using whichever tool this host has.
+sha256_of() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$1" | cut -d' ' -f1
+	else
+		shasum -a 256 "$1" | cut -d' ' -f1
+	fi
+}
+
+# kernel_tarball_name is the file libkrunfw's Makefile expects to find.
+kernel_tarball_name() { echo "linux-$LIBKRUNFW_KERNEL_VERSION.tar.xz"; }
+
+# seed_kernel_tarball places a verified cached tarball where the build looks,
+# so the download is skipped. A miss is silent and harmless: the build fetches,
+# exactly as it always did.
+seed_kernel_tarball() {
+	src_dir="${MGIT_LIBKRUN_CACHE:-}"
+	[ -n "$src_dir" ] || return 0
+	name="$(kernel_tarball_name)"
+	src="$src_dir/$name"
+	[ -f "$src" ] || return 0
+
+	got="$(sha256_of "$src")"
+	if [ "$got" != "$LIBKRUNFW_KERNEL_SHA256" ]; then
+		echo "libkrun cache: $name failed its digest check (got $got); discarding, the build will refetch"
+		rm -f "$src"
+		return 0
+	fi
+	mkdir -p "$1/tarballs"
+	cp "$src" "$1/tarballs/$name"
+	echo "libkrun cache: seeded $name from cache (digest verified); skipping the ~145 MB download"
+}
+
+# save_kernel_tarball copies a verified tarball INTO the cache after a build.
+#
+# The digest is re-checked here rather than assumed: this runs after a build
+# that may have downloaded the file itself, and a cache is only worth having if
+# what it holds was checked before it went in.
+save_kernel_tarball() {
+	dst_dir="${MGIT_LIBKRUN_CACHE:-}"
+	[ -n "$dst_dir" ] || return 0
+	name="$(kernel_tarball_name)"
+	built="$1/tarballs/$name"
+	[ -f "$built" ] || return 0
+	[ -f "$dst_dir/$name" ] && return 0
+
+	got="$(sha256_of "$built")"
+	if [ "$got" != "$LIBKRUNFW_KERNEL_SHA256" ]; then
+		echo "libkrun cache: refusing to cache $name — digest $got does not match the pin"
+		return 0
+	fi
+	mkdir -p "$dst_dir"
+	cp "$built" "$dst_dir/$name.tmp" && mv "$dst_dir/$name.tmp" "$dst_dir/$name"
+	echo "libkrun cache: stored $name for later runs"
+}
+
 echo "== libkrunfw $LIBKRUNFW_VERSION (compiles a guest kernel; the slow step) =="
 # The `[ ! -d ]` skip below is the SAME existence-check trap that made the
 # kernel-tarball retry fail three times identically: a clone that dies part-way
@@ -94,9 +169,11 @@ fi
 # wrong thing. Discarding the tarball is what makes attempt 2 an attempt.
 # Already-built objects are kept, so a real retry costs the download, not the
 # compile. Refs: MGIT-143 clause 3, MGIT-119
+seed_kernel_tarball "$work/libkrunfw"
 "$GUARD" -t "$BOUND" -l libkrunfw-build \
 	-c "rm -f '$work/libkrunfw'/tarballs/*.tar.*" -- \
 	sh -c "cd '$work/libkrunfw' && make -j'$jobs'"
+save_kernel_tarball "$work/libkrunfw"
 (cd "$work/libkrunfw" && make PREFIX="$prefix" install)
 ldconfig
 

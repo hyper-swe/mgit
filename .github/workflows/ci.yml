@@ -277,6 +277,22 @@ jobs:
             -c none:'rustup unpacks a component into a temp directory and moves it into place only once the download is complete and hash-checked; a failed target add leaves the toolchain exactly as it was' -- \
             "$HOME/.cargo/bin/rustup" target add "$(uname -m)-unknown-linux-musl"
 
+      # The pinned kernel tarball, cached across runs.
+      #
+      # libkrunfw downloads ~145 MB from a third party before it compiles
+      # anything, on every run. A transfer to a rented runner was therefore on
+      # the critical path of the whole repository, and a network hiccup there
+      # blocked an unrelated PR three times in a row. The tarball is PINNED, so
+      # its identity is its content, so it is cacheable by construction; the
+      # build verifies its digest whether the bytes came from the cache or the
+      # network, so this can only make the run faster, never weaker.
+      # Refs: MGIT-163, MGIT-147
+      - name: Cache the pinned libkrunfw kernel tarball
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mgit-libkrun
+          key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}
+
       - name: Build the PINNED libkrunfw + libkrun (NET=1; ~4-5 min)
         # The recipe moved into a script so a developer can run the runner's
         # exact build, and so the versions are PINNED in one place. It used to
@@ -285,6 +301,8 @@ jobs:
         # krun_set_workdir (MGIT-87). A build job that compiles against a
         # different library from the one the live gate boots proves less than
         # it appears to.
+        env:
+          MGIT_LIBKRUN_CACHE: ~/.cache/mgit-libkrun
         run: bash scripts/sandbox-image/build-libkrun.sh /usr/local
 
       - name: Build and vet the tagged path
