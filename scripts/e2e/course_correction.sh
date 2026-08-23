@@ -69,7 +69,15 @@ c3="$(short_hash "$(mgit commit --task-id "$task" -m 'add util helper (good)')")
 [ -n "$c1" ] && [ -n "$c2" ] && [ -n "$c3" ] || _e2e_fail "could not capture commit hashes ($c1/$c2/$c3)"
 pass "3 micro-commits created ($c1 good, $c2 WRONG, $c3 good)"
 assert_contains "$(cat config.txt)" "mode = WRONG" "wrong decision is in the working tree"
-assert_contains "$(mgit log --task-id "$task")" "pos=2" "task index has all 3 commits"
+# Count the trail's commit LINES rather than matching a rendered position.
+# The listing used to print `pos=N` and now prints each commit's subject
+# (MGIT-155); an assertion on either spelling is an assertion about rendering,
+# and what this step actually means is "all three commits are indexed".
+trail_commits() { mgit log --task-id "$1" | grep -c "^[0-9a-f]\{8\} \["; }
+[ "$(trail_commits "$task")" -eq 3 ] ||
+	_e2e_fail "task index must hold all 3 commits; got $(trail_commits "$task"):
+$(mgit log --task-id "$task")"
+pass "task index has all 3 commits"
 
 echo "== backtrack: rollback creates an append-only REVERT commit =="
 before="$(mgit log --oneline | wc -l | tr -d ' ')"
@@ -83,7 +91,10 @@ pass "history grew by one revert commit ($before -> $after), nothing deleted"
 log="$(mgit log --oneline)"
 assert_contains "$log" "$c2" "bad commit is STILL in history after rollback"
 assert_contains "$log" "WRONG DECISION" "bad commit message still readable"
-assert_contains "$(mgit log --task-id "$task")" "pos=3" "revert is indexed as a NEW task position"
+[ "$(trail_commits "$task")" -eq 4 ] ||
+	_e2e_fail "the revert must be indexed as a fourth task commit; got $(trail_commits "$task"):
+$(mgit log --task-id "$task")"
+pass "revert is indexed as a NEW task commit"
 # MGIT-54: the rollback RESTORES the pre-task state on disk (the whole task
 # is reverted — the good parts come back via restore/cherry-pick below).
 [ ! -f config.txt ] || _e2e_fail "config.txt must be gone after rollback (pre-task state)"
