@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mgit/internal/doctor"
 	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd/guestbase"
+	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
@@ -73,7 +76,50 @@ func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 		doctor.GuestLocalhostCheck{Probe: func(ctx context.Context) (string, error) {
 			return probeGuestLocalhost(ctx, connect, app.BoundTask)
 		}},
+		doctor.BaseCurrencyCheck{Inspect: inspectBaseCurrency},
 	}
+}
+
+// inspectBaseCurrency reports which mgit composed this repository's guest base
+// and which one is running now.
+//
+// The composing version is read from the base's own tree, where the content
+// digest already covers it — so the answer cannot be forged without breaking
+// the pin that boots it. A base with no marker returns "" and is reported as
+// unknown, which the check treats as a failure rather than a pass.
+// Refs: MGIT-174
+func inspectBaseCurrency() (composed, running string, err error) {
+	hostRoot, err := sandboxHostRoot()
+	if err != nil {
+		return "", "", fmt.Errorf("no sandbox host root for this repository: %w", err)
+	}
+	ref, err := images.PinnedRef(hostRoot, defaultGuestBaseName)
+	if err != nil {
+		return "", "", fmt.Errorf("no guest base registered for this repository: %w", err)
+	}
+	cache, cacheErr := openBaseCache()
+	if cacheErr != nil {
+		return "", "", fmt.Errorf("could not open the base cache: %w", cacheErr)
+	}
+	store, err := images.NewStoreWithBaseCache(hostRoot, func() time.Time { return time.Now().UTC() }, cache)
+	if err != nil {
+		return "", "", fmt.Errorf("could not open the image store: %w", err)
+	}
+	resolved, err := store.Resolve(ref)
+	if err != nil {
+		return "", "", fmt.Errorf("could not resolve the pinned guest base: %w", err)
+	}
+	rec, readErr := guestbase.ReadComposedBy(resolved.RootfsPath)
+	if errors.Is(readErr, guestbase.ErrComposedByUnknown) {
+		// Not an inspection failure: we looked and it genuinely says nothing.
+		// That distinction matters — "could not look" and "looked and found no
+		// record" are different facts, and only the second is a finding.
+		return "", Version, nil
+	}
+	if readErr != nil {
+		return "", "", readErr
+	}
+	return rec.Version, Version, nil
 }
 
 // probeGuestLocalhost resolves localhost inside the task's guest.

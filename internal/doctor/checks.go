@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/hyper-swe/mgit/internal/sandboxd/guestbase"
 )
 
 // NestedGitCheck reports whether this repository's recorded tree contains a
@@ -84,5 +86,57 @@ func (c GuestLocalhostCheck) Run(ctx context.Context) Result {
 		"network-policy problem and is not one"
 	r.Remedy = "recompose this repository's guest base with `mgit sandbox base from <image>`; " +
 		"bases composed before mgit wrote a static name table carry no /etc/hosts"
+	return r
+}
+
+// BaseCurrencyCheck reports whether this repository's guest base was composed
+// by the substrate now running it.
+//
+// From MGIT-174: nothing compared the two, because nothing recorded the
+// composing substrate — so a base composed under an older mgit produced no
+// warning for two consecutive releases, and a human hand-refreshed it twice.
+// R-H300 rule 5 says that is doctor's job, not a person's.
+//
+// It matters because the guest binaries are injected AT COMPOSE TIME and
+// frozen there: a stale base silently runs older guest code and so silently
+// lacks the guest-side fixes of every release since it was composed — while
+// the release notes say those fixes shipped. Refs: MGIT-162, MGIT-174
+type BaseCurrencyCheck struct {
+	// Inspect reports the base's composing version and the running one.
+	Inspect func() (composed, running string, err error)
+}
+
+// Name implements Check.
+func (BaseCurrencyCheck) Name() string { return "base/currency" }
+
+// Run implements Check.
+func (c BaseCurrencyCheck) Run(context.Context) Result {
+	r := Result{Name: c.Name(), Incident: "MGIT-174"}
+	composed, running, err := c.Inspect()
+	if err != nil {
+		r.Status, r.Reason = StatusNotChecked, err.Error()
+		r.Summary = "could not determine which mgit composed this repository's guest base"
+		return r
+	}
+	switch guestbase.BaseCurrency(composed, running) {
+	case guestbase.CurrencyCurrent:
+		r.Status = StatusOK
+		r.Summary = fmt.Sprintf("the guest base was composed by this substrate (%s)", running)
+	case guestbase.CurrencyUnknown:
+		// Deliberately NOT ok. Reporting silence as currency is the exact
+		// failure being fixed: for two releases the absence of a warning was
+		// read as an assurance.
+		r.Status = StatusFailed
+		r.Summary = "this guest base does not record what composed it, so whether its guest " +
+			"binaries match this substrate cannot be established"
+		r.Remedy = "recompose it with `mgit sandbox base from <image>`; bases composed before " +
+			"mgit recorded this carry no marker"
+	default:
+		r.Status = StatusFailed
+		r.Summary = fmt.Sprintf("the guest base was composed by mgit %s but this substrate is %s, "+
+			"so the guest binaries frozen into it are not this build's — it silently lacks every "+
+			"guest-side fix since %s", composed, running, composed)
+		r.Remedy = "recompose it with `mgit sandbox base from <image>`"
+	}
 	return r
 }
