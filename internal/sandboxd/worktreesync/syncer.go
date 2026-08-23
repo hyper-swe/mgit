@@ -133,7 +133,26 @@ func Sync(req Request) (Result, error) {
 	if err := Apply(candidate, req.GuestTree, plan); err != nil {
 		return Result{}, err
 	}
-	// The baseline moves only after a successful apply, so a failed sync
+	// READ THE DELIVERY BACK before reporting it.
+	//
+	// A sync once reported success while the guest's tree lacked a created
+	// file, and mgit had no idea — the drop was caught by a consumer's
+	// stale-copy check one layer up (MGIT-164). Apply returning nil says the
+	// writes were attempted; it does not say the guest can read them.
+	//
+	// The check costs one more manifest build of a tree already on local disk,
+	// and it is the difference between trusting the apply and knowing it. It
+	// runs BEFORE the baseline moves, so an undelivered sync re-derives the
+	// same work next time instead of recording a delivery that did not happen.
+	// Refs: MGIT-164
+	landed, err := BuildManifest(req.GuestTree)
+	if err != nil {
+		return Result{}, fmt.Errorf("worktree sync: read back the guest tree: %w", err)
+	}
+	if err := VerifyDelivery(plan, host, landed); err != nil {
+		return Result{}, err
+	}
+	// The baseline moves only after a VERIFIED apply, so a failed sync
 	// re-derives the same work next time rather than losing track of it.
 	if err := SaveManifest(req.StateDir, host); err != nil {
 		return Result{}, err
