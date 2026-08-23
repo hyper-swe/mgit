@@ -135,3 +135,58 @@ func TestEveryCheck_NamesItsIncident(t *testing.T) {
 		assert.Contains(t, got.Incident, "MGIT-")
 	}
 }
+
+// The base-currency check: current passes, any mismatch fails with both
+// versions named, and an unrecorded base FAILS rather than passing — because
+// reporting silence as currency is the failure being fixed. Refs: MGIT-174
+func TestBaseCurrencyCheck(t *testing.T) {
+	tests := []struct {
+		name       string
+		composed   string
+		running    string
+		inspectErr error
+		wantStatus Status
+		wantIn     string
+	}{
+		{
+			name: "composed_by_this_substrate", composed: "0.6.4", running: "0.6.4",
+			wantStatus: StatusOK, wantIn: "0.6.4",
+		},
+		{
+			name:     "composed_by_an_older_substrate_names_BOTH_versions",
+			composed: "0.6.3", running: "0.6.4",
+			wantStatus: StatusFailed, wantIn: "0.6.3",
+		},
+		{
+			name:     "an_unrecorded_base_is_a_FAILURE_not_a_pass",
+			composed: "", running: "0.6.4",
+			wantStatus: StatusFailed, wantIn: "does not record",
+		},
+		{
+			name:       "an_uninspectable_base_is_not_checked",
+			inspectErr: errors.New("no guest base registered for this repository"),
+			wantStatus: StatusNotChecked, wantIn: "no guest base registered",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := BaseCurrencyCheck{Inspect: func() (string, string, error) {
+				return tt.composed, tt.running, tt.inspectErr
+			}}
+			got := c.Run(context.Background())
+
+			assert.Equal(t, tt.wantStatus, got.Status)
+			assert.Contains(t, got.Summary+got.Reason, tt.wantIn)
+			assert.Equal(t, "MGIT-174", got.Incident)
+			if tt.wantStatus == StatusFailed {
+				assert.Contains(t, got.Remedy, "sandbox base from")
+			}
+			if tt.composed == "0.6.3" {
+				assert.Contains(t, got.Summary, "0.6.4",
+					"a mismatch must name BOTH versions, or the reader cannot judge the gap")
+				assert.Contains(t, got.Summary, "guest-side",
+					"the consequence must be stated: a stale base lacks guest-side fixes")
+			}
+		})
+	}
+}

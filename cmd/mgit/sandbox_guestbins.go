@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/hyper-swe/mgit/internal/sandboxd/guestbase"
 )
 
 // guestPair are the two LINUX binaries every guest base must carry: the
@@ -33,7 +35,22 @@ const guestBinSubdir = "guest"
 // middle one is what makes `brew install mgit` sufficient — mgit-guest is
 // guest-only and is never on a host PATH. Refs: MGIT-61.15, FR-17.11
 func injectGuestBinaries(baseDir, guestBinDir, exePath string) error {
-	return injectGuestBinariesWith(baseDir, resolveGuestBinaries(guestBinDir, exePath), buildGuestBinary)
+	if err := injectGuestBinariesWith(baseDir, resolveGuestBinaries(guestBinDir, exePath), buildGuestBinary); err != nil {
+		return err
+	}
+	// Record the substrate that just froze those binaries into the base.
+	//
+	// It goes HERE, in the function that does the freezing, because that is
+	// what the marker describes: the guest code inside a base is whatever this
+	// build injected, and it never changes again. Recording it anywhere else
+	// would be a second fact that could drift from the first — and both
+	// compose paths reach this function, so neither can forget.
+	//
+	// Nothing compared composing-substrate to running-substrate before this,
+	// because the composing substrate was written down nowhere; the door
+	// everyone believed existed was a one-time cache miss during the in-tree
+	// to content-addressed migration. Refs: MGIT-174, MGIT-147
+	return guestbase.WriteComposedBy(baseDir, Version, "")
 }
 
 // guestBinarySource is where the linux guest binaries are coming from: a
