@@ -224,3 +224,72 @@ func TestLoadManifest_Absent_IsEmpty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
+
+// A sync whose write cannot land is refused, and reports nothing as updated.
+//
+// HONEST SCOPE, because I got this wrong first: an unwritable guest tree makes
+// APPLY fail, so this exercises the apply-failure path and NOT the delivery
+// read-back. I verified that by deleting the VerifyDelivery call and watching
+// this test still pass — a test that passes with the code under test removed
+// is not testing it. VerifyDelivery's own coverage is direct, in
+// verify_test.go, where the manifests are supplied rather than produced.
+//
+// It is kept because the property is still worth holding: a failed apply must
+// not be reported as a delivery. Refs: MGIT-164
+func TestSync_ApplyThatCannotWrite_IsRefusedAndReportsNothingDelivered(t *testing.T) {
+	f := newFixture(t, map[string]string{"app.go": "V1"})
+
+	// A creation, exactly as the reported failure had.
+	writeTree(t, f.worktree, map[string]string{
+		"app.go":                      "V2",
+		"CapacityCalculator.test.tsx": "new test",
+	})
+
+	// Make the guest tree unwritable so the apply cannot land, then restore it
+	// so the read-back sees the real (undelivered) state.
+	require.NoError(t, os.Chmod(f.guestTree, 0o500))       //nolint:gosec // deliberately unwritable: the apply must not be able to land
+	t.Cleanup(func() { _ = os.Chmod(f.guestTree, 0o700) }) //nolint:gosec // restore the fixture
+
+	res, err := f.sync(false)
+
+	require.Error(t, err, "a sync that did not land must never report success")
+	assert.Empty(t, res.Updated, "nothing may be reported as updated when nothing was delivered")
+	require.NoError(t, os.Chmod(f.guestTree, 0o700)) //nolint:gosec // restore the fixture
+	assert.NotContains(t, listNames(t, f.guestTree), "CapacityCalculator.test.tsx",
+		"the premise: the creation really did not reach the guest")
+}
+
+// The baseline must NOT move when a sync failed, so the next one re-derives
+// the same work instead of believing it was already sent. This is the
+// invariant that keeps a failure recoverable rather than silently lossy, and
+// it holds for BOTH failure paths — a refused apply and a refused read-back,
+// which is why the verification was placed before SaveManifest.
+// Refs: MGIT-164
+func TestSync_FailedSync_LeavesTheBaselineWhereItWas(t *testing.T) {
+	f := newFixture(t, map[string]string{"app.go": "V1"})
+	before, err := LoadManifest(f.stateDir)
+	require.NoError(t, err)
+
+	writeTree(t, f.worktree, map[string]string{"app.go": "V2", "new.txt": "created"})
+	require.NoError(t, os.Chmod(f.guestTree, 0o500))       //nolint:gosec // deliberately unwritable: the apply must not be able to land
+	t.Cleanup(func() { _ = os.Chmod(f.guestTree, 0o700) }) //nolint:gosec // restore the fixture
+	_, syncErr := f.sync(false)
+	require.Error(t, syncErr)
+
+	after, err := LoadManifest(f.stateDir)
+	require.NoError(t, err)
+	assert.Equal(t, before, after,
+		"a failed delivery must not record itself as delivered, or the work is lost silently")
+}
+
+// listNames returns the base names directly under root.
+func listNames(t *testing.T, root string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Name())
+	}
+	return out
+}
