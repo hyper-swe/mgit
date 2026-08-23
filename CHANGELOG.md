@@ -5,6 +5,84 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-08-23
+
+**A sync now verifies its own delivery.** The release theme is the same as
+0.6.3's, one layer deeper: not just failing legibly, but refusing to claim work
+that did not happen.
+
+### Sync reads the delivery back before reporting it
+
+A worktree sync reported success while the guest's tree lacked the files — a
+`git apply` created a file and modified its sibling, and the guest could read
+neither. mgit had no idea. It was caught by a consumer's stale-copy check one
+layer up.
+
+That is the silent-destruction class, and it is the worst kind: a sync that
+fails loudly costs a retry, while a sync that reports success sends an agent on
+to build against a tree missing its own changes, and everything derived from it
+inherits the error without a symptom.
+
+**The root cause of that instance is still unreproduced**, and this release
+does not claim to fix it. Four shapes were tested live and all behaved
+correctly; both code suspects were cleared by reading. What ships instead makes
+the whole CLASS loud regardless of which mechanism drops an operation: `Apply`
+returning without error says the writes were ATTEMPTED, not that the guest can
+read them. The guest tree is now read back and compared against what was
+staged, before anything is reported — and before the delivery baseline moves,
+so an undelivered sync re-derives the same work next time rather than recording
+a delivery that never happened.
+
+Only planned paths are checked. A guest is entitled to its own files, and
+policing paths outside the plan would refuse syncs over work the guest
+legitimately created.
+
+### `mgit doctor`
+
+Standing checks for conditions that have already cost someone a diagnosis. Its
+one load-bearing decision: **not-checked is a first-class verdict**, distinct
+from both ok and failed. A diagnostic that silently skips is worse than no
+diagnostic — silence reads as a pass, and the reader has been misled by the
+instrument they consulted to avoid being misled. A check that cannot run says
+so, says why, and does not fail the exit code.
+
+Every failure names a remedy. Every check names the incident it converts, so
+the reason it exists outlives the people who remember it. The first two:
+whether this repository's recorded tree contains a nested `.git` (answerable at
+rest, where it previously required a failure), and whether the guest resolves
+localhost without a DNS query.
+
+### The daemon asked the wrong layer whether anything was registered
+
+The idle check consulted the BACKEND, which knows only booted VMs — while
+registration is a service-layer fact. So a task registered but not yet used had
+no VM at all, and the daemon exited while a live task was bound to it, stopping
+everything it does continuously. Its own doc comment already said "registered"
+while the code asked the backend; the two had drifted with nothing to make them
+disagree out loud.
+
+Frugality is preserved and was verified as carefully as the fix: a daemon with
+nothing registered still exits on its idle grace.
+
+### A task's trail says what each commit was
+
+`mgit log --task-id` — the reviewer's view of what an agent did — printed the
+index position (`pos=0`, `pos=1`) rather than the commit subject. The messages
+were correct and complete; the task-scoped log simply read an index that does
+not store them. The subject now comes from the commit object, the authoritative
+copy, so there is no second copy to drift. A commit whose object cannot be read
+is reported as unavailable rather than blank, because a blank reads as an empty
+commit message, which is a different fact.
+
+### CI no longer refetches a 145 MB kernel on every run
+
+A pinned kernel tarball was downloaded from a third party before every libkrun
+build, putting a transfer to a rented runner on the critical path of the whole
+repository — it blocked an unrelated change three times in a row. The tarball is
+pinned, so its identity is its content, so it is cacheable by construction. It
+is verified on the way into the cache and on the way out, because caching must
+not weaken the thing it speeds up.
+
 ## [0.6.3] - 2026-08-22
 
 **The release of things that failed silently.** Every headline entry here is a
