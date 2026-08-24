@@ -107,9 +107,16 @@ jobs:
           # measured. Over-generous for a `go install` is the safe direction:
           # an over-generous bound costs minutes during a real outage, an
           # under-generous one manufactures the red it was added to prevent.
+          # PINNED, not @latest. goreleaser v2.18.0 raised its Go floor to 1.27
+          # and this runner is on 1.26 with GOTOOLCHAIN=local, so `@latest`
+          # broke a documentation-only PR the day it was published — an input
+          # nobody chose, changing under a build that must be reproducible.
+          # v2.17.1 is the newest release that builds on this toolchain.
+          # Bump deliberately, together with the Go version. Refs: MGIT-179
+          GORELEASER_VERSION=v2.17.1
           bash scripts/ci/guard-fetch.sh -t 900 -l goreleaser-install \
             -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
-            go install github.com/goreleaser/goreleaser/v2@latest
+            go install github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}
           # Only the Linux builds — the darwin daemon is CGO/native (built on a
           # mac in release.yml), so it is excluded from this ubuntu snapshot.
           goreleaser build --snapshot --clean --skip=before \

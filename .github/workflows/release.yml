@@ -124,7 +124,12 @@ jobs:
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
-          version: latest
+          # PINNED for the same reason as e2e.yml's install, and this is the
+          # site that matters most: `latest` here resolves at RELEASE time,
+          # after the tag is pushed — and a failed publish burns the number
+          # (R-H298). An unpinned build tool on the release path is a version
+          # nobody chose deciding whether a release exists. Refs: MGIT-179
+          version: v2.17.1
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
