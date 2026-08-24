@@ -847,6 +847,67 @@ echo.Start(":8080") → change to "127.0.0.1:8080"
 
 ---
 
+## Working laws (each paid for by a named incident — do not prune without reading it)
+
+**Verification**
+- Tests green ≠ working. Run the thing and read real output after the
+  suite passes — every field defect this cycle (silent sync drop, wrong
+  daemon, empty snapshot list, doubled log marker) was found that way,
+  none by tests. (Session close, 2026-08-22.)
+- A test that passes with its subject deleted tests nothing. After
+  writing a test, neuter the code under test and watch it fail. Give
+  every new harness a negative control — prove it CAN fail before
+  trusting its passes. (#69 near-miss; campaign self-audit.)
+- A test's case list must come from a source the code under test does
+  not control; a test's time window must be able to contain the
+  failure. (pristineSections survivor; the time-blind cue test.)
+- Assert the property, not the presentation — count commits, don't
+  match rendered lines. (MGIT-161; the pos= shell gate.)
+- Hold the comparator still: one variable per experiment, and check ONE
+  edge of any CLI contract empirically before scripting against it.
+  (dep-helper inversion; done-from-open abort; /tmp theory.)
+
+**Layering & silence**
+- Ask "which layer owns this fact?" before consulting the manager from
+  the daemon — an answer true of the backend can be false of the
+  system. (MGIT-107, MGIT-154 — twice makes it a class.)
+- A doc comment asserting a layer contract needs a test that would
+  fail; naming a failure mode does not inoculate against it.
+  (MGIT-162: comment said name-table, code ran a resolver.)
+- Wherever silence would be meaningful, "cannot tell" must be a loud
+  verdict of its own. Beware the PHANTOM DOOR: an error that resembles
+  a designed check earns trust nobody built, and its later silence
+  reads as assurance; its only symptom is "a warning that used to fire
+  and doesn't any more." (doctor's not-checked; MGIT-174/#79.)
+
+**Integrity duals**
+- Caching must not weaken verification (digest in AND out; #66).
+- Provenance must not weaken determinism (deterministic markers; #79).
+- Pin the publisher's stated sum, never the bytes you received (#66).
+
+**Release**
+- Never cut from red. A tag never points twice — a failed publish
+  burns the number (R-H298).
+- Notes may not overstate: an unreproduced fix is stated as such;
+  field-verified and formally attested are DIFFERENT claims, and a
+  proof belongs to the version it was measured on (#164).
+- One assembler builds anything release-shaped; CI must exercise the
+  layout customers actually receive. (Blocker C: four hand-built
+  release dirs, installer broken against the real one.)
+
+**Process**
+- A PR merge is not a ticket close — closing, with the incident's
+  doctor check and regression scenario, is part of the merge ritual.
+  (MGIT-178; a fixed P0 sat 16 days as a false alarm.)
+- Close tickets on evidence, never inference. (121/103/68 audit.)
+- Preflight sweeps shell gates too, not just Go. (#68's stale assert.)
+- Invasive multi-part changes (staging + supervisor + wire) start in a
+  session with room to finish them. (151/156 deferrals.)
+- A design written before a precedent exists is re-read after one
+  appears. (MGIT-158 superseded by MGIT-152's pattern.)
+
+---
+
 ## VERIFICATION CHECKLIST
 
 Run before marking task "done":
