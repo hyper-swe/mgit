@@ -42,8 +42,13 @@ func logCmd() *cobra.Command {
 				return fmt.Errorf("log: %w", err)
 			}
 
-			// Apply --since / --until / --author filters
-			commits = filterCommits(commits, since, until, author)
+			// Apply --since / --until / --author filters. An unparseable
+			// window fails the command here rather than quietly returning the
+			// whole trail (MGIT-172).
+			commits, err = filterCommits(commits, since, until, author)
+			if err != nil {
+				return err
+			}
 
 			if formatJSON || format == "json" {
 				if limit > 0 && limit < len(commits) {
@@ -61,29 +66,32 @@ func logCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&formatJSON, "json", false, "Output as JSON")
 	cmd.Flags().BoolVar(&oneline, "oneline", false, "One-line compact format")
 	cmd.Flags().BoolVar(&graph, "graph", false, "Show commit graph")
-	cmd.Flags().StringVar(&since, "since", "", "Show commits after date (RFC3339)")
-	cmd.Flags().StringVar(&until, "until", "", "Show commits before date (RFC3339)")
+	cmd.Flags().StringVar(&since, "since", "", "Show commits at or after this RFC 3339 timestamp, e.g. 2026-08-15T00:00:00Z")
+	cmd.Flags().StringVar(&until, "until", "", "Show commits at or before this RFC 3339 timestamp, e.g. 2026-08-15T23:59:59Z")
 	cmd.Flags().StringVar(&author, "author", "", "Filter by author/agent ID")
 	cmd.Flags().StringVar(&format, "format", "", "Output format: oneline | full | json")
 	return cmd
 }
 
 // filterCommits applies --since, --until, --author filters to a commit list.
-// Refs: FR-8.4
-func filterCommits(commits []*model.Commit, since, until, author string) []*model.Commit {
+//
+// An unparseable window is REFUSED, never ignored. The output of a filter the
+// tool could not apply is indistinguishable from one that matched everything
+// — same commits, same order, exit 0 — and `mgit log` is the reviewer's view
+// of the audit trail, so a trail the reader believes is narrowed is the
+// failure (MGIT-172). Refusing beats guessing at other layouts: a second guess
+// that is also wrong would be the same silent defect. Refs: FR-8.4, MGIT-172
+func filterCommits(commits []*model.Commit, since, until, author string) ([]*model.Commit, error) {
+	sinceT, err := parseWindowBound("--since", since)
+	if err != nil {
+		return nil, err
+	}
+	untilT, err := parseWindowBound("--until", until)
+	if err != nil {
+		return nil, err
+	}
 	if since == "" && until == "" && author == "" {
-		return commits
-	}
-	var sinceT, untilT time.Time
-	if since != "" {
-		if t, err := time.Parse(time.RFC3339, since); err == nil {
-			sinceT = t
-		}
-	}
-	if until != "" {
-		if t, err := time.Parse(time.RFC3339, until); err == nil {
-			untilT = t
-		}
+		return commits, nil
 	}
 	var out []*model.Commit
 	for _, c := range commits {
@@ -98,7 +106,23 @@ func filterCommits(commits []*model.Commit, since, until, author string) []*mode
 		}
 		out = append(out, c)
 	}
-	return out
+	return out, nil
+}
+
+// parseWindowBound parses one RFC 3339 window bound; an empty value is no
+// bound. The refusal names the flag, the value and an acceptable form, so a
+// reader who typed a plain date is told what to type instead. Refs: MGIT-172
+func parseWindowBound(flag, value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("log: %s %q is not an RFC 3339 timestamp; write it like %s — a date alone or a phrase "+
+			"such as \"yesterday\" is refused rather than ignored, because a window the tool cannot apply would "+
+			"otherwise return the whole trail as if it had matched", flag, value, "2006-01-02T15:04:05Z")
+	}
+	return t, nil
 }
 
 // renderLog writes commits to stdout in the requested format.
