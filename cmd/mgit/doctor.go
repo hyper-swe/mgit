@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mgit/internal/doctor"
+	"github.com/hyper-swe/mgit/internal/guestnet"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/guestbase"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
@@ -122,12 +123,23 @@ func inspectBaseCurrency() (composed, running string, err error) {
 	return rec.Version, Version, nil
 }
 
-// probeGuestLocalhost resolves localhost inside the task's guest.
+// probeGuestLocalhost reads the task guest's own name table and returns the
+// line that maps localhost, or "" when nothing does.
 //
-// It asks the guest to read its own name table rather than to run a resolver:
-// the property under test is "localhost resolves WITHOUT a DNS query", and a
-// resolver that succeeded via DNS would pass a check whose whole point is that
-// DNS is unavailable. Refs: MGIT-162, MGIT-159
+// It READS /etc/hosts — the file internal/guestnet writes — rather than
+// running a resolver. The property under test is "localhost resolves WITHOUT
+// a DNS query", and `getent hosts` is a resolver: with mgit's own guest
+// nsswitch of `hosts: files dns` it falls through to DNS on a miss, so on a
+// sandbox whose egress reaches a resolver it passed a check whose whole point
+// is that DNS is unavailable (MGIT-169). Reading the table is the direct
+// question.
+//
+// Exit codes are distinguished, because a check that could not run must not
+// read as the failure: exit 0 is an answer (parsed for a localhost entry);
+// exit 1 with "No such file" is an answer too — no table at all IS the
+// MGIT-159 condition; anything else (127 for a base without `cat`, a
+// permission failure) is an error the caller reports as not-checked, with
+// the exit code and stderr as the reason. Refs: MGIT-162, MGIT-159, MGIT-169
 func probeGuestLocalhost(ctx context.Context, connect connectFunc, taskID string) (string, error) {
 	if taskID == "" {
 		return "", errors.New("no sandbox: this directory is not bound to a task worktree")
@@ -138,16 +150,18 @@ func probeGuestLocalhost(ctx context.Context, connect connectFunc, taskID string
 	}
 	var out, errOut strings.Builder
 	code, err := cl.Exec(ctx, taskID,
-		model.ExecRequest{Command: []string{"getent", "hosts", "localhost"}},
+		model.ExecRequest{Command: []string{"cat", "/etc/hosts"}},
 		&out, &errOut)
 	if err != nil {
 		return "", err
 	}
-	if code != 0 {
-		// getent exits non-zero when it resolves nothing, which IS the
-		// condition — an empty answer, reported as such rather than as an
-		// error the caller cannot interpret.
+	switch {
+	case code == 0:
+		return guestnet.LocalhostEntry(out.String()), nil
+	case code == 1 && strings.Contains(errOut.String(), "No such file"):
 		return "", nil
+	default:
+		return "", fmt.Errorf("could not read the guest's name table: `cat /etc/hosts` exited %d: %s",
+			code, strings.TrimSpace(errOut.String()))
 	}
-	return out.String(), nil
 }
