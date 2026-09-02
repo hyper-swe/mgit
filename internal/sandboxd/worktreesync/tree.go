@@ -153,7 +153,7 @@ func Apply(stagedTree, guestTree string, plan Plan) error {
 // its old contents, even where the guest's view of the name outlives the
 // unlink.
 //
-// WHY IT TRUNCATES FIRST, measured on real KVM (MGIT-90). The share is a host
+// WHY IT EMPTIES FIRST, measured on real KVM (MGIT-90). The share is a host
 // directory the guest has mounted, and the guest's kernel caches name lookups
 // for as long as the filesystem's entry timeout. On libkrun's Linux virtio-fs
 // that timeout is ~5 SECONDS: after a plain unlink the guest's directory
@@ -172,21 +172,58 @@ func Apply(stagedTree, guestTree string, plan Plan) error {
 // name itself may linger briefly; that residual is documented rather than
 // papered over.
 //
-// It is unconditional because it costs one syscall and is correct everywhere:
-// on a backend with no entry cache the truncate is simply invisible.
-// Refs: MGIT-90, MGIT-76, ADR-011
+// ONLY A REGULAR FILE IS EMPTIED (MGIT-168). os.Truncate follows symlinks, so
+// emptying a LINK landed the truncate on the link's TARGET — a path the plan
+// never named — and a sync that had deleted only link.txt reported success
+// while real.txt survived as a zero-byte file. Nothing caught it: the
+// MGIT-164 read-back checks planned paths, deliberately, and the damaged one
+// was outside the plan by construction. A link has a stale NAME, never stale
+// CONTENT, so the MGIT-90 argument does not apply to it and unlinking it
+// directly loses nothing. Refs: MGIT-90, MGIT-76, MGIT-168, ADR-011
 func removeForGuest(path string) error {
-	if err := os.Truncate(path, 0); err != nil && !os.IsNotExist(err) {
-		// A directory, or a path this process cannot truncate, is not a
-		// failure of the delete — the unlink below is what has to succeed.
-		if !errors.Is(err, syscall.EISDIR) {
-			return err
-		}
+	if err := emptyRegularFile(path); err != nil {
+		return err
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
+}
+
+// emptyRegularFile truncates path to zero bytes if, and only if, it is a
+// regular file — never through a link, never a directory.
+//
+// The kind is read with Lstat and then made BINDING at the open with
+// O_NOFOLLOW: the guest owns the tree this runs against and can swap an entry
+// for a symlink between the two calls, and a truncate that followed that link
+// would empty whatever host path it named. With O_NOFOLLOW such a swap gets
+// ELOOP, which is treated exactly like "not a regular file": skip the empty,
+// unlink the name. An entry that vanishes underneath is not an error — the
+// delete is idempotent (a guest that already removed the file must not fail
+// the sync). Refs: MGIT-168, MGIT-90
+func emptyRegularFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|oNoFollow, 0) //nolint:gosec // path is inside the sandbox's own staged tree, checked by safeJoin
+	if err != nil {
+		if os.IsNotExist(err) || errors.Is(err, syscall.ELOOP) {
+			return nil
+		}
+		return err
+	}
+	if err := f.Truncate(0); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // safeJoin resolves a tree-relative path, refusing anything that would land
