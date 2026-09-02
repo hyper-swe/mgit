@@ -117,14 +117,25 @@ func copyStagingEntry(root, path, rel, dst string, d os.DirEntry) error {
 
 // AssertSymlinkWithin rejects a symlink whose RESOLVED target escapes root.
 // The target is resolved relative to the link's directory and fully evaluated
-// (EvalSymlinks where it exists) so a chain of links cannot step outside. A
-// link to a not-yet-existing in-root path is allowed; one pointing outside
-// root (absolute or via ..) is rejected.
+// so a chain of links cannot step outside. A link to a not-yet-existing
+// in-root path is allowed; one pointing outside root (absolute or via ..) is
+// rejected.
+//
+// BOTH SIDES ARE CANONICALISED THE SAME WAY (MGIT-166). The root is resolved
+// through any symlinked prefix (macOS keeps /tmp and /var/folders behind
+// links, so every `mgit work /tmp/...` worktree has one); the target must be
+// too, or the comparison is between two namespaces. It used to be resolved
+// only when it EXISTED, so a link to a not-yet-generated path under /tmp read
+// as `../../..`-prefixed and was refused as an escape — a false positive with
+// a containment message, on the documented agent path. Now the target's
+// longest existing ancestor is resolved and the missing tail is re-appended,
+// which also closes the mirror gap: a dangling leaf under an in-root directory
+// link that points OUTSIDE resolves to where that link leads, and is refused.
 //
 // It is EXPORTED because both directions of the boundary need exactly this
 // check and the guarantee must keep ONE implementation: delivery inbound
 // passes the worktree root, and internal/sandboxd/artifactexport passes the
-// exported subtree root outbound. Refs: SEC-03, F-A/NEW-2, MGIT-73
+// exported subtree root outbound. Refs: SEC-03, F-A/NEW-2, MGIT-73, MGIT-166
 func AssertSymlinkWithin(root, linkPath string) error {
 	target, err := os.Readlink(linkPath)
 	if err != nil {
@@ -134,20 +145,8 @@ func AssertSymlinkWithin(root, linkPath string) error {
 	if !filepath.IsAbs(resolved) {
 		resolved = filepath.Join(filepath.Dir(linkPath), target)
 	}
-	resolved = filepath.Clean(resolved)
-	// Fully evaluate where possible (collapses any intermediate links); fall
-	// back to the lexical clean for a target that does not yet exist.
-	if eval, evalErr := filepath.EvalSymlinks(resolved); evalErr == nil {
-		resolved = eval
-	}
-	// Evaluate the root too so the containment check compares like with like:
-	// on some platforms the worktree root itself sits under a symlinked prefix
-	// (e.g. macOS /var -> /private/var), which EvalSymlinks expands on the
-	// target but not on a lexically-cleaned root.
-	cleanRoot := filepath.Clean(root)
-	if eval, evalErr := filepath.EvalSymlinks(cleanRoot); evalErr == nil {
-		cleanRoot = eval
-	}
+	resolved = canonicalize(filepath.Clean(resolved))
+	cleanRoot := canonicalize(filepath.Clean(root))
 	if resolved == cleanRoot {
 		return nil
 	}
@@ -156,6 +155,26 @@ func AssertSymlinkWithin(root, linkPath string) error {
 		return fmt.Errorf("%w: symlink %s -> %s escapes the worktree", ErrSymlinkEscape, linkPath, target)
 	}
 	return nil
+}
+
+// canonicalize resolves every symlink on the EXISTING part of path and keeps
+// the rest lexical: the longest ancestor EvalSymlinks accepts is resolved and
+// the not-yet-existing tail is re-appended to it. A path with no existing
+// ancestor at all is returned as given. This is what lets a dangling target
+// be judged in the same namespace as its root. Refs: MGIT-166
+func canonicalize(path string) string {
+	tail := ""
+	for cur := path; ; {
+		if eval, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(eval, tail)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return path
+		}
+		tail = filepath.Join(filepath.Base(cur), tail)
+		cur = parent
+	}
 }
 
 // copyTree recursively copies src into dst (files, dirs, symlinks verbatim).
