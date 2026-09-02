@@ -16,6 +16,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/buildinfo"
@@ -115,6 +116,9 @@ const greeting = "ok mgit-sandboxd\n"
 type Daemon struct {
 	cfg     Config
 	selfUID uint32 // daemon's own effective UID, cached at startup (FR-17.34)
+	// passInFlight is the single-flight guard for the snapshot pass, which
+	// runs OFF the select loop (see startSnapshotPass). Refs: MGIT-170
+	passInFlight atomic.Bool
 }
 
 // New validates the configuration and returns a Daemon.
@@ -164,6 +168,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	defer d.cleanupSocket(listener, lock)
+	defer d.noteAbandonedPass()
 
 	d.cfg.Logger.Info("sandboxd started", "event", "started", "socket", d.cfg.SocketPath)
 
@@ -217,7 +222,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 			idleSince = d.cfg.Clock()
 
 		case <-snapTicker.C:
-			d.observeWorktrees(ctx)
+			d.startSnapshotPass(ctx)
 
 		case err := <-acceptDone:
 			// Accept failure (e.g. fd exhaustion) is fatal — but VMs are
@@ -273,6 +278,56 @@ func (d *Daemon) newSnapshotTicker() *time.Ticker {
 		t.Stop()
 	}
 	return t
+}
+
+// startSnapshotPass runs one observation pass on its own goroutine, or skips
+// this tick if the previous pass is still running.
+//
+// WHY OFF THE LOOP (MGIT-170). Everything else the daemon does is kept off
+// the select path — a hung client gets its own goroutine so it "must never
+// block idle checks or shutdown". The pass used to run INLINE, and it is the
+// one piece of work whose duration scales with the user's repository: the
+// walk hashes every file of every supervised worktree and takes no context,
+// so nothing could shorten it. Measured with a 1.5s pass in flight, a client
+// waited 1.50s for the first byte of its greeting; with a 2s pass, shutdown
+// took 2.00s and, once a pass outlasted the tick, the select re-entered with
+// both the ticker and ctx.Done ready — a coin flip per iteration between
+// stopping and starting another pass (7.9s against a 2s pass, unbounded).
+//
+// SINGLE-FLIGHT, NOT QUEUED. A tick that arrives while a pass is running is
+// skipped and logged; passes never accumulate, so a slow repository costs at
+// most one pass of latency to its own next snapshot and nothing to anyone
+// else. Refs: MGIT-170, MGIT-110, MGIT-107
+func (d *Daemon) startSnapshotPass(ctx context.Context) {
+	if d.cfg.Watcher == nil {
+		return
+	}
+	if !d.passInFlight.CompareAndSwap(false, true) {
+		d.cfg.Logger.Info("sandboxd snapshot pass still running; this tick is skipped",
+			"event", "snapshot_skipped")
+		return
+	}
+	go func() {
+		defer d.passInFlight.Store(false)
+		d.observeWorktrees(ctx)
+	}()
+}
+
+// noteAbandonedPass records, on every exit from Run, that a pass was still in
+// flight and is being left behind.
+//
+// Shutdown does not wait for it, by decision: a snapshot is housekeeping and
+// the drain is not. The drain writes the terminal record and reaps the VMs,
+// and a supervisor's SIGTERM->SIGKILL window (systemd's default is 90s) is
+// spent on that, never on a tree walk that cannot be canceled. Nothing is
+// lost by abandoning it — the next daemon's first pass observes the same
+// tree, and go-git writes objects atomically — and nothing is silent about
+// it either: the line below is the record. Refs: MGIT-170, MGIT-107, R-H300
+func (d *Daemon) noteAbandonedPass() {
+	if d.passInFlight.Load() {
+		d.cfg.Logger.Info("sandboxd left a snapshot pass running at exit; the next daemon's first pass re-observes the tree",
+			"event", "snapshot_abandoned")
+	}
 }
 
 // observeWorktrees runs one passive observation pass, converting any failure
