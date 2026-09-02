@@ -12,12 +12,24 @@
 # Install:  make install-hooks     (sets core.hooksPath to scripts/hooks)
 # Bypass:   git push --no-verify   (the CI backstop still checks the PR)
 #
-# Refs: MGIT-142
+# TWO DOORS, deliberately different. The guard exits 2 when it REFUSES a
+# branch, and that blocks the push. It exits 1 when it could not run the check
+# at all (it could not open the repository, could not resolve the branch); that
+# is reported and does NOT block, the same way a missing Go toolchain is
+# handled below. A check that cannot run is an absence of evidence, not a
+# refusal, and CI's "Branch scope" job re-runs the guard on the pull request
+# either way (MGIT-182: for ten days every push from a linked worktree was
+# refused as "reference not found" — the guard's own defect, read as a verdict).
+#
+# Refs: MGIT-142, MGIT-182
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)
 zero='0000000000000000000000000000000000000000'
 status=0
+guarddir=$(mktemp -d)
+guard="$guarddir/branchguard"
+trap 'rm -rf "$guarddir"' EXIT
 
 if ! command -v go >/dev/null 2>&1; then
 	echo "pre-push: Go is not on PATH, so the branch-scope check did not run." >&2
@@ -33,9 +45,26 @@ while read -r local_ref local_sha _remote_ref _remote_sha; do
 	*) continue ;;
 	esac
 	branch=${local_ref#refs/heads/}
-	if ! (cd "$root" && go run ./scripts/branchguard --repo "$root" --branch "$branch"); then
-		status=1
+	# BUILD, THEN RUN. `go run` reports every non-zero program exit as its own
+	# exit 1 (printing "exit status N"), so through it a refusal (2) and a
+	# could-not-run (1) are the same number — and the first version of this
+	# door let a refused branch through on exactly that. The build is cached,
+	# so this costs nothing after the first push.
+	if ! (cd "$root" && go build -o "$guard" ./scripts/branchguard); then
+		echo "pre-push: the branch-scope guard did not build, so it did not check $branch." >&2
+		echo "          CI still checks it on the pull request. Refs: MGIT-182" >&2
+		continue
 	fi
+	rc=0
+	"$guard" --repo "$root" --branch "$branch" || rc=$?
+	case "$rc" in
+	0) ;;
+	2) status=1 ;; # refused: the branch carries another branch's commits
+	*)
+		echo "pre-push: the branch-scope check could not run on $branch (branchguard exit $rc)," >&2
+		echo "          so it did not check it. CI still checks it on the pull request. Refs: MGIT-182" >&2
+		;;
+	esac
 done
 
 exit "$status"
