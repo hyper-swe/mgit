@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-08-24T06:04:12Z",
+  "exported_at": "2026-09-02T19:35:56Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5705,6 +5705,31 @@
       "updated_at": "2026-06-22T13:18:00Z",
       "closed_at": "2026-06-22T13:18:00Z",
       "uid": "019eef3d-b36e-7991-9733-933a2e1c41cd"
+    },
+    {
+      "id": "MGIT-180",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 180,
+      "project": "MGIT",
+      "title": "MGIT-179 has no standing check: nothing fails when a build tool is resolved at @latest",
+      "description": "Rule 5 conversion for MGIT-179. The pin landed in #81 (both goreleaser sites moved to v2.17.1), but the FIX IS THE ONLY THING THAT LANDED — nothing in the repo now notices when a new floating version appears. Pin one tool, and the next unpinned one arrives the same way.\n\nMGIT-179's own acceptance saw this coming and left it undone: \"Consider whether any other @latest or unpinned action remains on a path that must be reproducible; fix or file what is found.\" This is that filing, promoted from a one-off sweep to a standing check, because a sweep done once decays the moment someone adds a workflow step.\n\nWHERE THIS CHECK LIVES IS THE WHOLE DESIGN QUESTION, and it is the \"which layer owns this fact?\" question from the working laws. The property is \"are this repo's build tools pinned\" — a CI property of THIS repository, not a property of a user's machine. `mgit doctor` runs on an installed binary on someone else's laptop, where there are no workflow files to inspect and the honest verdict would be StatusNotChecked forever. A check whose only possible answer is \"not applicable here\" is the phantom door in reverse: noise that trains people to skip the report.\n\nSo the recommendation is that this one is a PREFLIGHT/CI gate rather than a user-facing doctor check — a make target and a CI job that fails the build, run where the fact actually lives. Rule 5 is satisfied by the incident having a standing automated check, not by that check necessarily being a `doctor.Check`. If the reviewer disagrees and wants it in `mgit doctor` under a \"repo checks only when run inside the mgit source tree\" mode, that is a legitimate alternative and should be recorded as the decision — but it needs the StatusNotChecked path to be designed deliberately, not fallen into.\n\nWHAT TO DETECT, at minimum:\n  - `go install ...@latest` / `@master` / `@main` anywhere in .github/ or scripts/\n  - GitHub Actions `uses:` on a floating ref (a branch or a bare major where the workflow needs exactness), and any action input named version/goreleaser-version set to `latest`\n  - unpinned tool fetches in scripts/ (curl of a \"latest\" release URL)\n\nThe check must also state the Go-floor constraint that made v2.18.0 unusable, or the next person pins to whatever is newest and reproduces MGIT-179 exactly.\n\nNote the asymmetry that makes this cheap to get wrong: the failure lands AFTER the tag is pushed on the release path, and by R-H298 a tag never points twice, so the cost of the missing check is a burned version number rather than a red CI run.",
+      "prompt": "",
+      "acceptance": "- A standing automated check fails when a build tool or action on a reproducible path is resolved at a floating ref (@latest/@master/@main, `version: latest`, \"latest\" release URLs) in .github/ and scripts/.\n- The check runs in CI on every PR, so a newly added unpinned step is caught at the PR that adds it, not at the release that trips on it.\n- A negative control exists: introduce a floating ref in a scratch copy and prove the check FAILS on it, per the working law that a test which passes with its subject deleted tests nothing.\n- The decision on where the check lives — CI/preflight gate vs. a `mgit doctor` repo-mode check — is recorded with its reason, including why StatusNotChecked-on-every-user-machine was or was not acceptable.\n- The current tree passes the check, and any additional floating refs it finds are fixed in the same change or filed.\n- The Go-floor constraint (goreleaser v2.18.0 requires Go 1.27; the runner is on 1.26.x with GOTOOLCHAIN=local) is recorded beside the pin so the next bump is a decision.\n- MGIT-179's remaining acceptance item (the sweep) is satisfied by this work, and MGIT-179 is closed citing #81 plus this check.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "e174024384c47f9e9fd7f9dba6b5bf8a229fbae52ee882dc5466f0747989fb72",
+      "created_at": "2026-09-02T19:35:07Z",
+      "updated_at": "2026-09-02T19:35:07Z",
+      "uid": "01a0639e-3416-70b7-8dec-d83d7fcdbc0d"
     },
     {
       "id": "MGIT-19",
@@ -13143,6 +13168,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 444,
-  "checksum": "acbf040a149a857035849c9079b1d5c693cb331478cf48a8241a204f93918304"
+  "node_count": 445,
+  "checksum": "07af2cc5e66d39aaf532ea1ba68835077de676cda6052489058a308c7ac992d0"
 }
