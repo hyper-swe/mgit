@@ -866,6 +866,13 @@ echo.Start(":8080") → change to "127.0.0.1:8080"
 - Hold the comparator still: one variable per experiment, and check ONE
   edge of any CLI contract empirically before scripting against it.
   (dep-helper inversion; done-from-open abort; /tmp theory.)
+- Verification sits BETWEEN rebase and force-push, never after. Never
+  chain `rebase && push -f`: a failed rebase still reaches the push,
+  and `-f` removes the guard that would have caught it. Rebase, read
+  the diff you are about to force, then push. (#80 onto #81: a dirty
+  board file aborted the rebase, and the chained force-push would have
+  reverted #81's goreleaser pin — the fix that had just saved
+  v0.6.5's tag from being burned.)
 
 **Layering & silence**
 - Ask "which layer owns this fact?" before consulting the manager from
