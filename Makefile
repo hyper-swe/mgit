@@ -191,6 +191,11 @@ security-scan:
 # The MGIT-142 tripwire, runnable by hand. It normally runs itself from the
 # pre-push hook; this target is for checking a branch you are not standing on
 # (BRANCH=feat/x) or declaring a deliberate stack (BASE=fix/parent).
+## check-pinned-tools: Refuse a floating build-tool/action ref on a reproducible path (MGIT-180)
+.PHONY: check-pinned-tools
+check-pinned-tools:
+	@bash scripts/ci/check-pinned-tools.sh && bash scripts/ci/check-pinned-tools-selftest.sh
+
 .PHONY: branch-check
 branch-check:
 	@go run ./scripts/branchguard \
@@ -243,24 +248,26 @@ verify-archive:
 preflight:
 	@echo "=== mgit preflight checks ==="
 	@echo ""
-	@echo "[1/9] Linting..."
+	@echo "[1/10] Linting..."
 	@golangci-lint run ./... && echo "  PASS" || (echo "  FAIL"; exit 1)
-	@echo "[2/9] Tests with race detector..."
+	@echo "[2/10] Tests with race detector..."
 	@go test ./... -race -count=1 && echo "  PASS" || (echo "  FAIL"; exit 1)
-	@echo "[3/9] Test coverage..."
+	@echo "[3/10] Test coverage..."
 	@$(MAKE) test-cover
-	@echo "[4/9] Vulnerability scan..."
+	@echo "[4/10] Vulnerability scan..."
 	@govulncheck ./... && echo "  PASS" || (echo "  FAIL"; exit 1)
-	@echo "[5/9] Build binary..."
+	@echo "[5/10] Build binary..."
 	@$(MAKE) build && echo "  PASS" || (echo "  FAIL"; exit 1)
-	@echo "[6/9] Binary smoke test..."
+	@echo "[6/10] Binary smoke test..."
 	@./$(BINARY_PATH) --version && echo "  PASS"
-	@echo "[7/9] Anti-stub check..."
+	@echo "[7/10] Anti-stub check..."
 	@grep -rn '"not yet implemented"\|"not implemented"\|"integration pending"' \
 		--include='*.go' --exclude='*_test.go' . && (echo "  FAIL: stubs found"; exit 1) || echo "  PASS"
-	@echo "[8/9] Release archive contents..."
+	@echo "[8/10] Release archive contents..."
 	@$(MAKE) verify-archive >/dev/null && echo "  PASS" || (echo "  FAIL"; exit 1)
-	@echo "[9/9] Branch-scope hook installed..."
+	@echo "[9/10] Pinned build tools..."
+	@bash scripts/ci/check-pinned-tools.sh >/dev/null && echo "  PASS" || (echo "  FAIL: a floating ref — run make check-pinned-tools"; exit 1)
+	@echo "[10/10] Branch-scope hook installed..."
 	@# REPORTS, NEVER REWRITES. core.hooksPath is the contributor's own git
 	@# config; installing it unasked would touch what this check was not aimed
 	@# at, the same overreach as a `pkill` that stops every repository's daemon.
