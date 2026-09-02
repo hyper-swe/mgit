@@ -65,7 +65,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return exitError
 	}
-	repo, err := gogit.PlainOpenWithOptions(*repoPath, &gogit.PlainOpenOptions{DetectDotGit: true})
+	// EnableDotGitCommonDir: a LINKED worktree's .git is a file naming the
+	// main repository's .git/worktrees/<name>, and the refs live in the common
+	// dir it points back to. Without this the guard opened only the worktree's
+	// own gitdir, found no refs/heads at all, and refused every push from every
+	// linked worktree as "reference not found" (MGIT-182). The pre-push hook
+	// passes `git rev-parse --show-toplevel`, which in a linked worktree IS the
+	// worktree, so this is the hook's normal case, not a corner.
+	repo, err := gogit.PlainOpenWithOptions(*repoPath, &gogit.PlainOpenOptions{
+		DetectDotGit: true, EnableDotGitCommonDir: true,
+	})
 	if err != nil {
 		fmt.Fprintf(stderr, "branchguard: open %s: %v\n", *repoPath, err)
 		return exitError
