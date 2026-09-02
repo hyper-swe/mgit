@@ -46,7 +46,7 @@ func TestHello_KindTagIsUnique(t *testing.T) {
 		"KindList": KindList, "KindRemove": KindRemove, "KindStatus": KindStatus,
 		"KindGrants": KindGrants, "KindGrant": KindGrant, "KindSync": KindSync,
 		"KindPolicySet": KindPolicySet, "KindPolicyShow": KindPolicyShow,
-		"KindExport": KindExport, "KindHello": KindHello,
+		"KindExport": KindExport, "KindHello": KindHello, "KindEcho": KindEcho,
 	}
 	seen := make(map[byte]string, len(kinds))
 	for name, k := range kinds {

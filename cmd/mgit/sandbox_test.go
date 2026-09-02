@@ -54,6 +54,12 @@ type fakeSandboxClient struct {
 	syncReport *model.WorktreeSyncReport
 	syncErr    error
 
+	// echo* stand in for the daemon's echo verb (MGIT-175).
+	echoBytes   []int
+	echoResult  *controlproto.EchoResult
+	echoRefusal string
+	echoErr     error
+
 	policyTID     string
 	policyShowTID string
 	policyEntries []string
