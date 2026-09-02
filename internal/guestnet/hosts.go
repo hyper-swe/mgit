@@ -50,21 +50,36 @@ func EnsureHosts(path string) error {
 	}
 }
 
-// mapsLocalhost reports whether any non-comment line already names localhost.
-func mapsLocalhost(body string) bool {
-	for _, line := range strings.Split(body, "\n") {
-		line = strings.TrimSpace(line)
+// LocalhostEntry returns the first non-comment line of a hosts table whose
+// HOSTNAME fields include localhost, or "" when no line maps it.
+//
+// It is what "the guest maps localhost" means when the table is read directly
+// rather than through a resolver: a line like `127.0.0.1 localhost`. A comment
+// that mentions the word, or a trailing `# localhost` remark, maps nothing —
+// the exact false pass a resolver-free check exists to refuse. Exported for
+// doctor's guest/localhost probe, so the writer and the checker agree on one
+// definition. Refs: MGIT-169, MGIT-159
+func LocalhostEntry(body string) string {
+	for _, raw := range strings.Split(body, "\n") {
+		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		for _, field := range strings.Fields(line)[1:] {
+		fields := strings.Fields(line)
+		for _, field := range fields[1:] {
+			if strings.HasPrefix(field, "#") {
+				break // the rest of the line is a remark, not a hostname
+			}
 			if field == "localhost" {
-				return true
+				return line
 			}
 		}
 	}
-	return false
+	return ""
 }
+
+// mapsLocalhost reports whether any non-comment line already names localhost.
+func mapsLocalhost(body string) bool { return LocalhostEntry(body) != "" }
 
 // prependLoopback puts the loopback entries FIRST, which is where a resolver
 // expects to find them, without disturbing the order of what follows.
