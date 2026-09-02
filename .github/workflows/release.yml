@@ -58,6 +58,7 @@ jobs:
           # The install is a proxy.golang.org fetch; the scan that follows is
           # local. -t 120 is the floor (worst success 19s, n=136).
           # Refs: MGIT-143
+            # pin-exempt: govulncheck floats on purpose — a pinned scanner stops finding new vulnerabilities; the fetch is guarded (MGIT-143) and the float is a recorded decision (MGIT-179)
           bash scripts/ci/guard-fetch.sh -t 120 -l govulncheck-install \
             -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
             go install golang.org/x/vuln/cmd/govulncheck@latest

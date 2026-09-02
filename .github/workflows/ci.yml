@@ -47,6 +47,7 @@ jobs:
           # The install is a proxy.golang.org fetch; the scan that follows is
           # local. -t 120 is the floor: this step's worst success in CI history
           # is 19s (n=136). Refs: MGIT-143
+            # pin-exempt: govulncheck floats on purpose — a pinned scanner stops finding new vulnerabilities; the fetch is guarded (MGIT-143) and the float is a recorded decision (MGIT-179)
           bash scripts/ci/guard-fetch.sh -t 120 -l govulncheck-install \
             -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
             go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -62,6 +63,15 @@ jobs:
         run: |
           bash scripts/ci/fetch-inventory.sh
           bash scripts/ci/guard-fetch-selftest.sh
+
+      # Every build tool and action on a reproducible path is pinned, or its
+      # float is declared at the site with a reason. The self-test proves the
+      # check refuses each floating shape before its pass means anything.
+      # Refs: MGIT-180, MGIT-179
+      - name: Pinned tools — the tree, then the check's own refusals
+        run: |
+          bash scripts/ci/check-pinned-tools.sh
+          bash scripts/ci/check-pinned-tools-selftest.sh
 
       - name: Build binary
         run: make build
