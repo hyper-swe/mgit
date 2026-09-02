@@ -10,8 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mgit/internal/controlproto"
 	"github.com/hyper-swe/mgit/internal/doctor"
 	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd"
 	"github.com/hyper-swe/mgit/internal/sandboxd/guestbase"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
@@ -77,7 +79,51 @@ func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 			return probeGuestLocalhost(ctx, connect, app.BoundTask)
 		}},
 		doctor.BaseCurrencyCheck{Inspect: inspectBaseCurrency},
+		doctor.ResponseCapCheck{Probe: func(ctx context.Context, bytes int) (doctor.EchoReply, error) {
+			return probeResponseCap(ctx, connect, bytes)
+		}},
 	}
+}
+
+// echoer is the one verb the response-cap probe needs. It is asserted on the
+// connected client rather than added to sandboxClient, so a client without
+// it reports that it cannot ask — a not-checked, never a pass. Refs: MGIT-175
+type echoer interface {
+	Echo(ctx context.Context, bytes int) (*sandboxd.EchoOutcome, error)
+}
+
+// probeResponseCap asks the daemon for a control response of exactly bytes
+// and reports what came back: intact, refused (the daemon's words), or
+// arrived-but-wrong (how). Anything that stops it asking at all is an error,
+// so the check reports not-checked with the reason. Refs: MGIT-175, MGIT-160
+func probeResponseCap(ctx context.Context, connect connectFunc, bytes int) (doctor.EchoReply, error) {
+	cl, err := connect(ctx)
+	if err != nil {
+		return doctor.EchoReply{}, fmt.Errorf("no sandbox daemon reachable: %w", err)
+	}
+	e, ok := cl.(echoer)
+	if !ok {
+		return doctor.EchoReply{}, errors.New("this client cannot ask the daemon to echo")
+	}
+	out, err := e.Echo(ctx, bytes)
+	if err != nil {
+		return doctor.EchoReply{}, err
+	}
+	reply := doctor.EchoReply{Requested: bytes}
+	if out.Refusal != "" {
+		reply.Refusal = out.Refusal
+		return reply, nil
+	}
+	if err := controlproto.VerifyEcho(out.Result); err != nil {
+		reply.Detail = "the answer did not verify: " + err.Error()
+		return reply, nil //nolint:nilerr // a failed verification is the FINDING, carried as data; only "could not ask" is an error
+	}
+	if out.Result.Bytes != bytes {
+		reply.Detail = fmt.Sprintf("the answer is %d bytes, not the %d asked for", out.Result.Bytes, bytes)
+		return reply, nil
+	}
+	reply.Intact = true
+	return reply, nil
 }
 
 // inspectBaseCurrency reports which mgit composed this repository's guest base

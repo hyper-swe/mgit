@@ -129,6 +129,7 @@ func TestEveryCheck_NamesItsIncident(t *testing.T) {
 	for _, c := range []Check{
 		NestedGitCheck{Scan: func() ([]string, error) { return nil, nil }},
 		GuestLocalhostCheck{Probe: func(context.Context) (string, error) { return "127.0.0.1 localhost", nil }},
+		ResponseCapCheck{Probe: answering()},
 	} {
 		got := c.Run(context.Background())
 		require.NotEmpty(t, got.Incident, "%s does not name the incident it converts", c.Name())

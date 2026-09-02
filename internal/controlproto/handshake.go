@@ -61,7 +61,11 @@ const (
 	//
 	// 2 is the first version to speak this handshake. It also covers the
 	// MGIT-133 liveness beat, which is a wire addition in the same release.
-	ProtocolVersion = 2
+	// 3 adds the echo verb (KindEcho, an Echo field on request and response)
+	// that `mgit doctor` uses to exercise the MGIT-160 response cap
+	// (MGIT-175): a daemon left running from a 2 build refuses at the
+	// handshake, naming the restart, instead of answering "invalid request".
+	ProtocolVersion = 3
 
 	// LegacyProtocol names every mgit built before the handshake existed
 	// (0.5.x and earlier). Such a peer never states a version, so this number

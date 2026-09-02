@@ -164,6 +164,8 @@ func (d *Daemon) dispatch(ctx context.Context, conn net.Conn, req *controlproto.
 		d.servePolicyShow(ctx, conn, req.PolicyShow)
 	case controlproto.KindExport:
 		d.serveExport(ctx, conn, req.Export)
+	case controlproto.KindEcho:
+		d.serveEcho(conn, req.Echo)
 	default:
 		d.reply(conn, &controlproto.Response{},
 			fmt.Errorf("controlproto kind %#x not served by this daemon", req.Kind))

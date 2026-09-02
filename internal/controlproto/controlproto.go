@@ -56,6 +56,10 @@ const (
 	// KindExport brings a guest-built artifact out to a host-named path
 	// (MGIT-73). 'F' for file, because 'P' and 'E' are already spoken for.
 	KindExport byte = 'F'
+	// KindEcho ('M') is the exact-size echo `mgit doctor` uses to exercise the
+	// MGIT-160 response cap on the real channel. DECLARED in echo.go beside
+	// the check it serves; it is a request kind like every other one here.
+	//
 	// KindHello ('V') is the version handshake. It is DECLARED in handshake.go,
 	// beside the compatibility rule it serves, but it is a request kind like
 	// every other one here — adding a kind means reading both places, and
@@ -214,6 +218,9 @@ type Request struct {
 	// peer that sends anything else first is, by construction, a build from
 	// before the handshake existed. Refs: MGIT-136
 	Hello *HelloArgs `json:"hello,omitempty"`
+	// Echo asks for a control response of an exact size, for `mgit doctor`
+	// (MGIT-175). Declared in echo.go beside the verb it serves.
+	Echo *EchoArgs `json:"echo,omitempty"`
 }
 
 // LandResult summarizes a completed land.
@@ -253,13 +260,15 @@ type Response struct {
 	// that sent a hello ever receives one, so adding this field cannot reach
 	// a pre-handshake client's strict decoder. Refs: MGIT-136
 	Hello *HelloResult `json:"hello,omitempty"`
+	// Echo is the exact-size answer to an echo request (MGIT-175).
+	Echo *EchoResult `json:"echo,omitempty"`
 }
 
 // validKind reports whether k is a known request kind.
 func validKind(k byte) bool {
 	switch k {
 	case KindLaunch, KindExec, KindLand, KindList, KindRemove, KindStatus, KindGrants, KindGrant,
-		KindSync, KindPolicySet, KindPolicyShow, KindExport, KindHello:
+		KindSync, KindPolicySet, KindPolicyShow, KindExport, KindHello, KindEcho:
 		return true
 	default:
 		return false
@@ -321,6 +330,7 @@ func (req *Request) Validate() error {
 		KindPolicyShow: req.PolicyShow != nil,
 		KindExport:     req.Export != nil,
 		KindHello:      req.Hello != nil,
+		KindEcho:       req.Echo != nil,
 	}
 	for k, present := range set {
 		if present && k != req.Kind {
@@ -364,6 +374,8 @@ func (req *Request) Validate() error {
 		return validateExport(req.Export)
 	case KindHello:
 		return validateHello(req.Hello)
+	case KindEcho:
+		return req.Echo.Validate()
 	case KindList:
 		return nil // no payload
 	default:
