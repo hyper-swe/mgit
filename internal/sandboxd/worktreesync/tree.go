@@ -215,13 +215,41 @@ func safeJoin(root, rel string) (string, error) {
 //
 // The ordering guarantee rename would have given comes from the sandbox's sync
 // lock instead: no exec runs while a sync is applying, so no command observes a
-// partially written tree. Refs: MGIT-71, ADR-011
+// partially written tree.
+//
+// A SYMLINK IS DELIVERED AS A SYMLINK (MGIT-165). staging preserves an
+// in-tree link and BuildManifest records it by its target text; this used to
+// Stat and Open the source, both of which FOLLOW the link, and so wrote a
+// regular file holding the target's bytes into the guest. The MGIT-164
+// read-back then correctly called that stale content and refused the whole
+// sync — every worktree with an ordinary internal link (a monorepo package
+// link, docs/x.md -> ../x.md) launched fine and could never be synced. The
+// producer and the verifier now agree: the link is recreated with the same
+// target text, which is exactly what the manifest hashes.
+//
+// AND NOTHING IS EVER WRITTEN THROUGH A LINK. O_TRUNC follows links too, so
+// an update landing on a path where the guest holds a link would have emptied
+// and overwritten the link's TARGET — resolved on the host, by the daemon,
+// wherever the guest chose to point it. The destination is cleared first
+// unless it is a regular file, and the open carries O_NOFOLLOW so a swap in
+// the window between the two is refused rather than followed. A link that is
+// replaced gets a new inode, so a guest holding its old dentry sees ENOENT
+// for the entry timeout (~5s on KVM virtio-fs, 0s on macOS) — the same
+// residual removeForGuest documents, and for a link it is the right one:
+// there is no content to keep stable, only a name. Refs: MGIT-71, MGIT-165,
+// SEC-03, ADR-011
 func copyInto(src, dst string) error {
-	info, err := os.Stat(src)
+	info, err := os.Lstat(src)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return deliverLink(src, dst)
+	}
+	if err := clearNonRegular(dst); err != nil {
 		return err
 	}
 	in, err := os.Open(src) //nolint:gosec // src is inside the host-owned staged tree
@@ -230,7 +258,7 @@ func copyInto(src, dst string) error {
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm()) //nolint:gosec // dst is inside the sandbox's own staged tree
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|oNoFollow, info.Mode().Perm()) //nolint:gosec // dst is inside the sandbox's own staged tree
 	if err != nil {
 		return err
 	}
@@ -244,4 +272,39 @@ func copyInto(src, dst string) error {
 	// Chmod explicitly: O_CREATE's mode applies only to a NEW file, so an
 	// existing file would keep its old permissions.
 	return os.Chmod(dst, info.Mode().Perm())
+}
+
+// deliverLink recreates the link at src as a link at dst, carrying the same
+// target text so the read-back's hash of "symlink:"+target matches. Whatever
+// the guest holds at dst is removed first; a link is never written through
+// and never opened. Refs: MGIT-165, SEC-03
+func deliverLink(src, dst string) error {
+	target, err := os.Readlink(src)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Symlink(target, dst)
+}
+
+// clearNonRegular removes whatever sits at dst unless it is a regular file,
+// so the write that follows lands on a fresh inode rather than THROUGH a
+// guest-planted link, and a regular file keeps its inode for the guest's
+// cached dentry. A non-empty directory at dst fails here, loudly: the host
+// turned a directory into a file while the guest filled the directory, and
+// that is a conflict for a human, not something to delete. Refs: MGIT-165
+func clearNonRegular(dst string) error {
+	info, err := os.Lstat(dst)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode().IsRegular() {
+		return nil
+	}
+	return os.Remove(dst)
 }
