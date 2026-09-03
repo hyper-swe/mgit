@@ -190,19 +190,22 @@ green Linux gate is not evidence about macOS:
            (not the Linux-only `mgit sandbox image install`). MGIT-44,
            MGIT-64, MGIT-65.
 4. Complete the two live sandbox passes above and note them on the release.
-5. **Publish the guest-image bundle** — ⛔ **ON HOLD, DO NOT RUN (ADR-010, Consequences: the consolidation on libkrun retires this bundle).**
-   The owner decided 2026-07-29 to complete the libkrun path before publishing
-   (the decision ticket, MGIT-61.12, is closed; ADR-010 is the standing record).
+5. **Publish the guest-image bundle** — ⛔ **ON HOLD, DO NOT RUN (owner decision, 2026-07-29: the consolidation on libkrun retires this bundle).**
+   The rationale is the paragraph below; the retirement plan that would lift
+   the hold is MGIT-61.11's. The design record is ADR-010 (Consequences),
+   which at the time of writing is kept outside this repository — cite it,
+   but do not expect a reader of this tree to be able to open it. The
+   decision ticket, MGIT-61.12, is closed.
    Publishing is a one-way door: it makes mgit a public distributor of a kernel
    the libkrun consolidation intends to retire, and gives HyperSwe a digest to
    pin that would later need migrating off. It also has an UNMET GPL
    corresponding-source obligation for the re-hosted Linux kernel and busybox.
    Teams that need a sandbox today use a LOCAL install instead — same runtime:
    `mgit sandbox image install --from <local bundle dir>`.
-   Resume only when ADR-010's retirement plan (MGIT-61.11) names what, if
-   anything, is published; the artifact may not be this bundle format at all
-   (libkrunfw supplies the kernel, virtiofs supplies the root). Steps kept for
-   when the hold lifts:
+   Resume only when the retirement plan (MGIT-61.11) names what, if anything,
+   is published; the artifact may not be this bundle format at all (libkrunfw
+   supplies the kernel, virtiofs supplies the root). Steps kept for when the
+   hold lifts:
    ```
    scripts/sandbox-image/publish.sh out/publish        # builds all platform bundles + checksums
    gh release upload <tag> out/publish/*               # attach manifest.json + kernels + rootfs + checksums.txt
