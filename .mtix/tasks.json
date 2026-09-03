@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-03T03:14:44Z",
+  "exported_at": "2026-09-03T03:47:24Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5292,15 +5292,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-165",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "84e5f40a65da11c9238037b637bd6d0e91cf0d593457b36759ce87748bd1dc8a",
       "created_at": "2026-08-23T07:39:00Z",
-      "updated_at": "2026-09-02T20:07:50Z",
+      "updated_at": "2026-09-03T03:32:56Z",
+      "closed_at": "2026-09-03T03:32:56Z",
       "uid": "01a02d8e-fd9e-74da-9367-e6d7e406e980"
     },
     {
@@ -5317,15 +5318,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-166",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "af9caa0529b4518917416c6b3365786d2cde08e20f759217c5d9703cbf310dcf",
       "created_at": "2026-08-23T07:39:25Z",
-      "updated_at": "2026-09-02T20:11:59Z",
+      "updated_at": "2026-09-03T03:32:56Z",
+      "closed_at": "2026-09-03T03:32:56Z",
       "uid": "01a02d8f-5c28-7aa6-a5b5-a02f119c91a7"
     },
     {
@@ -5367,15 +5369,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-168",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "42c452d67170dd397802ff66c131596941280b50fa6ca7dabffab3eff20b85ab",
       "created_at": "2026-08-23T07:42:15Z",
-      "updated_at": "2026-09-02T20:04:17Z",
+      "updated_at": "2026-09-03T03:32:55Z",
+      "closed_at": "2026-09-03T03:32:55Z",
       "uid": "01a02d91-f644-7a35-beea-67df070d99fa"
     },
     {
@@ -5400,8 +5403,8 @@
       "weight": 1,
       "content_hash": "175ce775d83d0b51a2297e860e8c37532957b33453785ec118c4c9567a88da95",
       "created_at": "2026-08-23T07:52:46Z",
-      "updated_at": "2026-09-03T03:00:30Z",
-      "closed_at": "2026-09-03T03:00:30Z",
+      "updated_at": "2026-09-03T03:35:03Z",
+      "closed_at": "2026-09-03T03:35:03Z",
       "uid": "01a02d9b-95ce-72ca-8a95-8499b8e36952"
     },
     {
@@ -5444,15 +5447,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-170",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "f5f1f17aee08f402693e5eba588eaa3f4f25c6c835bfda700d9d4b0b849663d5",
       "created_at": "2026-08-23T08:11:28Z",
-      "updated_at": "2026-09-02T20:17:46Z",
+      "updated_at": "2026-09-03T03:32:56Z",
+      "closed_at": "2026-09-03T03:32:56Z",
       "uid": "01a02dac-b4ea-7407-b6ab-e3f1b173182d"
     },
     {
@@ -5494,15 +5498,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-172",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "b06f2b21d268cd0b8c930b3ee132dc1bbe0090d6d731da419de3f6de5d772e2f",
       "created_at": "2026-08-23T08:21:29Z",
-      "updated_at": "2026-09-02T20:45:55Z",
+      "updated_at": "2026-09-03T03:45:27Z",
+      "closed_at": "2026-09-03T03:45:27Z",
       "uid": "01a02db5-e254-7622-a7cc-1a5c2ce9c20c"
     },
     {
@@ -5578,8 +5583,8 @@
       "weight": 1,
       "content_hash": "1552da1a5ad587b0e2456367b05b637db99a7b82eb07dbff00fbc9aa3ae22779",
       "created_at": "2026-08-24T05:09:03Z",
-      "updated_at": "2026-09-03T03:00:29Z",
-      "closed_at": "2026-09-03T03:00:29Z",
+      "updated_at": "2026-09-03T03:35:02Z",
+      "closed_at": "2026-09-03T03:35:02Z",
       "uid": "01a0322c-10a1-7416-b6a5-973db088cb88"
     },
     {
@@ -5673,14 +5678,14 @@
       "labels": "[]",
       "status": "done",
       "progress": 1,
-      "assignee": "merge-agent",
+      "assignee": "claude-mgit-sprint",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "3eb04acd75907a4b5247e1162631769e0d3df566e02c8bb9f779f0305801b981",
       "created_at": "2026-08-24T06:04:11Z",
-      "updated_at": "2026-09-03T03:00:29Z",
-      "closed_at": "2026-09-03T03:00:29Z",
+      "updated_at": "2026-09-03T03:35:02Z",
+      "closed_at": "2026-09-03T03:35:02Z",
       "uid": "01a0325e-88ff-7cdc-98e0-531860b34f7f"
     },
     {
@@ -5731,8 +5736,8 @@
       "weight": 1,
       "content_hash": "e174024384c47f9e9fd7f9dba6b5bf8a229fbae52ee882dc5466f0747989fb72",
       "created_at": "2026-09-02T19:35:07Z",
-      "updated_at": "2026-09-03T03:00:30Z",
-      "closed_at": "2026-09-03T03:00:30Z",
+      "updated_at": "2026-09-03T03:35:03Z",
+      "closed_at": "2026-09-03T03:35:03Z",
       "uid": "01a0639e-3416-70b7-8dec-d83d7fcdbc0d"
     },
     {
@@ -5782,8 +5787,8 @@
       "weight": 1,
       "content_hash": "c0af3ef794fefe3965ca34cfd4e88a55075ac6f5a0569e354ce8de18c83667d0",
       "created_at": "2026-09-02T20:23:04Z",
-      "updated_at": "2026-09-03T03:14:44Z",
-      "closed_at": "2026-09-03T03:14:44Z",
+      "updated_at": "2026-09-03T03:32:56Z",
+      "closed_at": "2026-09-03T03:32:56Z",
       "uid": "01a063ca-1911-7639-b2eb-1461d62003a9"
     },
     {
@@ -5910,6 +5915,56 @@
       "created_at": "2026-09-03T00:04:05Z",
       "updated_at": "2026-09-03T00:04:05Z",
       "uid": "01a06494-7358-7109-ac55-08008764192e"
+    },
+    {
+      "id": "MGIT-188",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 188,
+      "project": "MGIT",
+      "title": "libkrunfw's kernel tarball: pre-fetch with resume and the pin, so a truncating mirror costs a resume rather than the job",
+      "description": "From the 2026-09-03 read of the two red \"libkrun backend (tagged build+vet, Linux)\" jobs on PRs #71 and #74 (runs of 2026-08-23, 07:46Z and 08:05Z): inside the pinned libkrunfw build, its OWN Makefile fetch of linux-6.12.91.tar.xz died on all three guarded attempts with\n\n    curl: (18) transfer closed with 76989584 bytes remaining to read\n    make: *** [Makefile:103: tarballs/linux-6.12.91.tar.xz] Error 18\n\nevery attempt cut at the SAME byte (68.0M of 141M) at three different speeds — a server-side truncation. Six other campaign PRs ran the step between 07:51 and 08:31Z and passed; today's main passes. Both jobs were cache MISSES (\"fail-on-cache-miss: false\"), so the MGIT-163 tarball cache did not help them.\n\nWHAT ALREADY EXISTS (scripts/sandbox-image/build-libkrun.sh): the verified cache seed/save (MGIT-163) and the guard's restore clause that deletes a partial tarball so a retry is an attempt (MGIT-143 clause 3). What does NOT exist: any control over the download itself. On a miss, libkrunfw's Makefile does a single-shot curl; the guard can only delete the partial and start from zero, three times, and a mirror that truncates at a fixed byte defeats that exactly as observed.\n\nTHE FIX (pipeline over vigilance): pre-fetch the pinned tarball ourselves, before `make`, into libkrunfw's tarballs/ — `curl -fL -C - --retry N --retry-all-errors` through guard-fetch, from a pinned URL (add LIBKRUNFW_KERNEL_URL to pins.env; the sha256 pin LIBKRUNFW_KERNEL_SHA256 already exists), then verify the digest and delete-and-fail on mismatch. A resumed transfer asks for the bytes after the cut instead of the same first 68 MB again; the digest check keeps \"caching must not weaken verification\" intact; libkrunfw's make then finds the file and skips its own download. Also observed, not fatal, same logs: rustup under sudo prints \"error: $HOME differs from euid-obtained home directory: you may be using sudo\" and then proceeds — an error-looking line that is not a failure, worth silencing or explaining at the site so a reader of a red log does not chase it.\n\nNegative control for the change: a local HTTP server that closes the connection after N bytes; the pre-fetch must complete by resuming and the digest must match; with resume disabled it must fail the same way the runs did.",
+      "prompt": "",
+      "acceptance": "- build-libkrun.sh pre-fetches the pinned kernel tarball with resume through the fetch guard, verifies LIBKRUNFW_KERNEL_SHA256, and hands it to libkrunfw's make; the URL is pinned in pins.env.\n- A self-test proves it against a truncating server (completes by resume; with resume disabled, fails like the 08-23 runs) — the negative control per the working law.\n- The cache seed/save path is unchanged and still digest-verified both ways.\n- The rustup \"$HOME differs\" line is either silenced (HOME set for the sudo'd rustup) or explained at the site.\n- CI's Linux libkrun job is green with the change, on a cache miss (bust the key once to prove the miss path).",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "e07cad60dcbeb1a4f67c04fbce4201f0c0029dd54ca9e999b6bc09362ccef39e",
+      "created_at": "2026-09-03T02:55:41Z",
+      "updated_at": "2026-09-03T02:55:41Z",
+      "uid": "01a06531-8d4e-7ea2-8e87-1fdc2dcf7d48"
+    },
+    {
+      "id": "MGIT-189",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 189,
+      "project": "MGIT",
+      "title": "ADR-010 is cited by 79 tracked files and is not in the repository (a local .git/info/exclude keeps it out)",
+      "description": "Found 2026-09-03 by the gate reviewer on PR #93 and verified: docs/adr/010-libkrun-backend-and-guest-distribution.md exists on the development machine, is listed in .git/info/exclude (a per-clone exclude, not .gitignore), has zero commits in any branch, and is cited by name — \"ADR-010\" — in 79 tracked files: README.md, CLAUDE.md, docs/INSTALL-SANDBOX.md, docs/release/RELEASE-CHECKLIST.md, Go doc comments across internal/sandboxd, and more. Every one of those citations is a dangling pointer for any reader who is not on this machine: the consolidation-on-libkrun decision, the guest-distribution plan, the NET=1 prerequisite section, the TSI de-risk argument and the bundle-publish hold all live in a file the repository does not contain.\n\nThe other ADRs (001–009, 011–015) are tracked; this is the only one kept out. Whatever the reason was (the 2026-07-29 review note on MGIT-61.14 already recorded \"ADR-010 still untracked with zero history hits\", so it was deliberate then), it is not written anywhere a reader finds, and the tree has kept citing the file as if it were there.\n\nThe MGIT-61.12 close (founder, 2026-09-03) asked for the release checklist to cite ADR-010 as the record of the bundle hold; PR #93 does so while stating that the file is outside the repository, which is the best a docs edit can do. The real fix is one of: commit ADR-010 (owner's call — it may contain material the owner keeps private, which is the only sensible reason for a local exclude); or move the load-bearing sections into tracked documents and make the 79 citations point at those.",
+      "prompt": "",
+      "acceptance": "- The owner decides: ADR-010 committed (and the exclude line removed), or its load-bearing content moved into tracked documents with the citations updated. The decision and its reason are recorded here.\n- After the change, `git grep -l ADR-010` names only files whose reference a reader of the repository can follow.\n- A tripwire, or the ADR index/README, states that every ADR cited by tracked text must itself be tracked — so the next locally-excluded design record is a decision rather than a drift.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "2823b17b14ddf5424b6d5202a4505e3c41089fc57e959fc91db1d7cd94a38dc9",
+      "created_at": "2026-09-03T03:02:01Z",
+      "updated_at": "2026-09-03T03:02:01Z",
+      "uid": "01a06537-583a-7367-a6ef-c6d686bae0bd"
     },
     {
       "id": "MGIT-19",
@@ -9327,7 +9382,7 @@
       "priority": 2,
       "labels": "[]",
       "status": "open",
-      "progress": 0.4,
+      "progress": 0.4666666666666667,
       "assignee": "",
       "creator": "mcp",
       "agent_state": "",
@@ -9421,22 +9476,23 @@
       "seq": 12,
       "project": "MGIT",
       "title": "DECISION: publish the guest-image bundles now (unblocks HyperSwe pin) vs hold pending the libkrun consolidation",
-      "description": "HyperSwe devs report the image bundles are built and waiting on a publish trigger; publishing completes HyperSwe's sandbox-setup pin. This is an OWNER-TRIGGERED, outward-facing action (no agent may run it), and it is a ONE-WAY DOOR that now conflicts with the consolidation decision recorded on MGIT-61: publishing commits mgit publicly to the kernel-distributor path that consolidating on libkrun is meant to retire, and creates a digest HyperSwe will pin against. There is also an unmet GPL precondition. This ticket forces the decision explicitly rather than letting it happen by default.",
+      "description": "CLOSED 2026-09-03 on the founder's decision, with the receipt in this field (annotations do not ride the tracked board — MGIT-187): decision B (HOLD) was made by the owner on 2026-07-29 and executed — docs/release/RELEASE-CHECKLIST.md step 5 carries the hold, ADR-010 §Consequences records it, MGIT-61.11 reconciled the ADR and holds the retirement plan; HyperSwe ships on mgit 0.6.4 with OCI-composed guest bases (`mgit sandbox base from`) and no published bundle digest exists for anyone to pin, so the blocker question is answered. The checklist and docs/INSTALL-SANDBOX.md now cite ADR-010 instead of this ticket (PR \"docs(release): the guest-image publish hold cites ADR-010, not a ticket\"). The hold itself stands in ADR-010; lifting it is MGIT-61.11's retirement plan.\n\n--- original description ---\nHyperSwe devs report the image bundles are built and waiting on a publish trigger; publishing completes HyperSwe's sandbox-setup pin. This is an OWNER-TRIGGERED, outward-facing action (no agent may run it), and it is a ONE-WAY DOOR that now conflicts with the consolidation decision recorded on MGIT-61: publishing commits mgit publicly to the kernel-distributor path that consolidating on libkrun is meant to retire, and creates a digest HyperSwe will pin against. There is also an unmet GPL precondition. This ticket forces the decision explicitly rather than letting it happen by default.",
       "prompt": "DO NOT PUBLISH FROM AN AGENT SESSION. Release cuts and outward-facing publishes are owner-triggered. This ticket exists to surface the decision, its preconditions, and the cost of each branch — not to authorise the action.\n\nTHE REQUEST: HyperSwe devs report the multi-platform bundles are built and waiting on a trigger; publishing them completes HyperSwe's sandbox-setup pin (so `mgit sandbox image install` with no --from resolves from the latest release).\n\nMECHANICS IF IT GOES AHEAD (docs/release/RELEASE-CHECKLIST.md step 5):\n  scripts/sandbox-image/publish.sh out/publish     # all platform bundles + checksums.txt\n  gh release upload \u003ctag\u003e out/publish/*\n  then verify on a CLEAN host: mgit sandbox image install \u0026\u0026 mgit run --sandbox -- echo ok\n(The vz kernel build needs docker, so publish.sh must run on a machine that has it.)\n\nWHY THIS IS NOT A ROUTINE STEP ANY MORE — THREE CONFLICTS:\n\n1. IT CONTRADICTS THE CONSOLIDATION DECISION. See the MGIT-61 annotation \"STRATEGIC DIRECTION CHANGE\" and ADR-010. Consolidating on libkrun deletes MGIT-30's kernel build, the rootfs images, publish.sh and the bundle install path — libkrun brings its own kernel via libkrunfw and shares a virtiofs root. Publishing now makes mgit a public kernel distributor for artifacts we plan to retire, and gives HyperSwe a pin against them.\n\n2. UNMET GPL PRECONDITION (flagged earlier, still open). The published bundle RE-HOSTS a Linux kernel binary (vendored from firecracker-ci) and a busybox-based rootfs. Both are GPL-2.0. Re-hosting makes US the distributor, so GPL §3 requires we make the CORRESPONDING SOURCE available, plus license notices, for the kernel AND busybox. Under libkrun that burden moves to upstream (libkrunfw publishes its source); today it is ours and it is NOT yet satisfied. This must be resolved BEFORE any public publish, independent of the consolidation question.\n\n3. THE PIN IS THE POINT. Once HyperSwe pins a published digest, retiring the bundle path becomes a coordinated migration rather than a deletion. That is a real cost to pay knowingly, not by accident.\n\nHYPERSWE IS NOT ACTUALLY BLOCKED — CHECK THIS FIRST. Development does not need the published bundle. A local install works today and is the same runtime:\n  mgit sandbox image install --from \u003clocal bundle dir\u003e\nA validated darwin/arm64 bundle already exists at ~/mgit-vz-cache/bundle (kernel + rootfs + manifest.json), and publish.sh produces the multi-platform layout locally. Confirm with the HyperSwe devs whether their blocker is genuinely \"we need a PUBLISHED artifact to pin\" or just \"we need a working sandbox\" — those have very different answers.\n\nTHE DECISION TO MAKE (owner):\n  A. PUBLISH NOW — accept the GPL obligations (satisfy them first), accept that HyperSwe pins something we intend to retire, and accept the migration cost later. Justified if HyperSwe genuinely needs a published, pinned artifact and cannot wait for the libkrun path.\n  B. HOLD — keep HyperSwe on local bundle installs until the consolidation resolves (MGIT-61.8 lifecycle, 61.10 real-VM litmus, 61.7 mgit-in-guest, Linux/KVM parity, virtiofs perf), then publish whatever the libkrun path actually needs. Avoids distributing artifacts with a planned end-of-life and defers the GPL burden to upstream.\n  C. PUBLISH AS EXPLICITLY PROVISIONAL — publish, but mark the bundle in release notes as a development pin with a stated end-of-life, so the later migration is expected rather than a surprise.\n\nWHICHEVER IS CHOSEN: record it here and reconcile ADR-010 + docs/release/RELEASE-CHECKLIST.md so the next agent is not left with contradictory guidance. If A or C, satisfy the GPL corresponding-source + notices requirement first and record how.\n\nRefs: MGIT-61.2 (bundle publish mechanics), MGIT-61.11 (consolidation reconciliation), ADR-010, docs/release/RELEASE-CHECKLIST.md",
       "acceptance": "The owner has recorded decision A, B or C on this ticket with reasoning; if publishing, the GPL corresponding-source + license notices for the re-hosted Linux kernel and busybox are satisfied and the method recorded, the release notes state the bundle's status (provisional or supported), and a clean-host verification of `mgit sandbox image install` + `mgit run --sandbox` is done; ADR-010 and the release checklist are updated so they no longer contradict the chosen path; the HyperSwe devs' actual blocker (published-pin vs working-sandbox) is confirmed and answered.",
       "node_type": "story",
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit-6112",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
-      "content_hash": "29c9f034eadd36d1b92df29c2a8b7b77d836f7636356210a4a5eeed90221cdd3",
+      "content_hash": "bc099d3cb87d6def5884da7806debbfbee866ce8144a01baca4cd4ecf1304f5e",
       "created_at": "2026-07-28T19:09:08Z",
-      "updated_at": "2026-07-28T19:09:08Z",
+      "updated_at": "2026-09-03T02:54:16Z",
+      "closed_at": "2026-09-03T02:54:16Z",
       "uid": "019faa21-7910-735b-a091-5e55575750e1"
     },
     {
@@ -13251,6 +13307,13 @@
       "last_heartbeat": "2026-09-02T21:10:10Z"
     },
     {
+      "agent_id": "claude-mgit-6112",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-61.12",
+      "last_heartbeat": "2026-09-03T02:53:48Z"
+    },
+    {
       "agent_id": "claude-mgit-72",
       "project": "MGIT",
       "state": "working",
@@ -13335,6 +13398,13 @@
       "last_heartbeat": "2026-08-19T13:20:55Z"
     },
     {
+      "agent_id": "claude-mgit-sprint",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-179",
+      "last_heartbeat": "2026-09-03T03:35:01Z"
+    },
+    {
       "agent_id": "claude-mgit75",
       "project": "MGIT",
       "state": "working",
@@ -13398,13 +13468,6 @@
       "last_heartbeat": "2026-04-02T13:18:09Z"
     },
     {
-      "agent_id": "merge-agent",
-      "project": "MGIT",
-      "state": "working",
-      "current_node_id": "MGIT-179",
-      "last_heartbeat": "2026-09-03T03:00:13Z"
-    },
-    {
       "agent_id": "opus-agent",
       "project": "MGIT",
       "state": "working",
@@ -13419,6 +13482,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 452,
-  "checksum": "73abd3c7e89233d536195193fbe68a783930156b4e59dbffdcab9c1522b19667"
+  "node_count": 454,
+  "checksum": "e1f2f1f740e4d79e5a259a06fb28b194388fec0747b990995d838e9b9b80d1ef"
 }
