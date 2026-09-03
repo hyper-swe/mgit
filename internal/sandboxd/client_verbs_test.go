@@ -375,7 +375,6 @@ func (w stallingWatcher) Observe(context.Context) error {
 //
 // Measured: dial 167us, first byte 1.40s. Refs: MGIT-170, MGIT-110
 func TestDaemon_ASnapshotPassInFlight_DoesNotStallARequest(t *testing.T) {
-	t.Skip("MGIT-170: the snapshot pass runs inline in the select loop and stalls the request path")
 
 	skipUnsupportedHostIPC(t)
 	cfg, _ := testConfig(t, newFakeManager("01JXSB1"))
@@ -417,7 +416,6 @@ func TestDaemon_ASnapshotPassInFlight_DoesNotStallARequest(t *testing.T) {
 // iteration is a coin flip between shutting down and starting another pass.
 // The delay has no bound, only a geometric tail. Refs: MGIT-170, MGIT-107, MGIT-110
 func TestDaemon_ASnapshotPassInFlight_DoesNotDelayShutdown(t *testing.T) {
-	t.Skip("MGIT-170: shutdown waits for one or more full snapshot passes")
 
 	skipUnsupportedHostIPC(t)
 	cfg, _ := testConfig(t, newFakeManager("01JXSB1"))
