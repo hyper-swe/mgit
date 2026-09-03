@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-03T00:04:06Z",
+  "exported_at": "2026-09-03T03:00:30Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5392,15 +5392,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-169",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "175ce775d83d0b51a2297e860e8c37532957b33453785ec118c4c9567a88da95",
       "created_at": "2026-08-23T07:52:46Z",
-      "updated_at": "2026-09-02T20:45:55Z",
+      "updated_at": "2026-09-03T03:00:30Z",
+      "closed_at": "2026-09-03T03:00:30Z",
       "uid": "01a02d9b-95ce-72ca-8a95-8499b8e36952"
     },
     {
@@ -5569,15 +5570,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-175",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "1552da1a5ad587b0e2456367b05b637db99a7b82eb07dbff00fbc9aa3ae22779",
       "created_at": "2026-08-24T05:09:03Z",
-      "updated_at": "2026-09-02T20:20:31Z",
+      "updated_at": "2026-09-03T03:00:29Z",
+      "closed_at": "2026-09-03T03:00:29Z",
       "uid": "01a0322c-10a1-7416-b6a5-973db088cb88"
     },
     {
@@ -5669,15 +5671,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "merge-agent",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "3eb04acd75907a4b5247e1162631769e0d3df566e02c8bb9f779f0305801b981",
       "created_at": "2026-08-24T06:04:11Z",
-      "updated_at": "2026-08-24T06:04:11Z",
+      "updated_at": "2026-09-03T03:00:29Z",
+      "closed_at": "2026-09-03T03:00:29Z",
       "uid": "01a0325e-88ff-7cdc-98e0-531860b34f7f"
     },
     {
@@ -5720,15 +5723,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-180",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "e174024384c47f9e9fd7f9dba6b5bf8a229fbae52ee882dc5466f0747989fb72",
       "created_at": "2026-09-02T19:35:07Z",
-      "updated_at": "2026-09-02T20:36:48Z",
+      "updated_at": "2026-09-03T03:00:30Z",
+      "closed_at": "2026-09-03T03:00:30Z",
       "uid": "01a0639e-3416-70b7-8dec-d83d7fcdbc0d"
     },
     {
@@ -13393,6 +13397,13 @@
       "last_heartbeat": "2026-04-02T13:18:09Z"
     },
     {
+      "agent_id": "merge-agent",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-179",
+      "last_heartbeat": "2026-09-03T03:00:13Z"
+    },
+    {
       "agent_id": "opus-agent",
       "project": "MGIT",
       "state": "working",
@@ -13408,5 +13419,5 @@
   ],
   "sessions": null,
   "node_count": 452,
-  "checksum": "dd7a7b18a9afaae46d530208316b96c2c11e2bfe77d3d642960669fe0f062dd6"
+  "checksum": "f9253c59b20d44179491120b894d21b98c500ebe6a2103b83350edd59e98c25d"
 }
