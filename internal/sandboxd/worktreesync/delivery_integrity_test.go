@@ -242,7 +242,6 @@ func TestRemoveForGuest_NonRegularPaths(t *testing.T) {
 // so the damaged file is outside the check by construction and the sync
 // reports success. Refs: MGIT-168, MGIT-90, MGIT-164
 func TestRemoveForGuest_Symlink_DoesNotTruncateItsTarget(t *testing.T) {
-	t.Skip("MGIT-168: removeForGuest truncates through a symlink and empties its target")
 
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target.txt")
@@ -270,7 +269,6 @@ func TestRemoveForGuest_Symlink_DoesNotTruncateItsTarget(t *testing.T) {
 // not see it. The test is written whole and skipped rather than narrowed: it
 // turns red the moment the skip is removed. Refs: MGIT-165, MGIT-164, SEC-03
 func TestSync_AWorktreeSymlink_IsDeliveredAsALink(t *testing.T) {
-	t.Skip("MGIT-165: sync flattens a worktree symlink and the read-back then refuses the whole sync")
 
 	f := newFixture(t, map[string]string{"real.txt": "hello"})
 	require.NoError(t, os.Symlink("real.txt", filepath.Join(f.worktree, "link.txt")))
@@ -405,7 +403,6 @@ func TestSync_UnreadableGuestTreeOnReadBack_IsRefused(t *testing.T) {
 // destroys data and says it succeeded is the exact failure MGIT-164's own
 // argument calls worse than a crash. Refs: MGIT-168, MGIT-164
 func TestSync_DeletingASymlink_LeavesItsTargetIntact(t *testing.T) {
-	t.Skip("MGIT-168: deleting a symlink empties its target, and the sync reports success")
 
 	f := newFixture(t, map[string]string{"real.txt": "IMPORTANT-CONTENT"})
 	require.NoError(t, os.Symlink("real.txt", filepath.Join(f.worktree, "link.txt")))
