@@ -284,6 +284,14 @@ type Manager struct {
 	mu        sync.Mutex
 	sandboxes map[string]*sandbox
 	entropy   *ulid.MonotonicEntropy
+
+	// settler is how a sync asks the GUEST what it reads after a delivery,
+	// and settleBudget/settlePoll bound how long it waits for the answer to
+	// match. Injected so the daemon's tests can drive a guest that lags or
+	// never settles without a hypervisor. Refs: MGIT-192
+	settler      guestSettler
+	settleBudget time.Duration
+	settlePoll   time.Duration
 }
 
 // NewManager validates the configuration and returns a Manager.
@@ -308,11 +316,13 @@ func NewManager(cfg Config) (*Manager, error) {
 	if cfg.GuestReadyTimeout <= 0 {
 		cfg.GuestReadyTimeout = guestReadyTimeoutDefault
 	}
-	return &Manager{
+	m := &Manager{
 		cfg:       cfg,
 		sandboxes: make(map[string]*sandbox),
 		entropy:   ulid.Monotonic(rand.Reader, 0),
-	}, nil
+	}
+	m.settler, m.settleBudget, m.settlePoll = defaultSettler(m), settleBudgetDefault, settlePollDefault
+	return m, nil
 }
 
 // guestReadyTimeoutDefault bounds the first-exec wait for the guest vsock

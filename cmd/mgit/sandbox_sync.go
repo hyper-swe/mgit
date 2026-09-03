@@ -102,6 +102,12 @@ func writeSyncReport(w io.Writer, task string, report *model.WorktreeSyncReport)
 		writeSyncDryRun(w, task, report)
 	default:
 		_, _ = fmt.Fprintf(w, "Synced host worktree into task %s's sandbox: %s\n", task, syncCounts(report))
+		if report.Detail != "" {
+			// The daemon qualifies a delivery it could not confirm from inside
+			// the guest. That qualification stays next to the delivery, or a
+			// reader takes the count above as the whole truth. Refs: MGIT-192
+			_, _ = fmt.Fprintf(w, "Warning: %s\n", report.Detail)
+		}
 	}
 	writeSyncPaths(w, report)
 	writeSyncTruncation(w, report)

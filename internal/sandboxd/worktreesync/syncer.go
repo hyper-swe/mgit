@@ -24,7 +24,12 @@ const stagedSubdir = "worktree-sync-candidate"
 // Result reports what a sync did — or, for a dry run, what it WOULD do — for
 // the caller and for the audit record.
 type Result struct {
-	Updated    []string // paths delivered into the guest
+	Updated []string // paths delivered into the guest
+	// Entries are the staged host entries of every Updated path — the digest
+	// the guest must be able to read before the delivery is reported. The
+	// host-side read-back proves the bytes landed in the host's directory;
+	// only the guest can say whether it sees them. Refs: MGIT-192
+	Entries    Manifest
 	Deleted    []string // paths removed from the guest
 	Overridden []string // guest-modified paths overwritten by --force
 	Skipped    bool     // the host worktree was unchanged; nothing was done
@@ -163,7 +168,24 @@ func Sync(req Request) (Result, error) {
 	if err := SaveManifest(req.StateDir, host); err != nil {
 		return Result{}, err
 	}
-	return classify(plan, false), nil
+	res := classify(plan, false)
+	res.Entries = deliveredEntries(host, plan.Update)
+	return res, nil
+}
+
+// deliveredEntries picks the staged entries of the delivered paths out of
+// the host manifest. Refs: MGIT-192
+func deliveredEntries(host Manifest, updated []string) Manifest {
+	if len(updated) == 0 {
+		return nil
+	}
+	out := make(Manifest, len(updated))
+	for _, path := range updated {
+		if e, ok := host[path]; ok {
+			out[path] = e
+		}
+	}
+	return out
 }
 
 // views gathers the three trees the collision policy compares: what the host
