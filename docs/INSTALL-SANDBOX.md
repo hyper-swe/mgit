@@ -438,7 +438,7 @@ with `scripts/build-guest-image.sh out/rootfs.ext4`, or register one directly
 with `mgit sandbox image add --kernel … --rootfs … --cmdline …`. The
 reproducible, SOUP-pinned kernel + rootfs build is tracked by **MGIT-30**.
 
-**Publishing is on hold (ADR-010, Consequences — ⛔ see
+**Publishing is on hold (owner decision 2026-07-29 — ⛔ see
 [RELEASE-CHECKLIST.md](release/RELEASE-CHECKLIST.md)):** the owner deferred
 attaching bundles to releases, since publishing today would hand out an
 artifact the libkrun migration intends to retire — and `base from` removes the
