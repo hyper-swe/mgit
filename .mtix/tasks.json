@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-03T03:00:30Z",
+  "exported_at": "2026-09-03T03:14:44Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5774,15 +5774,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-182",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "c0af3ef794fefe3965ca34cfd4e88a55075ac6f5a0569e354ce8de18c83667d0",
       "created_at": "2026-09-02T20:23:04Z",
-      "updated_at": "2026-09-02T21:10:10Z",
+      "updated_at": "2026-09-03T03:14:44Z",
+      "closed_at": "2026-09-03T03:14:44Z",
       "uid": "01a063ca-1911-7639-b2eb-1461d62003a9"
     },
     {
@@ -13419,5 +13420,5 @@
   ],
   "sessions": null,
   "node_count": 452,
-  "checksum": "f9253c59b20d44179491120b894d21b98c500ebe6a2103b83350edd59e98c25d"
+  "checksum": "73abd3c7e89233d536195193fbe68a783930156b4e59dbffdcab9c1522b19667"
 }
