@@ -64,14 +64,14 @@ func unreachable(err error) connectFunc {
 func TestDoctor_ExitCode_OnlyAFailedCheckIsNonZero(t *testing.T) {
 	tests := []struct {
 		name     string
-		hostsOut string // what the guest's probe answers
+		hostsOut string // what the guest answers EVERY exec probe with (localhost and sync-verify alike)
 		execCode int
 		execErr  error
 		wantCode int
 	}{
 		{
 			name:     "every_check_ok_exits_zero",
-			hostsOut: "127.0.0.1\tlocalhost\n",
+			hostsOut: "127.0.0.1\tlocalhost\nsha256sum\ndrop_caches\n",
 			wantCode: 0,
 		},
 		{

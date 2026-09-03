@@ -83,7 +83,36 @@ func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 		doctor.ResponseCapCheck{Probe: func(ctx context.Context, bytes int) (doctor.EchoReply, error) {
 			return probeResponseCap(ctx, connect, bytes)
 		}},
+		doctor.GuestSyncVerifyCheck{Probe: func(ctx context.Context) (string, error) {
+			return probeGuestSyncVerify(ctx, connect, app.BoundTask)
+		}},
 	}
+}
+
+// probeGuestSyncVerify asks the task's guest which of the two tools a sync's
+// guest-side confirmation relies on it has: sha256sum, to read a delivered
+// digest with, and a writable /proc/sys/vm/drop_caches, to invalidate its
+// cached view with. Each present tool is printed on its own line; the check
+// reads the lines. Refs: MGIT-192
+func probeGuestSyncVerify(ctx context.Context, connect connectFunc, taskID string) (string, error) {
+	if taskID == "" {
+		return "", errors.New("no sandbox: this directory is not bound to a task worktree")
+	}
+	cl, err := connect(ctx)
+	if err != nil {
+		return "", fmt.Errorf("no sandbox daemon reachable: %w", err)
+	}
+	const script = "command -v sha256sum >/dev/null 2>&1 && echo sha256sum; " +
+		"[ -w /proc/sys/vm/drop_caches ] && echo drop_caches; exit 0"
+	var out, errOut strings.Builder
+	code, err := cl.Exec(ctx, taskID, model.ExecRequest{Command: []string{"sh", "-c", script}}, &out, &errOut)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", fmt.Errorf("the guest's shell exited %d: %s", code, strings.TrimSpace(errOut.String()))
+	}
+	return out.String(), nil
 }
 
 // echoer is the one verb the response-cap probe needs. It is asserted on the

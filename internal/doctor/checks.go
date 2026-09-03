@@ -140,3 +140,53 @@ func (c BaseCurrencyCheck) Run(context.Context) Result {
 	}
 	return r
 }
+
+// GuestSyncVerifyCheck reports whether a task's guest can confirm a worktree
+// sync from inside itself.
+//
+// From MGIT-192: `sandbox sync` reported a delivery the guest could not yet
+// read — the guest's kernel kept its own view for a window after its last
+// access, and a `go vet` launched right after the sync read a half-updated
+// file. A sync now asks the guest to read the staged digest back, and
+// invalidates the guest's view first; both rely on tools the guest image must
+// carry. A guest without them gets every delivery reported as "not verified
+// from inside the guest", which is honest but is a condition worth asking
+// about directly. Refs: MGIT-192, MGIT-162
+type GuestSyncVerifyCheck struct {
+	// Probe lists, one per line, which of the two tools the guest has:
+	// "sha256sum" for reading digests and "drop_caches" for invalidation.
+	Probe func(ctx context.Context) (string, error)
+}
+
+// Name implements Check.
+func (GuestSyncVerifyCheck) Name() string { return "guest/sync-verify" }
+
+// Run implements Check.
+func (c GuestSyncVerifyCheck) Run(ctx context.Context) Result {
+	r := Result{Name: c.Name(), Incident: "MGIT-192"}
+	out, err := c.Probe(ctx)
+	if err != nil {
+		r.Status, r.Reason = StatusNotChecked, err.Error()
+		r.Summary = "could not ask a guest whether it can confirm a sync"
+		return r
+	}
+	hasSum := strings.Contains(out, "sha256sum")
+	hasDrop := strings.Contains(out, "drop_caches")
+	switch {
+	case hasSum && hasDrop:
+		r.Status = StatusOK
+		r.Summary = "the guest can confirm a delivered sync from inside itself, and can invalidate its cached view first"
+	case hasSum:
+		r.Status = StatusOK
+		r.Summary = "the guest can confirm a delivered sync from inside itself, but its cached view cannot be " +
+			"invalidated (/proc/sys/vm/drop_caches is not writable), so a sync waits out the cache window instead"
+	default:
+		r.Status = StatusFailed
+		r.Summary = "the guest has no sha256sum, so it cannot confirm what a sync delivered — every sync into it " +
+			"is reported as delivered on the host but not verified from inside the guest, and a command " +
+			"launched right after a sync may read a file the guest has not caught up on yet"
+		r.Remedy = "compose the guest base from an image that carries coreutils or busybox (sha256sum) with " +
+			"`mgit sandbox base from <image>`"
+	}
+	return r
+}

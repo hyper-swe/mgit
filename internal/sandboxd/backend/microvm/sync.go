@@ -81,7 +81,7 @@ func (m *Manager) SyncWorktree(ctx context.Context, id string, opts model.Worktr
 // across exec — so a command never observes a partially applied tree. A dry
 // run takes the same lock: a classification read while another sync was
 // applying would describe a tree that never existed.
-func (m *Manager) syncLocked(_ context.Context, sb *sandbox, opts model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error) {
+func (m *Manager) syncLocked(ctx context.Context, sb *sandbox, opts model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error) {
 	staged := stagedTreePath(sb.dir)
 	if staged == "" {
 		return nil, fmt.Errorf("%w: backend %q delivers the worktree as a "+
@@ -108,6 +108,17 @@ func (m *Manager) syncLocked(_ context.Context, sb *sandbox, opts model.Worktree
 		return refusalReport(err), err
 	}
 	report := toReport(res)
+	// The host read-back above proves the bytes landed in the host's
+	// directory. Whether the guest reads them is a separate fact — its kernel
+	// keeps its own view for a window after its last access — so nothing is
+	// reported delivered until the guest itself confirms it. Refs: MGIT-192
+	note, err := m.settleGuest(ctx, sb, res)
+	if err != nil {
+		m.cfg.Logger.Warn("worktree sync refused: the guest did not settle",
+			"event", "sync_unsettled", "sandbox_id", sb.info.ID, "task_id", sb.info.TaskID, "error", err.Error())
+		return nil, err
+	}
+	report.Detail = note
 	m.auditSync(sb, report)
 	return report, nil
 }

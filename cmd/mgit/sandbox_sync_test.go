@@ -245,3 +245,17 @@ func TestWriteSyncTruncation_SaysWhenTheListIsPartial(t *testing.T) {
 	writeSyncTruncation(&buf, &model.WorktreeSyncReport{})
 	assert.Empty(t, buf.String(), "a complete listing must say nothing")
 }
+
+// A delivery the guest could not confirm is reported as exactly that, on the
+// same surface as the delivery — never as an unqualified success. The note
+// comes from the daemon; the CLI's job is to keep it loud. Refs: MGIT-192
+func TestSandboxSync_UnverifiedGuestView_IsSaidLoudlyNextToTheDelivery(t *testing.T) {
+	c := &fakeSandboxClient{syncReport: &model.WorktreeSyncReport{
+		Updated: []string{"src/app.go"},
+		Detail:  "delivered on the host, but not verified from inside the guest: the guest has no sha256sum",
+	}}
+	out, err := runSandbox(okConnect(c), "sync", "--task", "MGIT-76")
+	require.NoError(t, err)
+	assert.Contains(t, out, "1 updated")
+	assert.Contains(t, out, "Warning: delivered on the host, but not verified from inside the guest: the guest has no sha256sum")
+}

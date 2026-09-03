@@ -5,6 +5,24 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`mgit sandbox sync` reported a delivery the guest could not yet read
+  (MGIT-192).** The host-side read-back added in 0.6.3 (MGIT-164) hashes the
+  host's copy of the guest tree, where the bytes are complete; the guest's
+  kernel keeps its own view of a file for a window after its last access, so
+  a host rewrite inside that window stayed invisible to it — measured on
+  macOS/libkrun at 0.1 s to over 1.2 s after `sync` had returned, which is how
+  a `go vet` launched right after a sync read a half-updated file. A sync now
+  invalidates the guest's cached view from inside the guest and reports a
+  path delivered only after the guest itself reads the staged digest, within a
+  bound; a guest that never agrees is a refusal naming the paths, and a guest
+  that cannot be asked (no exec channel, no `sha256sum`) is reported as
+  "delivered on the host, but not verified from inside the guest" rather than
+  as a success. The pre-exec sync that `mgit run` performs takes the same door.
+
 ## [0.6.5] - 2026-09-03
 
 **The symlink cluster, and a daemon that stops stalling.** Four defects found
