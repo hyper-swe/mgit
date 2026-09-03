@@ -81,6 +81,12 @@ type Request struct {
 	DryRun bool
 }
 
+// applyPlan is Apply, indirected at package scope so a test can inject the
+// silent drop the read-back exists to catch. Production is always Apply: a
+// verification that can only be exercised by hand-fed manifests is not known
+// to be wired to anything. Refs: MGIT-164
+var applyPlan = Apply
+
 // Sync propagates host worktree changes into a running sandbox's tree.
 //
 // It re-stages through internal/sandboxd/staging — the same tested path that
@@ -130,7 +136,7 @@ func Sync(req Request) (Result, error) {
 	if plan.Blocked() {
 		return Result{}, &ConflictError{Conflicts: plan.Conflicts}
 	}
-	if err := Apply(candidate, req.GuestTree, plan); err != nil {
+	if err := applyPlan(candidate, req.GuestTree, plan); err != nil {
 		return Result{}, err
 	}
 	// READ THE DELIVERY BACK before reporting it.
