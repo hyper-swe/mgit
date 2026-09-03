@@ -14,12 +14,28 @@ import (
 )
 
 // Echo lets the in-memory client stand in for the daemon's echo verb.
+//
+// With nothing configured it behaves as a HEALTHY daemon does: an answer at
+// or under the cap arrives intact, one over it is refused legibly. Tests of
+// the probe itself set echoResult/echoRefusal/echoErr to shape one leg; every
+// other doctor test gets a daemon whose response-cap check passes, rather
+// than a nil answer that reads as a failed delivery.
 func (f *fakeSandboxClient) Echo(_ context.Context, bytes int) (*sandboxd.EchoOutcome, error) {
 	f.echoBytes = append(f.echoBytes, bytes)
 	if f.echoErr != nil {
 		return nil, f.echoErr
 	}
-	return &sandboxd.EchoOutcome{Result: f.echoResult, Refusal: f.echoRefusal}, nil
+	if f.echoResult != nil || f.echoRefusal != "" {
+		return &sandboxd.EchoOutcome{Result: f.echoResult, Refusal: f.echoRefusal}, nil
+	}
+	if bytes > controlproto.MaxResponseBytes {
+		return &sandboxd.EchoOutcome{Refusal: "control response too large to send"}, nil
+	}
+	resp, err := controlproto.BuildEchoResponse(bytes)
+	if err != nil {
+		return nil, err
+	}
+	return &sandboxd.EchoOutcome{Result: resp.Echo}, nil
 }
 
 // echoless is a sandboxClient with no echo verb at all — the shape of a
