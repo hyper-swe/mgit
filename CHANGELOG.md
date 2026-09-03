@@ -60,6 +60,16 @@ The pass now runs on its own goroutine under a single-flight guard; after:
 
 ### `mgit doctor`
 
+- **`base/currency`** (MGIT-174, #79 — merged after 0.6.4 was tagged, so this
+  is its first release): a guest base now records which mgit composed it, as
+  a deterministic marker inside the digested tree, and doctor compares it
+  with the substrate running it. An unrecorded base is reported as a
+  **failure**, not a pass: for two releases the absence of a warning had been
+  read as an assurance while a stale base silently ran older guest binaries.
+  **Upgrade note:** every base composed by a release before this one carries
+  no marker, so `mgit doctor` will fail `base/currency` on it until you run
+  `mgit sandbox base from <image>` again. That is the check working, not a
+  regression.
 - **`daemon/response-cap`** (MGIT-175, #88): asks the running daemon for a
   full 1 MiB control response and verifies it arrived intact, then asks for
   one byte more and verifies the refusal is legible — the MGIT-160 incident,
@@ -72,6 +82,10 @@ The pass now runs on its own goroutine under a single-flight guard; after:
 
 ### Build hygiene
 
+- goreleaser is pinned (v2.17.1) on the release path (MGIT-179, #81): `@latest`
+  resolved to a release whose Go floor the runner does not meet, broke a
+  documentation-only PR, and on the release path would have burned a tag
+  number, since a tag never points twice.
 - CI refuses a build tool or action resolved at a floating ref unless the
   float is declared at the site with its reason; the tree passes with the two
   `govulncheck` floats declared (MGIT-180, #86).
