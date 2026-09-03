@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-02T23:46:05Z",
+  "exported_at": "2026-09-03T00:04:06Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5880,6 +5880,31 @@
       "created_at": "2026-09-02T21:14:48Z",
       "updated_at": "2026-09-02T21:14:48Z",
       "uid": "01a063f9-758c-7061-99ff-670c93f8451d"
+    },
+    {
+      "id": "MGIT-187",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 187,
+      "project": "MGIT",
+      "title": "The tracked board cannot carry annotations: every receipt, decision and verdict written with `mtix annotate` lives only in the gitignored local database",
+      "description": "Found 2026-09-03 at the close of the autonomous window, from the gate reviewer's observation on the board PR (#91) and verified here: .gitignore excludes .mtix/data/*.db (and its -shm/-wal), `mtix export` and the MCP server's tasks.json write carry NODE FIELDS ONLY, and the tracked .mtix/tasks.json contains zero \"annotations\" keys — while `mtix show` on the same tickets returns dozens of them. So the board of record committed as \"the record that makes ticket receipts durable\" carries filings, status, priority and claims, and drops exactly the part that is evidence: the PR/branch/scenario receipts on every ticket worked this window, the board-truth evidence on MGIT-158/164/61.12, the recorded design decisions on MGIT-175 and MGIT-180, the founder's rulings annotated by the previous session (e.g. the release-order ruling on MGIT-168), and all ten of the gate reviewer's verdict annotations.\n\nTwo sessions have now written \"annotated …\" into commit messages and logs believing it rode the file. The previous session's memory rule (\"ticket work is not landed until the board is committed and pushed\") was written on that belief; it is true of fields and false of annotations.\n\nWHY IT MATTERS (R-H300 / the merge ritual): the close of a ticket is supposed to be \"with the incident's doctor check and regression scenario\" as a receipt on the ticket. If that receipt is an annotation, it exists on one laptop. Clone the repo elsewhere and every ticket reads as bare as the day it was filed.\n\nCANDIDATE SHAPES:\n(a) mtix exports annotations into tasks.json (or a sibling tracked file such as .mtix/annotations.json) on every write, the way it exports node fields — the fix is in mtix (hyper-swe/mtix), file the twin there.\n(b) Until then, a convention: anything that must outlive the machine goes in a ticket FIELD (description/acceptance via `mtix update`), the PR body, or the sprint log — never only in an annotation. CLAUDE.md's merge-ritual text should say so (pairs with MGIT-183).\n(c) A doctor-style check in the board commit ritual: refuse a \"chore(board)\" commit whose message says \"annotat\" — a phantom-door tripwire for exactly this overstatement.\n\nVerification command, for whoever picks this up: `grep -c '\"annotations\"' .mtix/tasks.json` (0 today) against `mtix show MGIT-168 | grep -c annotations`.",
+      "prompt": "",
+      "acceptance": "- The twin is filed in hyper-swe/mtix (annotations in the export), and this ticket links it.\n- Until mtix carries them: CLAUDE.md states that annotations are local-only and names where durable receipts go (field, PR body, sprint log); the previous session's rule in the merge ritual is corrected accordingly.\n- A board commit that claims to carry annotations is refused or flagged by the commit ritual (a tripwire, with a negative control), OR the ritual text forbids the claim and says why.\n- The receipts of this window that exist only as annotations (168/165/166/170/175/180/169/172/182 PR receipts, 158/164/61.12 evidence, 175/180 decisions, the reviewer's verdicts) are either re-exported by the mtix fix or copied into fields — checked by `grep` on the tracked file.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "ac0fb9b7e8666a388274c9e5adb468856154dfcf79a1b07baa30d8746bfc7522",
+      "created_at": "2026-09-03T00:04:05Z",
+      "updated_at": "2026-09-03T00:04:05Z",
+      "uid": "01a06494-7358-7109-ac55-08008764192e"
     },
     {
       "id": "MGIT-19",
@@ -13382,6 +13407,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 451,
-  "checksum": "fb4bdbecfff531cccb36565e105d4b5a745df6eed0fee135f2f12315d0ae5308"
+  "node_count": 452,
+  "checksum": "dd7a7b18a9afaae46d530208316b96c2c11e2bfe77d3d642960669fe0f062dd6"
 }
