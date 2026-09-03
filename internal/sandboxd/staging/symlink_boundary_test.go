@@ -78,8 +78,6 @@ func TestAssertSymlinkWithin_TheBoundaryItsDocPromises(t *testing.T) {
 			name:       "a_link_to_a_NOT_YET_EXISTING_in_root_path_is_allowed_through_a_symlinked_root",
 			setup:      func(*testing.T, string) string { return "generated-later.txt" },
 			rootViaLnk: true,
-			skipIssue: "MGIT-166: the root is canonicalised and a non-existent target is not, " +
-				"so the safe link reads as an escape",
 		},
 		{
 			name:       "an_absolute_target_outside_the_root_is_rejected",
@@ -159,7 +157,6 @@ func TestAssertSymlinkWithin_TheBoundaryItsDocPromises(t *testing.T) {
 // every dogfooded worktree under /tmp, which on macOS is a symlink.
 // Refs: MGIT-166, SEC-03
 func TestBuild_ALinkToANotYetGeneratedPath_DoesNotFailTheBuild(t *testing.T) {
-	t.Skip("MGIT-166: a dangling in-root link under a symlinked root reads as an escape")
 
 	_, wt := symlinkedRoot(t)
 	require.NoError(t, os.WriteFile(filepath.Join(wt, "main.go"), []byte("package main"), 0o600))
