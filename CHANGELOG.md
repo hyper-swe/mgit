@@ -5,6 +5,88 @@ All notable changes to mgit are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2026-09-03
+
+**The symlink cluster, and a daemon that stops stalling.** Four defects found
+by the test campaign, each shipped with a test that failed before the fix and
+fails again with the fix removed. Two of them turned up a second defect in the
+same seam while being fixed.
+
+### Deleting a symlink no longer empties the file it points at (MGIT-168, #83)
+
+A sync that removed only a link truncated the link's *target* — a path the
+plan never named — and reported success with a clean `Deleted: [link.txt]`.
+`removeForGuest` emptied files before unlinking them (the MGIT-90 dentry
+argument), and `os.Truncate` follows links. Only a regular file is emptied
+now: the kind is read with `Lstat` and made binding at the open with
+`O_NOFOLLOW`, so a guest swapping the entry for a link between the two calls
+gets `ELOOP` rather than a write through it.
+
+### A worktree with an internal symlink can be synced again (MGIT-165, #84)
+
+Sync flattened a link into a copy of its target, and the delivery read-back
+(0.6.4) then refused the whole sync as stale content — so any repository with
+a monorepo package link or `docs/x.md -> ../x.md` could be launched but never
+synced. A link is now delivered as a link, with the same target text the
+manifest hashes. **Second defect, same seam:** the destination was opened
+with `O_TRUNC`, which follows links too, so a forced sync onto a path where
+the guest had planted a link wrote *through* it — resolved on the host, by
+the daemon, wherever the guest chose to point it. Nothing is written through
+a link now; the destination is cleared unless it is a regular file and the
+open carries `O_NOFOLLOW`.
+
+### A dangling in-tree link is no longer refused as an escape under `/tmp` (MGIT-166, #85)
+
+On macOS `/tmp` and `/var/folders` sit behind symlinks, so every
+`mgit work /tmp/...` worktree does. The SEC-03 guard canonicalised the root
+but only an *existing* target, so a link to a not-yet-generated in-tree path
+(`dist -> build/out`, a `.bin` shim) compared two namespaces and was refused
+with a containment message about a breach that did not exist. The target's
+longest existing ancestor is now resolved and the missing tail re-appended.
+**Second defect, same change:** under a direct root the per-link check had
+accepted a dangling leaf beneath an in-tree directory link that points
+outside; it is refused now.
+
+### The snapshot pass runs off the daemon's request loop (MGIT-170, #87)
+
+The passive snapshot pass ran inline in the daemon's select loop, so every
+connection accepted during one waited for the whole remaining pass, and a
+shutdown waited for a pass — or several, once a pass outlasted the tick.
+Measured with an uninterruptible watcher: first byte of the greeting 1.50s
+behind a 1.5s pass, shutdown 2.00s (4.00s in a second run) behind a 2s pass.
+The pass now runs on its own goroutine under a single-flight guard; after:
+397µs and 236µs. Shutdown does not wait for an in-flight pass, by decision
+(a snapshot is housekeeping and the drain is not), and says so in the log.
+
+### `mgit doctor`
+
+- **`daemon/response-cap`** (MGIT-175, #88): asks the running daemon for a
+  full 1 MiB control response and verifies it arrived intact, then asks for
+  one byte more and verifies the refusal is legible — the MGIT-160 incident,
+  checked on the real channel. The control-plane protocol version is now 3; a
+  daemon left running from an older build is refused at the handshake with
+  the restart named, and doctor reports `not-checked` with that reason.
+- **`guest/localhost`** reads the guest's name table (`/etc/hosts`) instead of
+  running a resolver, so it can no longer pass via DNS; a base without the
+  probe command reports `not-checked`, never `failed` (MGIT-169, #89).
+
+### Build hygiene
+
+- CI refuses a build tool or action resolved at a floating ref unless the
+  float is declared at the site with its reason; the tree passes with the two
+  `govulncheck` floats declared (MGIT-180, #86).
+- The branch-scope guard reads linked worktrees, and the pre-push hook no
+  longer treats "could not run" as a refusal (MGIT-182, #92).
+
+### Known issues carried
+
+- MGIT-164: a sync that reported success while the guest lacked files was
+  never reproduced; the class is refused by the read-back since 0.6.4, and
+  none of the four fixes above produces that shape.
+- MGIT-158: there is still no daemon↔guest version exchange.
+- MGIT-181: whether a sync should police paths outside its plan is an open
+  design question.
+
 ## [0.6.4] - 2026-08-23
 
 **A sync now verifies its own delivery.** The release theme is the same as
