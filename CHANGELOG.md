@@ -80,6 +80,13 @@ The pass now runs on its own goroutine under a single-flight guard; after:
   running a resolver, so it can no longer pass via DNS; a base without the
   probe command reports `not-checked`, never `failed` (MGIT-169, #89).
 
+### `mgit log`
+
+- `--since` and `--until` refuse a value they cannot parse, naming the flag,
+  the value and an acceptable form (MGIT-172, #90). A plain date or a
+  relative phrase used to be silently discarded, and the reviewer was handed
+  the whole trail with nothing to say the narrowing had not happened.
+
 ### Build hygiene
 
 - goreleaser is pinned (v2.17.1) on the release path (MGIT-179, #81): `@latest`
