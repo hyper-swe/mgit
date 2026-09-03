@@ -46,7 +46,9 @@ func TestFilterCommits(t *testing.T) {
 		name                 string
 		since, until, author string
 		want                 []string
-		skipIssue            string
+		// wantErr rows are the MGIT-172 shapes: an unparseable bound is
+		// REFUSED, naming the flag, never silently dropped.
+		wantErr bool
 	}{
 		{name: "no_filter_returns_everything", want: []string{"a", "b", "c"}},
 		{name: "since_is_inclusive_of_its_own_boundary", since: day1, want: []string{"b", "c"}},
@@ -60,48 +62,53 @@ func TestFilterCommits(t *testing.T) {
 			since: day2, until: day0, want: []string{},
 		},
 		{
-			name:      "a_plain_date_is_REFUSED_not_silently_ignored",
-			since:     "2026-08-11",
-			want:      []string{},
-			skipIssue: "MGIT-172: an unparseable --since is discarded and the trail comes back unfiltered",
+			name:    "a_plain_date_is_REFUSED_not_silently_ignored",
+			since:   "2026-08-11",
+			want:    []string{},
+			wantErr: true,
 		},
 		{
-			name:      "a_relative_word_is_REFUSED_not_silently_ignored",
-			since:     "yesterday",
-			want:      []string{},
-			skipIssue: "MGIT-172: an unparseable --since is discarded and the trail comes back unfiltered",
+			name:    "a_relative_word_is_REFUSED_not_silently_ignored",
+			since:   "yesterday",
+			want:    []string{},
+			wantErr: true,
 		},
 		{
-			name:      "an_unparseable_until_is_REFUSED_too",
-			until:     "next tuesday",
-			want:      []string{},
-			skipIssue: "MGIT-172: an unparseable --until is discarded and the trail comes back unfiltered",
+			name:    "an_unparseable_until_is_REFUSED_too",
+			until:   "next tuesday",
+			want:    []string{},
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.skipIssue != "" {
-				t.Skip(tt.skipIssue)
+			got, err := filterCommits(logFixture(), tt.since, tt.until, tt.author)
+			if tt.wantErr {
+				require.Error(t, err, "an unparseable bound must be refused, not ignored")
+				assert.Nil(t, got)
+				return
 			}
-			got := filterCommits(logFixture(), tt.since, tt.until, tt.author)
+			require.NoError(t, err)
 			assert.Equal(t, tt.want, idsOf(got))
 		})
 	}
 }
 
-// EXPECTED TO FAIL — SKIPPED, NAMING MGIT-172.
+// Written as a skipped probe naming MGIT-172; live since #90 fixed it.
 //
 // The property, stated so a fix cannot satisfy it by accident: the answer to a
 // filter the tool could not apply must not be INDISTINGUISHABLE from the
 // answer to no filter at all. That indistinguishability is the whole defect —
 // same commits, same order, no warning, exit 0 — and it is what lets a
-// reviewer believe a trail was narrowed when it was not. Refs: MGIT-172
+// reviewer believe a trail was narrowed when it was not. The fix answers with
+// a refusal and nothing else. Refs: MGIT-172
 func TestFilterCommits_AnUnappliedFilterIsNotSilentlyTheWholeTrail(t *testing.T) {
-	t.Skip("MGIT-172: an unparseable date is discarded and the unfiltered trail is returned")
+	all, err := filterCommits(logFixture(), "", "", "")
+	require.NoError(t, err)
+	rejected, err := filterCommits(logFixture(), "2026-08-11", "", "")
 
-	all := filterCommits(logFixture(), "", "", "")
-	rejected := filterCommits(logFixture(), "2026-08-11", "", "")
-
+	require.Error(t, err, "a filter the tool could not apply must be refused")
+	assert.Contains(t, err.Error(), "--since")
 	assert.NotEqual(t, idsOf(all), idsOf(rejected),
 		"a filter the tool could not apply must not answer exactly as if none were asked for")
 }
@@ -110,7 +117,8 @@ func TestFilterCommits_AnUnappliedFilterIsNotSilentlyTheWholeTrail(t *testing.T)
 // exactly as it does now. A fix that refused everything would satisfy the
 // skipped tests above and destroy the feature.
 func TestFilterCommits_AValidWindowKeepsWorking(t *testing.T) {
-	got := filterCommits(logFixture(), day1, day2, "")
+	got, err := filterCommits(logFixture(), day1, day2, "")
+	require.NoError(t, err)
 
 	assert.Equal(t, []string{"b", "c"}, idsOf(got))
 }
@@ -120,7 +128,8 @@ func TestFilterCommits_AValidWindowKeepsWorking(t *testing.T) {
 // let a later truncation reach back into it. Refs: FR-8.4
 func TestFilterCommits_DoesNotAliasTheInput(t *testing.T) {
 	in := logFixture()
-	out := filterCommits(in, "", "", "agent-a")
+	out, err := filterCommits(in, "", "", "agent-a")
+	require.NoError(t, err)
 	require.Len(t, out, 2)
 
 	out[0] = &model.Commit{CommitID: "REPLACED"}
