@@ -253,10 +253,18 @@ func TestProbeGuestLocalhost(t *testing.T) {
 			wantOut: "localhost",
 		},
 		{
-			name:   "an_empty_answer_is_the_MGIT_159_condition_not_an_error",
+			name:   "a_table_without_localhost_is_the_MGIT_159_condition_not_an_error",
 			taskID: "T-1",
-			// getent exits 2 when it resolves nothing. That IS the condition.
-			client:  &fakeSandboxClient{execCode: 2},
+			// The probe reads /etc/hosts (MGIT-169). A table that maps
+			// nothing to localhost IS the condition: an empty answer.
+			client:  &fakeSandboxClient{execStdout: "10.0.0.1\tgateway\n"},
+			wantOut: "",
+		},
+		{
+			name:   "no_name_table_at_all_is_the_condition_too",
+			taskID: "T-1",
+			// cat exits 1 with "No such file": no table maps localhost.
+			client:  &fakeSandboxClient{execCode: 1, execStderr: "cat: /etc/hosts: No such file or directory\n"},
 			wantOut: "",
 		},
 		{
@@ -264,10 +272,8 @@ func TestProbeGuestLocalhost(t *testing.T) {
 			taskID: "T-1",
 			// 127 is "command not found". The guest's name table may be
 			// perfectly correct; nothing here establishes otherwise.
-			client:  &fakeSandboxClient{execCode: 127, execStderr: "getent: not found"},
+			client:  &fakeSandboxClient{execCode: 127, execStderr: "sh: cat: not found"},
 			wantErr: "127",
-			skipIssue: "MGIT-169: every non-zero exit maps to the MGIT-159 failure, so a base " +
-				"without getent reports a condition nobody measured",
 		},
 	}
 	for _, tt := range tests {
