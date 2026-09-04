@@ -164,6 +164,8 @@ func (d *Daemon) dispatch(ctx context.Context, conn net.Conn, req *controlproto.
 		d.servePolicyShow(ctx, conn, req.PolicyShow)
 	case controlproto.KindExport:
 		d.serveExport(ctx, conn, req.Export)
+	case controlproto.KindSyncVerify:
+		d.serveSyncVerify(ctx, conn, req.SyncVerify)
 	case controlproto.KindEcho:
 		d.serveEcho(conn, req.Echo)
 	default:

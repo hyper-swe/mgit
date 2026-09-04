@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`mgit doctor` asks a guest whether it reads what was last delivered to it
+  (MGIT-164).** A new `guest/delivery` row sends the daemon a sync-verify
+  request; the daemon hashes every path in the sandbox's delivered manifest
+  from inside the guest and reports the ones the guest reads differently.
+  A guest that cannot be asked, or a sandbox nothing has been delivered to,
+  is reported as not-checked, never as a pass. The control protocol moves to
+  version 4 for the new verb; a CLI and daemon from different builds refuse
+  each other at the handshake, naming the restart, as before.
+
 ### Changed
 
 - **`grants`, `grant`, `export` and `land` refused with a hex opcode when this

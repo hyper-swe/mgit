@@ -47,6 +47,7 @@ type sandboxClient interface {
 	// returns BOTH the error and the report naming what it refused.
 	// Refs: MGIT-76
 	SyncWorktree(ctx context.Context, taskID string, opts model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error)
+	VerifyGuestView(ctx context.Context, taskID string) (*model.GuestViewReport, error)
 }
 
 // connectFunc resolves a live daemon (activation + greeting-verified) and

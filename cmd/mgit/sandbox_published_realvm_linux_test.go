@@ -109,6 +109,10 @@ func (a *realVMAdapter) SyncWorktree(context.Context, string,
 	panic("unused by this test")
 }
 
+func (a *realVMAdapter) VerifyGuestView(context.Context, string) (*model.GuestViewReport, error) {
+	panic("unused by this test")
+}
+
 // TestSandboxPublished_RealVM_ReportsActualPublishedPort boots a real
 // firecracker microVM with a published port and drives the actual `mgit
 // sandbox published` cobra command (not the service layer directly) against
