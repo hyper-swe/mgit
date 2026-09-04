@@ -142,7 +142,7 @@ func TestExecSettler_ClassifiesTheGuestView(t *testing.T) {
 	got := map[string]string{"same.go": "aaa", "stale.go": "OLD"}
 	view := classifyGuestView(want, got, []string{"deleted.go"}, []string{"deleted.go"})
 	assert.ElementsMatch(t, []string{
-		"stale.go (guest reads the old bytes)",
+		"stale.go (guest reads bytes that were not delivered)",
 		"gone.go (guest cannot read it)",
 		"deleted.go (still present in the guest)",
 	}, view.stale)

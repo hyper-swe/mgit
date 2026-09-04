@@ -217,7 +217,7 @@ func classifyGuestView(want worktreesync.Manifest, got map[string]string,
 		case !ok:
 			view.stale = append(view.stale, path+" (guest cannot read it)")
 		case hash != want[path].Hash:
-			view.stale = append(view.stale, path+" (guest reads the old bytes)")
+			view.stale = append(view.stale, path+" (guest reads bytes that were not delivered)")
 		}
 	}
 	wasDeleted := map[string]bool{}
@@ -270,4 +270,38 @@ func relative(root, path string) string {
 		return rel
 	}
 	return path
+}
+
+// VerifyGuestView asks the sandbox's guest, once and without waiting, what it
+// reads for every path in the last delivered manifest. It is the doctor's
+// question, not the sync's: a disagreement is reported, never waited out or
+// repaired here. Refs: MGIT-164, MGIT-192
+func (m *Manager) VerifyGuestView(ctx context.Context, id string) (*model.GuestViewReport, error) {
+	m.mu.Lock()
+	sb, ok := m.sandboxes[id]
+	m.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", model.ErrSandboxNotFound, id)
+	}
+	if sb.info.State != model.StateRunning {
+		return &model.GuestViewReport{Unverifiable: fmt.Sprintf("sandbox %q is %s, not running", id, sb.info.State)}, nil
+	}
+	if stagedTreePath(sb.dir) == "" {
+		return &model.GuestViewReport{Unverifiable: "this backend delivers the worktree as a launch-time image; " +
+			"nothing is delivered after launch to compare the guest against"}, nil
+	}
+	sb.syncMu.Lock()
+	defer sb.syncMu.Unlock()
+	delivered, err := worktreesync.LoadManifest(sb.dir)
+	if err != nil {
+		return nil, fmt.Errorf("read the delivered manifest: %w", err)
+	}
+	if len(delivered) == 0 {
+		return &model.GuestViewReport{Unverifiable: "nothing has been delivered to this sandbox yet"}, nil
+	}
+	view, err := m.settler.Probe(ctx, settleRequest{sandboxID: sb.info.ID, worktree: sb.info.WorktreePath, want: delivered})
+	if err != nil {
+		return nil, fmt.Errorf("asking the guest what it reads: %w", err)
+	}
+	return &model.GuestViewReport{Checked: len(delivered), Stale: view.stale, Unverifiable: view.unverifiable}, nil
 }

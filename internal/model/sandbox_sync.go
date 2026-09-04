@@ -145,3 +145,24 @@ func (r WorktreeSyncReport) Changed() bool { return len(r.Updated) > 0 || len(r.
 type WorktreeSyncer interface {
 	SyncWorktree(ctx context.Context, sandboxID string, opts WorktreeSyncOptions) (*WorktreeSyncReport, error)
 }
+
+// GuestViewReport is a sandbox's answer to "does your guest read what was
+// last delivered to it?" — the standing question MGIT-164 asked for, asked
+// of the guest itself rather than of the host's copy. Refs: MGIT-164, MGIT-192
+type GuestViewReport struct {
+	// Checked is how many delivered paths the guest was asked about.
+	Checked int `json:"checked"`
+	// Stale lists the delivered paths the guest reads differently, each with
+	// the way it differs (old bytes, cannot read it).
+	Stale []string `json:"stale,omitempty"`
+	// Unverifiable says why the guest could not be asked at all — nothing
+	// delivered yet, no exec channel, no sha256sum. A non-empty value is a
+	// loud "cannot tell", never a pass. Refs: R-H300
+	Unverifiable string `json:"unverifiable,omitempty"`
+}
+
+// GuestViewVerifier is implemented by backends that can ask a running guest
+// what it reads for the paths last delivered to it. Refs: MGIT-164
+type GuestViewVerifier interface {
+	VerifyGuestView(ctx context.Context, sandboxID string) (*GuestViewReport, error)
+}

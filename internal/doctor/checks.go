@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/guestbase"
 )
 
@@ -187,6 +188,50 @@ func (c GuestSyncVerifyCheck) Run(ctx context.Context) Result {
 			"launched right after a sync may read a file the guest has not caught up on yet"
 		r.Remedy = "compose the guest base from an image that carries coreutils or busybox (sha256sum) with " +
 			"`mgit sandbox base from <image>`"
+	}
+	return r
+}
+
+// GuestDeliveryCheck reports whether a task's guest reads what was last
+// delivered to it — the question MGIT-164 asked for after a sync reported
+// success over a tree the guest could not read. It is asked of the guest
+// itself, through the daemon that owns the delivered manifest; the host's
+// copy of the tree is not evidence of what the guest sees (MGIT-192).
+// Refs: MGIT-164, MGIT-192, MGIT-162
+type GuestDeliveryCheck struct {
+	// Probe asks the daemon for the bound task's guest view.
+	Probe func(ctx context.Context) (*model.GuestViewReport, error)
+}
+
+// Name implements Check.
+func (GuestDeliveryCheck) Name() string { return "guest/delivery" }
+
+// Run implements Check.
+func (c GuestDeliveryCheck) Run(ctx context.Context) Result {
+	r := Result{Name: c.Name(), Incident: "MGIT-164"}
+	view, err := c.Probe(ctx)
+	switch {
+	case err != nil:
+		r.Status, r.Reason = StatusNotChecked, err.Error()
+		r.Summary = "could not ask a guest whether it reads what was delivered to it"
+	case view == nil:
+		r.Status, r.Reason = StatusNotChecked, "the daemon returned no view"
+		r.Summary = "could not ask a guest whether it reads what was delivered to it"
+	case view.Unverifiable != "":
+		r.Status, r.Reason = StatusNotChecked, view.Unverifiable
+		r.Summary = "the guest could not be asked what it reads"
+	case len(view.Stale) == 0:
+		r.Status = StatusOK
+		r.Summary = fmt.Sprintf("the guest reads all %d delivered path(s) as they were delivered", view.Checked)
+	default:
+		r.Status = StatusFailed
+		r.Summary = fmt.Sprintf("the guest reads %d of %d delivered path(s) differently from what was delivered, "+
+			"starting with %s — a command in the guest is working on a tree that is not the one the host sent",
+			len(view.Stale), view.Checked, view.Stale[0])
+		r.Remedy = "re-launch the sandbox (`mgit sandbox stop`, then any `mgit run`): the guest's tree diverged " +
+			"from what was delivered while the host did not change, and `mgit sandbox sync` re-delivers only " +
+			"paths the host changed — even with --force. If it persists after a re-launch, the guest is not " +
+			"reading the tree that was written; report it with this output"
 	}
 	return r
 }
