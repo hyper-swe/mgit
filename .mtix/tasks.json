@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-03T11:52:40Z",
+  "exported_at": "2026-09-04T13:00:36Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5344,15 +5344,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit-167",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "128f15c1734040714e6f13a6a1d86bb6592ff7696f8ee04b0672fb00e6160f62",
       "created_at": "2026-08-23T07:39:46Z",
-      "updated_at": "2026-08-23T07:39:46Z",
+      "updated_at": "2026-09-04T12:35:40Z",
+      "closed_at": "2026-09-04T12:35:40Z",
       "uid": "01a02d8f-b081-7822-a0b6-6cce5361afb9"
     },
     {
@@ -5473,15 +5474,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit-171",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "9892259443d9f1971be3be27f4237ce9be1e78e52bfe55c4d3b45160c1a79010",
       "created_at": "2026-08-23T08:15:05Z",
-      "updated_at": "2026-08-23T08:15:05Z",
+      "updated_at": "2026-09-04T13:00:35Z",
+      "closed_at": "2026-09-04T13:00:35Z",
       "uid": "01a02db0-0633-7cf4-b221-10246878e1db"
     },
     {
@@ -5524,15 +5526,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit-173",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "faf66c7a29f06f2ac552828ac396231894290ae6376850ca11c060a1ecff4129",
       "created_at": "2026-08-23T08:27:39Z",
-      "updated_at": "2026-08-23T08:27:39Z",
+      "updated_at": "2026-09-04T12:48:49Z",
+      "closed_at": "2026-09-04T12:48:49Z",
       "uid": "01a02dbb-85da-7b2f-9f9b-b374f1e31382"
     },
     {
@@ -6057,15 +6060,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-192",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "cb0ccfa8fc6b7715b2838ce287ce4f730a1c0fbe84ada56f88651df2d92bf912",
       "created_at": "2026-09-03T11:31:30Z",
-      "updated_at": "2026-09-03T11:33:38Z",
+      "updated_at": "2026-09-04T10:53:35Z",
+      "closed_at": "2026-09-04T10:53:35Z",
       "uid": "01a06709-cd44-7dcf-8de9-cc460e3a05f6"
     },
     {
@@ -6092,6 +6096,31 @@
       "created_at": "2026-09-03T11:31:41Z",
       "updated_at": "2026-09-03T11:31:41Z",
       "uid": "01a06709-f904-71ff-b26d-913f043eb75e"
+    },
+    {
+      "id": "MGIT-194",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 194,
+      "project": "MGIT",
+      "title": "`mgit worktree list` shows registry entries whose paths no longer exist without marking them prunable",
+      "description": "Observed 2026-09-03 on mgit-dev: `mgit worktree list` printed eight task worktrees under /tmp (MGIT-72/73/75/76/77/78/80/81) whose directories are gone; nothing in the output says so. `git worktree list` marks such rows \"prunable\" and `git worktree prune` removes them; mgit's `prune` exists (FR-16) but the list gives a reader no reason to run it, so stale bindings (task / branch / path) sit in the registry indefinitely, and `mgit work` for a task that still shows as bound may be refused. Found while staging the MGIT-192 item-3 doctor run (needed a sandboxed task worktree that actually exists). Would sit under MGIT-8 (worktrees), which is closed.",
+      "prompt": "",
+      "acceptance": "(1) `mgit worktree list` marks a row whose path is missing (a trailing `prunable` marker, matching git's wording) and says how to clear it; (2) `--json` carries the same fact as a field; (3) a test whose registry rows come from a fixture the list code does not control: one present, one missing, and only the missing one is marked; (4) `mgit worktree prune --dry-run` names exactly those rows.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "af9445b7b72a522c6ceb436ef9746addd90ed283fb5cb6df396f5cd48679a0b8",
+      "created_at": "2026-09-03T11:57:31Z",
+      "updated_at": "2026-09-03T11:57:31Z",
+      "uid": "01a06721-9dc6-7cf0-a95f-24af6f296020"
     },
     {
       "id": "MGIT-2",
@@ -13359,6 +13388,13 @@
       "last_heartbeat": "2026-09-02T20:11:59Z"
     },
     {
+      "agent_id": "claude-mgit-167",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-167",
+      "last_heartbeat": "2026-09-04T05:09:28Z"
+    },
+    {
       "agent_id": "claude-mgit-168",
       "project": "MGIT",
       "state": "working",
@@ -13380,11 +13416,25 @@
       "last_heartbeat": "2026-09-02T20:17:46Z"
     },
     {
+      "agent_id": "claude-mgit-171",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-171",
+      "last_heartbeat": "2026-09-04T05:15:36Z"
+    },
+    {
       "agent_id": "claude-mgit-172",
       "project": "MGIT",
       "state": "working",
       "current_node_id": "MGIT-172",
       "last_heartbeat": "2026-09-02T20:45:55Z"
+    },
+    {
+      "agent_id": "claude-mgit-173",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-173",
+      "last_heartbeat": "2026-09-04T05:12:20Z"
     },
     {
       "agent_id": "claude-mgit-175",
@@ -13590,6 +13640,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 458,
-  "checksum": "38ba01d3093410692f69530359b5390aa7e7735ad4235d86d750b90c05cf34be"
+  "node_count": 459,
+  "checksum": "549edd6ee27a7b9773486a88ae6044ecf35225ff7e34a7a43695a6d5648c87bd"
 }
