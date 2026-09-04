@@ -28,7 +28,7 @@ func (m *verifyingManager) VerifyGuestView(_ context.Context, id string) (*model
 // The service resolves the task to the host-owned sandbox ID and hands the
 // question to the backend; the answer comes back verbatim. Refs: MGIT-164
 func TestSandboxService_VerifyGuestView_DelegatesToTheBackend(t *testing.T) {
-	mgr := &verifyingManager{view: &model.GuestViewReport{Checked: 4, Stale: []string{"app.go (guest reads the old bytes)"}}}
+	mgr := &verifyingManager{view: &model.GuestViewReport{Checked: 4, Stale: []string{"app.go (guest reads bytes that were not delivered)"}}}
 	svc := bootedSync(t, &mgr.syncingManager)
 	svc.manager = mgr
 
@@ -38,7 +38,7 @@ func TestSandboxService_VerifyGuestView_DelegatesToTheBackend(t *testing.T) {
 	assert.Equal(t, 1, mgr.verifies)
 	assert.NotEmpty(t, mgr.lastID, "the backend is addressed by the sandbox ID, not the task")
 	assert.Equal(t, 4, got.Checked)
-	assert.Equal(t, []string{"app.go (guest reads the old bytes)"}, got.Stale)
+	assert.Equal(t, []string{"app.go (guest reads bytes that were not delivered)"}, got.Stale)
 }
 
 // A sandbox that has not booted has had nothing delivered: the answer says
