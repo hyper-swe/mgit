@@ -114,7 +114,6 @@ func TestBound_CapsTheCountNotTheBytes_AndTheTransportIsTheBackstop(t *testing.T
 // claiming Truncated with a total equal to its own list length.
 // Refs: MGIT-173, MGIT-160
 func TestBound_IsIdempotent(t *testing.T) {
-	t.Skip("MGIT-173: a second Bound overwrites the honest totals with the capped list lengths")
 
 	r := WorktreeSyncReport{
 		Updated:   pathsOfLength(40_000, 40),
@@ -282,7 +281,6 @@ func conflictsOfLength(n, width int) []WorktreeSyncConflict {
 // honestly — it is a count that was never true of anything.
 // Refs: MGIT-173, MGIT-160
 func TestBound_ASecondPass_DoesNotInventACapForListsUnderIt(t *testing.T) {
-	t.Skip("MGIT-173: a second Bound caps totals for lists that were never truncated")
 
 	r := WorktreeSyncReport{
 		Updated: pathsOfLength(40_000, 40),
