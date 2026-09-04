@@ -220,6 +220,17 @@ func (c *CeilingManager) SyncWorktree(ctx context.Context, id string, opts model
 	return syncer.SyncWorktree(ctx, id, opts)
 }
 
+// VerifyGuestView forwards to the inner backend when it can ask a guest what
+// it reads. Refs: MGIT-164
+func (c *CeilingManager) VerifyGuestView(ctx context.Context, id string) (*model.GuestViewReport, error) {
+	verifier, ok := c.inner.(model.GuestViewVerifier)
+	if !ok {
+		return nil, fmt.Errorf("%w: backend does not deliver the worktree as a live shared directory",
+			model.ErrSandboxSyncUnsupported)
+	}
+	return verifier.VerifyGuestView(ctx, id)
+}
+
 // ExportArtifact forwards the OPTIONAL guest->host artifact export capability
 // to the inner backend when it has one, and reports the limitation when it
 // does not.

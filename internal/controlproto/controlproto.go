@@ -221,6 +221,9 @@ type Request struct {
 	// Echo asks for a control response of an exact size, for `mgit doctor`
 	// (MGIT-175). Declared in echo.go beside the verb it serves.
 	Echo *EchoArgs `json:"echo,omitempty"`
+	// SyncVerify asks whether a task's guest reads what was last delivered
+	// to it (MGIT-164). Declared in syncverify.go beside the verb it serves.
+	SyncVerify *TaskRef `json:"sync_verify,omitempty"`
 }
 
 // LandResult summarizes a completed land.
@@ -262,13 +265,15 @@ type Response struct {
 	Hello *HelloResult `json:"hello,omitempty"`
 	// Echo is the exact-size answer to an echo request (MGIT-175).
 	Echo *EchoResult `json:"echo,omitempty"`
+	// SyncVerify is the guest's answer to a sync-verify request (MGIT-164).
+	SyncVerify *SyncVerifyResult `json:"sync_verify,omitempty"`
 }
 
 // validKind reports whether k is a known request kind.
 func validKind(k byte) bool {
 	switch k {
 	case KindLaunch, KindExec, KindLand, KindList, KindRemove, KindStatus, KindGrants, KindGrant,
-		KindSync, KindPolicySet, KindPolicyShow, KindExport, KindHello, KindEcho:
+		KindSync, KindPolicySet, KindPolicyShow, KindExport, KindHello, KindEcho, KindSyncVerify:
 		return true
 	default:
 		return false
@@ -331,6 +336,7 @@ func (req *Request) Validate() error {
 		KindExport:     req.Export != nil,
 		KindHello:      req.Hello != nil,
 		KindEcho:       req.Echo != nil,
+		KindSyncVerify: req.SyncVerify != nil,
 	}
 	for k, present := range set {
 		if present && k != req.Kind {
@@ -376,6 +382,8 @@ func (req *Request) Validate() error {
 		return validateHello(req.Hello)
 	case KindEcho:
 		return req.Echo.Validate()
+	case KindSyncVerify:
+		return requireTask(req.SyncVerify)
 	case KindList:
 		return nil // no payload
 	default:

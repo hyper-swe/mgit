@@ -69,3 +69,26 @@ func (s *SandboxService) syncTarget(ctx context.Context, taskID string) (sandbox
 	}
 	return reg.info.ID, reg.booted, nil
 }
+
+// VerifyGuestView asks the task's guest whether it reads what was last
+// delivered to it. A sandbox that has not booted has had nothing delivered,
+// and says so rather than passing. Refs: MGIT-164
+func (s *SandboxService) VerifyGuestView(ctx context.Context, taskID string) (*model.GuestViewReport, error) {
+	sandboxID, booted, err := s.syncTarget(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if !booted {
+		return &model.GuestViewReport{Unverifiable: "nothing has been delivered to this sandbox yet: " + notBootedDetail}, nil
+	}
+	verifier, ok := s.manager.(model.GuestViewVerifier)
+	if !ok {
+		return nil, fmt.Errorf("%w: this sandbox's backend delivers the worktree as a launch-time "+
+			"copy, so there is no later delivery to compare the guest against", model.ErrSandboxSyncUnsupported)
+	}
+	report, err := verifier.VerifyGuestView(ctx, sandboxID)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox verify: %w", err)
+	}
+	return report, nil
+}

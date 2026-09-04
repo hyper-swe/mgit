@@ -20,11 +20,13 @@ import (
 
 // fakeSandboxClient is an in-memory sandboxClient for command tests.
 type fakeSandboxClient struct {
-	launched    *model.SandboxLaunchOptions
-	execTask    string
-	execReq     model.ExecRequest
-	removedTID  string
-	removeForce bool
+	launched     *model.SandboxLaunchOptions
+	execTask     string
+	verifyTask   string
+	verifyReport *model.GuestViewReport
+	execReq      model.ExecRequest
+	removedTID   string
+	removeForce  bool
 
 	listResult []model.SandboxInfo
 	statusInfo *model.SandboxInfo
@@ -555,4 +557,12 @@ func TestResolveSandboxPaths(t *testing.T) {
 
 func mkMgitDir(repo string) error {
 	return os.MkdirAll(filepath.Join(repo, ".mgit"), 0o700)
+}
+
+func (f *fakeSandboxClient) VerifyGuestView(_ context.Context, taskID string) (*model.GuestViewReport, error) {
+	f.verifyTask = taskID
+	if f.verifyReport == nil {
+		return nil, errors.New("fake client: no guest view configured")
+	}
+	return f.verifyReport, nil
 }

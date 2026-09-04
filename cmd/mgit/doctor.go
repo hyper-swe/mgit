@@ -86,7 +86,25 @@ func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 		doctor.GuestSyncVerifyCheck{Probe: func(ctx context.Context) (string, error) {
 			return probeGuestSyncVerify(ctx, connect, app.BoundTask)
 		}},
+		doctor.GuestDeliveryCheck{Probe: func(ctx context.Context) (*model.GuestViewReport, error) {
+			return probeGuestDelivery(ctx, connect, app.BoundTask)
+		}},
 	}
+}
+
+// probeGuestDelivery asks the daemon what the bound task's guest reads for
+// the paths last delivered to it. The daemon owns the delivered manifest and
+// the exec channel; the CLI does not read the daemon's state directory
+// itself. Refs: MGIT-164, MGIT-154
+func probeGuestDelivery(ctx context.Context, connect connectFunc, taskID string) (*model.GuestViewReport, error) {
+	if taskID == "" {
+		return nil, errors.New("no sandbox: this directory is not bound to a task worktree")
+	}
+	cl, err := connect(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("no sandbox daemon reachable: %w", err)
+	}
+	return cl.VerifyGuestView(ctx, taskID)
 }
 
 // probeGuestSyncVerify asks the task's guest which of the two tools a sync's

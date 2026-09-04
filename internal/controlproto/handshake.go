@@ -65,7 +65,11 @@ const (
 	// that `mgit doctor` uses to exercise the MGIT-160 response cap
 	// (MGIT-175): a daemon left running from a 2 build refuses at the
 	// handshake, naming the restart, instead of answering "invalid request".
-	ProtocolVersion = 3
+	//
+	// 4 adds the sync-verify verb (KindSyncVerify, a SyncVerify field on
+	// request and response) that `mgit doctor` uses to ask a guest whether it
+	// reads what was last delivered to it (MGIT-164).
+	ProtocolVersion = 4
 
 	// LegacyProtocol names every mgit built before the handshake existed
 	// (0.5.x and earlier). Such a peer never states a version, so this number

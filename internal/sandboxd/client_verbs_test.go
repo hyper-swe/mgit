@@ -238,6 +238,10 @@ func TestClient_OptionalVerbs_ReportThemselvesUnservedWhenUnwired(t *testing.T) 
 			_, err := client.Land(ctx, "MGIT-1")
 			return err
 		},
+		controlproto.KindSyncVerify: func() error {
+			_, err := client.VerifyGuestView(ctx, "MGIT-1")
+			return err
+		},
 	}
 	for kind, call := range calls {
 		t.Run(kindNames[kind], func(t *testing.T) {
@@ -293,6 +297,7 @@ func TestClient_PolicyRefusal_IsTheWorkedExampleTheOthersOwe(t *testing.T) {
 // kindNames labels the optional verbs for subtest output. The KINDS come from
 // controlproto's own constants above; only the human label lives here.
 var kindNames = map[byte]string{
+	controlproto.KindSyncVerify: "sync_verify",
 	controlproto.KindGrants:     "grants",
 	controlproto.KindGrant:      "grant",
 	controlproto.KindPolicySet:  "policy_set",
