@@ -92,10 +92,15 @@ const SyncReportPathLimit = 500
 // forget it. Refs: MGIT-160
 func (r WorktreeSyncReport) Bound(limit int) WorktreeSyncReport {
 	out := r
-	out.UpdatedTotal = len(r.Updated)
-	out.DeletedTotal = len(r.Deleted)
-	out.OverriddenTotal = len(r.Overridden)
-	out.ConflictsTotal = len(r.Conflicts)
+	// A total is authoritative once recorded: it can never be below the list
+	// that carries it, and a larger recorded total survives a later pass.
+	// Recomputing from the lists made a second Bound overwrite 40,000 with
+	// the cap, and invent a cap for lists that were never shortened — the
+	// exact under-report this field exists to prevent. Refs: MGIT-173
+	out.UpdatedTotal = max(r.UpdatedTotal, len(r.Updated))
+	out.DeletedTotal = max(r.DeletedTotal, len(r.Deleted))
+	out.OverriddenTotal = max(r.OverriddenTotal, len(r.Overridden))
+	out.ConflictsTotal = max(r.ConflictsTotal, len(r.Conflicts))
 	if limit <= 0 {
 		return out
 	}

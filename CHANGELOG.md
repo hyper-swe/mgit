@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that cannot be asked (no exec channel, no `sha256sum`) is reported as
   "delivered on the host, but not verified from inside the guest" rather than
   as a success. The pre-exec sync that `mgit run` performs takes the same door.
+- **A sync report bounded twice under-reported its totals (MGIT-173).** The
+  path-count totals added in 0.6.4 (MGIT-160) were recomputed from the lists
+  on every `Bound`, so a report that had already been capped reported the cap
+  as its total — 500 where 40,000 paths had diverged — and invented a cap for
+  lists that were never shortened. Latent (the daemon bounds once), but the
+  model's own comment invites more callers. A recorded total is now
+  authoritative: it is never below the list that carries it, and a larger
+  recorded total survives a later pass, so bounding a bounded report changes
+  nothing.
 
 ## [0.6.5] - 2026-09-03
 
