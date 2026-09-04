@@ -84,8 +84,10 @@ func TestDaemon_Export_NotWired_ReportsUnserved(t *testing.T) {
 
 	resp, err := controlproto.ReadResponse(conn)
 	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not served by this daemon",
+	assert.Contains(t, resp.Error, "`mgit sandbox export` is not served by this daemon",
 		"an unwired export verb says so rather than silently succeeding")
+	assert.Contains(t, resp.Error, "nothing left the sandbox")
+	assert.NotRegexp(t, `kind 0x[0-9a-f]+`, resp.Error, "no wire opcode reaches the operator (MGIT-171)")
 
 	cancel()
 	require.NoError(t, <-done)

@@ -180,8 +180,12 @@ func (d *Daemon) dispatch(ctx context.Context, conn net.Conn, req *controlproto.
 // only host-observed text (SEC-05). Refs: MGIT-11.10.10, SEC-01, SEC-05
 func (d *Daemon) serveLand(ctx context.Context, conn net.Conn, ref *controlproto.TaskRef) {
 	if d.cfg.Lander == nil {
-		d.reply(conn, &controlproto.Response{},
-			fmt.Errorf("controlproto kind %#x not served by this daemon", controlproto.KindLand))
+		d.reply(conn, &controlproto.Response{}, d.unservedVerb(ctx, ref.TaskID, "land",
+			"no land path is wired, so commits cannot be brought back from the guest through it — "+
+				"the host repository was not reachable when this daemon started, or this build carries no land transport",
+			"bring files out with `mgit sandbox export`, or restart the daemon from the repository "+
+				"(`mgit sandbox stop` then any sandbox verb)",
+			"nothing was landed and the guest's history is intact"))
 		return
 	}
 	commits, branch, err := d.cfg.Lander.Land(ctx, ref.TaskID)
@@ -194,8 +198,8 @@ func (d *Daemon) serveLand(ctx context.Context, conn net.Conn, ref *controlproto
 // not wired, e.g. off Linux) reports the verb as unserved. Refs: FR-17.12, SEC-05
 func (d *Daemon) serveGrants(ctx context.Context, conn net.Conn, ref *controlproto.TaskRef) {
 	if d.cfg.Grants == nil || d.cfg.Service == nil {
-		d.reply(conn, &controlproto.Response{},
-			fmt.Errorf("controlproto kind %#x not served by this daemon", controlproto.KindGrants))
+		d.reply(conn, &controlproto.Response{}, d.unservedVerb(ctx, ref.TaskID, "grants",
+			grantsUnwiredFact, grantsInstead, "no request was listed or approved"))
 		return
 	}
 	info, err := d.cfg.Service.Status(ctx, ref.TaskID)
@@ -217,8 +221,8 @@ func (d *Daemon) serveGrants(ctx context.Context, conn net.Conn, ref *controlpro
 // audited, sandbox-lifetime-scoped grant. Refs: FR-17.12, SEC-05
 func (d *Daemon) serveGrant(ctx context.Context, conn net.Conn, args *controlproto.GrantArgs) {
 	if d.cfg.Grants == nil || d.cfg.Service == nil {
-		d.reply(conn, &controlproto.Response{},
-			fmt.Errorf("controlproto kind %#x not served by this daemon", controlproto.KindGrant))
+		d.reply(conn, &controlproto.Response{}, d.unservedVerb(ctx, args.TaskID, "grant",
+			grantsUnwiredFact, grantsInstead, "no request was approved and no egress was opened"))
 		return
 	}
 	info, err := d.cfg.Service.Status(ctx, args.TaskID)
@@ -264,6 +268,55 @@ func (d *Daemon) serveSync(ctx context.Context, conn net.Conn, args *controlprot
 		resp.Error = err.Error()
 	}
 	d.writeResponse(conn, resp)
+}
+
+// unservedVerb builds the refusal for an optional verb this daemon cannot
+// serve, in the operator's words: the verb, the fact about this daemon or
+// backend that makes it unservable, what to do instead, and that nothing
+// happened. Modeled on policyUnservedReason, which MGIT-104 fixed while its
+// four siblings still answered with a hex opcode — "kind 0x44" tells a reader
+// neither that THIS BUILD cannot serve the verb (stop trying) nor that THIS
+// CALL failed (retry), and those need opposite responses. Refs: MGIT-171, MGIT-104
+func (d *Daemon) unservedVerb(ctx context.Context, taskID, verb, fact, instead, untouched string) error {
+	return fmt.Errorf("`mgit sandbox %s` is not served by this daemon on %s: %s. %s. "+
+		"This is a refusal, not a failure to reach the daemon: nothing was changed — %s",
+		verb, d.backendName(ctx, taskID), fact, instead, untouched)
+}
+
+// backendName names the task's backend when the daemon can look it up, and
+// otherwise says honestly that it is this build's backend.
+func (d *Daemon) backendName(ctx context.Context, taskID string) string {
+	if d.cfg.Service != nil && taskID != "" {
+		if info, err := d.cfg.Service.Status(ctx, taskID); err == nil && info.Backend != "" {
+			return info.Backend
+		}
+	}
+	return "this build's sandbox backend"
+}
+
+const (
+	grantsUnwiredFact = "no grant coordinator is wired, so there are no pending egress requests " +
+		"to list or approve — grants exist only where this daemon enforces the allowlist itself " +
+		"(firecracker on Linux)"
+	grantsInstead = "set the allowlist up front with `mgit sandbox policy set`, or launch with " +
+		"--network open if the task genuinely needs unrestricted egress"
+)
+
+// exportUnservedReason explains why nothing can leave this sandbox through
+// `mgit sandbox export`. On firecracker the reason is a property of the
+// backend, not of the wiring: the worktree was delivered as a launch-time
+// image, so there is no host directory to read an artifact from.
+// Refs: MGIT-171, MGIT-73, FR-17.18
+func (d *Daemon) exportUnservedReason(ctx context.Context, taskID string) error {
+	fact := "no exporter is wired, so artifacts cannot be copied out of the guest"
+	instead := "bring commits back with `mgit sandbox land`, or run a daemon built with the export path"
+	if d.backendName(ctx, taskID) == "firecracker" {
+		fact = "firecracker delivers the worktree as a launch-time image, so there is no host " +
+			"directory to read an artifact from"
+		instead = "bring commits back with `mgit sandbox land`, or re-launch the task on a backend " +
+			"whose guest tree lives on the host (libkrun or vzf)"
+	}
+	return d.unservedVerb(ctx, taskID, "export", fact, instead, "nothing left the sandbox")
 }
 
 // policyUnservedReason explains, in CONTAINMENT terms, why this daemon serves
@@ -351,8 +404,7 @@ func (d *Daemon) servePolicyShow(ctx context.Context, conn net.Conn, ref *contro
 // crashed. Refs: MGIT-73, FR-17.18, ADR-011
 func (d *Daemon) serveExport(ctx context.Context, conn net.Conn, args *controlproto.ExportArgs) {
 	if d.cfg.Exporter == nil {
-		d.reply(conn, &controlproto.Response{},
-			fmt.Errorf("controlproto kind %#x not served by this daemon", controlproto.KindExport))
+		d.reply(conn, &controlproto.Response{}, d.exportUnservedReason(ctx, args.TaskID))
 		return
 	}
 	res, err := d.cfg.Exporter.ExportArtifact(ctx, args.TaskID, args.Export)
