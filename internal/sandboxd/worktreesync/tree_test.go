@@ -108,7 +108,7 @@ func TestApply_RefusesABlockedPlan(t *testing.T) {
 	src, dst := t.TempDir(), t.TempDir()
 	writeTree(t, src, map[string]string{"a.go": "NEW"})
 	writeTree(t, dst, map[string]string{"a.go": "GUEST-EDIT"})
-	blocked := Plan{Update: []string{"a.go"}, Conflicts: []Conflict{{"a.go", ReasonModifiedInGuest}}}
+	blocked := Plan{Update: []string{"a.go"}, Conflicts: []Conflict{{Path: "a.go", Reason: ReasonModifiedInGuest}}}
 
 	err := Apply(src, dst, blocked)
 

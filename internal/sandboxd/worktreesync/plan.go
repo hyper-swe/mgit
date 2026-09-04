@@ -66,6 +66,12 @@ const (
 type Conflict struct {
 	Path   string
 	Reason Reason
+	// HostAbsent records that the host no longer has the path: honoring the
+	// host under --force means deleting it, not delivering it. Without this
+	// every conflict was promoted to an update, and a forced sync over a
+	// host-deleted path died in Apply on a stat of the candidate tree.
+	// Refs: MGIT-167
+	HostAbsent bool
 }
 
 // Plan is the computed sync: an all-or-nothing set of updates and deletes, or
@@ -113,10 +119,15 @@ func (p Plan) Forced() Plan {
 		Conflicts: p.Conflicts, forced: true}
 	for _, c := range p.Conflicts {
 		// A conflict is an update unless the host no longer has the path, in
-		// which case honoring the host means deleting it.
+		// which case honoring the host means deleting it. Refs: MGIT-167
+		if c.HostAbsent {
+			out.Delete = append(out.Delete, c.Path)
+			continue
+		}
 		out.Update = append(out.Update, c.Path)
 	}
 	sort.Strings(out.Update)
+	sort.Strings(out.Delete)
 	return out
 }
 
@@ -152,9 +163,9 @@ func Compute(delivered, host, guest Manifest) Plan {
 		guestEntry, inGuest := guest[path]
 		switch {
 		case !wasDelivered && inGuest:
-			plan.Conflicts = append(plan.Conflicts, Conflict{path, ReasonCreatedInGuest})
+			plan.Conflicts = append(plan.Conflicts, Conflict{Path: path, Reason: ReasonCreatedInGuest})
 		case wasDelivered && inGuest && guestEntry != deliveredEntry:
-			plan.Conflicts = append(plan.Conflicts, Conflict{path, ReasonModifiedInGuest})
+			plan.Conflicts = append(plan.Conflicts, Conflict{Path: path, Reason: ReasonModifiedInGuest})
 		default:
 			plan.Update = append(plan.Update, path)
 		}
@@ -182,7 +193,7 @@ func (p *Plan) appendDeletes(delivered, host, guest Manifest) {
 		case !inGuest:
 			continue // already gone in the guest too
 		case guestEntry != deliveredEntry:
-			p.Conflicts = append(p.Conflicts, Conflict{path, ReasonModifiedInGuest})
+			p.Conflicts = append(p.Conflicts, Conflict{Path: path, Reason: ReasonModifiedInGuest, HostAbsent: true})
 		default:
 			p.Delete = append(p.Delete, path)
 		}

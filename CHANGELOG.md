@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`mgit sandbox sync --force` died on a host-deleted path the guest had
+  modified (MGIT-167).** The plan promoted every conflict to an update, so a
+  path the host no longer had was "delivered" from a candidate tree that did
+  not contain it, and the whole all-or-nothing sync failed with a raw `stat`
+  on an internal path. A conflict over a path the host no longer has is now a
+  forced delete: the path is removed from the guest, reported under `deleted`,
+  and still audited under `overridden`, since un-landed guest work was
+  destroyed even though it was asked for.
+
 - **`mgit sandbox sync` reported a delivery the guest could not yet read
   (MGIT-192).** The host-side read-back added in 0.6.3 (MGIT-164) hashes the
   host's copy of the guest tree, where the bytes are complete; the guest's
