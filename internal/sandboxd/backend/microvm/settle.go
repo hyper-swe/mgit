@@ -217,7 +217,7 @@ func classifyGuestView(want worktreesync.Manifest, got map[string]string,
 		case !ok:
 			view.stale = append(view.stale, path+" (guest cannot read it)")
 		case hash != want[path].Hash:
-			view.stale = append(view.stale, path+" (guest reads the old bytes)")
+			view.stale = append(view.stale, path+" (guest reads bytes that were not delivered)")
 		}
 	}
 	wasDeleted := map[string]bool{}

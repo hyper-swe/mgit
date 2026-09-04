@@ -228,9 +228,10 @@ func (c GuestDeliveryCheck) Run(ctx context.Context) Result {
 		r.Summary = fmt.Sprintf("the guest reads %d of %d delivered path(s) differently from what was delivered, "+
 			"starting with %s — a command in the guest is working on a tree that is not the one the host sent",
 			len(view.Stale), view.Checked, view.Stale[0])
-		r.Remedy = "run `mgit sandbox sync` again; it now confirms every path from inside the guest before " +
-			"reporting. If this persists, the guest is not reading the tree that was written — report it with " +
-			"this output"
+		r.Remedy = "re-launch the sandbox (`mgit sandbox stop`, then any `mgit run`): the guest's tree diverged " +
+			"from what was delivered while the host did not change, and `mgit sandbox sync` re-delivers only " +
+			"paths the host changed — even with --force. If it persists after a re-launch, the guest is not " +
+			"reading the tree that was written; report it with this output"
 	}
 	return r
 }

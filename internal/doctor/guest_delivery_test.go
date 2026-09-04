@@ -63,7 +63,11 @@ func TestGuestDeliveryCheck(t *testing.T) {
 			assert.Equal(t, "MGIT-164", got.Incident)
 			assert.Equal(t, "guest/delivery", got.Name)
 			if tt.wantStatus == StatusFailed {
-				assert.Contains(t, got.Remedy, "mgit sandbox sync", "the remedy must name the verb that re-delivers")
+				// Measured live (2026-09-04): with the host worktree unchanged, `mgit sandbox
+				// sync` — even --force — is a no-op, so a remedy that only says "sync again"
+				// does not repair the state this row reports. It must name the re-launch.
+				assert.Contains(t, got.Remedy, "re-launch", "the remedy must name what actually re-delivers a guest-diverged tree")
+				assert.Contains(t, got.Remedy, "mgit sandbox sync", "and say what sync does and does not re-deliver")
 				assert.Contains(t, got.Summary, "2 of 312", "the summary must say how much of the tree disagrees")
 			}
 		})
