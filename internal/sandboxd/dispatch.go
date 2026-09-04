@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 
 	"github.com/hyper-swe/mgit/internal/controlproto"
 	"github.com/hyper-swe/mgit/internal/execwire"
@@ -280,7 +281,17 @@ func (d *Daemon) serveSync(ctx context.Context, conn net.Conn, args *controlprot
 func (d *Daemon) unservedVerb(ctx context.Context, taskID, verb, fact, instead, untouched string) error {
 	return fmt.Errorf("`mgit sandbox %s` is not served by this daemon on %s: %s. %s. "+
 		"This is a refusal, not a failure to reach the daemon: nothing was changed — %s",
-		verb, d.backendName(ctx, taskID), fact, instead, untouched)
+		verb, d.backendName(ctx, taskID), fact, sentence(instead), untouched)
+}
+
+// sentence makes a clause read as the sentence it is placed as: the "what to
+// do instead" clause follows a full stop, so its first letter is upper-cased
+// unless it opens with a quoted command. Refs: MGIT-171
+func sentence(clause string) string {
+	if clause == "" || clause[0] == '`' {
+		return clause
+	}
+	return strings.ToUpper(clause[:1]) + clause[1:]
 }
 
 // backendName names the task's backend when the daemon can look it up, and

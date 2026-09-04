@@ -2,6 +2,7 @@ package sandboxd
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -66,6 +67,35 @@ func TestClient_UnservedVerbs_EachSaysWhatDidNotHappen(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "`mgit sandbox "+tt.verb+"` is not served by this daemon")
 			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+// A refusal is prose an operator reads under pressure: every sentence in it
+// starts like a sentence. The reviewer of #101 found the "what to do
+// instead" clause starting lowercase after the first period. The rows are the
+// four verbs whose refusals this builder writes. Refs: MGIT-171
+func TestClient_UnservedVerbs_EverySentenceStartsLikeOne(t *testing.T) {
+	client := clientFor(t, func(*Config) {})
+	ctx := context.Background()
+	calls := map[string]func() error{
+		"land":   func() error { _, err := client.Land(ctx, "MGIT-1"); return err },
+		"grants": func() error { _, err := client.Grants(ctx, "MGIT-1"); return err },
+		"grant":  func() error { _, err := client.Grant(ctx, "MGIT-1", "k"); return err },
+		"export": func() error {
+			_, err := client.ExportArtifact(ctx, "MGIT-1", model.ArtifactExportRequest{GuestPath: "a", HostPath: "/b"})
+			return err
+		},
+	}
+	for verb, call := range calls {
+		t.Run(verb, func(t *testing.T) {
+			err := call()
+			require.Error(t, err)
+			for _, sentence := range strings.Split(err.Error(), ". ")[1:] {
+				first := sentence[0]
+				assert.True(t, first == '`' || (first >= 'A' && first <= 'Z'),
+					"a sentence starts lowercase: %q", sentence)
+			}
 		})
 	}
 }
