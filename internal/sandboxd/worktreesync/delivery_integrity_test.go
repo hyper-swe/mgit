@@ -296,7 +296,6 @@ func TestSync_AWorktreeSymlink_IsDeliveredAsALink(t *testing.T) {
 // refusing to complete it — with a diagnosis they cannot act on — is the worst
 // place to fail. Refs: MGIT-167, MGIT-71, ADR-011
 func TestSync_ForceOverAHostDeletedPath_RemovesItFromTheGuest(t *testing.T) {
-	t.Skip("MGIT-167: Plan.Forced() promotes a host-deleted conflict to an update, and Apply then fails")
 
 	f := newFixture(t, map[string]string{"doomed.txt": "V1", "keep.txt": "K"})
 	// The guest edited it; the host then deleted it. Exactly what --force is for.
