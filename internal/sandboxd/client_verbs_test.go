@@ -264,12 +264,7 @@ func TestClient_OptionalVerbs_ReportThemselvesUnservedWhenUnwired(t *testing.T) 
 // unactionableRefusal marks the verbs MGIT-104's fix has not reached. Each
 // entry is a skip, never a narrowed assertion: the case above is written whole
 // and turns red the moment the entry is deleted. Refs: MGIT-171
-var unactionableRefusal = map[byte]string{
-	controlproto.KindGrants: "MGIT-171: answers with a hex opcode",
-	controlproto.KindGrant:  "MGIT-171: answers with a hex opcode",
-	controlproto.KindExport: "MGIT-171: answers with a hex opcode",
-	controlproto.KindLand:   "MGIT-171: answers with a hex opcode — on the audit-critical verb",
-}
+var unactionableRefusal = map[byte]string{}
 
 // The policy verbs are the ones MGIT-104's fix DID reach, and they are the
 // worked example the other four should follow: they name the backend, state

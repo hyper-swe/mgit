@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`grants`, `grant`, `export` and `land` refused with a hex opcode when this
+  daemon could not serve them (MGIT-171).** MGIT-104's fix reached the policy
+  verbs only; the other four still answered `controlproto kind 0x44 not served
+  by this daemon` — which tells an operator neither that this build cannot
+  serve the verb (stop trying) nor that this call failed (retry). Each now
+  names the verb in the operator's words and the backend, states the fact that
+  makes it unservable (no land path, no grant coordinator, no exporter — and on
+  firecracker, that the worktree was delivered as a launch-time image so there
+  is no host directory to export from), says what to use instead, and says
+  plainly that nothing was changed.
+
 ### Fixed
 
 - **`mgit sandbox sync` reported a delivery the guest could not yet read
