@@ -63,3 +63,6 @@ import-to-mtix.py
 .mtix/data/backups/
 .mtix/logs/
 /mcpdrive
+
+# Derived at run time by scripts/e2e/sandbox_posture_negative_control.sh; never a source file (MGIT-191)
+scripts/e2e/.sandbox_posture_negative_control.generated.sh
