@@ -222,6 +222,8 @@ jobs:
           bash scripts/e2e/sandbox_posture.sh "$RUNNER_TEMP/bin" 2>&1 | tee "$RUNNER_TEMP/posture.log"
           grep -q 'SANDBOX POSTURE E2E: PASS (live)' "$RUNNER_TEMP/posture.log" || {
             echo "FATAL: the posture gate did not pass LIVE (a SKIP is a failure here)"; exit 1; }
+          # MGIT-191: the harness's daemon-leak check must be shown to FIRE, or it proves nothing.
+          bash scripts/e2e/sandbox_posture_negative_control.sh "$RUNNER_TEMP/bin"
 
       # The sandbox CLI verbs an operator actually types. They were unit-only
       # until MGIT-88: unit tests exercise the service BENEATH the CLI, and this
@@ -556,6 +558,8 @@ jobs:
             | tee "$RUNNER_TEMP/posture-libkrun.log"
           grep -q 'SANDBOX POSTURE E2E: PASS (live)' "$RUNNER_TEMP/posture-libkrun.log" || {
             echo "FATAL: the libkrun posture gate did not pass LIVE (a SKIP is a failure here)"; exit 1; }
+          # MGIT-191: the harness's daemon-leak check must be shown to FIRE, or it proves nothing.
+          bash scripts/e2e/sandbox_posture_negative_control.sh "$RUNNER_TEMP/bin"
 
       - name: The VALIDATED column — boot, exec, sync, export, SEC-03 containment
         env:

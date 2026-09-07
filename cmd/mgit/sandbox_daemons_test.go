@@ -187,3 +187,51 @@ func TestSandboxDaemons_ALeakedDaemonIsMarkedLEAKED(t *testing.T) {
 		}
 	}
 }
+
+// The identity check has two halves and both are pinned: the daemon's name,
+// and the record's socket — a mgit-sandboxd serving some OTHER socket is not
+// this daemon either. And an unreadable command line is a refusal that keeps
+// the record: not knowing is not evidence that the record is stale.
+// Refs: MGIT-191, R-H300
+func TestSandboxDaemonsStop_IdentityCheck_BothHalvesAndTheUnreadableCase(t *testing.T) {
+	tests := []struct {
+		name       string
+		argv       string
+		argvErr    error
+		wantSignal bool
+		wantRecord bool // the record still exists afterwards
+	}{
+		{"the_recorded_daemon", "/usr/local/bin/mgit-sandboxd --socket SOCK --host-root /w/.mgit/sandbox", nil, true, true},
+		{"a_daemon_serving_another_socket", "/usr/local/bin/mgit-sandboxd --socket /run/other/d.sock", nil, false, false},
+		{"not_a_daemon_at_all", "/usr/bin/vim SOCK", nil, false, false},
+		{"command_line_unreadable", "", errors.New("ps: no such process table"), false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			rec := daemonrec.Record{PID: 4242, RepoRoot: "/w", Socket: dir + "/d.sock"}
+			require.NoError(t, daemonrec.Write(rec))
+			var signaled []int
+			deps := daemonsDeps{
+				list: func(context.Context) ([]daemonrec.Listed, error) {
+					return []daemonrec.Listed{{Record: rec, Status: daemonrec.Status{Alive: true}}}, nil
+				},
+				kill:  func(pid int, sig syscall.Signal) error { signaled = append(signaled, pid); return nil },
+				alive: func(int) bool { return false },
+				argv: func(int) (string, error) {
+					return strings.ReplaceAll(tt.argv, "SOCK", rec.Socket), tt.argvErr
+				},
+			}
+			_, err := runDaemonsCmd(t, deps, "daemons", "stop", "--repo-root", "/w")
+			if tt.wantSignal {
+				require.NoError(t, err)
+				assert.Equal(t, []int{4242}, signaled)
+			} else {
+				require.Error(t, err)
+				assert.Empty(t, signaled)
+			}
+			_, statErr := os.Stat(dir + "/" + daemonrec.FileName)
+			assert.Equal(t, tt.wantRecord, statErr == nil, "record kept?")
+		})
+	}
+}
