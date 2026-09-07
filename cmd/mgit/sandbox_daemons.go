@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -27,11 +30,47 @@ type daemonsDeps struct {
 	list  func(ctx context.Context) ([]daemonrec.Listed, error)
 	kill  func(pid int, sig syscall.Signal) error
 	alive func(pid int) bool
+	argv  func(pid int) (string, error) // the command line at a pid, for the identity check before a signal
 	clock func() time.Time
 }
 
 func hostDaemonsDeps() daemonsDeps {
-	return daemonsDeps{list: listHostDaemons, kill: syscall.Kill, alive: pidAlive, clock: time.Now}
+	return daemonsDeps{list: listHostDaemons, kill: syscall.Kill, alive: pidAlive, argv: pidArgv, clock: time.Now}
+}
+
+// pidArgv reads the command line at a pid through ps, which answers the same
+// way on macOS and Linux; /proc is Linux-only. Refs: MGIT-191
+func pidArgv(pid int) (string, error) {
+	out, err := exec.CommandContext(context.Background(), "ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output() //nolint:gosec // fixed binary, integer argument
+	if err != nil {
+		return "", fmt.Errorf("read the command line at pid %d: %w", pid, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// isRecordedDaemon reports whether the process at the record's pid is the
+// daemon the record describes: its command line names mgit-sandboxd and the
+// record's socket. Pids are reused; a stale record plus a reused pid must
+// never become a signal to an unrelated process. Refs: MGIT-191
+func isRecordedDaemon(argv string, rec daemonrec.Record) bool {
+	return strings.Contains(argv, "mgit-sandboxd") && strings.Contains(argv, rec.Socket)
+}
+
+// sameRoot matches a repository root as a path, not as bytes: a trailing
+// slash or a symlinked prefix names the same repository. Refs: MGIT-166
+func sameRoot(a, b string) bool {
+	if a == b {
+		return true
+	}
+	return rootPath(a) == rootPath(b)
+}
+
+func rootPath(p string) string {
+	p = filepath.Clean(p)
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
 }
 
 // listHostDaemons reads every daemon record under this user's runtime base
@@ -166,7 +205,7 @@ func sandboxDaemonsStopCmd(deps daemonsDeps) *cobra.Command {
 				return err
 			}
 			for _, d := range listed {
-				if d.Record.RepoRoot != root {
+				if !sameRoot(d.Record.RepoRoot, root) {
 					continue
 				}
 				return stopDaemon(cmd.OutOrStdout(), deps, d)
@@ -183,6 +222,15 @@ func stopDaemon(w io.Writer, deps daemonsDeps, d daemonrec.Listed) error {
 	if !d.Status.Alive {
 		_, _ = fmt.Fprintf(w, "daemon %d for %s is already gone; its record was stale\n", pid, d.Record.RepoRoot)
 		return daemonrec.Remove(d.Record.Socket)
+	}
+	argv, err := deps.argv(pid)
+	if err != nil {
+		return fmt.Errorf("refusing to signal pid %d for %s: %w", pid, d.Record.RepoRoot, err)
+	}
+	if !isRecordedDaemon(argv, d.Record) {
+		_ = daemonrec.Remove(d.Record.Socket) // the record is stale; the pid belongs to something else now
+		return fmt.Errorf("refusing to signal pid %d for %s: it is not the daemon the record names — its command "+
+			"line is %q; the stale record was removed and nothing was signaled", pid, d.Record.RepoRoot, argv)
 	}
 	if err := deps.kill(pid, syscall.SIGTERM); err != nil {
 		return fmt.Errorf("signal daemon %d: %w", pid, err)
