@@ -189,11 +189,12 @@ cleanup() {
 		(cd "$work" && mgit sandbox remove "$t" --force >/dev/null 2>&1) || true
 	done
 	fleet_kill_daemon "$work" >/dev/null 2>&1 || true
-	rm -rf "$work" || true
-	# MGIT-191: a run must not leave a daemon behind. Loud, not fatal: the
-	# assertions above own the exit status; this is the receipt for the leak class.
+	# MGIT-191: a run must not leave a daemon behind. Checked BEFORE the scratch
+	# goes, so the daemon's own self-drain cannot mask a kill that missed. Loud,
+	# not fatal: the assertions above own the exit status.
 	local leaked
 	leaked="$(pgrep -f -- "--host-root $work/" 2>/dev/null || true)"
+	rm -rf "$work" || true
 	if [ -n "$leaked" ]; then
 		echo "FLEET SOAK: daemon LEAKED after teardown (pid $leaked serving $work)" >&2
 	else

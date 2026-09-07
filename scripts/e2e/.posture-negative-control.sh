@@ -97,7 +97,7 @@ work="$(mktemp -d)"
 # so other repositories' daemons on this host are never touched or counted.
 cleanup() {
 	local status=$? leaked
-	mgit sandbox daemons stop --repo-root "$work" >/dev/null 2>&1 || true
+	: # NEGATIVE CONTROL: stop removed
 	# The check runs BEFORE the scratch is removed: with its root still present
 	# the daemon cannot have drained itself, so what this proves is the stop —
 	# not a race against the daemon's own self-drain. Keyed on --host-root,
