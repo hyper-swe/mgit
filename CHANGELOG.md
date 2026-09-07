@@ -18,6 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version 4 for the new verb; a CLI and daemon from different builds refuse
   each other at the handshake, naming the restart, as before.
 
+- **Sandbox daemons are findable and stoppable host-wide (MGIT-191).** Six
+  daemons from long-deleted temp-directory repositories were alive for up to
+  thirteen days on one host, visible only through `ps`, and the reflex fix —
+  a blanket `pkill` — would have taken five real repositories' daemons with
+  them. Each daemon now keeps a record beside its socket while it runs;
+  `mgit sandbox daemons` lists every daemon with its pid, age, repository root
+  and flags (temp-root, root-gone, dead, LEAKED), `mgit sandbox daemons stop
+  --repo-root <path>` signals one repository's daemon by its recorded pid, a
+  daemon whose repository root is deleted drains itself within one idle check,
+  and `mgit doctor` fails `daemons/host` when any daemon has outlived its
+  repository. The live e2e harnesses stop what they launch and prove nothing
+  serves their scratch root afterwards. Daemons started by earlier builds keep
+  no record and stay visible only to `ps` until restarted.
+
 ### Changed
 
 - **`grants`, `grant`, `export` and `land` refused with a hex opcode when this

@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd/daemonrec"
 	"github.com/hyper-swe/mgit/internal/sandboxd/guestbase"
 )
 
@@ -234,4 +236,69 @@ func (c GuestDeliveryCheck) Run(ctx context.Context) Result {
 			"reading the tree that was written; report it with this output"
 	}
 	return r
+}
+
+// HostDaemonsCheck reports whether any sandbox daemon on this host has
+// outlived its repository — a root that no longer exists, or a temp-directory
+// root served for longer than any run could need.
+//
+// From MGIT-185 and MGIT-191: six such daemons were alive for eleven to
+// thirteen days on one host, visible only through ps, and the reflex fix —
+// pkill — would have taken five real repositories' daemons with them.
+// The remedy names the scoped stop. Refs: MGIT-191, MGIT-185, MGIT-162
+type HostDaemonsCheck struct {
+	// List reads and judges every daemon record for this user on this host.
+	List func(ctx context.Context) ([]daemonrec.Listed, error)
+	// TempRootGrace is how long a temp-directory root may be served before
+	// it counts as a leak; zero means 24 hours.
+	TempRootGrace time.Duration
+}
+
+// Name implements Check.
+func (HostDaemonsCheck) Name() string { return "daemons/host" }
+
+// Run implements Check.
+func (c HostDaemonsCheck) Run(ctx context.Context) Result {
+	r := Result{Name: c.Name(), Incident: "MGIT-191"}
+	grace := c.TempRootGrace
+	if grace <= 0 {
+		grace = 24 * time.Hour
+	}
+	listed, err := c.List(ctx)
+	if err != nil {
+		r.Status, r.Reason = StatusNotChecked, err.Error()
+		r.Summary = "could not read this host's sandbox daemon records"
+		return r
+	}
+	alive, leaked := 0, []daemonrec.Listed{}
+	for _, d := range listed {
+		if !d.Status.Alive {
+			continue // a stale record, pruned by the list verb; not a daemon
+		}
+		alive++
+		if d.Status.Leaked(grace) {
+			leaked = append(leaked, d)
+		}
+	}
+	if len(leaked) == 0 {
+		r.Status = StatusOK
+		r.Summary = fmt.Sprintf("%d daemon(s) on this host, each serving a repository that exists", alive)
+		return r
+	}
+	first := leaked[0]
+	r.Status = StatusFailed
+	r.Summary = fmt.Sprintf("%d of %d daemon(s) on this host have outlived their repository, starting with pid %d "+
+		"serving %s (%s) — each holds a socket, a log and possibly a VM for a repository nobody is using",
+		len(leaked), alive, first.Record.PID, first.Record.RepoRoot, leakReason(first.Status))
+	r.Remedy = fmt.Sprintf("`mgit sandbox daemons` lists them; stop each with `mgit sandbox daemons stop --repo-root %s` "+
+		"(by pid, scoped to that repository — never a blanket process kill: other repositories' daemons share this host)",
+		first.Record.RepoRoot)
+	return r
+}
+
+func leakReason(st daemonrec.Status) string {
+	if st.RootGone {
+		return "its repository root no longer exists"
+	}
+	return fmt.Sprintf("a temp-directory root served for %s", st.Age.Round(time.Hour))
 }

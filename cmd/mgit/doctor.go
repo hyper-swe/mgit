@@ -89,6 +89,7 @@ func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 		doctor.GuestDeliveryCheck{Probe: func(ctx context.Context) (*model.GuestViewReport, error) {
 			return probeGuestDelivery(ctx, connect, app.BoundTask)
 		}},
+		doctor.HostDaemonsCheck{List: listHostDaemons},
 	}
 }
 

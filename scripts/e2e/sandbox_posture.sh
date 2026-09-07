@@ -91,7 +91,22 @@ esac
 
 # --- Live path --------------------------------------------------------------
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+# Teardown removes what this run launched and then PROVES it: a daemon that
+# outlives its mktemp root is exactly the leak MGIT-191 found six of. The stop
+# is scoped to this root's daemon (by its recorded pid); the check is by root,
+# so other repositories' daemons on this host are never touched or counted.
+cleanup() {
+	local status=$? leaked
+	mgit sandbox daemons stop --repo-root "$work" >/dev/null 2>&1 || true
+	rm -rf "$work"
+	leaked="$(pgrep -f -- "--repo-root $work" 2>/dev/null || true)"
+	if [ -n "$leaked" ]; then
+		echo "SANDBOX POSTURE E2E: FAIL -- daemon leaked after teardown (pid $leaked serving $work)" >&2
+		exit 1
+	fi
+	exit "$status"
+}
+trap cleanup EXIT
 cd "$work"
 git init -q
 git -c user.email=e2e@mgit.local -c user.name=e2e commit -q --allow-empty -m init
