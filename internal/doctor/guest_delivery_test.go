@@ -29,7 +29,7 @@ func TestGuestDeliveryCheck(t *testing.T) {
 		},
 		{
 			name:       "the_guest_reads_old_bytes_is_the_MGIT_164_condition",
-			report:     &model.GuestViewReport{Checked: 312, Stale: []string{"src/app.go (guest reads the old bytes)", "gone.go (guest cannot read it)"}},
+			report:     &model.GuestViewReport{Checked: 312, Stale: []string{"src/app.go (guest reads bytes that were not delivered)", "gone.go (guest cannot read it)"}},
 			wantStatus: StatusFailed,
 			wantIn:     "src/app.go",
 		},

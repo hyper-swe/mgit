@@ -27,7 +27,7 @@ func (v *verifyingDispatcher) VerifyGuestView(_ context.Context, taskID string) 
 // Refs: MGIT-164
 func TestClient_VerifyGuestView_RoundTripsTheGuestsAnswer(t *testing.T) {
 	svc := &verifyingDispatcher{fakeDispatcher: &fakeDispatcher{},
-		report: &model.GuestViewReport{Checked: 3, Stale: []string{"app.go (guest reads the old bytes)"}}}
+		report: &model.GuestViewReport{Checked: 3, Stale: []string{"app.go (guest reads bytes that were not delivered)"}}}
 	client := clientFor(t, func(c *Config) { c.Service = svc })
 
 	got, err := client.VerifyGuestView(context.Background(), "MGIT-1")
@@ -35,7 +35,7 @@ func TestClient_VerifyGuestView_RoundTripsTheGuestsAnswer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "MGIT-1", svc.task)
 	assert.Equal(t, 3, got.Checked)
-	assert.Equal(t, []string{"app.go (guest reads the old bytes)"}, got.Stale)
+	assert.Equal(t, []string{"app.go (guest reads bytes that were not delivered)"}, got.Stale)
 }
 
 // A daemon whose service cannot answer refuses in the operator's words, like
