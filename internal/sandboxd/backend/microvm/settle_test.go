@@ -38,7 +38,7 @@ func (f *fakeSettler) Probe(_ context.Context, req settleRequest) (settleView, e
 	view := settleView{}
 	if stale {
 		for path := range req.want {
-			view.stale = append(view.stale, path+" (guest reads the old bytes)")
+			view.stale = append(view.stale, path+" (guest reads bytes that were not delivered)")
 		}
 	}
 	return view, nil
