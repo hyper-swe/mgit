@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-04T13:00:36Z",
+  "exported_at": "2026-09-07T16:26:49Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5267,15 +5267,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit-164",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "d4fc61f0ee4d43bb5e8a3465058760e27fbd3d49b1ad51a922c0c49a9ecf7074",
       "created_at": "2026-08-23T06:15:31Z",
-      "updated_at": "2026-08-23T06:15:31Z",
+      "updated_at": "2026-09-07T16:00:55Z",
+      "closed_at": "2026-09-07T16:00:55Z",
       "uid": "01a02d42-8dad-7e19-91b4-bbad151bb07c"
     },
     {
@@ -6035,15 +6036,15 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "claude-mgit-191",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "8569eb496dfae870ba3e8e163a8322c417ef6b0063227f25c55246c4d97899c2",
       "created_at": "2026-09-03T11:26:16Z",
-      "updated_at": "2026-09-03T11:27:35Z",
+      "updated_at": "2026-09-07T14:26:49Z",
       "uid": "01a06705-00c1-7ae1-a327-e6c4eedc4196"
     },
     {
@@ -6121,6 +6122,31 @@
       "created_at": "2026-09-03T11:57:31Z",
       "updated_at": "2026-09-03T11:57:31Z",
       "uid": "01a06721-9dc6-7cf0-a95f-24af6f296020"
+    },
+    {
+      "id": "MGIT-195",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 195,
+      "project": "MGIT",
+      "title": "The LIVE CI legs (KVM libkrun / firecracker) never run `mgit doctor`'s guest rows or the sync-verify verb",
+      "description": "Reviewer's note on PR #104 (2026-09-04): the Sandbox LIVE legs in ci.yml exercise launch/exec/sync/land on real guests, but none of them runs `mgit doctor` inside a task worktree, so the guest rows — guest/localhost (MGIT-159), guest/sync-verify (MGIT-192), guest/delivery (MGIT-164, the sync-verify verb) — and base/currency (MGIT-174) are only ever verified live by hand (this session's live164*.log runs on macOS/libkrun). A doctor row that regresses on Linux would not be caught by CI. The e2e scripts live in scripts/e2e (sandbox_posture.sh is the natural home); the preflight law says shell gates are swept when output changes.",
+      "prompt": "",
+      "acceptance": "(1) A LIVE leg runs `mgit doctor` inside a booted task worktree on each KVM backend and asserts the guest rows' STATUS by property (ok / not-checked / FAIL as the backend allows — e.g. firecracker delivers a launch-time image, so guest/delivery is not-checked there and that is asserted, not skipped), never by matching rendered prose; (2) the same leg tampers a delivered file in the staged tree on libkrun and asserts guest/delivery FAILS and doctor exits 1; (3) a negative control: the leg is shown failing once with the assertion inverted; (4) scripts/e2e is swept for the rows' names so a wording change trips nothing.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "11eda489d2c65dcb6d2ca2248dc71460994e47a197f4925e5decde3da37e7490",
+      "created_at": "2026-09-04T17:56:21Z",
+      "updated_at": "2026-09-04T17:56:21Z",
+      "uid": "01a06d90-7d9e-7d79-ab92-19cbe7b7329f"
     },
     {
       "id": "MGIT-2",
@@ -13374,6 +13400,13 @@
       "last_heartbeat": "2026-08-21T16:47:59Z"
     },
     {
+      "agent_id": "claude-mgit-164",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-164",
+      "last_heartbeat": "2026-09-04T13:14:30Z"
+    },
+    {
       "agent_id": "claude-mgit-165",
       "project": "MGIT",
       "state": "working",
@@ -13456,6 +13489,13 @@
       "state": "working",
       "current_node_id": "MGIT-182",
       "last_heartbeat": "2026-09-02T21:10:10Z"
+    },
+    {
+      "agent_id": "claude-mgit-191",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-191",
+      "last_heartbeat": "2026-09-07T14:26:49Z"
     },
     {
       "agent_id": "claude-mgit-192",
@@ -13640,6 +13680,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 459,
-  "checksum": "549edd6ee27a7b9773486a88ae6044ecf35225ff7e34a7a43695a6d5648c87bd"
+  "node_count": 460,
+  "checksum": "1793fdd24651aa2d22f421234d62e0f03b5f185c35a8aab0d6666c130a34e0db"
 }
