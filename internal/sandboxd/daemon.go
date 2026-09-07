@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hyper-swe/mgit/internal/sandboxd/daemonrec"
 	"io"
 	"log/slog"
 	"net"
@@ -25,7 +26,11 @@ import (
 
 // Config wires the daemon's dependencies (DI everywhere; no globals).
 type Config struct {
-	SocketPath   string               // unix socket the daemon serves
+	SocketPath string // unix socket the daemon serves
+	// RepoRoot is the repository this daemon serves. When it disappears the
+	// daemon drains itself within one idle-check interval instead of
+	// outliving it by days (MGIT-191); empty means "do not watch".
+	RepoRoot     string
 	Manager      model.SandboxManager // supervised sandbox backend
 	Logger       *slog.Logger         // structured logging (slog only)
 	Clock        func() time.Time     // injected clock
@@ -169,6 +174,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer d.cleanupSocket(listener, lock)
 	defer d.noteAbandonedPass()
+	d.writeRecord()
+	defer d.removeRecord()
 
 	d.cfg.Logger.Info("sandboxd started", "event", "started", "socket", d.cfg.SocketPath)
 
@@ -231,6 +238,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return errors.Join(fmt.Errorf("sandboxd accept loop: %w", err), d.drainBounded(ctx))
 
 		case <-ticker.C:
+			if d.repoRootVanished() {
+				return d.drainBounded(ctx)
+			}
 			busy, err := d.hasSandboxes(ctx)
 			if err != nil {
 				d.cfg.Logger.Error("sandboxd list failed", "event", "list_error", "error", err)
@@ -698,4 +708,37 @@ func dialOK(ctx context.Context, socketPath string) bool {
 		return false
 	}
 	return string(buf) == greeting
+}
+
+// repoRootVanished reports, once per tick, whether the repository this
+// daemon serves has been deleted — the leak MGIT-191 found: daemons whose
+// mktemp roots were gone, alive for eleven days. A daemon serving nothing
+// that exists drains itself and says so. Refs: MGIT-191, MGIT-185
+func (d *Daemon) repoRootVanished() bool {
+	if d.cfg.RepoRoot == "" {
+		return false
+	}
+	if _, err := os.Stat(d.cfg.RepoRoot); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	d.cfg.Logger.Info("sandboxd draining: its repository root no longer exists",
+		"event", "repo_root_vanished", "repo_root", d.cfg.RepoRoot)
+	return true
+}
+
+// writeRecord makes this daemon findable host-wide while it runs; a record
+// that cannot be written is logged, never fatal — serving is the point.
+// Refs: MGIT-191
+func (d *Daemon) writeRecord() {
+	rec := daemonrec.Record{PID: os.Getpid(), RepoRoot: d.cfg.RepoRoot, Socket: d.cfg.SocketPath,
+		StartedAt: d.cfg.Clock().UTC(), Version: d.cfg.Version}
+	if err := daemonrec.Write(rec); err != nil {
+		d.cfg.Logger.Warn("sandboxd could not write its daemon record", "event", "record_unwritten", "error", err.Error())
+	}
+}
+
+func (d *Daemon) removeRecord() {
+	if err := daemonrec.Remove(d.cfg.SocketPath); err != nil {
+		d.cfg.Logger.Warn("sandboxd could not remove its daemon record", "event", "record_unremoved", "error", err.Error())
+	}
 }

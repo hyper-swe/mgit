@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -184,7 +185,7 @@ func run(args []string, out, logSink io.Writer) int {
 		ceiling.maxTotalMemoryMB, ceiling.defaultMemoryMB)
 
 	dcfg := sandboxd.Config{
-		SocketPath: opts.socket, Manager: manager,
+		SocketPath: opts.socket, Manager: manager, RepoRoot: servedRepoRoot(opts),
 		Logger: logger, Clock: clock, IdleGrace: opts.idleGrace, MaxConns: opts.maxConns,
 		PeerBinder: peerBinder,
 	}
@@ -300,4 +301,18 @@ func run(args []string, out, logSink io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// servedRepoRoot names the repository this daemon serves, for its host-wide
+// record and its self-drain when the root vanishes: --repo-root when given,
+// else the repository the host root sits in (<repo>/.mgit/sandbox).
+// Refs: MGIT-191
+func servedRepoRoot(o *daemonOpts) string {
+	if o.repoRoot != "" {
+		return o.repoRoot
+	}
+	if o.hostRoot != "" && filepath.Base(o.hostRoot) == "sandbox" && filepath.Base(filepath.Dir(o.hostRoot)) == ".mgit" {
+		return filepath.Dir(filepath.Dir(o.hostRoot))
+	}
+	return ""
 }
