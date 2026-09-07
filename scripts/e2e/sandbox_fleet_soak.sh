@@ -193,7 +193,7 @@ cleanup() {
 	# MGIT-191: a run must not leave a daemon behind. Loud, not fatal: the
 	# assertions above own the exit status; this is the receipt for the leak class.
 	local leaked
-	leaked="$(pgrep -f -- "--repo-root $work" 2>/dev/null || true)"
+	leaked="$(pgrep -f -- "--host-root $work/" 2>/dev/null || true)"
 	if [ -n "$leaked" ]; then
 		echo "FLEET SOAK: daemon LEAKED after teardown (pid $leaked serving $work)" >&2
 	else

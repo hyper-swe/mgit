@@ -99,7 +99,9 @@ cleanup() {
 	local status=$? leaked
 	mgit sandbox daemons stop --repo-root "$work" >/dev/null 2>&1 || true
 	rm -rf "$work"
-	leaked="$(pgrep -f -- "--repo-root $work" 2>/dev/null || true)"
+	# Keyed on --host-root, which the CLI always passes; --repo-root is optional in the
+	# daemon's argv, and a check on it never fired (its negative control passed).
+	leaked="$(pgrep -f -- "--host-root $work/" 2>/dev/null || true)"
 	if [ -n "$leaked" ]; then
 		echo "SANDBOX POSTURE E2E: FAIL -- daemon leaked after teardown (pid $leaked serving $work)" >&2
 		exit 1
