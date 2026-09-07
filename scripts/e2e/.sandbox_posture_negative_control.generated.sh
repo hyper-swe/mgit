@@ -97,7 +97,7 @@ work="$(mktemp -d)"
 # so other repositories' daemons on this host are never touched or counted.
 cleanup() {
 	local status=$? leaked
-	: # NEGATIVE CONTROL: stop removed
+	: # NEGATIVE CONTROL: the scoped stop is removed
 	# The check runs BEFORE the scratch is removed: with its root still present
 	# the daemon cannot have drained itself, so what this proves is the stop —
 	# not a race against the daemon's own self-drain. Keyed on --host-root,

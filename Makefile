@@ -47,7 +47,8 @@ e2e:
 	echo "== daemon-less posture =="; bash scripts/e2e/daemonless_posture.sh "$$bindir"; \
 	echo "== REST posture + lock coexistence =="; bash scripts/e2e/rest_posture.sh "$$bindir"; \
 	echo "== MCP posture =="; MGIT_BIN="$$bindir/mgit" go run ./scripts/e2e/mcpdrive; \
-	echo "== sandbox posture =="; bash scripts/e2e/sandbox_posture.sh "$$bindir"
+	echo "== sandbox posture =="; bash scripts/e2e/sandbox_posture.sh "$$bindir"; \
+	echo "== sandbox posture: negative control (the leak check must fire) =="; bash scripts/e2e/sandbox_posture_negative_control.sh "$$bindir"
 
 ## soak: Fleet soak + chaos gate — N concurrent sandboxes under churn
 # Needs a real sandbox backend AND a guest image, so unlike `make e2e` it builds
