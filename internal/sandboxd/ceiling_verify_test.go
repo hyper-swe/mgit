@@ -2,6 +2,7 @@ package sandboxd
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -42,4 +43,19 @@ func TestCeiling_VerifyGuestView_BackendWithoutTheCapability_FailsClosed(t *test
 	_, err := mgr.VerifyGuestView(context.Background(), "01SANDBOX")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, model.ErrSandboxSyncUnsupported)
+}
+
+// failingInner is a backend whose own refusal must reach the caller verbatim.
+type failingInner struct{ *fakeManager }
+
+func (failingInner) VerifyGuestView(context.Context, string) (*model.GuestViewReport, error) {
+	return nil, errors.New("backend: the guest went away mid-question")
+}
+
+// The hop adds nothing to a backend's own refusal: it is forwarded as is.
+// Refs: MGIT-164
+func TestCeiling_VerifyGuestView_ForwardsTheBackendsRefusalVerbatim(t *testing.T) {
+	mgr := NewCeilingManager(failingInner{newFakeManager()}, 0, 0, 0)
+	_, err := mgr.VerifyGuestView(context.Background(), "01SANDBOX")
+	require.EqualError(t, err, "backend: the guest went away mid-question")
 }
