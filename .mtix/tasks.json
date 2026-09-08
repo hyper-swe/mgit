@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-07T16:26:49Z",
+  "exported_at": "2026-09-08T04:37:15Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6147,6 +6147,56 @@
       "created_at": "2026-09-04T17:56:21Z",
       "updated_at": "2026-09-04T17:56:21Z",
       "uid": "01a06d90-7d9e-7d79-ab92-19cbe7b7329f"
+    },
+    {
+      "id": "MGIT-196",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 196,
+      "project": "MGIT",
+      "title": "Three views of one sandbox binding disagree at a scratch-path worktree: status and launch say bound/running, run --check and doctor say no sandbox bound, and the fail-closed path goes dark without a remedy (FEAT-7.28)",
+      "description": "RELAYED from the FEAT board (FEAT-7.28, reported 2026-09-04 ~11:35Z from a sandboxed agent session on mgit 0.6.5 feb9f3e): task sprint-go-agent-2, worktree registered at a scratch path. `mgit sandbox status sprint-go-agent-2` printed running; `mgit sandbox launch --task-id sprint-go-agent-2 --worktree \u003csame path\u003e` refused with \"task already bound to a worktree\"; `mgit sandbox sync --task-id … --force` delivered (\"up to date\"); yet `mgit run --check` from that path AND from the repo worktree said \"no sandbox bound for \u003cpath\u003e\"; `mgit sandbox status --json` said \"sandbox not found\"; `mgit doctor` there said \"this directory is not bound to a task worktree\". Three views of one registry disagreed, and the fail-closed run path went dark with no remedy that works (launch refused, run refused). Workaround used: `mgit sandbox exec --task-id … -- sh -c 'cd \u003csynced path\u003e \u0026\u0026 go test ./...'`, which runs as ROOT in the guest (MGIT-151's defect), unlike mgit run.\n\nThe report's asks: (1) status / status --json / run --check must agree; (2) a stale binding needs a stated remedy (a rebind or a remove that does not need the VM); (3) exec should run as the same unprivileged user as run, or say that it does not — (3) is MGIT-151's.\n\nREPRODUCED 2026-09-08 (scratch repository, dev pair from main f3cf780, macOS/libkrun), three mechanisms: (a) THE LITERAL PATH: `mgit sandbox launch --task-id T --worktree \u003cplain dir\u003e` writes agent files under \u003cdir\u003e/.mgit (generated, shims, CLAUDE.md/AGENTS.md), after which \u003cdir\u003e resolves as a repository of its own (findRepoRoot honours any .mgit directory) — every verb from inside it addresses a second daemon with an empty index; all four symptoms verbatim, and `mgit doctor` there exited 1 with zero bytes on either stream (0.6.5 too). (b) A copy of the repository carrying its own .mgit store is, correctly, its own repository — but no refusal named which daemon had been asked. (c) The same repository through two spellings of its path gets two daemons over one index and a fresh daemon deletes the other's live sandbox: MGIT-197. Measured: `mgit run` and `sandbox exec` both execute as uid 0.",
+      "prompt": "",
+      "acceptance": "- The report's sequence is reproduced on a scratch repository for both registrations (`mgit work … --sandbox` and `sandbox launch --worktree \u003cplain directory\u003e`), the disagreeing outputs pasted verbatim into the ticket/PR, and the mechanism named from evidence.\n- After the fix, for one task and one path, `sandbox status \u003ctask\u003e`, `run --check` from the path and `doctor` from the path agree — all bound, or all unbound for the same stated reason — tested at the layer that owns the fact, with the test's cases from a fixture the code under test does not control.\n- `run --check`'s refusal names the daemon/repository it asked and the recorded worktree paths it compared the cwd against, and states the remedy; a stale binding (path gone or moved) can be removed with `sandbox remove` without booting the VM, and the removal is tested.\n- `sandbox status \u003ctask\u003e --json` refuses in the same words as without --json.\n- Negative control: every new test shown failing with its subject removed.\n- Ask (3) recorded as MGIT-151's; until it lands, `sandbox exec`'s help and the README state that exec runs as root in the guest.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "claude-mgit-196",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "d0bf632727936107f45c7ee3a1b873007c02763b20e66933df6222a3b6847c0a",
+      "created_at": "2026-09-08T03:37:25Z",
+      "updated_at": "2026-09-08T04:37:06Z",
+      "uid": "01a07f17-8ed6-7cd9-8c2d-6888e3104dd0"
+    },
+    {
+      "id": "MGIT-197",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 197,
+      "project": "MGIT",
+      "title": "One repository, two daemons: the sandbox daemon is keyed by the path's spelling, and a second daemon over the same index deletes the first's live sandbox with a `killed` event that never happened",
+      "description": "FOUND 2026-09-08 while reproducing MGIT-196 (FEAT-7.28): dev pair at main f3cf780, macOS/libkrun, a scratch repository. The daemon socket key is sha256 of the repository root AS SPELLED by the caller's cwd (cmd/mgit/sandbox_connect.go, resolveSandboxPaths; os.Getwd returns the shell's $PWD spelling), with no symlink resolution — and nothing stops two daemons from serving one host root (`\u003crepo\u003e/.mgit/sandbox`, where the SQLite registry lives). Reproduced three ways:\n\n(1) DIVERGENCE. `cd /private/tmp/…/r196` and `cd /tmp/…/r196` (one directory: /tmp is a symlink to private/tmp) spawn two daemons; `mgit sandbox daemons` lists both roots. A sandbox launched through one spelling is \"sandbox not found: task\" through the other, and `sandbox list` differs by spelling (T-3 only via the first, T-4 only via the second). Status/List answer from each daemon's in-memory registry, rehydrated from the shared index only at its start.\n\n(2) DESTRUCTION. With T-1 booted and running under daemon A (`mgit run` answers from the guest), a third daemon C, spawned through a symlink spelling of the same root, rehydrated the shared index — log: registry_rehydrated recovered=[] discarded=[T-1] — wrote a `killed` event whose reason reads \"unsupervised: the daemon that supervised this sandbox exited; its VM could not be verified by the daemon that replaced it\", false on both counts (A had not exited; `mgit run -- hostname` still answered localhost, exit 0, with A's __krun-vm child alive), and DELETED T-1's row from `sandboxes`. From then on A says running (memory), C says not found, the index holds no row, the audit trail records a kill that did not happen, and when A exits the sandbox vanishes without a `destroyed` event.\n\n(3) DUPLICATE TERMINAL EVENTS. `daemons stop --repo-root` of either spelling drained the shared registrations, and both daemons wrote `destroyed` for the same sandbox ids.\n\nThe fact \"which daemon serves this repository's sandbox state\" belongs to the host root that holds the index, not to the spelling of a working directory (MGIT-177's question). Receipts: the reproduction logs (repro196b.log, repro196c.log) and the events query on the scratch index, quoted in PR #109. FOUND WHILE FIXING: the first cut claimed the host root inside the daemon's Run, after the service wiring had rehydrated the index — the refused daemon discarded a live sandbox on its way out. The claim now precedes anything that reads the index, and a test pins the order.",
+      "prompt": "",
+      "acceptance": "- The CLI keys the daemon on the canonical (symlink-resolved) repository root, for a repository root and for a linked worktree's marker store alike; a test spells one root three ways (direct, a symlinked prefix, a symlinked leaf) and asserts one socket path; the test fails with the canonicalization removed.\n- The daemon claims an exclusive lock on its host root (`\u003chost-root\u003e/daemon.lock`, flock, released by the kernel on death) before it serves; a second daemon for the same host root refuses to start naming the holder's pid and socket while the first keeps serving — tested with two real daemons over one host root; the CLI's activation failure carries that refusal.\n- `mgit doctor`'s `daemons/host` row FAILS when two live daemons' roots resolve to one repository, naming both spellings and the stop command for the extra one.\n- The rehydration `killed` reason states what was verified, not what was assumed.\n- Live: the divergence and destruction runs re-run with the fixed pair show one daemon for the three spellings and T-1 surviving with its VM; no duplicate `destroyed` events.\n- CHANGELOG entry with the upgrade note: stop the repository's daemon before upgrading if a sandbox is running on a symlink-spelled root.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "3076e9a3c7588e38e6e4af4058292c10ac09a1985d892ce9ba9d939c70380a8f",
+      "created_at": "2026-09-08T03:50:24Z",
+      "updated_at": "2026-09-08T04:37:14Z",
+      "uid": "01a07f23-736c-7cf4-b52a-9a23729d9c92"
     },
     {
       "id": "MGIT-2",
@@ -13505,6 +13555,13 @@
       "last_heartbeat": "2026-09-03T11:33:38Z"
     },
     {
+      "agent_id": "claude-mgit-196",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-196",
+      "last_heartbeat": "2026-09-08T04:16:46Z"
+    },
+    {
       "agent_id": "claude-mgit-6112",
       "project": "MGIT",
       "state": "working",
@@ -13680,6 +13737,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 460,
-  "checksum": "1793fdd24651aa2d22f421234d62e0f03b5f185c35a8aab0d6666c130a34e0db"
+  "node_count": 462,
+  "checksum": "d69cf28705c87a210dd2ae018d472ec7a9eeadd0b55bd7536fbcd8fb9296c493"
 }
