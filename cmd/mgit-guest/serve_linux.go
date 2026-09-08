@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/mdlayher/vsock"
@@ -45,6 +46,11 @@ func serveGuest(ctx context.Context, supervisor *guest.Supervisor, execPort, lan
 		return err
 	}
 	worktreePath := worktreeMountPath()
+	// The land-ready notify is gated on the private store having CHANGED
+	// across an exec: a boot's setup execs commit nothing and used to cost
+	// the host three land passes each time (MGIT-199). The baseline is the
+	// store as delivered, which the host already knows.
+	landGate := newLandReadyGate(filepath.Join(worktreePath, ".mgit"))
 	logger.Info("mgit-guest land-ready notify", "event", "notify_config", "target", describeNotify(notifyPort))
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -61,11 +67,17 @@ func serveGuest(ctx context.Context, supervisor *guest.Supervisor, execPort, lan
 	go func() {
 		errs <- serveVsock(ctx, execPort, logger, func(c net.Conn) {
 			serveExecConn(ctx, supervisor, c, logger)
-			// After the agent finishes a command, signal the host it may land
-			// (auto-land trigger). Best-effort + idempotent: a host pull with no
-			// new commits is a no-op, so emitting after every exec is safe and
-			// gives "land as soon as done" latency. Refs: MGIT-11.10.11
-			emitLandReady(notifyPort, logger)
+			// After the agent finishes a command that moved the private store —
+			// a commit — signal the host it may land (auto-land trigger).
+			// Best-effort + idempotent: a host pull with no new commits is a
+			// no-op, and a command that committed nothing sends nothing, so the
+			// host lands as soon as there is something to land and never for a
+			// boot's own setup execs. Refs: MGIT-11.10.11, MGIT-199
+			if landGate.changed() {
+				emitLandReady(notifyPort, logger)
+			} else {
+				logger.Debug("mgit-guest exec left the store unchanged; no land-ready signal", "event", "notify_skipped")
+			}
 		})
 	}()
 	go func() {
