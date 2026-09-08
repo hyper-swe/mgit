@@ -79,8 +79,39 @@ func sandboxRepoRoot(cwd string) (string, error) {
 	if isWorktree {
 		return filepath.Dir(marker.Store), nil
 	}
+	// A sandbox worktree `mgit sandbox launch --worktree` decorated names the
+	// repository that registered it; a .mgit with no store, no marker and no
+	// owner is that decoration from before the owner was recorded — refused
+	// with the reason, never served as an empty repository of its own.
+	// Refs: MGIT-196
+	owner, hasOwner, err := gitstore.ReadSandboxOwner(root)
+	if err != nil {
+		return "", err
+	}
+	if hasOwner {
+		if !gitstore.StorePresent(owner.RepoRoot) {
+			return "", fmt.Errorf("%s/.mgit names %s as the repository that registered its sandbox (task %s), "+
+				"but that path holds no mgit store (moved or deleted?); re-run `mgit sandbox launch --task-id %s "+
+				"--worktree %s` from the owning repository", root, owner.RepoRoot, owner.Task, owner.Task, root)
+		}
+		return owner.RepoRoot, nil
+	}
+	if !gitstore.StorePresent(root) && gitstore.LaunchDecorated(root) {
+		return "", storelessMgitError(root)
+	}
 	return root, nil
 }
+
+// ownedClient is the production client plus the identity of the daemon it
+// talks to, so a refusal can say which registry it consulted. Refs: MGIT-196
+type ownedClient struct {
+	*sandboxd.Client
+	repoRoot string
+	socket   string
+}
+
+// DaemonIdentity implements sandboxClient. Refs: MGIT-196
+func (c *ownedClient) DaemonIdentity() (repoRoot, socket string) { return c.repoRoot, c.socket }
 
 // locateSandboxd finds the mgit-sandboxd binary: first alongside this
 // executable (the normal install layout), then on PATH.
@@ -180,7 +211,10 @@ func sandboxConnectFor(ctx context.Context, dir string) (sandboxClient, error) {
 			"sandbox daemon unavailable (no fallback — task work runs only inside the sandbox): %w%s",
 			err, daemonFailureDetail(p.daemonLog))
 	}
-	return sandboxd.NewClient(p.socket, func() time.Time { return time.Now().UTC() }), nil
+	return &ownedClient{
+		Client:   sandboxd.NewClient(p.socket, func() time.Time { return time.Now().UTC() }),
+		repoRoot: repoRoot, socket: p.socket,
+	}, nil
 }
 
 // mcpSandboxPolicyConnectorFor adapts the daemon connector for the repo

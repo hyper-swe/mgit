@@ -22,7 +22,11 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "exec --task <id> -- <command> [args...]",
 		Short: "Run a command in a task's sandbox (streams output, propagates exit code)",
-		Args:  cobra.MinimumNArgs(1),
+		Long: "Runs one command inside the task's guest, streaming its output and propagating " +
+			"its exit code. Until MGIT-151 lands, every guest exec — this verb's and `mgit run`'s — " +
+			"runs as root inside the microVM: a build that assumes an unprivileged user will not " +
+			"notice here.",
+		Args: cobra.MinimumNArgs(1),
 		// Real errors are printed here; cobra must not also print them or
 		// turn an exitError into an "Error:" line.
 		SilenceErrors: true,
@@ -42,7 +46,7 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 				model.ExecRequest{Command: args, Env: env, Timeout: timeout},
 				cmd.OutOrStdout(), cmd.ErrOrStderr())
 			if err != nil {
-				return execFailure(cmd, cl, task, err)
+				return execFailure(cmd, cl, task, explainNotFound(cmd.Context(), cl, err))
 			}
 			if code != 0 {
 				// A signal death may be memory exhaustion; name the cap in

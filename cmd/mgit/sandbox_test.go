@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/controlproto"
 	"github.com/hyper-swe/mgit/internal/model"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // fakeSandboxClient is an in-memory sandboxClient for command tests.
@@ -30,6 +32,13 @@ type fakeSandboxClient struct {
 
 	listResult []model.SandboxInfo
 	statusInfo *model.SandboxInfo
+	// statusErr fails Status alone, leaving List answerable — the shape of a
+	// daemon that holds other sandboxes but not the one asked for (MGIT-196).
+	statusErr error
+	// repoRoot and socket are what the fake answers to DaemonIdentity; empty
+	// means a client that cannot name its daemon.
+	repoRoot string
+	socket   string
 	// statusCalls counts Status lookups, so a test can assert a daemon that
 	// just proved it cannot answer is not asked again (MGIT-133).
 	statusCalls int
@@ -94,8 +103,11 @@ func (f *fakeSandboxClient) Launch(_ context.Context, opts model.SandboxLaunchOp
 		return nil, f.opErr
 	}
 	f.launched = &opts
-	return &model.SandboxInfo{ID: "01JSB", TaskID: opts.TaskID, State: model.StateCreated}, nil
+	return &model.SandboxInfo{ID: "01JSB", TaskID: opts.TaskID, WorktreePath: opts.WorktreePath, State: model.StateCreated}, nil
 }
+
+// DaemonIdentity names the daemon this fake stands in for (MGIT-196).
+func (f *fakeSandboxClient) DaemonIdentity() (repoRoot, socket string) { return f.repoRoot, f.socket }
 func (f *fakeSandboxClient) Exec(_ context.Context, taskID string, req model.ExecRequest, stdout, stderr io.Writer) (int, error) {
 	f.execTask, f.execReq = taskID, req
 	if f.execErr != nil {
@@ -110,6 +122,9 @@ func (f *fakeSandboxClient) List(context.Context) ([]model.SandboxInfo, error) {
 }
 func (f *fakeSandboxClient) Status(_ context.Context, taskID string) (*model.SandboxInfo, error) {
 	f.statusCalls++
+	if f.statusErr != nil {
+		return nil, f.statusErr
+	}
 	if f.opErr != nil {
 		return nil, f.opErr
 	}
@@ -398,8 +413,11 @@ func TestSandboxPublished_ListsPorts(t *testing.T) {
 func TestSandboxCmd_JSONOutput(t *testing.T) {
 	t.Run("launch", func(t *testing.T) {
 		fc := &fakeSandboxClient{}
+		// A real path: the daemon echoes the worktree back and launch writes the
+		// agent env block into it; an unwritable fixture path would warn into
+		// the captured stream and break the JSON.
 		out, err := runSandbox(okConnect(fc), "launch",
-			"--task", "MGIT-4", "--worktree", "/w", "--image", "img@sha256:"+strings.Repeat("a", 64),
+			"--task", "MGIT-4", "--worktree", t.TempDir(), "--image", "img@sha256:"+strings.Repeat("a", 64),
 			"--json")
 		require.NoError(t, err)
 		var got model.SandboxInfo
@@ -565,4 +583,101 @@ func (f *fakeSandboxClient) VerifyGuestView(_ context.Context, taskID string) (*
 		return nil, errors.New("fake client: no guest view configured")
 	}
 	return f.verifyReport, nil
+}
+
+// `sandbox status <task>` answered "sandbox not found" from a daemon it never
+// named, so one task could be running (asked through the repository that
+// launched it) and not found (asked through a copy of the tree, or through
+// another spelling of the same path) with nothing on screen to tell the two
+// apart. The report also read a --json/plain difference into what was a cwd
+// difference; both forms refuse in the same words. Refs: MGIT-196, FEAT-7.28
+func TestSandboxStatus_NotFound_NamesTheDaemonAsked_PlainAndJSONAlike(t *testing.T) {
+	newFake := func() *fakeSandboxClient {
+		return &fakeSandboxClient{
+			statusErr: fmt.Errorf("%w: task %q", model.ErrSandboxNotFound, "T-2"),
+			repoRoot:  filepath.FromSlash("/repo"), socket: filepath.FromSlash("/run/d.sock"),
+			listResult: []model.SandboxInfo{{ID: "s1", TaskID: "T-1",
+				WorktreePath: filepath.FromSlash("/w1"), State: model.StateCreated}},
+		}
+	}
+	_, errPlain := runSandbox(okConnect(newFake()), "status", "T-2")
+	_, errJSON := runSandbox(okConnect(newFake()), "status", "T-2", "--json")
+	require.Error(t, errPlain)
+	require.Error(t, errJSON)
+	assert.Equal(t, errPlain.Error(), errJSON.Error(), "--json must refuse in the same words")
+	assert.ErrorIs(t, errPlain, model.ErrSandboxNotFound, "the sentinel survives the explanation")
+	for _, want := range []string{
+		`sandbox not found: task "T-2"`,
+		"the daemon of repository " + filepath.FromSlash("/repo"),
+		filepath.FromSlash("/run/d.sock"),
+		"1 sandbox",
+		"T-1 at " + filepath.FromSlash("/w1") + " (created)",
+		"mgit sandbox daemons",
+	} {
+		assert.Contains(t, errPlain.Error(), want)
+	}
+}
+
+// Launch writes agent files under <worktree>/.mgit, which made a plain
+// directory look like a repository of its own (MGIT-196). It now also records
+// which repository's daemon registered the sandbox, so verbs run from inside
+// the directory reach that daemon — and says so when it cannot. Refs: MGIT-196
+func TestSandboxLaunch_RecordsTheOwningRepositoryInTheWorktree(t *testing.T) {
+	wt := t.TempDir()
+	fc := &fakeSandboxClient{repoRoot: filepath.FromSlash("/repo"), socket: filepath.FromSlash("/run/d.sock")}
+	_, err := runSandbox(okConnect(fc), "launch", "--task-id", "T-1", "--worktree", wt, "--image", "base@sha256:abc")
+	require.NoError(t, err)
+
+	owner, ok, err := gitstore.ReadSandboxOwner(wt)
+	require.NoError(t, err)
+	require.True(t, ok, "launch must record its owner")
+	assert.Equal(t, filepath.FromSlash("/repo"), owner.RepoRoot)
+	assert.Equal(t, "T-1", owner.Task)
+
+	t.Run("a_record_that_could_not_be_written_is_said", func(t *testing.T) {
+		wt := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(wt, ".mgit"), []byte("a file where the directory goes"), 0o600))
+		fc := &fakeSandboxClient{repoRoot: filepath.FromSlash("/repo"), socket: filepath.FromSlash("/run/d.sock")}
+		out, err := runSandbox(okConnect(fc), "launch", "--task-id", "T-1", "--worktree", wt, "--image", "base@sha256:abc")
+		require.NoError(t, err, "the sandbox is registered; the missing record is a warning")
+		assert.Contains(t, out, "could not record the owning repository")
+	})
+}
+
+// MGIT-151 is open: every guest exec — this verb's and `mgit run`'s — runs as
+// root. Until it lands the help says so (FEAT-7.28's third ask). Refs: MGIT-196, MGIT-151
+func TestSandboxExec_Help_SaysCommandsRunAsRoot(t *testing.T) {
+	out, err := runSandbox(okConnect(&fakeSandboxClient{}), "exec", "--help")
+	require.NoError(t, err)
+	assert.Contains(t, out, "as root")
+	assert.Contains(t, out, "MGIT-151")
+}
+
+// `sandbox remove` retires the binding; the owner record launch wrote into the
+// worktree goes with it, so a later doctor there does not ask about a task
+// that no longer exists — while a record naming another task is left alone.
+// Refs: MGIT-196
+func TestSandboxRemove_ClearsTheOwnerRecordOfThatTask(t *testing.T) {
+	tests := []struct {
+		name     string
+		recorded string // task the owner file names
+		removed  string // task removed
+		wantGone bool
+	}{
+		{name: "the_removed_task's_record_goes", recorded: "T-1", removed: "T-1", wantGone: true},
+		{name: "another_task's_record_stays", recorded: "T-2", removed: "T-1", wantGone: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wt := t.TempDir()
+			require.NoError(t, gitstore.WriteSandboxOwner(wt, gitstore.SandboxOwner{RepoRoot: "/repo", Task: tt.recorded}))
+			fc := &fakeSandboxClient{statusInfo: &model.SandboxInfo{ID: "01JSB", TaskID: tt.removed, WorktreePath: wt, State: model.StateCreated}}
+			_, err := runSandbox(okConnect(fc), "remove", tt.removed)
+			require.NoError(t, err)
+			assert.Equal(t, tt.removed, fc.removedTID)
+			_, ok, err := gitstore.ReadSandboxOwner(wt)
+			require.NoError(t, err)
+			assert.Equal(t, !tt.wantGone, ok)
+		})
+	}
 }

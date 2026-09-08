@@ -519,7 +519,7 @@ func TestDispatch_WriteErrors_LoggedNoCrash(t *testing.T) {
 
 	assert.False(t, d.relayChunks(failConn{}, execwire.FrameStdout, []byte("data")),
 		"a failed frame write reports failure")
-	d.writeResultFrame(failConn{}, execwire.Result{ExitCode: 0}, "")
+	d.writeResultFrame(failConn{}, execwire.Result{ExitCode: 0}, nil)
 	d.writeResponse(failConn{}, &controlproto.Response{})
 	assert.Contains(t, logs.String(), `"write_error"`, "broken-connection writes are audited")
 }

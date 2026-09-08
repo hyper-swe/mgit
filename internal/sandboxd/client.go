@@ -170,7 +170,30 @@ func remoteFailure(resp *controlproto.Response) error {
 		msg := strings.TrimPrefix(resp.Error, "["+resp.ErrorCode+"] ")
 		return &model.EgressPolicyError{Code: resp.ErrorCode, Reason: "sandbox: " + msg}
 	}
+	if resp.ErrorCode == model.ErrorCodeSandboxNotFound {
+		return &codedError{msg: "sandbox: " + resp.Error, sentinel: model.ErrSandboxNotFound}
+	}
 	return fmt.Errorf("sandbox: %s", resp.Error)
+}
+
+// codedError is a daemon-side failure rebuilt WITH its sentinel on this side
+// of the wire, so callers use errors.Is rather than strings.Contains, while
+// the text reads exactly as the daemon wrote it. Refs: MGIT-196
+type codedError struct {
+	msg      string
+	sentinel error
+}
+
+func (e *codedError) Error() string { return e.msg }
+func (e *codedError) Unwrap() error { return e.sentinel }
+
+// remoteExecFailure rebuilds an exec's terminal failure, restoring the
+// sentinel its code names (MGIT-196). Refs: MGIT-196
+func remoteExecFailure(rf execwire.ResultFrame) error {
+	if rf.ErrorCode == model.ErrorCodeSandboxNotFound {
+		return &codedError{msg: "sandbox exec: " + rf.Error, sentinel: model.ErrSandboxNotFound}
+	}
+	return errors.New("sandbox exec: " + rf.Error)
 }
 
 // roundTripRaw sends one request and returns the daemon's response VERBATIM,
@@ -214,7 +237,7 @@ func (c *Client) SyncWorktree(ctx context.Context, taskID string, opts model.Wor
 		return nil, err
 	}
 	if resp.Error != "" {
-		return resp.Synced, fmt.Errorf("sandbox: %s", resp.Error)
+		return resp.Synced, remoteFailure(resp)
 	}
 	return resp.Synced, nil
 }
@@ -447,7 +470,7 @@ func (c *Client) relayFrames(ctx context.Context, conn net.Conn, stdout, stderr 
 				return -1, fmt.Errorf("sandbox client: decode result: %w", err)
 			}
 			if rf.Error != "" {
-				return -1, errors.New("sandbox exec: " + rf.Error)
+				return -1, remoteExecFailure(rf)
 			}
 			return rf.Result.ExitCode, nil
 		default:

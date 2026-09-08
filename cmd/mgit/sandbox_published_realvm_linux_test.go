@@ -64,6 +64,9 @@ func (a *realVMAdapter) Status(ctx context.Context, taskID string) (*model.Sandb
 	return a.mgr.Resolve(ctx, id)
 }
 
+// DaemonIdentity: the adapter drives a manager directly and has no daemon to name (MGIT-196).
+func (a *realVMAdapter) DaemonIdentity() (repoRoot, socket string) { return "", "" }
+
 func (a *realVMAdapter) List(context.Context) ([]model.SandboxInfo, error) {
 	panic("unused by this test")
 }

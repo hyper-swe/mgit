@@ -263,7 +263,7 @@ func startResourceDaemon(t *testing.T, p model.SandboxPolicy, mgr model.SandboxM
 
 	waitForDaemonSocket(t, socket)
 	return func(context.Context) (sandboxClient, error) {
-		return sandboxd.NewClient(socket, time.Now), nil
+		return &ownedClient{Client: sandboxd.NewClient(socket, time.Now), socket: socket}, nil
 	}
 }
 
