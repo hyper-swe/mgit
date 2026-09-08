@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/hyper-swe/mgit/internal/model"
 )
@@ -14,9 +13,10 @@ import (
 // Defaults for an identity the host named only by number: the guest's own
 // convention for the unprivileged user commands run as. Refs: MGIT-151
 const (
-	defaultIdentityName = "agent"
-	defaultIdentityHome = "/home/agent"
-	defaultEtcDir       = "/etc"
+	defaultIdentityName     = "agent"
+	defaultIdentityHome     = "/home/agent"
+	defaultEtcDir           = "/etc"
+	defaultFallbackHomeRoot = "/tmp/home"
 )
 
 // withIdentityDefaults fills the name and home the host left empty.
@@ -53,11 +53,11 @@ func processIdentity() model.GuestIdentity {
 // Everything here runs as the supervisor (root in a guest); a failure
 // refuses the exec rather than letting it run under a half-made identity.
 // Refs: MGIT-151
-func (s *Supervisor) ensureIdentity(id model.GuestIdentity) error {
+func (s *Supervisor) ensureIdentity(id model.GuestIdentity) (model.GuestIdentity, error) {
 	if id.IsRoot() {
 		// Root needs no entries, but its home must exist too: a minimal base
 		// ships no /root, and CI's root half found HOME pointing at nothing.
-		return ensureHome(id)
+		return s.ensureHome(id)
 	}
 	etc := s.EtcDir
 	if etc == "" {
@@ -65,35 +65,88 @@ func (s *Supervisor) ensureIdentity(id model.GuestIdentity) error {
 	}
 	// A minimal base may ship no etc directory at all; the entries need one.
 	if err := os.MkdirAll(etc, 0o755); err != nil { //nolint:gosec // G301: /etc is world-readable by design
-		return fmt.Errorf("etc dir %s: %w", etc, err)
+		return id, fmt.Errorf("etc dir %s: %w", etc, err)
 	}
 	passwdLine := fmt.Sprintf("%s:x:%d:%d::%s:/bin/sh", id.Name, id.UID, id.GID, id.Home)
 	if err := prependEntryUnlessName(filepath.Join(etc, "passwd"), id.Name, passwdLine); err != nil {
-		return fmt.Errorf("passwd entry for uid %d: %w", id.UID, err)
+		return id, fmt.Errorf("passwd entry for uid %d: %w", id.UID, err)
 	}
 	groupLine := fmt.Sprintf("%s:x:%d:", id.Name, id.GID)
 	if err := prependEntryUnlessName(filepath.Join(etc, "group"), id.Name, groupLine); err != nil {
-		return fmt.Errorf("group entry for gid %d: %w", id.GID, err)
+		return id, fmt.Errorf("group entry for gid %d: %w", id.GID, err)
 	}
-	return ensureHome(id)
+	return s.ensureHome(id)
 }
 
-// ensureHome gives the identity a home that exists and is owned by it:
-// parents any identity can traverse, the home itself owner-only. The live
-// libkrun proof found `/home` created 0750 by the root supervisor, so the
-// identity resolved its home and could not write a byte into it.
-// Refs: MGIT-151
-func ensureHome(id model.GuestIdentity) error {
-	if err := os.MkdirAll(filepath.Dir(id.Home), 0o755); err != nil { //nolint:gosec // G301: parents must be traversable by the identity
-		return fmt.Errorf("home parent for %s: %w", id.Home, err)
+// ensureHome gives the identity a home that exists and is owned by it, and
+// returns the identity with the home it actually has. A home that already
+// exists with the right owner is left exactly as it is: no chown, which the
+// Linux/libkrun overlay refuses even for root's own /root (MGIT-89) — CI's
+// libkrun leg refused every exec on that chown. A home the guest's root
+// cannot take falls back under FallbackHomeRoot (/tmp/home by default),
+// which every guest can write; the child's HOME and the echoed identity
+// name the fallback. Refs: MGIT-151, MGIT-89
+func (s *Supervisor) ensureHome(id model.GuestIdentity) (model.GuestIdentity, error) {
+	if ownedDir(id.Home, id) {
+		return id, nil
 	}
-	if err := os.Mkdir(id.Home, 0o750); err != nil && !errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("home %s: %w", id.Home, err)
+	firstErr := makeOwnedHome(id.Home, id)
+	if firstErr == nil {
+		return id, nil
 	}
-	if err := os.Chown(id.Home, id.UID, id.GID); err != nil {
-		return fmt.Errorf("own home %s: %w", id.Home, err)
+	root := s.FallbackHomeRoot
+	if root == "" {
+		root = defaultFallbackHomeRoot
+	}
+	fallback := filepath.Join(root, id.Name)
+	if ownedDir(fallback, id) {
+		id.Home = fallback
+		return id, nil
+	}
+	if err := makeOwnedHome(fallback, id); err != nil {
+		return id, fmt.Errorf("home %s: %w; fallback %s: %w", id.Home, firstErr, fallback, err)
+	}
+	if s.Logger != nil {
+		s.Logger.Info("mgit-guest identity home fell back", "event", "identity_home_fallback",
+			"asked", id.Home, "home", fallback, "reason", firstErr.Error())
+	}
+	id.Home = fallback
+	return id, nil
+}
+
+// ownedDir reports whether path is a directory owned by the identity.
+func ownedDir(path string, id model.GuestIdentity) bool {
+	fi, err := os.Stat(path)
+	if err != nil || !fi.IsDir() {
+		return false
+	}
+	uid, gid, ok := fileOwner(fi)
+	return ok && uid == id.UID && gid == id.GID
+}
+
+// makeOwnedHome creates the home — parents any identity can traverse, the
+// home itself owner-only (the live libkrun proof found `/home` created 0750
+// by the root supervisor, so the identity resolved its home and could not
+// write a byte into it) — and owns it to the identity.
+func makeOwnedHome(home string, id model.GuestIdentity) error {
+	if err := os.MkdirAll(filepath.Dir(home), 0o755); err != nil { //nolint:gosec // G301: parents must be traversable by the identity
+		return fmt.Errorf("home parent for %s: %w", home, err)
+	}
+	if err := os.Mkdir(home, 0o750); err != nil && !errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("home %s: %w", home, err)
+	}
+	if ownedDir(home, id) {
+		return nil
+	}
+	if err := os.Chown(home, id.UID, id.GID); err != nil {
+		return fmt.Errorf("own home %s: %w", home, err)
 	}
 	return nil
+}
+
+// identityEnv is the environment the identity implies for the child.
+func identityEnv(id model.GuestIdentity) []string {
+	return []string{"HOME=" + id.Home, "USER=" + id.Name, "LOGNAME=" + id.Name}
 }
 
 // prependEntryUnlessName prepends line to the colon-separated file at path
@@ -111,20 +164,4 @@ func prependEntryUnlessName(path, name, line string) error {
 	}
 	content := line + "\n" + string(existing)
 	return os.WriteFile(path, []byte(content), 0o644) //nolint:gosec // passwd and group are world-readable by design
-}
-
-// credentialFor returns the credential a child must be started with to run
-// as id, or nil when the supervisor already is that identity. A switch this
-// process cannot make fails at start (EPERM) — the child never runs as the
-// supervisor instead. Refs: MGIT-151
-func credentialFor(id model.GuestIdentity) *syscall.Credential {
-	if id.UID == os.Getuid() && id.GID == os.Getgid() {
-		return nil
-	}
-	return &syscall.Credential{Uid: uint32(id.UID), Gid: uint32(id.GID), NoSetGroups: true} //nolint:gosec // ids are validated non-negative by the model
-}
-
-// identityEnv is the environment the identity implies for the child.
-func identityEnv(id model.GuestIdentity) []string {
-	return []string{"HOME=" + id.Home, "USER=" + id.Name, "LOGNAME=" + id.Name}
 }

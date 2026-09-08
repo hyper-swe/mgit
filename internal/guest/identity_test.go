@@ -166,7 +166,8 @@ func TestEnsureIdentity_CreatedParentsAreTraversable_HomeIsOwnerOnly(t *testing.
 	base := t.TempDir()
 	home := filepath.Join(base, "home", "agent")
 	id := model.GuestIdentity{UID: os.Getuid(), GID: os.Getgid(), Name: "agent", Home: home}
-	require.NoError(t, sup.ensureIdentity(id))
+	_, err := sup.ensureIdentity(id)
+	require.NoError(t, err)
 	parent, err := os.Stat(filepath.Join(base, "home"))
 	require.NoError(t, err)
 	assert.NotZero(t, parent.Mode().Perm()&0o001, "the created parent is traversable by others: %o", parent.Mode().Perm())
@@ -184,7 +185,47 @@ func TestEnsureIdentity_CreatesTheEtcDirWhenAbsent(t *testing.T) {
 	sup := NewSupervisor(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	sup.EtcDir = filepath.Join(t.TempDir(), "not", "yet", "etc")
 	id := model.GuestIdentity{UID: os.Getuid(), GID: os.Getgid(), Name: "agent", Home: filepath.Join(t.TempDir(), "home", "agent")}
-	require.NoError(t, sup.ensureIdentity(id))
+	_, err := sup.ensureIdentity(id)
+	require.NoError(t, err)
 	assert.FileExists(t, filepath.Join(sup.EtcDir, "passwd"))
 	assert.FileExists(t, filepath.Join(sup.EtcDir, "group"))
+}
+
+// A home the guest's root cannot take — Linux/libkrun refuses metadata
+// operations outside /tmp and the worktree (MGIT-89), and CI's libkrun leg
+// refused every exec with "chown /root: operation not supported" — falls
+// back to a home under the fallback root, and the identity the child gets
+// (and echoes) names the home it actually has. Refs: MGIT-151, MGIT-89
+func TestEnsureIdentity_UncreatableHome_FallsBackUnderTheFallbackRoot(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can create any directory; the refusal needs an unprivileged process")
+	}
+	sup, _ := identitySupervisor(t)
+	sup.FallbackHomeRoot = filepath.Join(t.TempDir(), "tmp-home")
+	locked := filepath.Join(t.TempDir(), "locked")
+	require.NoError(t, os.MkdirAll(locked, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) }) //nolint:gosec // G302: a test scratch dir, restored so t.TempDir can remove it
+	id := model.GuestIdentity{UID: os.Getuid(), GID: os.Getgid(), Name: "agent", Home: filepath.Join(locked, "home", "agent")}
+	got, err := sup.ensureIdentity(id)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(sup.FallbackHomeRoot, "agent"), got.Home, "the home moved under the fallback root")
+	assert.DirExists(t, got.Home)
+}
+
+// A home that already exists with the right owner is left exactly as it is:
+// no chown, which the Linux/libkrun overlay refuses even for root's own
+// /root. Refs: MGIT-151, MGIT-89
+func TestEnsureIdentity_ExistingOwnedHome_IsLeftAlone(t *testing.T) {
+	sup, _ := identitySupervisor(t)
+	home := filepath.Join(t.TempDir(), "home", "agent")
+	require.NoError(t, os.MkdirAll(home, 0o750))
+	before, err := os.Stat(home)
+	require.NoError(t, err)
+	id := model.GuestIdentity{UID: os.Getuid(), GID: os.Getgid(), Name: "agent", Home: home}
+	got, err := sup.ensureIdentity(id)
+	require.NoError(t, err)
+	assert.Equal(t, home, got.Home)
+	after, err := os.Stat(home)
+	require.NoError(t, err)
+	assert.Equal(t, before.Mode(), after.Mode(), "mode untouched")
 }
