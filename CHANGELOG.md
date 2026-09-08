@@ -54,6 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Release notes no longer list scoped housekeeping commits (MGIT-190).**
+  goreleaser's changelog filters matched only the bare `docs:` / `test:` /
+  `ci:` / `chore:` prefixes, and this repository writes `type(scope):`, so the
+  v0.6.5 notes carried seven `chore(board):` and five `docs(release):` commits
+  until they were pruned by hand. One pattern now covers both spellings; a
+  test pins it against the commit shapes main carries.
+
 - **`mgit` builds for Windows again (MGIT-198).** The daemon verbs added in
   MGIT-191 used `syscall.Kill` in a file with no build tag, which broke both
   Windows targets of `mgit` on main without a red anywhere — the next release
