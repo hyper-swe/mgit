@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-08T12:59:24Z",
+  "exported_at": "2026-09-08T14:19:18Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5035,15 +5035,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit-156",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "07e3460a5d0c11fde9277f973c93e455a9e1d2f474d7ec483821d30c8c3a7cc4",
       "created_at": "2026-08-20T17:02:37Z",
-      "updated_at": "2026-08-20T17:02:37Z",
+      "updated_at": "2026-09-08T14:19:17Z",
+      "closed_at": "2026-09-08T14:19:17Z",
       "uid": "01a0201f-ea3c-77ac-b3e3-0880137b29df"
     },
     {
@@ -6979,6 +6980,31 @@
       "created_at": "2026-09-08T12:43:53Z",
       "updated_at": "2026-09-08T12:43:53Z",
       "uid": "01a0810b-dc51-7203-82ca-98d8f6f8ff47"
+    },
+    {
+      "id": "MGIT-203",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 203,
+      "project": "MGIT",
+      "title": "Flaky: TestE2E_FullLifecycle_OverRealGitRepo_HistoryIntact walks .git/objects while git's background maintenance creates and removes maintenance.lock",
+      "description": "Seen 2026-09-08 on PR #119's Test job (a PR touching only e2e.yml and a packaging test; main's last six runs green): `lstat …/.git/objects/maintenance.lock: no such file or directory` from the walk in coexist_e2e_test.go (lines ~42 and ~93). The test enumerates the fixture repository's .git/objects to prove the project's git was not mutated, and a real `git` in the fixture runs background maintenance (gc --auto / maintenance) that creates and removes a lock file under .git/objects during the walk, so lstat races the removal.\n\nFix (either, both are honest): skip transient `*.lock` entries in that walk — they are git's own, not objects — or set `maintenance.auto=false` and `gc.auto=0` on the fixture repository so nothing runs in the background while the test reads. Whichever is chosen, the negative control is the same: a lock file planted mid-walk must not fail the walk, while a planted OBJECT must still be detected as a mutation.",
+      "prompt": "",
+      "acceptance": "- The walk tolerates git's own transient lock files (or the fixture disables background maintenance), with a test that plants `maintenance.lock` during the walk and passes, and one that plants a foreign object and still fails.\n- The Test job on a PR that does not touch git code no longer fails on this test; cite the PR run where it re-ran green.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "694ba6a963970afb48472a87e9076a92a5e69f7be78ca44e719e661315cee34c",
+      "created_at": "2026-09-08T13:30:34Z",
+      "updated_at": "2026-09-08T13:30:34Z",
+      "uid": "01a08136-9894-71b1-a1a0-6ae3f837a7bd"
     },
     {
       "id": "MGIT-21",
@@ -13568,6 +13594,13 @@
       "last_heartbeat": "2026-08-22T05:58:12Z"
     },
     {
+      "agent_id": "claude-mgit-156",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-156",
+      "last_heartbeat": "2026-09-08T13:04:28Z"
+    },
+    {
       "agent_id": "claude-mgit-157",
       "project": "MGIT",
       "state": "working",
@@ -13911,6 +13944,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 467,
-  "checksum": "4febacf11c18aef73dd4c2588c9da9077ef00fb914117b71bde0aa741bb3a5ba"
+  "node_count": 468,
+  "checksum": "67c716a2b9c0428f05670fbe4c7c5135f5d4496947f9c34f218206200da55c9c"
 }
