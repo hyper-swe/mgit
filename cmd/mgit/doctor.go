@@ -179,6 +179,7 @@ func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 			return probeGuestDelivery(ctx, connect, task)
 		}},
 		doctor.HostDaemonsCheck{List: listHostDaemons},
+		doctor.DuplicateDaemonsCheck{List: listHostDaemons},
 	}
 }
 

@@ -30,12 +30,22 @@ type Config struct {
 	// RepoRoot is the repository this daemon serves. When it disappears the
 	// daemon drains itself within one idle-check interval instead of
 	// outliving it by days (MGIT-191); empty means "do not watch".
-	RepoRoot     string
-	Manager      model.SandboxManager // supervised sandbox backend
-	Logger       *slog.Logger         // structured logging (slog only)
-	Clock        func() time.Time     // injected clock
-	IdleGrace    time.Duration        // zero-sandbox linger before exit
-	PollInterval time.Duration        // idle-check cadence
+	RepoRoot string
+	// HostRoot is the durable host root this daemon serves — where the
+	// sandbox index lives. The daemon claims it exclusively before serving,
+	// so one repository has one daemon whatever spelling of its path a
+	// client used (MGIT-197); empty means "claim nothing" (greet-only
+	// builds, tests).
+	HostRoot string
+	// HostRootClaim is the claim the CALLER already holds on HostRoot — taken
+	// before the index was read, which Run is too late for (MGIT-197). When
+	// set, Run claims nothing and the caller releases it.
+	HostRootClaim *HostRootClaim
+	Manager       model.SandboxManager // supervised sandbox backend
+	Logger        *slog.Logger         // structured logging (slog only)
+	Clock         func() time.Time     // injected clock
+	IdleGrace     time.Duration        // zero-sandbox linger before exit
+	PollInterval  time.Duration        // idle-check cadence
 	// Service dispatches authenticated control requests (launch/exec/
 	// list/remove/status). When nil the daemon greets only — a backend
 	// build without a wired service still authenticates and reports
@@ -173,6 +183,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	defer d.cleanupSocket(listener, lock)
+	hostClaim, err := d.claimHostRoot()
+	if err != nil {
+		return err
+	}
+	defer hostClaim.Release()
 	defer d.noteAbandonedPass()
 	d.writeRecord()
 	defer d.removeRecord()
@@ -378,7 +393,7 @@ func (d *Daemon) drainBounded(ctx context.Context) error {
 // directory and socket modes (0700/0600, F-08). The flock closes the
 // check-remove-rebind race: only the lock holder ever removes or binds
 // the path.
-func (d *Daemon) listen(ctx context.Context) (net.Listener, *socketLock, error) {
+func (d *Daemon) listen(ctx context.Context) (net.Listener, *fileLock, error) {
 	if err := d.ensureSocketDir(); err != nil {
 		return nil, nil, err
 	}
@@ -640,7 +655,7 @@ func (d *Daemon) drainViaManager(ctx context.Context) error {
 // cleanupSocket closes the listener, removes the socket file, and
 // releases the path claim. The lock file itself is deliberately never
 // unlinked (unlink-while-locked races a successor's open).
-func (d *Daemon) cleanupSocket(listener net.Listener, lock *socketLock) {
+func (d *Daemon) cleanupSocket(listener net.Listener, lock *fileLock) {
 	_ = listener.Close()
 	if err := os.Remove(d.cfg.SocketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		d.cfg.Logger.Error("sandboxd socket cleanup failed", "event", "cleanup_error", "error", err)
@@ -741,4 +756,15 @@ func (d *Daemon) removeRecord() {
 	if err := daemonrec.Remove(d.cfg.SocketPath); err != nil {
 		d.cfg.Logger.Warn("sandboxd could not remove its daemon record", "event", "record_unremoved", "error", err.Error())
 	}
+}
+
+// claimHostRoot takes the host root's exclusive claim for a daemon started
+// without one. A daemon whose caller already holds the claim (mgit-sandboxd's
+// main takes it before anything reads the index) claims nothing here and
+// leaves the release to that caller. Refs: MGIT-197
+func (d *Daemon) claimHostRoot() (*HostRootClaim, error) {
+	if d.cfg.HostRootClaim != nil {
+		return nil, nil
+	}
+	return ClaimHostRoot(d.cfg.HostRoot, d.cfg.SocketPath)
 }

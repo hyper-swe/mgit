@@ -74,27 +74,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   destroyed even though it was asked for.
 
 
-- **`mgit sandbox status`, `mgit run --check` and `mgit doctor` could disagree
-  about one sandbox, and none of them said which daemon it had asked
-  (MGIT-196).** `mgit sandbox launch --worktree <dir>` wrote agent files under
-  `<dir>/.mgit`, after which `<dir>` resolved as a repository of its own — its
-  own daemon, an empty registry: `status` from the launching repository said
-  running, `run --check` from the worktree said "no sandbox bound", `doctor`
-  there said "not bound to a task worktree", and a second `launch` refused
-  with "task already bound". Launch now records the owning repository in
-  `<dir>/.mgit/sandbox-owner` and every sandbox verb follows it; a `.mgit`
-  that is neither a store, a worktree marker nor an owner is refused with the
-  remedy instead of being served as a phantom repository. Every "no sandbox
-  bound" and "sandbox not found" now names the daemon it asked (repository
-  root and socket) and what that daemon holds, task by task, so a sandbox
-  that lives in another repository's daemon — or in this repository's under
-  another spelling of its path (MGIT-197) — is one screen away instead of
-  invisible. `doctor` opens the owning repository from an owned worktree,
-  resolves the task the way `run` does from any directory a registered
-  sandbox covers, and its guest rows give the same reason `run` gives when
-  none does. `sandbox exec --help` says guest commands run as root until
-  MGIT-151.
-
 - **`mgit doctor` exited 1 in silence from a directory it could not open as a
   repository (MGIT-196).** Its own error silencing plus the CLI's bare exit
   printed nothing on either stream. It now prints the reason.
@@ -120,6 +99,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authoritative: it is never below the list that carries it, and a larger
   recorded total survives a later pass, so bounding a bounded report changes
   nothing.
+
+- **One repository, one daemon (MGIT-197).** The sandbox daemon was keyed on
+  the repository path as the caller's shell spelled it, with no symlink
+  resolution and nothing stopping two daemons from serving one host root — so
+  a repository reached as `/tmp/x`, `/private/tmp/x` and through a symlink got
+  three daemons over one index. Their registries diverged (a sandbox launched
+  through one spelling was "not found" through another), and a daemon spawned
+  through a second spelling rehydrated the shared index, could not see the
+  first daemon's VM, deleted that live sandbox's row and wrote a `killed`
+  event claiming its supervisor had exited — while it was alive and serving.
+  Now the daemon key is the resolved path, every spelling reaches one daemon;
+  `mgit-sandboxd` claims `<repo>/.mgit/sandbox/daemon.lock` before it reads
+  the index and a second daemon for the same host root refuses to start naming
+  the holder's pid and socket; `mgit doctor` fails a new
+  `daemons/one-per-repository` row when two live daemons serve one repository;
+  and the rehydration `killed` reason states what the daemon verified (it holds
+  the lock) instead of what it assumed. **Upgrade note:** a daemon from before
+  this change holds no lock, so on a repository whose path passes through a
+  symlink the first post-upgrade command starts a new daemon beside it and
+  rehydrates the index once more; stop the old daemon first
+  (`mgit sandbox daemons stop --repo-root <its root>`) if a sandbox is running
+  there — the version-skew door already asks for that restart.
+
+- **`mgit sandbox status`, `mgit run --check` and `mgit doctor` could disagree
+  about one sandbox, and none of them said which daemon it had asked
+  (MGIT-196).** `mgit sandbox launch --worktree <dir>` wrote agent files under
+  `<dir>/.mgit`, after which `<dir>` resolved as a repository of its own — its
+  own daemon, an empty registry: `status` from the launching repository said
+  running, `run --check` from the worktree said "no sandbox bound", `doctor`
+  there said "not bound to a task worktree", and a second `launch` refused
+  with "task already bound". Launch now records the owning repository in
+  `<dir>/.mgit/sandbox-owner` and every sandbox verb follows it; a `.mgit`
+  that is neither a store, a worktree marker nor an owner is refused with the
+  remedy instead of being served as a phantom repository. Every "no sandbox
+  bound" and "sandbox not found" now names the daemon it asked (repository
+  root and socket) and what that daemon holds, task by task, so a sandbox
+  that lives in another repository's daemon — or in this repository's under
+  another spelling of its path (MGIT-197) — is one screen away instead of
+  invisible. `doctor` opens the owning repository from an owned worktree,
+  resolves the task the way `run` does from any directory a registered
+  sandbox covers, and its guest rows give the same reason `run` gives when
+  none does. `sandbox exec --help` says guest commands run as root until
+  MGIT-151.
 
 ## [0.6.5] - 2026-09-03
 

@@ -19,9 +19,13 @@ type RehydrateReport struct {
 
 // lostVMDetail is the audit detail recorded when a rehydrated registration
 // claimed a VM this daemon cannot verify. It states what was actually
-// established — that the sandbox is no longer supervised — rather than
-// claiming the VM was observed to be gone, which this daemon cannot know.
-const lostVMDetail = `{"reason":"unsupervised: the daemon that supervised this sandbox exited; its VM could not be verified by the daemon that replaced it"}`
+// established: this daemon holds the repository's daemon lock (MGIT-197), so
+// no other daemon supervises the sandbox, and the backend could not find the
+// VM the record claimed — rather than asserting the VM was observed to die,
+// which this daemon cannot know. Before the lock, a second daemon over the
+// same index wrote this record about a daemon that was alive and serving.
+// Refs: MGIT-102, MGIT-197
+const lostVMDetail = `{"reason":"unsupervised: this daemon holds the repository's daemon lock, so the daemon that supervised this sandbox is gone, and the VM the record claimed could not be found by the backend"}`
 
 // Rehydrate rebuilds the in-process working set from the durable registry at
 // daemon start, RECONCILING each row against reality rather than trusting it.
