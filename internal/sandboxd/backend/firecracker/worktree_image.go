@@ -122,5 +122,11 @@ func buildWorktreeImage(ctx context.Context, runner mkfsRunner, worktreePath, im
 // filesystem in the pre-sized image and populates it from srcDir (-d). No
 // root is required for -d. Refs: MGIT-11.6.4
 func mke2fsArgs(srcDir, imagePath string) []string {
-	return []string{"-F", "-q", "-t", "ext4", "-d", srcDir, imagePath}
+	// -d copies the owners of the tree's contents, but the filesystem's ROOT
+	// directory defaults to root:root (e2fsprogs >= 1.43), which left the
+	// worktree's top level unwritable by the identity that owns everything
+	// under it. It is owned by the delivering process — the same identity
+	// guest execs run as. Refs: MGIT-151
+	rootOwner := fmt.Sprintf("root_owner=%d:%d", os.Getuid(), os.Getgid())
+	return []string{"-F", "-q", "-t", "ext4", "-E", rootOwner, "-d", srcDir, imagePath}
 }

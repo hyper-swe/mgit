@@ -54,6 +54,10 @@ func (s *Supervisor) ensureIdentity(id model.GuestIdentity) error {
 	if etc == "" {
 		etc = defaultEtcDir
 	}
+	// A minimal base may ship no etc directory at all; the entries need one.
+	if err := os.MkdirAll(etc, 0o755); err != nil { //nolint:gosec // G301: /etc is world-readable by design
+		return fmt.Errorf("etc dir %s: %w", etc, err)
+	}
 	passwdLine := fmt.Sprintf("%s:x:%d:%d::%s:/bin/sh", id.Name, id.UID, id.GID, id.Home)
 	if err := prependEntryUnlessName(filepath.Join(etc, "passwd"), id.Name, passwdLine); err != nil {
 		return fmt.Errorf("passwd entry for uid %d: %w", id.UID, err)

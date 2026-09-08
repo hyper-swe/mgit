@@ -165,3 +165,16 @@ func TestEnsureIdentity_CreatedParentsAreTraversable_HomeIsOwnerOnly(t *testing.
 	require.NoError(t, err)
 	assert.Zero(t, h.Mode().Perm()&0o007, "the home itself is not world-accessible: %o", h.Mode().Perm())
 }
+
+// A guest whose base ships no /etc at all (the minimal firecracker rootfs
+// links a handful of busybox applets and nothing else) still gets its
+// passwd and group entries: the supervisor creates the directory it writes
+// into. Refs: MGIT-151
+func TestEnsureIdentity_CreatesTheEtcDirWhenAbsent(t *testing.T) {
+	sup := NewSupervisor(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	sup.EtcDir = filepath.Join(t.TempDir(), "not", "yet", "etc")
+	id := model.GuestIdentity{UID: os.Getuid(), GID: os.Getgid(), Name: "agent", Home: filepath.Join(t.TempDir(), "home", "agent")}
+	require.NoError(t, sup.ensureIdentity(id))
+	assert.FileExists(t, filepath.Join(sup.EtcDir, "passwd"))
+	assert.FileExists(t, filepath.Join(sup.EtcDir, "group"))
+}

@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,7 +46,7 @@ func TestBuildWorktreeImage_PreSizesAndInvokesMke2fs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(64)<<20, fi.Size(), "image is pre-sized to the requested MB")
 	require.Equal(t, 1, mkfs.calls)
-	assert.Equal(t, []string{"-F", "-q", "-t", "ext4", "-d", wt, img}, mkfs.gotArgs,
+	assert.Equal(t, []string{"-F", "-q", "-t", "ext4", "-E", fmt.Sprintf("root_owner=%d:%d", os.Getuid(), os.Getgid()), "-d", wt, img}, mkfs.gotArgs,
 		"mke2fs populates the image from the worktree with -d (rootless)")
 }
 
@@ -112,7 +113,7 @@ type snapshotMkfs struct {
 func (s *snapshotMkfs) run(_ context.Context, args ...string) error {
 	s.calls++
 	// args = [-F -q -t ext4 -d <srcDir> <img>]; the -d source is index 5.
-	s.srcDir = args[5]
+	s.srcDir = srcDirArg(args)
 	s.have = map[string]bool{}
 	_ = filepath.WalkDir(s.srcDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -223,4 +224,16 @@ func TestBuildWorktreeImage_SizingFailures(t *testing.T) {
 			assert.Zero(t, mkfs.calls, "mke2fs is not run when sizing the image fails")
 		})
 	}
+}
+
+// srcDirArg returns the source directory mke2fs was told to populate from —
+// the argument after -d — wherever it sits, so an added option (MGIT-151's
+// -E root_owner) does not move it out from under the fake.
+func srcDirArg(args []string) string {
+	for i, a := range args {
+		if a == "-d" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
 }
