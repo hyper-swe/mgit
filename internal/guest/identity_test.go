@@ -146,3 +146,22 @@ func TestIdentityDefaults(t *testing.T) {
 	assert.Equal(t, "dev", kept.Name)
 	assert.Equal(t, "/srv/dev", kept.Home)
 }
+
+// A home whose parent does not exist yet gets a parent any identity can
+// traverse: the live libkrun proof found `/home` created root-owned 0750
+// under a root supervisor, so the identity could resolve its home and yet
+// not write a byte into it. The home itself stays owner-only. Refs: MGIT-151
+func TestEnsureIdentity_CreatedParentsAreTraversable_HomeIsOwnerOnly(t *testing.T) {
+	sup, _ := identitySupervisor(t)
+	base := t.TempDir()
+	home := filepath.Join(base, "home", "agent")
+	id := model.GuestIdentity{UID: os.Getuid(), GID: os.Getgid(), Name: "agent", Home: home}
+	require.NoError(t, sup.ensureIdentity(id))
+	parent, err := os.Stat(filepath.Join(base, "home"))
+	require.NoError(t, err)
+	assert.NotZero(t, parent.Mode().Perm()&0o001, "the created parent is traversable by others: %o", parent.Mode().Perm())
+	assert.NotZero(t, parent.Mode().Perm()&0o010, "and by the group: %o", parent.Mode().Perm())
+	h, err := os.Stat(home)
+	require.NoError(t, err)
+	assert.Zero(t, h.Mode().Perm()&0o007, "the home itself is not world-accessible: %o", h.Mode().Perm())
+}

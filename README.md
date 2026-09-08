@@ -413,7 +413,7 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 | `mgit run -- <command>` | Run a command inside the current worktree's task microVM (fail-closed) |
 | `mgit sandbox launch --task-id ID --worktree PATH --image REF` | Register a sandbox for a task (the microVM boots on first use, and fails closed if its guest never comes up). Records the owning repository in `PATH/.mgit/sandbox-owner`, so mgit commands run from inside PATH reach this repository's daemon rather than a phantom repository of PATH's own |
 | `… --cpus N --memory-mb N --disk-quota-mb N` | Size this sandbox (also on `mgit work`). Unset takes the host policy default; above the policy's per-sandbox maximum the launch is **refused naming the limit**, never silently reduced |
-| `mgit sandbox exec --task-id ID -- <command>` | Execute one command in the task's sandbox (as root inside the guest until MGIT-151 — so does `mgit run`) |
+| `mgit sandbox exec --task-id ID -- <command>` | Execute one command in the task's sandbox as the daemon's own user inside the guest (so does `mgit run`); `--as-root` escalates one command to root, audited. When the guest cannot confirm the identity it ran as — a base composed before v0.6.7, or the container backend, which does not switch — the verb says `guest exec identity UNVERIFIED` on stderr (MGIT-151) |
 | `mgit sandbox shell --task-id ID` | Attach an interactive session (confined-agent mode) |
 | `mgit sandbox land --task-id ID` | Pull + host-verify + land the sandbox's changes |
 | `mgit sandbox sync --task-id ID [--dry-run] [--force]` | Re-stage the host worktree into the running guest; `--dry-run` reports what would change (and every conflict) without touching it |

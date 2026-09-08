@@ -62,7 +62,13 @@ func (s *Supervisor) ensureIdentity(id model.GuestIdentity) error {
 	if err := prependEntryUnlessName(filepath.Join(etc, "group"), id.Name, groupLine); err != nil {
 		return fmt.Errorf("group entry for gid %d: %w", id.GID, err)
 	}
-	if err := os.MkdirAll(id.Home, 0o750); err != nil {
+	// Parents any identity can traverse, the home itself owner-only. The
+	// live libkrun proof found `/home` created 0750 by the root supervisor,
+	// so the identity resolved its home and could not write a byte into it.
+	if err := os.MkdirAll(filepath.Dir(id.Home), 0o755); err != nil { //nolint:gosec // G301: parents must be traversable by the identity
+		return fmt.Errorf("home parent for %s: %w", id.Home, err)
+	}
+	if err := os.Mkdir(id.Home, 0o750); err != nil && !errors.Is(err, os.ErrExist) {
 		return fmt.Errorf("home %s: %w", id.Home, err)
 	}
 	if err := os.Chown(id.Home, id.UID, id.GID); err != nil {

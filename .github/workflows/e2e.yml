@@ -382,6 +382,12 @@ jobs:
           go test ./internal/sandboxd/backend/firecracker/ -run 'TestE2E_' \
             -v -count=1 -timeout 30m 2>&1 | tee "$RUNNER_TEMP/fc-user.log"
           grep -q '^ok  ' "$RUNNER_TEMP/fc-user.log" || { echo "FATAL: firecracker e2e failed"; exit 1; }
+          # The identity proof is meaningful in THIS half, where the daemon's
+          # identity is the unprivileged runner user: the guest must switch to
+          # it and the worktree image must be writable by it. Asserted by name
+          # — a SKIP would leave the claim unproven. Refs: MGIT-151
+          grep -q -- '--- PASS: TestE2E_Exec_RunsAsTheIdentityAsked' "$RUNNER_TEMP/fc-user.log" \
+            || { echo "FATAL: TestE2E_Exec_RunsAsTheIdentityAsked did not PASS in the unprivileged half"; exit 1; }
 
       # The root half is where containment is actually proven: tap + iptables
       # REDIRECT (CAP_NET_ADMIN) is how this backend enforces egress, and the
