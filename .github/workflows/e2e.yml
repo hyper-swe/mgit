@@ -11,11 +11,31 @@ name: e2e
 on:
   push:
     branches: [main]
+    # Documentation and the board reach no e2e job — the jobs build cmd/, run
+    # scripts/e2e, scripts/sandbox-image and scripts/ci, and goreleaser — so a
+    # push or pull request touching only these files skips the matrix: 13 of
+    # the 43 main pushes and 11 of the 41 merged PRs in the eight days to
+    # 2026-09-08 were such changes. Every other path runs everything — the
+    # matrix on a pull request is the evidence the merge rule reads, and no
+    # leg is left to be discovered on main. Refs: MGIT-202
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".mtix/**"
+      - "LICENSE"
+      - ".gitignore"
   # Every pull request, whatever its base: a PR stacked on a feature branch
   # got no checks at all while this read `branches: [main]`, and the evidence
   # the merge rule requires lived in hand-dispatched run ids nobody running
   # `gh pr checks` would see (MGIT-200). Pushes stay filtered to main.
   pull_request:
+    # The same list as push, for the same reason. Refs: MGIT-202
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".mtix/**"
+      - "LICENSE"
+      - ".gitignore"
   workflow_call: {}
   # On-demand: re-run the live containment gate against a branch without
   # waiting for a release tag. Refs: MGIT-78
@@ -27,6 +47,17 @@ on:
   # wide one. Refs: MGIT-113
   schedule:
     - cron: "0 3 * * *"
+
+# A push to a pull request cancels the run it supersedes: 34 of the 97 PR
+# runs in the eight days to 2026-09-08 were overtaken by a newer push before
+# they finished, each a full matrix nobody would read. Every other event —
+# a push to main, the nightly, a release's call, a dispatch — produces
+# evidence and gets a group of its own, so it is never queued behind or
+# cancelled by another run (a shared group holds one pending run and cancels
+# the rest). Refs: MGIT-202
+concurrency:
+  group: e2e-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
