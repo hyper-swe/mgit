@@ -90,7 +90,7 @@ func (s *Supervisor) ensureHome(id model.GuestIdentity) (model.GuestIdentity, er
 	if ownedDir(id.Home, id) {
 		return id, nil
 	}
-	firstErr := makeOwnedHome(id.Home, id)
+	firstErr := s.makeOwnedHome(id.Home, id)
 	if firstErr == nil {
 		return id, nil
 	}
@@ -103,7 +103,7 @@ func (s *Supervisor) ensureHome(id model.GuestIdentity) (model.GuestIdentity, er
 		id.Home = fallback
 		return id, nil
 	}
-	if err := makeOwnedHome(fallback, id); err != nil {
+	if err := s.makeOwnedHome(fallback, id); err != nil {
 		return id, fmt.Errorf("home %s: %w; fallback %s: %w", id.Home, firstErr, fallback, err)
 	}
 	if s.Logger != nil {
@@ -128,7 +128,7 @@ func ownedDir(path string, id model.GuestIdentity) bool {
 // home itself owner-only (the live libkrun proof found `/home` created 0750
 // by the root supervisor, so the identity resolved its home and could not
 // write a byte into it) — and owns it to the identity.
-func makeOwnedHome(home string, id model.GuestIdentity) error {
+func (s *Supervisor) makeOwnedHome(home string, id model.GuestIdentity) error {
 	if err := os.MkdirAll(filepath.Dir(home), 0o755); err != nil { //nolint:gosec // G301: parents must be traversable by the identity
 		return fmt.Errorf("home parent for %s: %w", home, err)
 	}
@@ -138,7 +138,11 @@ func makeOwnedHome(home string, id model.GuestIdentity) error {
 	if ownedDir(home, id) {
 		return nil
 	}
-	if err := os.Chown(home, id.UID, id.GID); err != nil {
+	chown := s.Chown
+	if chown == nil {
+		chown = os.Chown
+	}
+	if err := chown(home, id.UID, id.GID); err != nil {
 		return fmt.Errorf("own home %s: %w", home, err)
 	}
 	return nil

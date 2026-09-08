@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -228,4 +229,31 @@ func TestEnsureIdentity_ExistingOwnedHome_IsLeftAlone(t *testing.T) {
 	after, err := os.Stat(home)
 	require.NoError(t, err)
 	assert.Equal(t, before.Mode(), after.Mode(), "mode untouched")
+}
+
+// The leave-alone rule must be OBSERVABLE, not just true on a host where a
+// chown to one's own uid succeeds: with a chown that records its calls and
+// answers as the Linux/libkrun overlay does (not supported), an owned home —
+// pre-existing or just created by the identity itself — never reaches it.
+// Removing the stat check before the chown fails this test. Refs: MGIT-151, MGIT-89
+func TestEnsureIdentity_OwnedHome_NeverReachesChown(t *testing.T) {
+	sup, _ := identitySupervisor(t)
+	var calls []string
+	sup.Chown = func(path string, _, _ int) error {
+		calls = append(calls, path)
+		return syscall.ENOTSUP
+	}
+	id := model.GuestIdentity{UID: os.Getuid(), GID: os.Getgid(), Name: "agent"}
+
+	existing := filepath.Join(t.TempDir(), "home", "agent")
+	require.NoError(t, os.MkdirAll(existing, 0o750))
+	id.Home = existing
+	_, err := sup.ensureIdentity(id)
+	require.NoError(t, err, "an existing owned home is left alone even where chown is refused")
+
+	id.Home = filepath.Join(t.TempDir(), "home", "agent")
+	got, err := sup.ensureIdentity(id)
+	require.NoError(t, err, "a home the identity creates itself is owned on creation; no chown needed")
+	assert.Equal(t, id.Home, got.Home)
+	assert.Empty(t, calls, "chown was never called for an owned home")
 }
