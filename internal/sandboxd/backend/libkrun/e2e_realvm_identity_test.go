@@ -52,9 +52,9 @@ func TestE2E_Libkrun_RealVM_ExecRunsAsTheIdentityAsked(t *testing.T) {
 	vm, console := bootVMUntil(t, cfg, `"vsock_port":1024`)
 	t.Cleanup(func() { _ = vm.Stop(context.Background(), true) })
 
-	asked := model.GuestIdentity{UID: os.Getuid(), GID: os.Getgid(), Name: "agent", Home: "/home/agent"}
+	asked := model.IdentityForProcess(os.Getuid(), os.Getgid())
 	out, res := execIdentityProbe(t, workDir, sandboxID, model.ExecRequest{Command: []string{"/sbin/idprobe"}, RunAs: &asked})
-	want := fmt.Sprintf("uid=%d gid=%d name=agent home=/home/agent home_file_owner=%d:%d", asked.UID, asked.GID, asked.UID, asked.GID)
+	want := fmt.Sprintf("uid=%d gid=%d name=%s home=%s home_file_owner=%d:%d", asked.UID, asked.GID, asked.Name, asked.Home, asked.UID, asked.GID)
 	if strings.TrimSpace(out) != want {
 		t.Errorf("the command's own view of its identity:\n got %q\nwant %q\nconsole:\n%s", strings.TrimSpace(out), want, console)
 	}
