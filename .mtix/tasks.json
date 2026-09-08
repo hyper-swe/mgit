@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-08T05:22:01Z",
+  "exported_at": "2026-09-08T05:34:44Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6224,6 +6224,31 @@
       "uid": "01a07f58-0909-70de-af91-73b40bd3a2f7"
     },
     {
+      "id": "MGIT-199",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 199,
+      "project": "MGIT",
+      "title": "The guest→host notify trigger fires three \"notify-triggered land completed\" events with commits:0 within 70 ms of a libkrun guest boot",
+      "description": "OBSERVED 2026-09-08 in a scratch repository's daemon log (dev pair from main f3cf780, macOS/libkrun) while reproducing MGIT-197, on every boot of a lazily registered sandbox:\n\n    09:56:45.815 sandbox launched (backend libkrun, task T-7)\n    09:56:45.822 notify-triggered land completed  commits:0  branch task/T-7\n    09:56:45.831 notify-triggered land completed  commits:0  branch task/T-7\n    09:56:45.892 notify-triggered land completed  commits:0  branch task/T-7\n\nThree lands ran within 70 ms of the guest coming up, each landing nothing. Nothing failed, but a trigger that fires three times at boot with nothing to land is either a guest-side notifier announcing on startup (each announcement costs a land pass: pull + verify) or a listener double-registering — either way, the notify path's cost and its semantics (\"the guest committed\") are not what the record shows. Not chased; recorded so it is not lost. The guest notify trigger is MGIT-11.10.10 / MGIT-11.11's guest→host direction.",
+      "prompt": "",
+      "acceptance": "- The cause is named from the daemon and guest logs (which side sends the notify at boot, and how many times), and either the boot-time notify is suppressed (nothing to land) or the reason it must run is stated at the site.\n- A test pins the count of notify-triggered lands for a boot with no guest commit.\n- If the three are a listener double-registration, the registration is made idempotent and tested.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "cd9c160c3922de092c1441ab9f86418ffb355e1e20cb427006c4e66fd3cd3718",
+      "created_at": "2026-09-08T05:23:18Z",
+      "updated_at": "2026-09-08T05:23:18Z",
+      "uid": "01a07f78-7f73-775a-935b-ac5fc41c939d"
+    },
+    {
       "id": "MGIT-2",
       "parent_id": "",
       "depth": 0,
@@ -6872,6 +6897,31 @@
       "updated_at": "2026-06-22T13:03:53Z",
       "closed_at": "2026-06-22T13:03:53Z",
       "uid": "019eef3d-d9fd-7392-bd3a-6e7c04d73c7b"
+    },
+    {
+      "id": "MGIT-200",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 200,
+      "project": "MGIT",
+      "title": "A PR whose base is not main gets no pull_request CI at all, so a stacked PR shows zero checks and `gh pr checks` reads \"nothing\" rather than \"look elsewhere\"",
+      "description": "FOUND 2026-09-08 on PR #110 (MGIT-197), stacked on #108's branch: ci.yml and e2e.yml trigger on `pull_request: branches: [main]` (and `push: branches: [main]`), so a PR against a feature branch runs nothing — `gh pr checks 110` answered \"no checks reported\", and R-H302 §1's \"CI green at that head\" could only be met by dispatching both workflows by hand (`gh workflow run ci.yml --ref \u003cbranch\u003e`), whose run ids live in the PR body and the ticket annotation, where a merger running `gh pr checks` never sees them. An empty check list reads as \"nothing to see\", not \"look elsewhere\". Blast radius today: #110 is the only PR with a non-main base across both repositories (the watcher checked), so it is one PR, not a fleet problem — but the shape is the pipeline-over-vigilance kind: the evidence a merge rule requires must be where the rule's reader looks.\n\nTwo fixes, the owning lane's call: (a) widen both workflows' `pull_request` trigger to every base (drop the `branches:` filter under `pull_request:`; keep `push: branches: [main]`), so a stacked PR is checked at its head against its base like any other; (b) never stack — base every PR on main and carry the dependency as commits, which is what the swe repository does. (a) is the pipeline fix; (b) is a convention that needs remembering.",
+      "prompt": "",
+      "acceptance": "- A PR whose base is a feature branch shows the same check set as a PR against main (both workflows run at its head); the receipt is a real stacked PR's check list after the change.\n- Negative control: the state before the change, recorded from #110 (\"no checks reported on the 'fix/mgit-197-one-daemon' branch\"), is quoted in the PR.\n- The branchguard's Branch-Scope-Override message (scripts/branchguard) says that a stacked PR gets its own checks, or — if (b) is chosen — that stacking is refused and the dependency travels as commits.\n- CHANGELOG entry (CI is a user-facing surface for contributors).",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "claude-mgit-200",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "f57a0e557bc4107abf71d28fbe9486a5c61070108adf73ed6162d29365c0f7d2",
+      "created_at": "2026-09-08T05:23:48Z",
+      "updated_at": "2026-09-08T05:34:43Z",
+      "uid": "01a07f78-f2d9-768b-b0c4-e02c0147c24e"
     },
     {
       "id": "MGIT-21",
@@ -13608,6 +13658,13 @@
       "last_heartbeat": "2026-09-08T04:53:14Z"
     },
     {
+      "agent_id": "claude-mgit-200",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-200",
+      "last_heartbeat": "2026-09-08T05:34:43Z"
+    },
+    {
       "agent_id": "claude-mgit-6112",
       "project": "MGIT",
       "state": "working",
@@ -13783,6 +13840,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 463,
-  "checksum": "02d0923007597d435ea7cb4b93926257e0477afe57a83114cfce5ab931f7c805"
+  "node_count": 465,
+  "checksum": "192ccbb780f3a5d7a89f4f0f042ab585c196d75a38eddf910efab3a0f900bbf3"
 }
