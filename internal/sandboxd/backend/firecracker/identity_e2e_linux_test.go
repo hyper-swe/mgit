@@ -88,11 +88,16 @@ func TestE2E_Exec_RunsAsTheIdentityAsked(t *testing.T) {
 	res := execWhenServing(t, mgr, info.ID, model.ExecRequest{
 		Command: []string{probe, wtPath}, Dir: wtPath, RunAs: &asked,
 	})
-	want := fmt.Sprintf("uid=%d gid=%d name=%s home=%s home_file_owner=%d:%d dir_file_owner=%d:%d",
-		asked.UID, asked.GID, asked.Name, asked.Home, asked.UID, asked.GID, asked.UID, asked.GID)
-	assert.Equal(t, want, strings.TrimSpace(string(res.Stdout)), "the command's own view of its identity and of the worktree write; stderr=%q", string(res.Stderr))
+	// The home is the one the guest ECHOES, not the one asked: a guest whose
+	// root cannot take the asked home uses a fallback under /tmp and says so;
+	// uid, gid and name are as asked.
 	require.NotNil(t, res.RanAs, "the guest echoes the identity it ran as")
-	assert.Equal(t, asked, *res.RanAs)
+	want := fmt.Sprintf("uid=%d gid=%d name=%s home=%s home_file_owner=%d:%d dir_file_owner=%d:%d",
+		asked.UID, asked.GID, asked.Name, res.RanAs.Home, asked.UID, asked.GID, asked.UID, asked.GID)
+	assert.Equal(t, want, strings.TrimSpace(string(res.Stdout)), "the command's own view of its identity and of the worktree write; stderr=%q", string(res.Stderr))
+	assert.Equal(t, asked.UID, res.RanAs.UID)
+	assert.Equal(t, asked.GID, res.RanAs.GID)
+	assert.Equal(t, asked.Name, res.RanAs.Name)
 
 	// Nothing asked: the guest runs it as itself, root, and SAYS so.
 	none := execWhenServing(t, mgr, info.ID, model.ExecRequest{Command: []string{probe}, Dir: wtPath})

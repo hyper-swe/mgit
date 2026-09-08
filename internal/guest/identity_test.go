@@ -257,3 +257,21 @@ func TestEnsureIdentity_OwnedHome_NeverReachesChown(t *testing.T) {
 	assert.Equal(t, id.Home, got.Home)
 	assert.Empty(t, calls, "chown was never called for an owned home")
 }
+
+// A home the identity owns but cannot write — root's /root on Linux/libkrun,
+// where the overlay refuses writes outside /tmp and the worktree (MGIT-89)
+// — is not a usable home: it falls back under the fallback root like an
+// uncreatable one, and the echoed identity names the home actually used.
+// Refs: MGIT-151, MGIT-89
+func TestEnsureIdentity_OwnedButUnwritableHome_FallsBack(t *testing.T) {
+	sup, _ := identitySupervisor(t)
+	sup.FallbackHomeRoot = filepath.Join(t.TempDir(), "tmp-home")
+	owned := filepath.Join(t.TempDir(), "root")
+	require.NoError(t, os.MkdirAll(owned, 0o750))
+	sup.HomeWritable = func(dir string) bool { return dir != owned }
+	id := model.GuestIdentity{UID: os.Getuid(), GID: os.Getgid(), Name: "root", Home: owned}
+	got, err := sup.ensureIdentity(id)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(sup.FallbackHomeRoot, "root"), got.Home, "an unwritable home is not a home")
+	assert.DirExists(t, got.Home)
+}

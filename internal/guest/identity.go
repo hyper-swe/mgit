@@ -87,24 +87,30 @@ func (s *Supervisor) ensureIdentity(id model.GuestIdentity) (model.GuestIdentity
 // which every guest can write; the child's HOME and the echoed identity
 // name the fallback. Refs: MGIT-151, MGIT-89
 func (s *Supervisor) ensureHome(id model.GuestIdentity) (model.GuestIdentity, error) {
+	var firstErr error
 	if ownedDir(id.Home, id) {
-		return id, nil
-	}
-	firstErr := s.makeOwnedHome(id.Home, id)
-	if firstErr == nil {
-		return id, nil
+		if s.homeWritable(id.Home) {
+			return id, nil
+		}
+		firstErr = fmt.Errorf("%s is owned by uid %d but cannot take a file", id.Home, id.UID)
+	} else if firstErr = s.makeOwnedHome(id.Home, id); firstErr == nil {
+		if s.homeWritable(id.Home) {
+			return id, nil
+		}
+		firstErr = fmt.Errorf("%s was created but cannot take a file", id.Home)
 	}
 	root := s.FallbackHomeRoot
 	if root == "" {
 		root = defaultFallbackHomeRoot
 	}
 	fallback := filepath.Join(root, id.Name)
-	if ownedDir(fallback, id) {
-		id.Home = fallback
-		return id, nil
+	if !ownedDir(fallback, id) {
+		if err := s.makeOwnedHome(fallback, id); err != nil {
+			return id, fmt.Errorf("home %s: %w; fallback %s: %w", id.Home, firstErr, fallback, err)
+		}
 	}
-	if err := s.makeOwnedHome(fallback, id); err != nil {
-		return id, fmt.Errorf("home %s: %w; fallback %s: %w", id.Home, firstErr, fallback, err)
+	if !s.homeWritable(fallback) {
+		return id, fmt.Errorf("home %s: %w; fallback %s cannot take a file either", id.Home, firstErr, fallback)
 	}
 	if s.Logger != nil {
 		s.Logger.Info("mgit-guest identity home fell back", "event", "identity_home_fallback",
@@ -112,6 +118,24 @@ func (s *Supervisor) ensureHome(id model.GuestIdentity) (model.GuestIdentity, er
 	}
 	id.Home = fallback
 	return id, nil
+}
+
+// homeWritable is the injected probe or a real one: create and remove a
+// file in dir. The probe runs as the supervisor, so it cannot see a
+// permission the identity lacks — but an overlay's refusal is filesystem-
+// wide and it sees that, which is the case that bit (MGIT-89).
+func (s *Supervisor) homeWritable(dir string) bool {
+	if s.HomeWritable != nil {
+		return s.HomeWritable(dir)
+	}
+	f, err := os.CreateTemp(dir, ".home-probe-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return true
 }
 
 // ownedDir reports whether path is a directory owned by the identity.
