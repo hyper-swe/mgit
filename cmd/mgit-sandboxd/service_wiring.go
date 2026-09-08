@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -58,6 +59,11 @@ func buildSandboxService(manager model.SandboxManager, hostRoot string, policySt
 	// in this process, so an idle exit (NFR-17.6) silently takes a user's
 	// containment with it (MGIT-102). Refs: FR-17.9, FR-17.10, MGIT-102
 	svc.SetRegistry(events)
+	// Guest execs run as the daemon itself: the uid/gid it delivers the
+	// worktree and the composed base as, which is therefore the identity a
+	// command can read the base and write the worktree as. A daemon run as
+	// root delivers root-owned trees and its execs stay root. Refs: MGIT-151
+	svc.SetExecIdentity(model.GuestIdentity{UID: os.Getuid(), GID: os.Getgid(), Name: "agent", Home: "/home/agent"})
 	return svc, events, events.Close, nil
 }
 
