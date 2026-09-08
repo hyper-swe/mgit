@@ -385,19 +385,22 @@ jobs:
           fi
           echo "no skips in the root-gated battery"
 
-      - name: Assert the MGIT-78 live-policy pair RAN and passed
+      - name: Assert the live-policy proofs RAN and passed
         run: |
           set -uo pipefail
-          # Named explicitly rather than trusted to the package result: these
-          # two are the whole reason MGIT-78 exists, and their gates
+          # Named explicitly rather than trusted to the package result: the
+          # MGIT-78 pair is the whole reason that ticket exists, the MGIT-156
+          # proof is the only live evidence that a policy staged onto an
+          # unbooted sandbox is what its guest enforces, and their gates
           # (requireGuestImage + requireNetRoot) skip silently.
           for t in TestE2E_Firecracker_Revoke_KillsEstablishedFlow \
-                   TestE2E_Firecracker_Revoke_DrainKeepsEstablishedFlow; do
+                   TestE2E_Firecracker_Revoke_DrainKeepsEstablishedFlow \
+                   TestE2E_Firecracker_StagedPolicy_CreatedSandboxBootsEnforcingIt; do
             grep -q -- "--- PASS: $t " "$RUNNER_TEMP/fc-root.log" \
               || { echo "FATAL: $t did not PASS (skipped or failed)"; exit 1; }
           done
-          echo "== MGIT-78 live-policy evidence =="
-          grep -E 'revoke applied|drained revoke applied|hold probe|post-revoke flow refused|REAL VM PASS' \
+          echo "== live-policy evidence (MGIT-78, MGIT-156) =="
+          grep -E 'revoke applied|drained revoke applied|hold probe|post-revoke flow refused|REAL VM PASS|STAGED POLICY' \
             "$RUNNER_TEMP/fc-root.log" || true
 
   # LIVE Linux containment gate for the OTHER backend: real libkrun microVMs on
