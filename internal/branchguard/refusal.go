@@ -72,6 +72,8 @@ func writeRemedies(b *strings.Builder, r *Result) {
 	fmt.Fprintf(b, "  Or record WHY it must ship this way — the reason travels in the pull\n")
 	fmt.Fprintf(b, "  request, so it is reviewed rather than assumed:\n")
 	fmt.Fprintf(b, "      git commit --amend --trailer %q\n", OverrideTrailer+" <why this branch needs "+parent+">")
+	fmt.Fprintf(b, "  A stacked pull request is checked at its head against its base like any\n")
+	fmt.Fprintf(b, "  other; open it against %s, not main (MGIT-200).\n", parent)
 }
 
 // OverrideNotice renders what is printed when a recorded waiver lets the push

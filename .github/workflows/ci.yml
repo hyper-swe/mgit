@@ -3,8 +3,11 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every pull request, whatever its base: a PR stacked on a feature branch
+  # got no checks at all while this read `branches: [main]`, and the evidence
+  # the merge rule requires lived in hand-dispatched run ids nobody running
+  # `gh pr checks` would see (MGIT-200). Pushes stay filtered to main.
   pull_request:
-    branches: [main]
   # Lets a feature branch's jobs be verified before they ever reach main or a
   # PR -- added specifically to give the new libkrun-linux job (below) its
   # first real run, since push/pull_request alone never fire on this branch.
