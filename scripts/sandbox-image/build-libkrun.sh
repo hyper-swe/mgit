@@ -218,12 +218,14 @@ fi
 # the same third-party-transfer exposure as the tarball above, just wearing
 # cargo's clothes.
 #
-# rustup may print `error: $HOME differs from euid-obtained home directory: you
-# may be using sudo` here when this script runs under sudo with the caller's
-# HOME kept (the usage line says sudo, and the caller's ~/.cargo is where the
-# toolchain lives — forcing HOME=/root would lose it). rustup proceeds past
-# that line; it is not this step's failure. Read the exit status, not that
-# line (MGIT-188).
+# rustup prints `error: $HOME differs from euid-obtained home directory: you
+# may be using sudo` here whenever HOME and the euid's passwd home disagree:
+# in CI the libkrun jobs run in a container as root with HOME=/github/home
+# (the runner's convention, and where the rustup step installed the
+# toolchain) while root's passwd home is /root; locally, `sudo` with the
+# caller's HOME kept does the same. Forcing HOME to the euid's home would
+# lose the toolchain. rustup proceeds past the line; it is not this step's
+# failure — read the exit status, not that line (MGIT-188).
 "$GUARD" -t "$BOUND" -l libkrun-build \
 	-c none:'cargo verifies every downloaded crate against its checksum and discards a partial, so no corrupt artifact survives to satisfy a later existence check; the build tree is kept deliberately, which is what makes a retry cost the fetch rather than the compile' -- \
 	sh -c "cd '$work/libkrun' && make NET=1 -j'$jobs'"

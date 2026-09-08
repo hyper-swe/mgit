@@ -50,12 +50,15 @@ prefetch_verified() {
 	resume="-C -"
 	[ "${PREFETCH_NO_RESUME:-0}" = "1" ] && resume=""
 	# The partial is the RESUME POINT, so the guard's restore clause keeps it:
-	# every attempt asks for the bytes after the cut. The digest check below
-	# is what rejects a short or corrupt file.
+	# every attempt is a fresh curl that asks for the bytes after the cut. The
+	# retries are the GUARD's, not curl's — the libkrun jobs run in an Ubuntu
+	# 20.04 container whose curl (7.68) predates --retry-all-errors, and a
+	# closed transfer is not a "transient" error to curl's own --retry anyway.
+	# The digest check below is what rejects a short or corrupt file.
 	# shellcheck disable=SC2086 # resume is two words on purpose
 	if ! "$GUARD" -t "$bound" -l "prefetch-$name" \
 		-c none:'the partial file is the resume point: the next attempt continues from its length, and the digest check after completion is what rejects a short or corrupt file' -- \
-		curl -fL --retry 3 --retry-delay 2 --retry-all-errors $resume -o "$part" "$url"; then
+		curl -fL $resume -o "$part" "$url"; then
 		echo "prefetch: FATAL: $name could not be fetched from $url (the partial, if any, stays at $part for a later resume)" >&2
 		return 1
 	fi
