@@ -34,7 +34,12 @@ func resolveSandboxPaths(repoRoot string) (sandboxPaths, error) {
 	if fi, err := os.Stat(filepath.Join(repoRoot, ".mgit")); err != nil || !fi.IsDir() {
 		return sandboxPaths{}, fmt.Errorf("not an mgit repository (no .mgit in %s)", repoRoot)
 	}
-	sum := sha256.Sum256([]byte(repoRoot))
+	// The key is the repository, not the spelling: one repository reached as
+	// /tmp/x, /private/tmp/x and through a symlink got three daemons over one
+	// index, whose registries diverged and whose rehydrations deleted each
+	// other's live sandboxes (MGIT-197). Paths handed to the daemon stay as
+	// spelled; only the key is canonical. Refs: MGIT-197
+	sum := sha256.Sum256([]byte(canonicalPath(repoRoot)))
 	key := hex.EncodeToString(sum[:6])
 	runtimeDir := filepath.Join(runtimeBase(), fmt.Sprintf("mgit-%d", os.Getuid()), key)
 	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
@@ -63,7 +68,8 @@ func runtimeBase() string {
 // sandboxRepoRoot resolves the repo root that OWNS the sandbox daemon for a
 // working directory: the nearest ancestor with a .mgit directory, and — when
 // that ancestor is a linked worktree (its .mgit carries a marker, not the
-// store) — the shared parent repo the marker points at. The daemon socket
+// store) — the shared parent repo the marker points at. The root comes back
+// as spelled; resolveSandboxPaths keys the daemon on its canonical form. The daemon socket
 // key, host root (images/policy/audit), and --repo-root must all be the
 // parent's; sandbox-to-worktree routing is handled by the sandbox records'
 // WorktreePath matching, not by per-worktree daemons. Refs: MGIT-57
