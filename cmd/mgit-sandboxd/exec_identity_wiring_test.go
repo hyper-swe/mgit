@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // The daemon runs guest execs as ITSELF — the uid/gid it delivered the
@@ -20,8 +22,6 @@ func TestBuildSandboxService_WiresTheDaemonsOwnIdentityForExecs(t *testing.T) {
 	defer func() { _ = closeAudit() }()
 	id := svc.ExecIdentity()
 	require.NotNil(t, id, "an identity is wired at build time")
-	assert.Equal(t, os.Getuid(), id.UID)
-	assert.Equal(t, os.Getgid(), id.GID)
-	assert.Equal(t, "agent", id.Name)
-	assert.Equal(t, "/home/agent", id.Home)
+	assert.Equal(t, model.IdentityForProcess(os.Getuid(), os.Getgid()), *id,
+		"the daemon's own identity by the one rule: root's own when root, the agent convention otherwise")
 }

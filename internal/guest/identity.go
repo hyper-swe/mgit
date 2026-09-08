@@ -21,11 +21,18 @@ const (
 
 // withIdentityDefaults fills the name and home the host left empty.
 func withIdentityDefaults(id model.GuestIdentity) model.GuestIdentity {
+	root := model.RootIdentity()
 	if id.Name == "" {
 		id.Name = defaultIdentityName
+		if id.IsRoot() {
+			id.Name = root.Name
+		}
 	}
 	if id.Home == "" {
 		id.Home = defaultIdentityHome
+		if id.IsRoot() {
+			id.Home = root.Home
+		}
 	}
 	return id
 }
@@ -48,7 +55,9 @@ func processIdentity() model.GuestIdentity {
 // Refs: MGIT-151
 func (s *Supervisor) ensureIdentity(id model.GuestIdentity) error {
 	if id.IsRoot() {
-		return nil
+		// Root needs no entries, but its home must exist too: a minimal base
+		// ships no /root, and CI's root half found HOME pointing at nothing.
+		return ensureHome(id)
 	}
 	etc := s.EtcDir
 	if etc == "" {
@@ -66,9 +75,15 @@ func (s *Supervisor) ensureIdentity(id model.GuestIdentity) error {
 	if err := prependEntryUnlessName(filepath.Join(etc, "group"), id.Name, groupLine); err != nil {
 		return fmt.Errorf("group entry for gid %d: %w", id.GID, err)
 	}
-	// Parents any identity can traverse, the home itself owner-only. The
-	// live libkrun proof found `/home` created 0750 by the root supervisor,
-	// so the identity resolved its home and could not write a byte into it.
+	return ensureHome(id)
+}
+
+// ensureHome gives the identity a home that exists and is owned by it:
+// parents any identity can traverse, the home itself owner-only. The live
+// libkrun proof found `/home` created 0750 by the root supervisor, so the
+// identity resolved its home and could not write a byte into it.
+// Refs: MGIT-151
+func ensureHome(id model.GuestIdentity) error {
 	if err := os.MkdirAll(filepath.Dir(id.Home), 0o755); err != nil { //nolint:gosec // G301: parents must be traversable by the identity
 		return fmt.Errorf("home parent for %s: %w", id.Home, err)
 	}

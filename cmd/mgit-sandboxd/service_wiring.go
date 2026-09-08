@@ -63,7 +63,7 @@ func buildSandboxService(manager model.SandboxManager, hostRoot string, policySt
 	// worktree and the composed base as, which is therefore the identity a
 	// command can read the base and write the worktree as. A daemon run as
 	// root delivers root-owned trees and its execs stay root. Refs: MGIT-151
-	svc.SetExecIdentity(model.GuestIdentity{UID: os.Getuid(), GID: os.Getgid(), Name: "agent", Home: "/home/agent"})
+	svc.SetExecIdentity(model.IdentityForProcess(os.Getuid(), os.Getgid()))
 	return svc, events, events.Close, nil
 }
 

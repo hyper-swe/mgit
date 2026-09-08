@@ -84,12 +84,12 @@ func TestE2E_Exec_RunsAsTheIdentityAsked(t *testing.T) {
 	// an image owned by the host's uid — reporting the owner of what it
 	// wrote; the minimal guest rootfs ships no `stat` or `id`, so the probe
 	// is the only witness. Refs: MGIT-151
-	asked := model.GuestIdentity{UID: os.Getuid(), GID: os.Getgid(), Name: "agent", Home: "/home/agent"}
+	asked := model.IdentityForProcess(os.Getuid(), os.Getgid())
 	res := execWhenServing(t, mgr, info.ID, model.ExecRequest{
 		Command: []string{probe, wtPath}, Dir: wtPath, RunAs: &asked,
 	})
-	want := fmt.Sprintf("uid=%d gid=%d name=agent home=/home/agent home_file_owner=%d:%d dir_file_owner=%d:%d",
-		asked.UID, asked.GID, asked.UID, asked.GID, asked.UID, asked.GID)
+	want := fmt.Sprintf("uid=%d gid=%d name=%s home=%s home_file_owner=%d:%d dir_file_owner=%d:%d",
+		asked.UID, asked.GID, asked.Name, asked.Home, asked.UID, asked.GID, asked.UID, asked.GID)
 	assert.Equal(t, want, strings.TrimSpace(string(res.Stdout)), "the command's own view of its identity and of the worktree write; stderr=%q", string(res.Stderr))
 	require.NotNil(t, res.RanAs, "the guest echoes the identity it ran as")
 	assert.Equal(t, asked, *res.RanAs)

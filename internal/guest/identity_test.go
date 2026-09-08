@@ -145,6 +145,8 @@ func TestIdentityDefaults(t *testing.T) {
 	kept := withIdentityDefaults(model.GuestIdentity{UID: 501, GID: 20, Name: "dev", Home: "/srv/dev"})
 	assert.Equal(t, "dev", kept.Name)
 	assert.Equal(t, "/srv/dev", kept.Home)
+	root := withIdentityDefaults(model.GuestIdentity{UID: 0, GID: 0})
+	assert.Equal(t, model.RootIdentity(), root, "root's defaults are root's own, not an agent's")
 }
 
 // A home whose parent does not exist yet gets a parent any identity can

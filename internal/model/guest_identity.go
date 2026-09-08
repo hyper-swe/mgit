@@ -68,3 +68,14 @@ func hasDotDot(p string) bool {
 	}
 	return false
 }
+
+// IdentityForProcess is the identity a process of the given uid/gid runs
+// guest execs as: root's own when the uid is zero (a root daemon delivers
+// root-owned trees and its execs stay root, with root's home), and the
+// guest's agent convention otherwise. Refs: MGIT-151
+func IdentityForProcess(uid, gid int) GuestIdentity {
+	if uid == 0 {
+		return RootIdentity()
+	}
+	return GuestIdentity{UID: uid, GID: gid, Name: "agent", Home: "/home/agent"}
+}

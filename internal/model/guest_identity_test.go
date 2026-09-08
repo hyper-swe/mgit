@@ -104,3 +104,13 @@ func TestExecRequest_JSON_IdentityFieldsAbsentWhenUnset(t *testing.T) {
 	require.NotNil(t, req.RunAs)
 	assert.Equal(t, GuestIdentity{UID: 501, GID: 20, Name: "agent", Home: "/home/agent"}, *req.RunAs)
 }
+
+// A process's identity for guest execs: root's own name and home when its
+// uid is zero — a root daemon runs guest execs as root, and root's home is
+// /root, not an agent's — and the agent convention otherwise. One rule for
+// the daemon's wiring and for every proof. Refs: MGIT-151
+func TestIdentityForProcess(t *testing.T) {
+	assert.Equal(t, RootIdentity(), IdentityForProcess(0, 0))
+	assert.Equal(t, RootIdentity(), IdentityForProcess(0, 20), "uid 0 is root whatever the gid")
+	assert.Equal(t, GuestIdentity{UID: 501, GID: 20, Name: "agent", Home: "/home/agent"}, IdentityForProcess(501, 20))
+}
