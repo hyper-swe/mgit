@@ -19,7 +19,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/hyper-swe/mgit/internal/execwire"
 	"github.com/hyper-swe/mgit/internal/model"
@@ -44,6 +43,9 @@ type Supervisor struct {
 	// EtcDir is where passwd and group live; empty means /etc. Tests point
 	// it at a scratch directory. Refs: MGIT-151
 	EtcDir string
+	// FallbackHomeRoot is where an identity's home goes when the guest's
+	// root cannot take it (Linux/libkrun, MGIT-89); empty means /tmp/home.
+	FallbackHomeRoot string
 }
 
 // NewSupervisor returns a supervisor with the default clean base env.
@@ -111,13 +113,13 @@ func (s *Supervisor) Execute(ctx context.Context, req model.ExecRequest, stdout,
 	// this process cannot make fails the start, it never runs the command
 	// as the supervisor instead. Refs: MGIT-151
 	ran := processIdentity()
-	var cred *syscall.Credential
 	if req.RunAs != nil {
 		ran = withIdentityDefaults(*req.RunAs)
-		if err := s.ensureIdentity(ran); err != nil {
+		materialized, err := s.ensureIdentity(ran)
+		if err != nil {
 			return Outcome{}, fmt.Errorf("guest exec: identity: %w", err)
 		}
-		cred = credentialFor(ran)
+		ran = materialized
 		env = append(env, identityEnv(ran)...)
 	}
 	env = append(env, req.Env...)
@@ -135,8 +137,11 @@ func (s *Supervisor) Execute(ctx context.Context, req model.ExecRequest, stdout,
 
 	cmd := exec.CommandContext(ctx, prog, req.Command[1:]...) //nolint:gosec // argv is the host-routed whole command (FR-17.11)
 	cmd.Env = env
-	if cred != nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: cred}
+	// The child starts under the identity's credential where this process
+	// can make the switch; a platform that cannot refuses rather than runs
+	// the command as the supervisor. Refs: MGIT-151
+	if err := startAs(cmd, ran); err != nil {
+		return Outcome{}, fmt.Errorf("guest exec: identity: %w", err)
 	}
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
