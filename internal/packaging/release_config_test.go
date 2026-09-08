@@ -12,6 +12,9 @@
 package packaging
 
 import (
+	"encoding/json"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -487,4 +490,77 @@ func cutSection(s, start, end string) (string, bool) {
 		return rest[:j], true
 	}
 	return rest, true
+}
+
+// The v0.6.5 notes listed seven chore(board): and five docs(release): commits
+// beside the release commits: the changelog filters matched only the bare
+// `docs:` form, and this repository's commit format is `type(scope):`. The
+// subjects below are the shapes main carries; both spellings of housekeeping
+// must be excluded and every user-facing type kept. Refs: MGIT-190
+func TestReleaseConfig_ChangelogFiltersExcludeScopedHousekeeping(t *testing.T) {
+	cfg := readRepoFile(t, ".goreleaser.yaml")
+	excludes := changelogExcludes(t, cfg)
+	require.NotEmpty(t, excludes, "the changelog must declare exclude filters")
+
+	tests := []struct {
+		subject string
+		wantOut bool
+	}{
+		{"docs: sketch the release flow", true},
+		{"docs(release): changelog for v0.6.5", true},
+		{"chore: bump deps", true},
+		{"chore(board): close MGIT-164 on #104's merge", true},
+		{"test: pin the wire version at 4", true},
+		{"test(microvm): the fake settler speaks the classifier's label", true},
+		{"ci: pin the Go toolchain", true},
+		{"ci(mgit-180): pinned tools", true},
+		{"feat(doctor): ask a guest whether it reads what was delivered", false},
+		{"feat: a new verb", false},
+		{"fix(sandbox): let a forced sync honor a host deletion", false},
+		{"fix: a bare fix", false},
+		{"fix(docs): a fix whose scope is docs stays", false},
+		{"perf(store): faster index reads", false},
+		{"refactor(cli): split run.go", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.subject, func(t *testing.T) {
+			excluded := false
+			for _, re := range excludes {
+				if re.MatchString(tt.subject) {
+					excluded = true
+				}
+			}
+			assert.Equal(t, tt.wantOut, excluded, "subject %q; filters %v", tt.subject, excludes)
+		})
+	}
+}
+
+// changelogExcludes pulls the `changelog.filters.exclude` patterns out of the
+// goreleaser config by its own indentation, compiled with Go's regexp — the
+// engine goreleaser applies them with. Kept as a line scan so the test adds
+// no YAML dependency. Refs: MGIT-190
+func changelogExcludes(t *testing.T, cfg string) []*regexp.Regexp {
+	t.Helper()
+	var out []*regexp.Regexp
+	inExclude := false
+	for _, line := range strings.Split(cfg, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == "exclude:":
+			inExclude = true
+			continue
+		case inExclude && strings.HasPrefix(trimmed, "#"):
+			continue
+		case inExclude && strings.HasPrefix(trimmed, "- "):
+			raw := strings.Trim(strings.TrimPrefix(trimmed, "- "), `"`)
+			var pattern string
+			require.NoError(t, json.Unmarshal([]byte(`"`+raw+`"`), &pattern), "unescape %s", raw)
+			re, err := regexp.Compile(pattern)
+			require.NoError(t, err, "pattern %q must compile", pattern)
+			out = append(out, re)
+		case inExclude && trimmed != "":
+			inExclude = false
+		}
+	}
+	return out
 }

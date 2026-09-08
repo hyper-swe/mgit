@@ -205,10 +205,13 @@ changelog:
   sort: asc
   filters:
     exclude:
-      - "^docs:"
-      - "^test:"
-      - "^ci:"
-      - "^chore:"
+      # One pattern for both spellings this repository uses: the bare
+      # `docs:` and the scoped `docs(release):` (CLAUDE.md's commit format is
+      # `type(scope): description`). The four bare patterns this replaced
+      # matched only the unscoped form, so the v0.6.5 notes carried seven
+      # chore(board): and five docs(release): commits until they were pruned
+      # by hand. Refs: MGIT-190
+      - "^(docs|test|ci|chore)(\\(.*\\))?:"
 
 release:
   github:
