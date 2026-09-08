@@ -263,6 +263,14 @@ func TestE2E_Firecracker_StagedPolicy_CreatedSandboxBootsEnforcingIt(t *testing.
 	assert.Equal(t, []string{"requested", "staged+pending"}, phases,
 		"policy audit: a request, then a staged (pending) record — and no `applied` claim for a sandbox the boot configured")
 
+	// The evidence line is printed only when every assertion above held: the
+	// control run (the staged list not carried onto the launch) showed the
+	// same line printing beside five failed assertions, which is a PASS
+	// marker on a failing proof. Refs: MGIT-156
+	if t.Failed() {
+		t.Logf("STAGED POLICY REAL VM FAIL: see the assertions above (registered allowing %q, staged %q)", stagedLaunchEntry, stagedPendingEntry)
+		return
+	}
 	t.Logf("STAGED POLICY REAL VM PASS: registered allowing %q, staged %q before boot; guest resolved %q (%s) and was REFUSED %q; read-back after boot = %v (rules=%d)",
 		stagedLaunchEntry, stagedPendingEntry, stagedPendingEntry, allowedTestIP, stagedLaunchEntry, live.Entries, live.RuleCount)
 }
