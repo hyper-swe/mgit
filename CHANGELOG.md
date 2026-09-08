@@ -71,6 +71,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test pins that gate's target list to the release config so the two cannot
   drift.
 
+
+- **A mirror that truncates the libkrunfw kernel tarball costs a resume, not
+  the job (MGIT-188).** libkrunfw's own Makefile fetched its ~141 MB kernel
+  tarball with a single-shot curl, and on 2026-08-23 a mirror closed the
+  transfer at the same byte on all three guarded attempts of two CI jobs —
+  the guard could only delete the partial and start from zero. The build now
+  pre-fetches the tarball itself, from a URL pinned beside its digest, with
+  resume under the fetch guard, and verifies the digest before make ever
+  looks for the file; a self-test proves it against a server that truncates
+  on purpose, both with resume (completes) and without (fails as the runs
+  did), and that wrong bytes are deleted, never left for an existence check.
 - **`mgit sandbox sync --force` died on a host-deleted path the guest had
   modified (MGIT-167).** The plan promoted every conflict to an update, so a
   path the host no longer had was "delivered" from a candidate tree that did

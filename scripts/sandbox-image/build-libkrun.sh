@@ -52,6 +52,8 @@ jobs="$(nproc 2>/dev/null || echo 2)"
 # is where clause 3 was learned the hard way, so it is also where the
 # generalized version earns its keep. Refs: MGIT-143, MGIT-119
 GUARD="$here/../ci/guard-fetch.sh"
+# shellcheck source=scripts/sandbox-image/prefetch.sh
+. "$here/prefetch.sh"
 
 # -t 1800 for every step here. The MGIT-143 rule is 4x the slowest SUCCESSFUL
 # observation of the call site; the enclosing CI step ("Build the PINNED
@@ -138,6 +140,26 @@ save_kernel_tarball() {
 	echo "libkrun cache: stored $name for later runs"
 }
 
+# prefetch_kernel_tarball fetches the pinned kernel tarball ourselves — with
+# resume, under the fetch guard, digest-verified — before libkrunfw's make does
+# its single-shot curl, so a mirror that truncates at a fixed byte costs a
+# resume rather than the job (MGIT-188). A tarball the cache seeded is left
+# alone: its digest was checked on the way in. The URL pin and the Makefile's
+# expected name must agree, or the pre-fetch would verify a file make never
+# looks at. Refs: MGIT-188, MGIT-163
+prefetch_kernel_tarball() {
+	name="$(kernel_tarball_name)"
+	dest="$1/tarballs/$name"
+	[ -f "$dest" ] && return 0
+	if [ "$(basename "$LIBKRUNFW_KERNEL_URL")" != "$name" ]; then
+		echo "FATAL: LIBKRUNFW_KERNEL_URL ($LIBKRUNFW_KERNEL_URL) does not name $name — pins.env disagrees with itself" >&2
+		exit 1
+	fi
+	# -t 600: the ladder step above 4x a ~141 MB transfer at the slowest speed
+	# the 08-23 logs show; the compile that follows has its own bound.
+	prefetch_verified "$LIBKRUNFW_KERNEL_URL" "$LIBKRUNFW_KERNEL_SHA256" "$dest" 600
+}
+
 echo "== libkrunfw $LIBKRUNFW_VERSION (compiles a guest kernel; the slow step) =="
 # The `[ ! -d ]` skip below is the SAME existence-check trap that made the
 # kernel-tarball retry fail three times identically: a clone that dies part-way
@@ -170,8 +192,13 @@ fi
 # Already-built objects are kept, so a real retry costs the download, not the
 # compile. Refs: MGIT-143 clause 3, MGIT-119
 seed_kernel_tarball "$work/libkrunfw"
+prefetch_kernel_tarball "$work/libkrunfw"
+# The restore clause no longer deletes the tarball: it is pre-fetched and
+# digest-verified above, so make never downloads and a truncated file can no
+# longer satisfy its existence check (MGIT-188); a failed compile keeps its
+# objects so a retry costs the compile's remainder, not the transfer.
 "$GUARD" -t "$BOUND" -l libkrunfw-build \
-	-c "rm -f '$work/libkrunfw'/tarballs/*.tar.*" -- \
+	-c none:'the kernel tarball is pre-fetched and digest-verified before make runs (MGIT-188), so nothing make fetches can be left truncated; already-built objects are kept on purpose' -- \
 	sh -c "cd '$work/libkrunfw' && make -j'$jobs'"
 save_kernel_tarball "$work/libkrunfw"
 (cd "$work/libkrunfw" && make PREFIX="$prefix" install)
@@ -190,6 +217,13 @@ fi
 # Guarded because this build resolves and downloads crates from crates.io --
 # the same third-party-transfer exposure as the tarball above, just wearing
 # cargo's clothes.
+#
+# rustup may print `error: $HOME differs from euid-obtained home directory: you
+# may be using sudo` here when this script runs under sudo with the caller's
+# HOME kept (the usage line says sudo, and the caller's ~/.cargo is where the
+# toolchain lives — forcing HOME=/root would lose it). rustup proceeds past
+# that line; it is not this step's failure. Read the exit status, not that
+# line (MGIT-188).
 "$GUARD" -t "$BOUND" -l libkrun-build \
 	-c none:'cargo verifies every downloaded crate against its checksum and discards a partial, so no corrupt artifact survives to satisfy a later existence check; the build tree is kept deliberately, which is what makes a retry cost the fetch rather than the compile' -- \
 	sh -c "cd '$work/libkrun' && make NET=1 -j'$jobs'"
