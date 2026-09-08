@@ -79,7 +79,7 @@ func TestClaimHostRoot_CreatesAnAbsentHostRoot(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
 	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm(), "the host root is the operator's alone")
-	data, err := os.ReadFile(filepath.Join(hostRoot, hostLockName))
+	data, err := os.ReadFile(filepath.Join(hostRoot, hostLockName)) //nolint:gosec // a path this test built under its own TempDir
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "socket /s/d.sock")
 }
