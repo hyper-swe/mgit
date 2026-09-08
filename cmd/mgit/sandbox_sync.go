@@ -50,7 +50,7 @@ func sandboxSyncCmd(connect connectFunc) *cobra.Command {
 			}
 			report, syncErr := cl.SyncWorktree(cmd.Context(), task,
 				model.WorktreeSyncOptions{Force: force, DryRun: dryRun})
-			return renderSync(cmd, task, report, syncErr, asJSON)
+			return renderSync(cmd, task, report, explainNotFound(cmd.Context(), cl, syncErr), asJSON)
 		},
 	}
 	bindTaskIDFlag(cmd, &task, "task ID whose sandbox receives the host worktree (required)")

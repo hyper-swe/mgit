@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -42,8 +44,11 @@ func doctorCmd(connect connectFunc) *cobra.Command {
 		// rather than a finding by it. Refs: MGIT-162
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			app, err := openAppFromCwd()
+			app, err := openDoctorApp()
 			if err != nil {
+				// SilenceErrors above plus main's bare exit made this an exit 1
+				// with nothing on either stream (MGIT-196). Nothing is silent.
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "mgit doctor: %v\n", err)
 				return err
 			}
 			defer app.Close()
@@ -70,24 +75,108 @@ func doctorCmd(connect connectFunc) *cobra.Command {
 	return cmd
 }
 
+// openDoctorApp opens the repository doctor should examine for the cwd. A
+// sandbox worktree that names its owner (a directory `mgit sandbox launch
+// --worktree` decorated, MGIT-196) is examined AS the owning repository, bound
+// to the recorded task — the repository `mgit run` from there is routed to. A
+// .mgit that is neither a store, a linked worktree, nor an owned sandbox
+// worktree is refused with the reason, never opened as an empty repository.
+// Refs: MGIT-196
+func openDoctorApp() (*App, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("get working directory: %w", err)
+	}
+	root, err := findRepoRoot(cwd)
+	if err != nil {
+		return nil, err
+	}
+	_, isWorktree, err := gitstore.ReadWorktreeMarker(root)
+	if err != nil {
+		return nil, fmt.Errorf("read worktree marker: %w", err)
+	}
+	if isWorktree {
+		return openAppAt(cwd)
+	}
+	owner, hasOwner, err := gitstore.ReadSandboxOwner(root)
+	if err != nil {
+		return nil, err
+	}
+	if hasOwner {
+		app, err := OpenApp(owner.RepoRoot)
+		if err != nil {
+			return nil, fmt.Errorf("open the owning repository %s named by %s/.mgit/sandbox-owner: %w",
+				owner.RepoRoot, root, err)
+		}
+		app.BoundTask = owner.Task
+		return app, nil
+	}
+	if !gitstore.StorePresent(root) && gitstore.LaunchDecorated(root) {
+		return nil, storelessMgitError(root)
+	}
+	return openAppAt(cwd)
+}
+
+// doctorBinding resolves, once, the task doctor's guest rows ask about: the
+// bound task of a linked worktree or an owned sandbox worktree, else — as
+// `mgit run` resolves — the registered sandbox whose worktree covers the cwd.
+// When none covers it, the reason is the one `mgit run` prints there, so the
+// two views cannot disagree (MGIT-196). Refs: MGIT-196
+type doctorBinding struct {
+	app     *App
+	connect connectFunc
+	once    sync.Once
+	task    string
+	err     error
+}
+
+func (b *doctorBinding) resolve(ctx context.Context) (string, error) {
+	b.once.Do(func() {
+		if b.app.BoundTask != "" {
+			b.task = b.app.BoundTask
+			return
+		}
+		_, _, sb, err := resolveRun(ctx, b.connect, os.Getwd)
+		if err != nil {
+			b.err = err
+			return
+		}
+		b.task = sb.TaskID
+	})
+	return b.task, b.err
+}
+
 // doctorChecks assembles the checks with their real probes.
 func doctorChecks(app *App, connect connectFunc) []doctor.Check {
+	binding := &doctorBinding{app: app, connect: connect}
 	return []doctor.Check{
 		doctor.NestedGitCheck{Scan: func() ([]string, error) {
 			return gitstore.NewWorktreeStore(app.Repo).RecordedNestedRepos(context.Background())
 		}},
 		doctor.GuestLocalhostCheck{Probe: func(ctx context.Context) (string, error) {
-			return probeGuestLocalhost(ctx, connect, app.BoundTask)
+			task, err := binding.resolve(ctx)
+			if err != nil {
+				return "", err
+			}
+			return probeGuestLocalhost(ctx, connect, task)
 		}},
 		doctor.BaseCurrencyCheck{Inspect: inspectBaseCurrency},
 		doctor.ResponseCapCheck{Probe: func(ctx context.Context, bytes int) (doctor.EchoReply, error) {
 			return probeResponseCap(ctx, connect, bytes)
 		}},
 		doctor.GuestSyncVerifyCheck{Probe: func(ctx context.Context) (string, error) {
-			return probeGuestSyncVerify(ctx, connect, app.BoundTask)
+			task, err := binding.resolve(ctx)
+			if err != nil {
+				return "", err
+			}
+			return probeGuestSyncVerify(ctx, connect, task)
 		}},
 		doctor.GuestDeliveryCheck{Probe: func(ctx context.Context) (*model.GuestViewReport, error) {
-			return probeGuestDelivery(ctx, connect, app.BoundTask)
+			task, err := binding.resolve(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return probeGuestDelivery(ctx, connect, task)
 		}},
 		doctor.HostDaemonsCheck{List: listHostDaemons},
 	}

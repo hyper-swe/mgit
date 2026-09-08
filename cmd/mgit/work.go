@@ -269,6 +269,7 @@ func launchWorkSandbox(ctx context.Context, out io.Writer, deps workDeps, opts w
 			"--worktree %s --image %s%s` to retry\n", err, wt.TaskID, wt.Path, image, opts.Resources.flagSuffix())
 		return
 	}
+	recordSandboxOwner(out, cl, info)
 	writeSandboxEnvDoc(out, info)
 	_, _ = fmt.Fprint(out, launchMessage(info))
 }

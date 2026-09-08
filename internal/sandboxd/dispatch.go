@@ -268,7 +268,7 @@ func (d *Daemon) serveSync(ctx context.Context, conn net.Conn, args *controlprot
 	resp := &controlproto.Response{Synced: report}
 	if err != nil {
 		d.cfg.Logger.Warn("sandboxd op failed", "event", "op_error", "error", err.Error())
-		resp.Error = err.Error()
+		resp.Error, resp.ErrorCode = err.Error(), failureCode(err) // the code beside the text, as reply does (MGIT-196)
 	}
 	d.writeResponse(conn, resp)
 }
@@ -450,6 +450,12 @@ func failureCode(opErr error) string {
 	if errors.As(opErr, &failure) && model.ValidEgressFailureCode(failure.Code) {
 		return failure.Code
 	}
+	// A missing sandbox has one stable token too, so the CLI can explain the
+	// refusal (which daemon was asked, what it holds) without matching prose.
+	// Refs: MGIT-196
+	if errors.Is(opErr, model.ErrSandboxNotFound) {
+		return model.ErrorCodeSandboxNotFound
+	}
 	return ""
 }
 
@@ -525,7 +531,7 @@ func (d *Daemon) serveExec(ctx context.Context, conn net.Conn, args *controlprot
 	}
 	if out.err != nil {
 		d.cfg.Logger.Warn("sandboxd exec failed", "event", "op_error", "error", out.err.Error())
-		d.writeResultFrame(conn, execwire.Result{}, out.err.Error())
+		d.writeResultFrame(conn, execwire.Result{}, out.err)
 		return
 	}
 	d.armWriteDeadline(conn)
@@ -533,7 +539,7 @@ func (d *Daemon) serveExec(ctx context.Context, conn net.Conn, args *controlprot
 		!d.relayChunks(conn, execwire.FrameStderr, out.res.Stderr) {
 		return // the connection is gone; the result frame would also fail
 	}
-	d.writeResultFrame(conn, execwire.Result{ExitCode: out.res.ExitCode}, "")
+	d.writeResultFrame(conn, execwire.Result{ExitCode: out.res.ExitCode}, nil)
 }
 
 // relayChunks writes data as execwire frames no larger than
@@ -551,9 +557,15 @@ func (d *Daemon) relayChunks(conn net.Conn, kind byte, data []byte) bool {
 	return true
 }
 
-// writeResultFrame writes the terminal execwire result frame.
-func (d *Daemon) writeResultFrame(conn net.Conn, result execwire.Result, errStr string) {
-	payload, err := json.Marshal(execwire.ResultFrame{Result: result, Error: errStr})
+// writeResultFrame writes the terminal execwire result frame. A failure
+// travels as text plus its stable code (failureCode), the same pair the
+// control responses carry. Refs: MGIT-196
+func (d *Daemon) writeResultFrame(conn net.Conn, result execwire.Result, opErr error) {
+	frame := execwire.ResultFrame{Result: result}
+	if opErr != nil {
+		frame.Error, frame.ErrorCode = opErr.Error(), failureCode(opErr)
+	}
+	payload, err := json.Marshal(frame)
 	if err != nil {
 		d.cfg.Logger.Error("sandboxd encode result frame failed", "event", "write_error", "error", err.Error())
 		return

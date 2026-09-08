@@ -311,3 +311,10 @@ type ConflictError struct {
 func (e *ConflictError) Error() string {
 	return fmt.Sprintf("conflict on %s %q: %s", e.Resource, e.ID, e.Message)
 }
+
+// ErrorCodeSandboxNotFound is the stable wire token the daemon sends beside
+// an ErrSandboxNotFound message, so a client rebuilds the sentinel on its
+// side of the boundary instead of matching prose — and can then explain the
+// refusal: which daemon it asked, what that daemon holds (MGIT-196).
+// Refs: MGIT-196, R-H233
+const ErrorCodeSandboxNotFound = "sandbox_not_found"

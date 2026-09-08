@@ -3,6 +3,7 @@ package sandboxd
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -209,4 +210,45 @@ func TestClient_Shell_TransportGated(t *testing.T) {
 	code, err := c.Shell(context.Background(), "MGIT-4.2", strings.NewReader(""), nil, nil)
 	assert.Equal(t, -1, code)
 	assert.ErrorIs(t, err, model.ErrShellTransportUnavailable)
+}
+
+// A daemon's "sandbox not found" reached the CLI as prose only, so a caller
+// wanting to explain it (MGIT-196: which daemon was asked, what it holds)
+// had to match strings. The daemon now sends a stable code beside the text and
+// the client rebuilds the sentinel: errors.Is holds on this side of the wire
+// for every verb that can say it. Refs: MGIT-196, R-H233
+func TestClient_SandboxNotFound_SentinelCrossesTheWire(t *testing.T) {
+	notFound := fmt.Errorf("%w: task %q", model.ErrSandboxNotFound, "T-9")
+	tests := []struct {
+		name string
+		disp *fakeDispatcher
+		call func(*Client) error
+	}{
+		{name: "status", disp: &fakeDispatcher{opErr: notFound}, call: func(c *Client) error {
+			_, err := c.Status(context.Background(), "T-9")
+			return err
+		}},
+		{name: "remove", disp: &fakeDispatcher{opErr: notFound}, call: func(c *Client) error {
+			return c.Remove(context.Background(), "T-9", false)
+		}},
+		{name: "sync", disp: &fakeDispatcher{syncErr: notFound}, call: func(c *Client) error {
+			_, err := c.SyncWorktree(context.Background(), "T-9", model.WorktreeSyncOptions{})
+			return err
+		}},
+		{name: "exec", disp: &fakeDispatcher{opErr: notFound}, call: func(c *Client) error {
+			_, err := c.Exec(context.Background(), "T-9", model.ExecRequest{Command: []string{"true"}},
+				&bytes.Buffer{}, &bytes.Buffer{})
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, stop := newClientForDaemon(t, tt.disp)
+			defer stop()
+			err := tt.call(client)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, model.ErrSandboxNotFound)
+			assert.Contains(t, err.Error(), `sandbox not found: task "T-9"`, "the text still reads as before")
+		})
+	}
 }

@@ -102,6 +102,11 @@ type Result struct {
 type ResultFrame struct {
 	Result Result `json:"outcome"`
 	Error  string `json:"error,omitempty"`
+	// ErrorCode is the STABLE machine-readable token for why the exec failed,
+	// beside the text as the control Response carries it, so a client can
+	// rebuild the sentinel (a missing sandbox, MGIT-196) instead of matching
+	// prose. Absent from older daemons; empty means no vocabulary applied.
+	ErrorCode string `json:"error_code,omitempty"`
 }
 
 // WriteRequest writes one length-prefixed JSON ExecRequest (host -> guest).

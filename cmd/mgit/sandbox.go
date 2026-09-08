@@ -48,6 +48,10 @@ type sandboxClient interface {
 	// Refs: MGIT-76
 	SyncWorktree(ctx context.Context, taskID string, opts model.WorktreeSyncOptions) (*model.WorktreeSyncReport, error)
 	VerifyGuestView(ctx context.Context, taskID string) (*model.GuestViewReport, error)
+	// DaemonIdentity names the daemon this client talks to — the repository
+	// root it is keyed on and its socket — so a refusal can say which registry
+	// it consulted (MGIT-196). Empty strings mean the client cannot say.
+	DaemonIdentity() (repoRoot, socket string)
 }
 
 // connectFunc resolves a live daemon (activation + greeting-verified) and
@@ -203,6 +207,9 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Name the owning repository inside the worktree, so verbs run from
+			// there reach this daemon and not a phantom of their own (MGIT-196).
+			recordSandboxOwner(cmd.ErrOrStderr(), cl, info)
 			// Regenerate the worktree's CLAUDE.md env section to match this
 			// sandbox's network posture (MGIT-11.11.2).
 			writeSandboxEnvDoc(cmd.ErrOrStderr(), info)
@@ -344,7 +351,7 @@ func sandboxStatusCmd(connect connectFunc) *cobra.Command {
 			}
 			info, err := cl.Status(cmd.Context(), args[0])
 			if err != nil {
-				return err
+				return explainNotFound(cmd.Context(), cl, err)
 			}
 			// The effective resource caps are part of status on purpose: an
 			// agent must be able to READ its ceiling rather than infer it
@@ -374,7 +381,7 @@ func sandboxPublishedCmd(connect connectFunc) *cobra.Command {
 			}
 			info, err := cl.Status(cmd.Context(), args[0])
 			if err != nil {
-				return err
+				return explainNotFound(cmd.Context(), cl, err)
 			}
 			return writePublishedPorts(cmd.OutOrStdout(), info, asJSON)
 		},
@@ -415,9 +422,15 @@ func sandboxRemoveCmd(connect connectFunc) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// The owner record launch wrote into the worktree retires with the
+			// binding (MGIT-196). Status is best-effort here: a daemon that cannot
+			// say where the worktree is leaves the record for the next launch to
+			// rewrite, and Remove below still speaks for the binding itself.
+			info, _ := cl.Status(cmd.Context(), args[0])
 			if err := cl.Remove(cmd.Context(), args[0], force); err != nil {
-				return err
+				return explainNotFound(cmd.Context(), cl, err)
 			}
+			clearSandboxOwner(cmd.ErrOrStderr(), info, args[0])
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed sandbox for task %s\n", args[0])
 			return nil
 		},

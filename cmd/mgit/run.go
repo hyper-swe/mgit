@@ -143,7 +143,7 @@ func resolveRun(ctx context.Context, connect connectFunc, getwd func() (string, 
 	}
 	sb := sandboxForDir(list, dir)
 	if sb == nil {
-		return nil, "", nil, fmt.Errorf("no sandbox bound for %s (run `mgit sandbox launch` first; commands never run on the host)", dir)
+		return nil, "", nil, unboundError(cl, dir, list)
 	}
 	return cl, dir, sb, nil
 }

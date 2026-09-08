@@ -268,3 +268,41 @@ func wtRealResolved(t *testing.T, p string) string {
 	require.NoError(t, err)
 	return r
 }
+
+// "no sandbox bound for <dir>" named nothing — not which daemon was asked, not
+// what it held — so a sandbox registered by another repository's daemon (or by
+// this repository under another spelling of its path) read exactly like no
+// sandbox at all (MGIT-196, FEAT-7.28). R-H300 rule 2: the refusal states what
+// it verified. Refs: MGIT-196
+func TestRun_NoSandboxBound_NamesTheDaemonAskedAndWhatItHolds(t *testing.T) {
+	wt1 := filepath.FromSlash("/other/wt1")
+	wt2 := filepath.FromSlash("/other/wt2")
+	fc := &fakeSandboxClient{
+		repoRoot: filepath.FromSlash("/repo"), socket: filepath.FromSlash("/run/mgit/d.sock"),
+		listResult: []model.SandboxInfo{
+			{ID: "s1", TaskID: "T-1", WorktreePath: wt1, State: model.StateRunning},
+			{ID: "s2", TaskID: "T-2", WorktreePath: wt2, State: model.StateCreated},
+		},
+	}
+	out, err := runRun(okConnect(fc), staticwd(filepath.FromSlash("/repo/wt")), "--check")
+	require.Error(t, err)
+	for _, want := range []string{
+		"no sandbox bound for " + filepath.FromSlash("/repo/wt"),
+		"the daemon of repository " + filepath.FromSlash("/repo"),
+		filepath.FromSlash("/run/mgit/d.sock"),
+		"2 sandboxes",
+		"T-1 at " + wt1 + " (running)",
+		"T-2 at " + wt2 + " (created)",
+		"mgit sandbox daemons",
+	} {
+		assert.Contains(t, out, want)
+	}
+	assert.Empty(t, fc.execTask, "naming the daemon must not run anything")
+
+	t.Run("an_empty_registry_is_said_to_be_empty", func(t *testing.T) {
+		fc := &fakeSandboxClient{repoRoot: filepath.FromSlash("/repo"), socket: filepath.FromSlash("/run/d.sock")}
+		out, err := runRun(okConnect(fc), staticwd(filepath.FromSlash("/repo/wt")), "--check")
+		require.Error(t, err)
+		assert.Contains(t, out, "which has no sandboxes")
+	})
+}
