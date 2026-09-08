@@ -66,6 +66,7 @@ jobs:
         run: |
           bash scripts/ci/fetch-inventory.sh
           bash scripts/ci/guard-fetch-selftest.sh
+          bash scripts/sandbox-image/prefetch-selftest.sh
 
       # Every build tool and action on a reproducible path is pinned, or its
       # float is declared at the site with a reason. The self-test proves the
