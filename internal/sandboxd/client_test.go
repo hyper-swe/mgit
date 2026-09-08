@@ -65,10 +65,10 @@ func TestClient_Exec_StreamsAndPropagatesExit(t *testing.T) {
 	defer stop()
 
 	var stdout, stderr bytes.Buffer
-	code, err := client.Exec(context.Background(), "MGIT-1",
+	res, err := client.Exec(context.Background(), "MGIT-1",
 		model.ExecRequest{Command: []string{"sh", "-c", "echo out; echo err 1>&2; exit 42"}}, &stdout, &stderr)
 	require.NoError(t, err)
-	assert.Equal(t, 42, code, "the guest exit code propagates")
+	assert.Equal(t, 42, res.ExitCode, "the guest exit res.ExitCode propagates")
 	assert.Equal(t, "out\n", stdout.String())
 	assert.Equal(t, "err\n", stderr.String())
 }
@@ -79,10 +79,10 @@ func TestClient_Exec_SetupFailure_ReturnsError(t *testing.T) {
 	client, stop := newClientForDaemon(t, &fakeDispatcher{opErr: model.ErrSandboxNotFound})
 	defer stop()
 
-	code, err := client.Exec(context.Background(), "MGIT-x",
+	res, err := client.Exec(context.Background(), "MGIT-x",
 		model.ExecRequest{Command: []string{"true"}}, &bytes.Buffer{}, &bytes.Buffer{})
 	require.Error(t, err)
-	assert.Equal(t, -1, code)
+	assert.Equal(t, -1, res.ExitCode)
 }
 
 // errWriter fails every write, standing in for a broken output sink.
@@ -97,10 +97,10 @@ func TestClient_Exec_OutputWriteError_Surfaces(t *testing.T) {
 	client, stop := newClientForDaemon(t, svc)
 	defer stop()
 
-	code, err := client.Exec(context.Background(), "MGIT-1",
+	res, err := client.Exec(context.Background(), "MGIT-1",
 		model.ExecRequest{Command: []string{"true"}}, errWriter{}, &bytes.Buffer{})
 	require.Error(t, err)
-	assert.Equal(t, -1, code)
+	assert.Equal(t, -1, res.ExitCode)
 }
 
 // TestClient_OpError_Surfaces verifies a service error comes back as a
@@ -124,7 +124,7 @@ func TestClient_NoDaemon_FailsClosed(t *testing.T) {
 
 	code, execErr := client.Exec(ctx, "MGIT-1", model.ExecRequest{Command: []string{"true"}}, &bytes.Buffer{}, &bytes.Buffer{})
 	require.Error(t, execErr)
-	assert.Equal(t, -1, code, "no exit code is invented when the daemon is unreachable")
+	assert.Equal(t, -1, code.ExitCode, "no exit code is invented when the daemon is unreachable")
 }
 
 // TestClient_Squatter_NoGreeting_Rejected verifies a socket that accepts

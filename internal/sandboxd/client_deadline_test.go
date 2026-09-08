@@ -170,10 +170,10 @@ func TestClient_Exec_OutlivesTheRequestTimeout_Completes(t *testing.T) {
 	client.requestTimeout = 100 * time.Millisecond
 
 	var stdout, stderr bytes.Buffer
-	code, err := client.Exec(context.Background(), "MGIT-122",
+	res, err := client.Exec(context.Background(), "MGIT-122",
 		model.ExecRequest{Command: []string{"/bin/sleep", "45"}}, &stdout, &stderr)
 	require.NoError(t, err, "a command that outran the control-plane request timeout was killed by it")
-	assert.Equal(t, 7, code)
+	assert.Equal(t, 7, res.ExitCode)
 	assert.Equal(t, "done\n", stdout.String())
 }
 
@@ -228,12 +228,12 @@ func TestClient_Exec_VersionedPeerNeverBeats_ReportsTheDaemon(t *testing.T) {
 	client.stallTimeout = 100 * time.Millisecond
 
 	var stdout, stderr bytes.Buffer
-	code, err := client.Exec(context.Background(), "MGIT-138",
+	res, err := client.Exec(context.Background(), "MGIT-138",
 		model.ExecRequest{Command: []string{"go", "test", "./..."}}, &stdout, &stderr)
 
 	require.ErrorIs(t, err, model.ErrSandboxDaemonUnresponsive,
 		"a versioned peer that never beat was excused instead of reported")
-	assert.Equal(t, -1, code)
+	assert.Equal(t, -1, res.ExitCode)
 	assert.Contains(t, err.Error(), "DAEMON", "the daemon is not named as the suspect")
 	assert.Empty(t, stderr.String(),
 		"a stall is an error, not an advisory printed over the command's own output")
@@ -372,7 +372,7 @@ func TestExec_ChattyLongCommand_OutputAloneKeepsItAlive(t *testing.T) {
 	require.NoError(t, err,
 		"a command whose own output kept arriving was killed anyway: the idle "+
 			"deadline is being rearmed by beats only, which breaks every streaming caller")
-	assert.Equal(t, 0, res, "a completed command reports its exit code")
+	assert.Equal(t, 0, res.ExitCode, "a completed command reports its exit code")
 	assert.Contains(t, stdout.String(), "done",
 		"the final output must survive the chatter that preceded it")
 }

@@ -33,6 +33,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/controlproto"
 	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/firecracker"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 )
@@ -74,7 +75,7 @@ func (a *realVMAdapter) Remove(ctx context.Context, taskID string, force bool) e
 	id := a.byTask[taskID]
 	return a.mgr.Remove(ctx, id, force)
 }
-func (a *realVMAdapter) Exec(context.Context, string, model.ExecRequest, io.Writer, io.Writer) (int, error) {
+func (a *realVMAdapter) Exec(context.Context, string, model.ExecRequest, io.Writer, io.Writer) (sandboxd.ExecOutcome, error) {
 	panic("unused by this test")
 }
 func (a *realVMAdapter) Land(context.Context, string) (*controlproto.LandResult, error) {

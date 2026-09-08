@@ -33,6 +33,7 @@ func runCmd() *cobra.Command {
 // agent-integration hooks (MGIT-11.11.1, .3) rely on.
 func newRunCmd(connect connectFunc, getwd func() (string, error)) *cobra.Command {
 	var env []string
+	var asRoot bool
 	var check bool
 	var timeout time.Duration
 	cmd := &cobra.Command{
@@ -52,12 +53,13 @@ func newRunCmd(connect connectFunc, getwd func() (string, error)) *cobra.Command
 			if len(args) == 0 {
 				return printRunErr(cmd.ErrOrStderr(), fmt.Errorf("a command is required (mgit run -- <command>)"))
 			}
-			return runExec(cmd, connect, getwd, args, env, timeout)
+			return runExec(cmd, connect, getwd, args, env, timeout, asRoot)
 		},
 	}
 	cmd.Flags().StringArrayVar(&env, "env", nil, "explicit KEY=VALUE injected into the guest (repeatable; host env is never forwarded)")
 	cmd.Flags().BoolVar(&check, "check", false, "report whether a sandbox is available for the current worktree, without executing")
 	bindExecTimeoutFlag(cmd, &timeout)
+	bindAsRootFlag(cmd, &asRoot)
 	return cmd
 }
 
@@ -65,7 +67,7 @@ func newRunCmd(connect connectFunc, getwd func() (string, error)) *cobra.Command
 // propagating the guest exit code. Host env is never forwarded; the guest
 // cwd is the host cwd (identical-path mount). Refs: FR-17.3, FR-17.11
 func runExec(cmd *cobra.Command, connect connectFunc, getwd func() (string, error),
-	args, env []string, timeout time.Duration) error {
+	args, env []string, timeout time.Duration, asRoot bool) error {
 	cl, dir, sb, err := resolveRun(cmd.Context(), connect, getwd)
 	if err != nil {
 		// A version mismatch is refused while resolving the sandbox — the
@@ -80,8 +82,8 @@ func runExec(cmd *cobra.Command, connect connectFunc, getwd func() (string, erro
 	}
 	// argv as a list — no host shell — and only explicit --env injections;
 	// the host environment is never forwarded into the hostile guest.
-	code, err := cl.Exec(cmd.Context(), sb.TaskID,
-		model.ExecRequest{Command: args, Dir: dir, Env: env, Timeout: timeout},
+	out, err := cl.Exec(cmd.Context(), sb.TaskID,
+		model.ExecRequest{Command: args, Dir: dir, Env: env, Timeout: timeout, AsRoot: asRoot},
 		cmd.OutOrStdout(), cmd.ErrOrStderr())
 	if err != nil {
 		// The guest is unreachable — but WHICH failure that is decides what to
@@ -93,7 +95,12 @@ func runExec(cmd *cobra.Command, connect connectFunc, getwd func() (string, erro
 		defer writeGuestFailureAdvisory(cmd.Context(), cmd.ErrOrStderr(), sb, err)
 		return printRunErr(cmd.ErrOrStderr(), err)
 	}
-	if code != 0 {
+	// What the command ran as, when the daemon could not verify it, is said
+	// after the command's own output and before its exit code is judged: an
+	// agent reading a build failure must know whether it ran as the user it
+	// expected. Refs: MGIT-151
+	writeExecIdentity(cmd.ErrOrStderr(), out.Identity)
+	if code := out.ExitCode; code != 0 {
 		// The sandbox is already resolved here, so the ceiling the command
 		// ran under is known at the exact moment it failed — which is the
 		// moment an agent otherwise starts reshaping its build to fit a

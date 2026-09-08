@@ -93,6 +93,13 @@ type ResourceUsage struct {
 type Result struct {
 	ExitCode int           `json:"exit_code"`
 	Usage    ResourceUsage `json:"usage"`
+	// RanAs is the identity the guest ran the command as, echoed so the
+	// host can verify the identity it asked for. Absent from guests that
+	// predate it; nil means "did not say". Refs: MGIT-151
+	RanAs *model.GuestIdentity `json:"ran_as,omitempty"`
+	// Identity is the daemon's verdict on RanAs, set only on the
+	// daemon->client hop (the guest never fills it). Refs: MGIT-151
+	Identity *model.ExecIdentity `json:"identity,omitempty"`
 }
 
 // ResultFrame is the JSON payload of the terminal result frame: the

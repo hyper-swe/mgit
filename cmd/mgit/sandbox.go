@@ -12,6 +12,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/controlproto"
 	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd"
 )
 
 // sandboxClient is the control-plane client surface the sandbox commands
@@ -20,7 +21,7 @@ import (
 // Refs: FR-17.34, MGIT-11.10.9
 type sandboxClient interface {
 	Launch(ctx context.Context, opts model.SandboxLaunchOptions) (*model.SandboxInfo, error)
-	Exec(ctx context.Context, taskID string, req model.ExecRequest, stdout, stderr io.Writer) (int, error)
+	Exec(ctx context.Context, taskID string, req model.ExecRequest, stdout, stderr io.Writer) (sandboxd.ExecOutcome, error)
 	List(ctx context.Context) ([]model.SandboxInfo, error)
 	Status(ctx context.Context, taskID string) (*model.SandboxInfo, error)
 	Remove(ctx context.Context, taskID string, force bool) error

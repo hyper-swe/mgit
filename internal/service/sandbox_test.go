@@ -68,6 +68,11 @@ func (m *fakeSandboxManager) Exec(ctx context.Context, id string, req model.Exec
 	if m.execErr != nil {
 		return nil, m.execErr
 	}
+	if m.execResult == nil {
+		// Every real backend returns a result or an error, never neither;
+		// the fake's zero value mirrors that with an empty result.
+		return &model.ExecResult{}, nil
+	}
 	return m.execResult, nil
 }
 func (m *fakeSandboxManager) Stop(_ context.Context, id string, force bool) error {
