@@ -17,6 +17,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/controlproto"
 	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
@@ -80,6 +81,8 @@ type fakeSandboxClient struct {
 	exportTID    string
 	exportReq    model.ArtifactExportRequest
 	exportResult *model.ArtifactExportResult
+	// execIdentity is the daemon's verdict the fake returns with an exec (MGIT-151).
+	execIdentity *model.ExecIdentity
 }
 
 func (f *fakeSandboxClient) SetEgressPolicy(_ context.Context, taskID string, entries []string, drain bool) (*controlproto.PolicyResult, error) {
@@ -108,14 +111,14 @@ func (f *fakeSandboxClient) Launch(_ context.Context, opts model.SandboxLaunchOp
 
 // DaemonIdentity names the daemon this fake stands in for (MGIT-196).
 func (f *fakeSandboxClient) DaemonIdentity() (repoRoot, socket string) { return f.repoRoot, f.socket }
-func (f *fakeSandboxClient) Exec(_ context.Context, taskID string, req model.ExecRequest, stdout, stderr io.Writer) (int, error) {
+func (f *fakeSandboxClient) Exec(_ context.Context, taskID string, req model.ExecRequest, stdout, stderr io.Writer) (sandboxd.ExecOutcome, error) {
 	f.execTask, f.execReq = taskID, req
 	if f.execErr != nil {
-		return -1, f.execErr
+		return sandboxd.ExecOutcome{ExitCode: -1}, f.execErr
 	}
 	_, _ = io.WriteString(stdout, f.execStdout)
 	_, _ = io.WriteString(stderr, f.execStderr)
-	return f.execCode, nil
+	return sandboxd.ExecOutcome{ExitCode: f.execCode, Identity: f.execIdentity}, nil
 }
 func (f *fakeSandboxClient) List(context.Context) ([]model.SandboxInfo, error) {
 	return f.listResult, f.opErr
@@ -646,13 +649,6 @@ func TestSandboxLaunch_RecordsTheOwningRepositoryInTheWorktree(t *testing.T) {
 
 // MGIT-151 is open: every guest exec — this verb's and `mgit run`'s — runs as
 // root. Until it lands the help says so (FEAT-7.28's third ask). Refs: MGIT-196, MGIT-151
-func TestSandboxExec_Help_SaysCommandsRunAsRoot(t *testing.T) {
-	out, err := runSandbox(okConnect(&fakeSandboxClient{}), "exec", "--help")
-	require.NoError(t, err)
-	assert.Contains(t, out, "as root")
-	assert.Contains(t, out, "MGIT-151")
-}
-
 // `sandbox remove` retires the binding; the owner record launch wrote into the
 // worktree goes with it, so a later doctor there does not ask about a task
 // that no longer exists — while a record naming another task is left alone.

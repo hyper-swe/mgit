@@ -539,7 +539,11 @@ func (d *Daemon) serveExec(ctx context.Context, conn net.Conn, args *controlprot
 		!d.relayChunks(conn, execwire.FrameStderr, out.res.Stderr) {
 		return // the connection is gone; the result frame would also fail
 	}
-	d.writeResultFrame(conn, execwire.Result{ExitCode: out.res.ExitCode}, nil)
+	// The identity echo and the daemon's verdict on it ride beside the exit
+	// code, so the verb can say what the command ran as. Refs: MGIT-151
+	d.writeResultFrame(conn, execwire.Result{
+		ExitCode: out.res.ExitCode, RanAs: out.res.RanAs, Identity: out.res.Identity,
+	}, nil)
 }
 
 // relayChunks writes data as execwire frames no larger than

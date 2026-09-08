@@ -336,11 +336,11 @@ func TestExec_LongCommandThroughRealDaemon_Survives(t *testing.T) {
 	client.stallTimeout = 3 * testBeatInterval
 
 	var stdout, stderr bytes.Buffer
-	code, err := client.Exec(context.Background(), "MGIT-133",
+	res, err := client.Exec(context.Background(), "MGIT-133",
 		model.ExecRequest{Command: []string{"go", "build", "./..."}}, &stdout, &stderr)
 	require.NoError(t, err, "a healthy long command was killed by the stall check")
-	assert.Equal(t, "done\n", stdout.String(), "the command's output is the assertion, not its exit code")
-	assert.Equal(t, 3, code)
+	assert.Equal(t, "done\n", stdout.String(), "the command's output is the assertion, not its exit res.ExitCode")
+	assert.Equal(t, 3, res.ExitCode)
 	assert.Empty(t, stderr.String(), "a beating daemon needs no advisory")
 
 	cancel()

@@ -364,15 +364,34 @@ type ExecRequest struct {
 	Dir     string        `json:"dir,omitempty"`        // cwd inside the guest (identical-path mount)
 	Env     []string      `json:"env,omitempty"`        // explicit injections, flagged in audit
 	Timeout time.Duration `json:"timeout_ns,omitempty"` // nanoseconds; zero means the sandbox TTL governs
+	// RunAs is the identity the guest runs the command as. The daemon fills
+	// it with its own uid/gid — the identity it delivered the tree as. Nil
+	// leaves the guest's own default, which on a guest that predates the
+	// field is root; the guest reports what it ran as in the result, so the
+	// host can tell. Refs: MGIT-151
+	RunAs *GuestIdentity `json:"run_as,omitempty"`
+	// AsRoot is the operator's explicit escalation (`--as-root`): the daemon
+	// audits it and sets RunAs to root. It is never implied. Refs: MGIT-151
+	AsRoot bool `json:"as_root,omitempty"`
 }
 
-// Validate checks the exec request shape. Refs: FR-17.11
+// Validate checks the exec request shape, including that an explicit
+// escalation and an unprivileged identity are never both asked for.
+// Refs: FR-17.11, MGIT-151
 func (r ExecRequest) Validate() error {
 	if len(r.Command) == 0 {
 		return &ValidationError{Field: "command", Message: "must contain at least one argument"}
 	}
 	if r.Timeout < 0 {
 		return &ValidationError{Field: "timeout_ns", Message: "must be non-negative (zero = sandbox TTL governs)"}
+	}
+	if r.RunAs != nil {
+		if err := r.RunAs.Validate(); err != nil {
+			return nestField("run_as", err)
+		}
+		if r.AsRoot && !r.RunAs.IsRoot() {
+			return &ValidationError{Field: "run_as", Message: "as_root asks for root but run_as names an unprivileged identity"}
+		}
 	}
 	return nil
 }
@@ -383,6 +402,13 @@ type ExecResult struct {
 	Stdout   []byte `json:"stdout"`
 	Stderr   []byte `json:"stderr"`
 	ExitCode int    `json:"exit_code"`
+	// RanAs is the identity the guest REPORTED running the command as. Nil
+	// means the guest did not say (it predates MGIT-151), which the host
+	// treats as unverified, never as any identity. Refs: MGIT-151
+	RanAs *GuestIdentity `json:"ran_as,omitempty"`
+	// Identity is the daemon's verdict on RanAs against what it asked for,
+	// filled by the service; nil when no verdict was made. Refs: MGIT-151
+	Identity *ExecIdentity `json:"identity,omitempty"`
 }
 
 // NetworkModeEnforcer is an OPTIONAL SandboxManager extension by which a

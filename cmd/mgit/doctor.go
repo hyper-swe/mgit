@@ -214,11 +214,11 @@ func probeGuestSyncVerify(ctx context.Context, connect connectFunc, taskID strin
 	const script = "command -v sha256sum >/dev/null 2>&1 && echo sha256sum; " +
 		"[ -w /proc/sys/vm/drop_caches ] && echo drop_caches; exit 0"
 	var out, errOut strings.Builder
-	code, err := cl.Exec(ctx, taskID, model.ExecRequest{Command: []string{"sh", "-c", script}}, &out, &errOut)
+	res, err := cl.Exec(ctx, taskID, model.ExecRequest{Command: []string{"sh", "-c", script}}, &out, &errOut)
 	if err != nil {
 		return "", err
 	}
-	if code != 0 {
+	if code := res.ExitCode; code != 0 {
 		return "", fmt.Errorf("the guest's shell exited %d: %s", code, strings.TrimSpace(errOut.String()))
 	}
 	return out.String(), nil
@@ -333,12 +333,13 @@ func probeGuestLocalhost(ctx context.Context, connect connectFunc, taskID string
 		return "", fmt.Errorf("no sandbox daemon reachable: %w", err)
 	}
 	var out, errOut strings.Builder
-	code, err := cl.Exec(ctx, taskID,
+	res, err := cl.Exec(ctx, taskID,
 		model.ExecRequest{Command: []string{"cat", "/etc/hosts"}},
 		&out, &errOut)
 	if err != nil {
 		return "", err
 	}
+	code := res.ExitCode
 	switch {
 	case code == 0:
 		return guestnet.LocalhostEntry(out.String()), nil

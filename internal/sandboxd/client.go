@@ -351,6 +351,14 @@ func (c *Client) EgressPolicy(ctx context.Context, taskID string) (*controlproto
 	return resp.Policy, nil
 }
 
+// ExecOutcome is what an exec returns besides its streamed output: the
+// guest's exit code and the daemon's verdict on the identity the command
+// ran as (nil from a daemon that predates the verdict). Refs: MGIT-151
+type ExecOutcome struct {
+	ExitCode int
+	Identity *model.ExecIdentity
+}
+
 // Exec runs one command in a task's sandbox, copying stdout/stderr to the
 // supplied writers as frames arrive and returning the guest exit code. A
 // supervisor-level failure (the guest could not start the command) is
@@ -375,10 +383,10 @@ func (c *Client) EgressPolicy(ctx context.Context, taskID string) (*controlproto
 // which the daemon enforces guest-side; a dead daemon, whose socket closes and
 // ends the read at once; and ctx, wired to the connection here so a caller that
 // gives up is never left blocked. Refs: FR-17.11, FR-17.11.1, MGIT-122, MGIT-133
-func (c *Client) Exec(ctx context.Context, taskID string, req model.ExecRequest, stdout, stderr io.Writer) (int, error) {
+func (c *Client) Exec(ctx context.Context, taskID string, req model.ExecRequest, stdout, stderr io.Writer) (ExecOutcome, error) {
 	conn, err := c.dialGreeted(ctx)
 	if err != nil {
-		return -1, err
+		return ExecOutcome{ExitCode: -1}, err
 	}
 	defer func() { _ = conn.Close() }()
 	defer watchCancel(ctx, conn)()
@@ -388,7 +396,7 @@ func (c *Client) Exec(ctx context.Context, taskID string, req model.ExecRequest,
 		Kind: controlproto.KindExec,
 		Exec: &controlproto.ExecArgs{TaskID: taskID, Exec: req},
 	}); err != nil {
-		return -1, fmt.Errorf("sandbox client: send exec: %w", err)
+		return ExecOutcome{ExitCode: -1}, fmt.Errorf("sandbox client: send exec: %w", err)
 	}
 	return c.relayFrames(ctx, conn, stdout, stderr)
 }
@@ -433,7 +441,7 @@ func (c *Client) Shell(_ context.Context, _ string, _ io.Reader, _, _ io.Writer)
 // A peer that legitimately cannot beat is a wire change, and a wire change
 // bumps the protocol number and is refused one layer up.
 // Refs: MGIT-138, MGIT-136, MGIT-133, MGIT-122
-func (c *Client) relayFrames(ctx context.Context, conn net.Conn, stdout, stderr io.Writer) (int, error) {
+func (c *Client) relayFrames(ctx context.Context, conn net.Conn, stdout, stderr io.Writer) (ExecOutcome, error) {
 	for {
 		c.armStall(conn)
 		kind, payload, err := execwire.ReadFrame(conn)
@@ -445,12 +453,12 @@ func (c *Client) relayFrames(ctx context.Context, conn net.Conn, stdout, stderr 
 			// Ctrl-C on a non-beating daemon was silently swallowed and the
 			// loop waited forever. Refs: MGIT-122, MGIT-133
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return -1, fmt.Errorf("sandbox client: exec canceled: %w", ctxErr)
+				return ExecOutcome{ExitCode: -1}, fmt.Errorf("sandbox client: exec canceled: %w", ctxErr)
 			}
 			if !errors.Is(err, os.ErrDeadlineExceeded) {
-				return -1, fmt.Errorf("sandbox client: read exec stream: %w", err)
+				return ExecOutcome{ExitCode: -1}, fmt.Errorf("sandbox client: read exec stream: %w", err)
 			}
-			return -1, stalledDaemonError(c.stallTimeout)
+			return ExecOutcome{ExitCode: -1}, stalledDaemonError(c.stallTimeout)
 		}
 		switch kind {
 		case execwire.FrameHeartbeat:
@@ -458,23 +466,23 @@ func (c *Client) relayFrames(ctx context.Context, conn net.Conn, stdout, stderr 
 			// idle deadline above is a beat's entire effect.
 		case execwire.FrameStdout:
 			if _, err := stdout.Write(payload); err != nil {
-				return -1, fmt.Errorf("sandbox client: write stdout: %w", err)
+				return ExecOutcome{ExitCode: -1}, fmt.Errorf("sandbox client: write stdout: %w", err)
 			}
 		case execwire.FrameStderr:
 			if _, err := stderr.Write(payload); err != nil {
-				return -1, fmt.Errorf("sandbox client: write stderr: %w", err)
+				return ExecOutcome{ExitCode: -1}, fmt.Errorf("sandbox client: write stderr: %w", err)
 			}
 		case execwire.FrameResult:
 			var rf execwire.ResultFrame
 			if err := json.Unmarshal(payload, &rf); err != nil {
-				return -1, fmt.Errorf("sandbox client: decode result: %w", err)
+				return ExecOutcome{ExitCode: -1}, fmt.Errorf("sandbox client: decode result: %w", err)
 			}
 			if rf.Error != "" {
-				return -1, remoteExecFailure(rf)
+				return ExecOutcome{ExitCode: -1}, remoteExecFailure(rf)
 			}
-			return rf.Result.ExitCode, nil
+			return ExecOutcome{ExitCode: rf.Result.ExitCode, Identity: rf.Result.Identity}, nil
 		default:
-			return -1, fmt.Errorf("sandbox client: unexpected exec frame %#x", kind)
+			return ExecOutcome{ExitCode: -1}, fmt.Errorf("sandbox client: unexpected exec frame %#x", kind)
 		}
 	}
 }

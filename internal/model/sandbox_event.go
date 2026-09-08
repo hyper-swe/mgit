@@ -42,6 +42,10 @@ const (
 	EventTTLExpired = "ttl_expired"
 	// EventKilled records a forced stop.
 	EventKilled = "killed"
+	// EventExecPrivileged records an operator's explicit root escalation of one
+	// guest exec (`--as-root`): audit-only, it moves the sandbox to no state.
+	// Refs: MGIT-151, FR-17.18
+	EventExecPrivileged = "exec_privileged"
 )
 
 // nonStateEventTypes are the valid audit-only events: they are recorded in
@@ -50,7 +54,7 @@ const (
 // Single source of truth for both vocabulary validation and DeriveState.
 // Refs: FR-17.18, F-01
 var nonStateEventTypes = []string{
-	EventPolicyGranted, EventCredentialsInjected, EventPolicyChanged, EventArtifactExported,
+	EventPolicyGranted, EventCredentialsInjected, EventPolicyChanged, EventArtifactExported, EventExecPrivileged,
 }
 
 // NonStateEventTypes returns the audit-only event types (no state change),

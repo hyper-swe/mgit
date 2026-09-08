@@ -19,13 +19,16 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 	var task string
 	var env []string
 	var timeout time.Duration
+	var asRoot bool
 	cmd := &cobra.Command{
 		Use:   "exec --task <id> -- <command> [args...]",
 		Short: "Run a command in a task's sandbox (streams output, propagates exit code)",
 		Long: "Runs one command inside the task's guest, streaming its output and propagating " +
-			"its exit code. Until MGIT-151 lands, every guest exec — this verb's and `mgit run`'s — " +
-			"runs as root inside the microVM: a build that assumes an unprivileged user will not " +
-			"notice here.",
+			"its exit code. The command runs as the daemon's own user inside the guest — the " +
+			"identity the worktree and the base were delivered as — so a build that assumes root " +
+			"notices here, as it would on the user's machine; --as-root escalates one command to " +
+			"root, and the daemon audits it. When the guest cannot confirm the identity it ran as " +
+			"(a base composed before this version), the verb says so on stderr.",
 		Args: cobra.MinimumNArgs(1),
 		// Real errors are printed here; cobra must not also print them or
 		// turn an exitError into an "Error:" line.
@@ -42,13 +45,14 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 			// argv is passed as a list — no shell on the host path — and only
 			// the explicit --env injections are sent; the host environment is
 			// never forwarded into the hostile guest (FR-17.3).
-			code, err := cl.Exec(cmd.Context(), task,
-				model.ExecRequest{Command: args, Env: env, Timeout: timeout},
+			out, err := cl.Exec(cmd.Context(), task,
+				model.ExecRequest{Command: args, Env: env, Timeout: timeout, AsRoot: asRoot},
 				cmd.OutOrStdout(), cmd.ErrOrStderr())
 			if err != nil {
 				return execFailure(cmd, cl, task, explainNotFound(cmd.Context(), cl, err))
 			}
-			if code != 0 {
+			writeExecIdentity(cmd.ErrOrStderr(), out.Identity)
+			if code := out.ExitCode; code != 0 {
 				// A signal death may be memory exhaustion; name the cap in
 				// force so the caller does not "fix" its workload instead
 				// (R-H212). Status is only consulted on the failure path.
@@ -63,6 +67,7 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 	bindTaskIDFlag(cmd, &task, "task ID whose sandbox runs the command (required)")
 	cmd.Flags().StringArrayVar(&env, "env", nil, "explicit KEY=VALUE injected into the guest (repeatable; host env is never forwarded)")
 	bindExecTimeoutFlag(cmd, &timeout)
+	bindAsRootFlag(cmd, &asRoot)
 	return cmd
 }
 

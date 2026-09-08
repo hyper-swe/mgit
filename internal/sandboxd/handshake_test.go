@@ -350,10 +350,10 @@ func TestClient_Handshake_Exec_SkewNeverReachesTheFrameLoop(t *testing.T) {
 
 	cl := NewClient(socket, time.Now)
 	var out, errOut strings.Builder
-	code, err := cl.Exec(context.Background(), "MGIT-136",
+	res, err := cl.Exec(context.Background(), "MGIT-136",
 		model.ExecRequest{Command: []string{"true"}}, &out, &errOut)
 	require.Error(t, err)
-	assert.Equal(t, -1, code)
+	assert.Equal(t, -1, res.ExitCode)
 	assert.ErrorIs(t, err, model.ErrSandboxVersionSkew)
 	assert.NotContains(t, err.Error(), "unexpected exec frame",
 		"the skew is settled before any frame is read")
@@ -389,14 +389,14 @@ func TestClient_Handshake_PreMGIT133Daemon_RefusedBeforeTheFrameLoop(t *testing.
 
 	cl := NewClient(socket, time.Now)
 	var out, errOut strings.Builder
-	code, err := cl.Exec(context.Background(), "MGIT-138",
+	res, err := cl.Exec(context.Background(), "MGIT-138",
 		model.ExecRequest{Command: []string{"make"}}, &out, &errOut)
 
 	require.Error(t, err, "a beat-less pre-handshake daemon served an exec; "+
 		"the client would need the removed no-liveness fallback to survive it")
 	assert.ErrorIs(t, err, model.ErrSandboxVersionSkew,
 		"the refusal must be the version mismatch, settled at the handshake")
-	assert.Equal(t, -1, code)
+	assert.Equal(t, -1, res.ExitCode)
 	assert.Empty(t, out.String(), "the client read the old daemon's beat-less frame stream")
 	assert.NotErrorIs(t, err, model.ErrSandboxDaemonUnresponsive,
 		"a build too old to beat is refused as old, never accused of stalling")

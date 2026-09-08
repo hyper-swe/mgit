@@ -135,6 +135,9 @@ type SandboxService struct {
 	// Refs: MGIT-122, ADR-009 (amendment), NFR-17.6
 	mu     sync.Mutex
 	byTask map[string]*sandboxReg
+	// execIdentity is the identity guest execs run as (SetExecIdentity);
+	// nil asks the guest for nothing. Refs: MGIT-151
+	execIdentity *model.GuestIdentity
 }
 
 // sandboxReg is one registered sandbox (booted or not). lastActivity and
@@ -662,10 +665,19 @@ func (s *SandboxService) Exec(ctx context.Context, taskID string, req model.Exec
 		ctx, cancel = context.WithTimeout(ctx, req.Timeout)
 		defer cancel()
 	}
+	// The identity is decided here, once, for every client: refused if the
+	// client chose one, audited if it escalated, the daemon's otherwise;
+	// and the guest's echo is judged on the way back. Refs: MGIT-151
+	req, err = s.decideExecIdentity(ctx, info, req)
+	if err != nil {
+		return nil, err
+	}
 	res, err := s.manager.Exec(ctx, info.ID, req)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox exec: %w", err)
 	}
+	verdict := model.VerdictOnExecIdentity(req.RunAs, res.RanAs)
+	res.Identity = &verdict
 	// A completed exec is activity: reset the idle-suspend deadline so an
 	// actively-used sandbox is never suspended out from under its agent.
 	// Refs: NFR-17.3
