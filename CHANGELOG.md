@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-09-08
+
+**The daemon knows which repository it serves, and every verb says which
+daemon it asked.** Twelve tickets, found by using the substrate and by reading
+its own CI rather than by inspection: a worktree launch that turned the
+worktree into a phantom repository with a daemon of its own; three spellings
+of one path that got three daemons over one index, one of which deleted a
+live sandbox's row and called it killed; a sync that reported delivery before
+the guest could read it; a Windows build broken on main with no red anywhere;
+a kernel mirror that truncated the same tarball three times. Each fix shipped
+with a test that failed before it and fails again with it removed.
+
 ### Added
 
 - **`mgit doctor` asks a guest whether it reads what was last delivered to it
@@ -71,7 +83,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test pins that gate's target list to the release config so the two cannot
   drift.
 
-
 - **A mirror that truncates the libkrunfw kernel tarball costs a resume, not
   the job (MGIT-188).** libkrunfw's own Makefile fetched its ~141 MB kernel
   tarball with a single-shot curl, and on 2026-08-23 a mirror closed the
@@ -90,7 +101,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forced delete: the path is removed from the guest, reported under `deleted`,
   and still audited under `overridden`, since un-landed guest work was
   destroyed even though it was asked for.
-
 
 - **`mgit sandbox status`, `mgit run --check` and `mgit doctor` could disagree
   about one sandbox, and none of them said which daemon it had asked
@@ -160,6 +170,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rehydrates the index once more; stop the old daemon first
   (`mgit sandbox daemons stop --repo-root <its root>`) if a sandbox is running
   there — the version-skew door already asks for that restart.
+
+### Known issues carried
+
+- `sync --force` does not restore a file the guest edited when the host did
+  not change it: `--force` overrides conflicts, it never resets (MGIT-193).
+- `mgit worktree list` shows registry rows whose paths no longer exist
+  without a prunable marker (MGIT-194).
+- The LIVE CI legs never run `mgit doctor`'s guest rows (MGIT-195).
+- Every guest exec — `mgit run`'s and `sandbox exec`'s — runs as root inside
+  the guest (MGIT-151); the help and README say so.
+- The guest notifies a land after every exec, so a boot lands three times
+  with nothing to land (MGIT-199).
 
 ## [0.6.5] - 2026-09-03
 
