@@ -147,7 +147,9 @@ func run(args []string, out, logSink io.Writer) int {
 	// daemon was serving, with a `killed` event that never happened (MGIT-197).
 	claim, err := sandboxd.ClaimHostRoot(opts.hostRoot, opts.socket)
 	if err != nil {
-		logger.Error("sandbox host root is served by another daemon", "event", "host_root_held", "error", err.Error())
+		// The error says which: another daemon holds it, or the claim itself
+		// could not be taken (the text differs; the log line must not presume).
+		logger.Error("sandbox host root could not be claimed", "event", "host_root_unclaimed", "error", err.Error())
 		return 2
 	}
 	defer claim.Release()
