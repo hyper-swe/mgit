@@ -8,6 +8,8 @@ package e2e
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,7 +27,10 @@ func gitCmd(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	full := append([]string{"-c", "user.email=dev@example.com", "-c", "user.name=dev"}, args...)
+	// No background maintenance in the fixture: the snapshot walks .git while
+	// git would otherwise gc and lock it under us. Refs: MGIT-203
+	full := append([]string{"-c", "user.email=dev@example.com", "-c", "user.name=dev",
+		"-c", "gc.auto=0", "-c", "maintenance.auto=false"}, args...)
 	cmd := exec.CommandContext(ctx, "git", full...) //nolint:gosec // fixed args, test
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
@@ -39,8 +44,30 @@ func snapshotProjectGit(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	root := filepath.Join(dir, ".git")
 	snap := make(map[string]string)
-	require.NoError(t, filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+	require.NoError(t, filepath.Walk(root, snapshotVisit(root, snap)))
+	return snap
+}
+
+// snapshotVisit is the walk's visitor: every readable file under root goes
+// into snap by its relative path, and git's OWN transient locks are skipped
+// whether the walk could read them or not.
+//
+// The skip exists in two places because the race has two shapes. A lock that
+// is still there is read and then skipped by name; a lock that VANISHED
+// between the directory listing and the walk's lstat arrives here as an
+// error with no info at all — `lstat …/objects/maintenance.lock: no such file
+// or directory`, which failed #119's Test job while git's background
+// maintenance created and removed it under a walk that touched nothing.
+// This snapshot exists to prove mgit never writes into the project's .git;
+// a lock git creates for itself is not evidence about mgit either way. A
+// non-lock entry that vanishes is still an error: that would hide a real
+// change. Refs: MGIT-203, MGIT-14
+func snapshotVisit(root string, snap map[string]string) filepath.WalkFunc {
+	return func(p string, info os.FileInfo, err error) error {
 		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) && strings.HasSuffix(p, ".lock") {
+				return nil
+			}
 			return err
 		}
 		if info.IsDir() {
@@ -50,14 +77,6 @@ func snapshotProjectGit(t *testing.T, dir string) map[string]string {
 		if rerr != nil {
 			return rerr
 		}
-		// Skip git's OWN transient locks. This snapshot exists to prove mgit
-		// never writes into the project's .git, and a lock file git creates for
-		// itself is not evidence about mgit. `objects/maintenance.lock` appeared
-		// in the BEFORE snapshot and was gone by the AFTER one on a release
-		// preflight run -- git's background maintenance ran between them -- and
-		// failed a guarantee mgit had not broken. A test that reports someone
-		// else's write as ours is worse than no test: it spends the credibility
-		// of the assertion that matters most in this file. Refs: MGIT-14
 		if strings.HasSuffix(rel, ".lock") {
 			return nil
 		}
@@ -67,8 +86,7 @@ func snapshotProjectGit(t *testing.T, dir string) map[string]string {
 		}
 		snap[rel] = string(data)
 		return nil
-	}))
-	return snap
+	}
 }
 
 // TestE2E_FullLifecycle_OverRealGitRepo_HistoryIntact drives the real mgit
