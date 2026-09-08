@@ -108,7 +108,15 @@ func TestExecute_AsRoot_SwitchesToTheAskedIdentity(t *testing.T) {
 		t.Skip("the credential switch needs root (the guest agent is PID 1 root; CI's root-gated half runs this)")
 	}
 	sup, _ := identitySupervisor(t)
-	home := filepath.Join(t.TempDir(), "home", "agent")
+	// Go's t.TempDir is root-owned and owner-only under sudo, so the switched
+	// child could not even traverse to the home it was given (CI's root half,
+	// 2026-09-08: `touch: … Permission denied` after a correct `id -u`). In a
+	// guest the home lives under a traversable root; give the fixture the
+	// same property, both temp levels.
+	base := t.TempDir()
+	require.NoError(t, os.Chmod(base, 0o755))               //nolint:gosec // G302: a test scratch dir the switched child must traverse
+	require.NoError(t, os.Chmod(filepath.Dir(base), 0o755)) //nolint:gosec // G302: same, one level up
+	home := filepath.Join(base, "home", "agent")
 	id := model.GuestIdentity{UID: 65534, GID: 65534, Name: "agent", Home: home}
 	out, text, err := runShell(t, sup, model.ExecRequest{
 		Command: []string{"sh", "-c", `id -u; id -g; touch "$HOME/.mine"; stat -c %u "$HOME/.mine"`},
