@@ -46,6 +46,11 @@ type Supervisor struct {
 	// FallbackHomeRoot is where an identity's home goes when the guest's
 	// root cannot take it (Linux/libkrun, MGIT-89); empty means /tmp/home.
 	FallbackHomeRoot string
+	// Chown owns a home to its identity; nil means os.Chown. Tests inject a
+	// recording one, because on a host a chown to one's own uid always
+	// succeeds and the rule "an owned home is never chowned" would not be
+	// observable otherwise. Refs: MGIT-151
+	Chown func(path string, uid, gid int) error
 }
 
 // NewSupervisor returns a supervisor with the default clean base env.
