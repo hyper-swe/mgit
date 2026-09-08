@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Guest execs run as the daemon's own user, not root (MGIT-151).** Every
+  command `mgit run` or `sandbox exec` sent into a guest ran as uid 0, so a
+  build that only works as root passed in the sandbox and failed on the
+  user's machine, and a guest-kernel escape faced a root process. Measured
+  before designing: the worktree and the composed base a daemon delivers
+  are owned by its own uid/gid (the libkrun share maps no ids, the
+  firecracker image copies inode owners), and an unprivileged daemon can
+  chown neither — so that uid/gid is the identity a command can read the
+  base and write the worktree as. The guest now gives it a passwd entry
+  (`agent`) and a home (`/home/agent`), starts the command under it, and
+  reports the identity it ran as with every result; the daemon judges that
+  echo against what it asked and the verb prints `guest exec identity
+  UNVERIFIED — …` on stderr when it cannot confirm (a base composed before
+  this version carries an older guest agent that runs everything as root:
+  recompose it; the container backend does not switch identities). `--as-root`
+  escalates one command to root and is recorded as an `exec_privileged`
+  audit event naming the program and its argument count, never the
+  arguments. A daemon run as root delivers root-owned trees and its execs
+  stay root. Proven live on libkrun (macOS) and in the firecracker
+  unprivileged CI half, from the command's own view of its uid, gid, name,
+  home and the owner of what it wrote.
+
 ## [0.6.6] - 2026-09-08
 
 **The daemon knows which repository it serves, and every verb says which
