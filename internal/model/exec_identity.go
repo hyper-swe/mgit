@@ -24,7 +24,8 @@ func VerdictOnExecIdentity(asked, ran *GuestIdentity) ExecIdentity {
 		v.Reason = "no identity was asked for, so the guest's default ran (root on guests that predate this field)"
 	case ran == nil:
 		v.Reason = fmt.Sprintf("the guest did not report the identity it ran as; asked for uid %d gid %d — "+
-			"a base composed before this version runs commands as root; recompose it with `mgit sandbox base from <image>`",
+			"a base composed before this version, or a backend that does not switch identities (container), "+
+			"runs commands as root; recompose the base with `mgit sandbox base from <image>` or use a microVM backend",
 			asked.UID, asked.GID)
 	case ran.UID != asked.UID || ran.GID != asked.GID:
 		v.Reason = fmt.Sprintf("the guest ran as uid %d gid %d, not the uid %d gid %d asked for",

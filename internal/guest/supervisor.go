@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/hyper-swe/mgit/internal/execwire"
 	"github.com/hyper-swe/mgit/internal/model"
@@ -40,6 +41,9 @@ type (
 type Supervisor struct {
 	BaseEnv []string
 	Logger  *slog.Logger
+	// EtcDir is where passwd and group live; empty means /etc. Tests point
+	// it at a scratch directory. Refs: MGIT-151
+	EtcDir string
 }
 
 // NewSupervisor returns a supervisor with the default clean base env.
@@ -98,8 +102,24 @@ func (s *Supervisor) Execute(ctx context.Context, req model.ExecRequest, stdout,
 
 	// Clean environment: explicit base + per-exec injections, never the
 	// inherited (host) environment.
-	env := make([]string, 0, len(s.BaseEnv)+len(req.Env))
+	env := make([]string, 0, len(s.BaseEnv)+len(req.Env)+3)
 	env = append(env, s.BaseEnv...)
+	// The identity the host asked for, or this process's own when it asked
+	// for nothing; either way it is echoed in the outcome. A non-root
+	// identity is materialized (passwd, group, home) before the child
+	// starts, and the child is started under its credential — a switch
+	// this process cannot make fails the start, it never runs the command
+	// as the supervisor instead. Refs: MGIT-151
+	ran := processIdentity()
+	var cred *syscall.Credential
+	if req.RunAs != nil {
+		ran = withIdentityDefaults(*req.RunAs)
+		if err := s.ensureIdentity(ran); err != nil {
+			return Outcome{}, fmt.Errorf("guest exec: identity: %w", err)
+		}
+		cred = credentialFor(ran)
+		env = append(env, identityEnv(ran)...)
+	}
 	env = append(env, req.Env...)
 
 	// Resolve the program against the GUEST's PATH (from env), not PID 1's
@@ -115,6 +135,9 @@ func (s *Supervisor) Execute(ctx context.Context, req model.ExecRequest, stdout,
 
 	cmd := exec.CommandContext(ctx, prog, req.Command[1:]...) //nolint:gosec // argv is the host-routed whole command (FR-17.11)
 	cmd.Env = env
+	if cred != nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: cred}
+	}
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
 	}
@@ -123,7 +146,7 @@ func (s *Supervisor) Execute(ctx context.Context, req model.ExecRequest, stdout,
 
 	runErr := cmd.Run()
 
-	var outcome Outcome
+	outcome := Outcome{RanAs: &ran}
 	if cmd.ProcessState != nil {
 		outcome.ExitCode = cmd.ProcessState.ExitCode()
 		outcome.Usage = ResourceUsage{

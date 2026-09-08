@@ -405,6 +405,17 @@ jobs:
             -test.timeout 30m 2>&1 | tee "$RUNNER_TEMP/fc-root.log"
           grep -q '^PASS$' "$RUNNER_TEMP/fc-root.log" || { echo "FATAL: root-gated firecracker e2e failed"; exit 1; }
 
+      # The guest supervisor's credential switch is proven where a process may
+      # make it: as root, without a VM. Asserted positively — a SKIP here
+      # means the test did not run, and it is the only host-side proof that a
+      # command asked to run unprivileged does. Refs: MGIT-151
+      - name: Guest supervisor identity switch (root, no VM) — must PASS, a SKIP fails the job
+        run: |
+          set -uo pipefail
+          sudo -E env PATH="$PATH" go test ./internal/guest/ -run 'TestExecute_AsRoot_SwitchesToTheAskedIdentity' \
+            -v -count=1 2>&1 | tee "$RUNNER_TEMP/guest-identity.log"
+          grep -q -- '--- PASS: TestExecute_AsRoot_SwitchesToTheAskedIdentity' "$RUNNER_TEMP/guest-identity.log" \
+            || { echo "FATAL: the identity switch proof did not PASS (skipped or failed)"; exit 1; }
       - name: Assert the root half SKIPPED nothing
         run: |
           set -uo pipefail

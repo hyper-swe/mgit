@@ -18,6 +18,16 @@ func (s *SandboxService) SetExecIdentity(id model.GuestIdentity) {
 	s.execIdentity = &id
 }
 
+// ExecIdentity reports the identity guest execs run as, or nil when none
+// is wired. Refs: MGIT-151
+func (s *SandboxService) ExecIdentity() *model.GuestIdentity {
+	if s.execIdentity == nil {
+		return nil
+	}
+	id := *s.execIdentity
+	return &id
+}
+
 // decideExecIdentity settles the identity an exec runs as BEFORE it is
 // sent: a client-chosen run_as is refused (the only road to root is the
 // audited as_root), an escalation is audited and asks the guest for root

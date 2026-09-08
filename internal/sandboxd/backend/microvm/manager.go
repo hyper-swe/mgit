@@ -639,7 +639,7 @@ func (m *Manager) execUntilTheGuestAnswers(
 		result, stdout, stderr, err := m.execOnce(ctx, id, req)
 		if err == nil {
 			m.markGuestAnswered(id)
-			return &model.ExecResult{Stdout: stdout, Stderr: stderr, ExitCode: result.ExitCode}, nil
+			return &model.ExecResult{Stdout: stdout, Stderr: stderr, ExitCode: result.ExitCode, RanAs: result.RanAs}, nil
 		}
 		if !m.guestNeverAnswered(id) || !isSilentDisconnect(err, stdout, stderr) ||
 			!time.Now().Add(guestReadyPollInterval).Before(deadline) {
