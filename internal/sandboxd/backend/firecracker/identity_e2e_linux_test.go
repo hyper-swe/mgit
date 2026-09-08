@@ -80,22 +80,19 @@ func TestE2E_Exec_RunsAsTheIdentityAsked(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Remove(context.Background(), info.ID, true) })
 
+	// The probe reports its own view AND writes the worktree — delivered as
+	// an image owned by the host's uid — reporting the owner of what it
+	// wrote; the minimal guest rootfs ships no `stat` or `id`, so the probe
+	// is the only witness. Refs: MGIT-151
 	asked := model.GuestIdentity{UID: os.Getuid(), GID: os.Getgid(), Name: "agent", Home: "/home/agent"}
 	res := execWhenServing(t, mgr, info.ID, model.ExecRequest{
-		Command: []string{probe}, Dir: wtPath, RunAs: &asked,
+		Command: []string{probe, wtPath}, Dir: wtPath, RunAs: &asked,
 	})
-	want := fmt.Sprintf("uid=%d gid=%d name=agent home=/home/agent home_file_owner=%d:%d", asked.UID, asked.GID, asked.UID, asked.GID)
-	assert.Equal(t, want, strings.TrimSpace(string(res.Stdout)), "the command's own view of its identity; stderr=%q", string(res.Stderr))
+	want := fmt.Sprintf("uid=%d gid=%d name=agent home=/home/agent home_file_owner=%d:%d dir_file_owner=%d:%d",
+		asked.UID, asked.GID, asked.UID, asked.GID, asked.UID, asked.GID)
+	assert.Equal(t, want, strings.TrimSpace(string(res.Stdout)), "the command's own view of its identity and of the worktree write; stderr=%q", string(res.Stderr))
 	require.NotNil(t, res.RanAs, "the guest echoes the identity it ran as")
 	assert.Equal(t, asked, *res.RanAs)
-
-	// The worktree — delivered as an image owned by the host's uid — is
-	// writable as that identity, and what it writes is owned by it.
-	wt := execWhenServing(t, mgr, info.ID, model.ExecRequest{
-		Command: []string{"/bin/sh", "-c", "touch owned && stat -c %u:%g owned"}, Dir: wtPath, RunAs: &asked,
-	})
-	assert.Equal(t, 0, wt.ExitCode, "the identity writes the worktree; stderr=%q", string(wt.Stderr))
-	assert.Equal(t, fmt.Sprintf("%d:%d", asked.UID, asked.GID), strings.TrimSpace(string(wt.Stdout)), "and owns what it wrote")
 
 	// Nothing asked: the guest runs it as itself, root, and SAYS so.
 	none := execWhenServing(t, mgr, info.ID, model.ExecRequest{Command: []string{probe}, Dir: wtPath})
@@ -103,8 +100,8 @@ func TestE2E_Exec_RunsAsTheIdentityAsked(t *testing.T) {
 	require.NotNil(t, none.RanAs)
 	assert.True(t, none.RanAs.IsRoot(), "and the guest reports root")
 	if !t.Failed() {
-		t.Logf("IDENTITY REAL VM PASS: asked uid %d gid %d; the guest's child saw %q; the worktree write is owned %s; nothing asked ran as root and said so",
-			asked.UID, asked.GID, strings.TrimSpace(string(res.Stdout)), strings.TrimSpace(string(wt.Stdout)))
+		t.Logf("IDENTITY REAL VM PASS: asked uid %d gid %d; the guest's child saw %q; nothing asked ran as root and said so",
+			asked.UID, asked.GID, strings.TrimSpace(string(res.Stdout)))
 	}
 }
 
