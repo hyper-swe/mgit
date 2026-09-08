@@ -73,6 +73,14 @@ jobs:
           bash scripts/ci/check-pinned-tools.sh
           bash scripts/ci/check-pinned-tools-selftest.sh
 
+      # Every target the release ships compiles on every PR, so a platform
+      # break cannot reach a tag: a syscall.Kill in an untagged file broke the
+      # Windows targets of mgit on main and nothing here noticed, because the
+      # job built only on the runner's own platform (MGIT-198). The target list
+      # is pinned to .goreleaser.yaml by TestCrossBuild_CoversEveryReleaseTarget.
+      - name: Cross-build every release target
+        run: bash scripts/ci/cross-build.sh
+
       - name: Build binary
         run: make build
 

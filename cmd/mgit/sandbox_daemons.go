@@ -35,7 +35,7 @@ type daemonsDeps struct {
 }
 
 func hostDaemonsDeps() daemonsDeps {
-	return daemonsDeps{list: listHostDaemons, kill: syscall.Kill, alive: pidAlive, argv: pidArgv, clock: time.Now}
+	return daemonsDeps{list: listHostDaemons, kill: hostKill, alive: pidAlive, argv: pidArgv, clock: time.Now}
 }
 
 // pidArgv reads the command line at a pid through ps, which answers the same
@@ -96,15 +96,6 @@ func listHostDaemons(_ context.Context) ([]daemonrec.Listed, error) {
 // scratch of some run rather than a repository anyone keeps.
 func tempRoots() []string {
 	return []string{os.TempDir(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}
-}
-
-// pidAlive asks the kernel, not ps.
-func pidAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // sandboxDaemonsCmd is the host-wide view MGIT-185 asked for: every sandbox
