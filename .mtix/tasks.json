@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-08T11:40:19Z",
+  "exported_at": "2026-09-08T12:59:24Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5935,15 +5935,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit-188",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "e07cad60dcbeb1a4f67c04fbce4201f0c0029dd54ca9e999b6bc09362ccef39e",
       "created_at": "2026-09-03T02:55:41Z",
-      "updated_at": "2026-09-03T02:55:41Z",
+      "updated_at": "2026-09-08T12:18:26Z",
+      "closed_at": "2026-09-08T12:18:26Z",
       "uid": "01a06531-8d4e-7ea2-8e87-1fdc2dcf7d48"
     },
     {
@@ -6011,15 +6012,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-190",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "39780da55316cfdabcf432aa7e00784442daa5fc3838a2bf9fe23d9f9cc262a1",
       "created_at": "2026-09-03T04:57:41Z",
-      "updated_at": "2026-09-08T04:53:14Z",
+      "updated_at": "2026-09-08T12:06:17Z",
+      "closed_at": "2026-09-08T12:06:17Z",
       "uid": "01a065a1-3db4-776e-9208-e6d5e66d1f65"
     },
     {
@@ -6163,15 +6165,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-196",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "d0bf632727936107f45c7ee3a1b873007c02763b20e66933df6222a3b6847c0a",
       "created_at": "2026-09-08T03:37:25Z",
-      "updated_at": "2026-09-08T04:37:06Z",
+      "updated_at": "2026-09-08T12:31:03Z",
+      "closed_at": "2026-09-08T12:31:03Z",
       "uid": "01a07f17-8ed6-7cd9-8c2d-6888e3104dd0"
     },
     {
@@ -6188,15 +6191,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-197",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "dd81d0ce2688ed7b88961498478c103578cddd30430585203e7ee12933571283",
       "created_at": "2026-09-08T03:50:24Z",
-      "updated_at": "2026-09-08T04:53:14Z",
+      "updated_at": "2026-09-08T12:59:23Z",
+      "closed_at": "2026-09-08T12:59:23Z",
       "uid": "01a07f23-736c-7cf4-b52a-9a23729d9c92"
     },
     {
@@ -6950,6 +6954,31 @@
       "created_at": "2026-09-08T11:36:10Z",
       "updated_at": "2026-09-08T11:40:18Z",
       "uid": "01a080cd-dd57-71f7-a6cc-aafc2e9030a6"
+    },
+    {
+      "id": "MGIT-202",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 202,
+      "project": "MGIT",
+      "title": "The KVM box as a self-hosted runner: a capability receipt first, then the KVM legs moved to it, then e2e.yml's queue (path filters, cancel-in-progress, a PR subset with full-on-main answered on this ticket)",
+      "description": "Approved 2026-09-08 (the queue's item 4a). The Linux KVM box is registered as a self-hosted GitHub Actions runner for this repository (label self-hosted; its address is private and never appears in a ticket, PR, commit or public doc — it is \"the KVM box\"). Three steps, in order:\n\n(1) RECEIPT. A dispatch-only workflow with one step on that runner printing `ls -l /dev/kvm`, `nproc`, `free -g`, `uname -r` (plus the runner's uid, whether sudo is passwordless, and whether docker is present — what the LIVE legs need), so the box's capability is a CI run anyone can read rather than an assumption. Because this repository is PUBLIC, before any workflow targets a self-hosted runner the Actions setting \"require approval for all outside collaborators\" must be confirmed — a fork's pull request must never run on that box; the receipt workflow itself has no pull_request trigger.\n\n(2) THE LEGS. Move the libkrun and firecracker LIVE legs of e2e.yml (sandbox-live-linux, sandbox-live-linux-libkrun) and ci.yml's tagged libkrun build to the box, with the runner label read from a repository variable so the workflow carries no address; keep the hosted runners as the fallback until the box has produced green runs of both legs; take MGIT-156 (live KVM gate for MGIT-109's policy staging) and MGIT-151 (unprivileged guests) off the parked list.\n\n(3) THE QUEUE. e2e.yml consumed 3,128 minutes in 8 days — free, but it is the queue every PR waits in. Add path filters and `concurrency: cancel-in-progress`, and answer here whether every push needs the full e2e matrix or whether a PR subset plus full-on-main preserves the same evidence; no coverage is removed without its reason stated.",
+      "prompt": "",
+      "acceptance": "- (1) A workflow_dispatch run on the self-hosted runner prints the four lines (and the uid/sudo/docker facts) — the run URL is the receipt in the PR; the fork-PR approval policy is confirmed \"all outside collaborators\" before it is dispatched, with the check's output quoted (never the address).\n- (2) Both LIVE legs green on the box, run URLs quoted; the label comes from a repository variable; the hosted variants stay until then.\n- (3) e2e.yml has path filters and cancel-in-progress; the evidence question is answered on this ticket with the minutes saved measured on a week of runs.\n- Sanitization: the address appears nowhere in the repository or this ticket.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "mcp",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "24c0fd1484d73549db98a546146d5a1990153ad319e9a757dd2ccae6938a7bde",
+      "created_at": "2026-09-08T12:43:53Z",
+      "updated_at": "2026-09-08T12:43:53Z",
+      "uid": "01a0810b-dc51-7203-82ca-98d8f6f8ff47"
     },
     {
       "id": "MGIT-21",
@@ -13644,6 +13673,13 @@
       "last_heartbeat": "2026-09-02T21:10:10Z"
     },
     {
+      "agent_id": "claude-mgit-188",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-188",
+      "last_heartbeat": "2026-09-08T12:18:19Z"
+    },
+    {
       "agent_id": "claude-mgit-190",
       "project": "MGIT",
       "state": "working",
@@ -13875,6 +13911,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 466,
-  "checksum": "769f4031ccb4ff420fb2a49cb70e0e7c39d2c0c1f919d8f23b09272f720e1300"
+  "node_count": 467,
+  "checksum": "4febacf11c18aef73dd4c2588c9da9077ef00fb914117b71bde0aa741bb3a5ba"
 }
