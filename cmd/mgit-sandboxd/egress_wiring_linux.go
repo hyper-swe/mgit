@@ -3,11 +3,9 @@
 package main
 
 import (
-	"context"
 	"log/slog"
 	"time"
 
-	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/firecracker"
 	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 	"github.com/hyper-swe/mgit/internal/service"
@@ -51,11 +49,11 @@ func wireEgress(svc *service.SandboxService, events *index.Store, clock func() t
 		logger.Error("sandbox egress wiring failed; allowlist mode will fail closed", "error", err.Error())
 		return egressWiring{}
 	}
-	svc.SetEgressController(fcEgressController{runner: runner})
+	svc.SetEgressController(firecracker.NewEgressController(runner))
 	// The same runner is the LIVE policy enforcer for this backend: its
 	// authorizer is consulted per connection, so a mutated allowlist decides
 	// the next flow with no VM involvement. Refs: MGIT-72
-	wiring := egressWiring{Policy: runnerPolicyController{runner: runner}}
+	wiring := egressWiring{Policy: firecracker.NewPolicyController(runner)}
 
 	// Capability escalation: a host-observed egress denial can be escalated to a
 	// scoped, audited grant that widens THIS runner's live allowlist; the grant
@@ -81,53 +79,3 @@ func wireEgress(svc *service.SandboxService, events *index.Store, clock func() t
 	wiring.Grants = capSvc
 	return wiring
 }
-
-// runnerPolicyController adapts the host-side egress runner to the service's
-// live-policy seam. On this backend the enforcer lives in the DAEMON's own
-// process, so the mutation is a direct call — unlike libkrun, where it has to
-// cross into a re-exec'd VM child. Refs: MGIT-72
-type runnerPolicyController struct{ runner *egress.Runner }
-
-// SetEgressPolicy replaces the running allowlist, killing established flows
-// unless drain is set. Refs: MGIT-72, ADR-012
-func (c runnerPolicyController) SetEgressPolicy(
-	_ context.Context, sandboxID string, entries []string, drain bool,
-) (model.EgressPolicyChange, error) {
-	change, err := c.runner.SetPolicy(sandboxID, entries, drain)
-	if err != nil {
-		return model.EgressPolicyChange{}, err
-	}
-	return model.EgressPolicyChange{
-		Entries: change.Entries, RuleCount: change.RuleCount,
-		Killed: change.Killed, Drained: change.Drained,
-	}, nil
-}
-
-// EgressPolicy reports the allowlist in force. Refs: MGIT-72
-func (c runnerPolicyController) EgressPolicy(
-	_ context.Context, sandboxID string,
-) (model.EgressPolicyState, error) {
-	state, err := c.runner.Policy(sandboxID)
-	if err != nil {
-		return model.EgressPolicyState{}, err
-	}
-	return model.EgressPolicyState{Entries: state.Entries, RuleCount: state.RuleCount}, nil
-}
-
-// fcEgressController adapts egress.Runner to service.EgressController,
-// resolving the firecracker per-sandbox tap gateway the proxy/DNS bind.
-type fcEgressController struct{ runner *egress.Runner }
-
-// StartEgress brings up the sandbox's egress stack on its tap gateway.
-func (c fcEgressController) StartEgress(ctx context.Context, info model.SandboxInfo) error {
-	_, err := c.runner.Start(ctx, egress.Binding{
-		SandboxID: info.ID,
-		TaskID:    info.TaskID,
-		GatewayIP: firecracker.GatewayFor(info.ID),
-		Policy:    model.NetworkPolicy{Mode: info.NetworkMode, Allowlist: info.NetworkAllowlist},
-	})
-	return err
-}
-
-// StopEgress tears the sandbox's egress stack down (idempotent).
-func (c fcEgressController) StopEgress(sandboxID string) { _ = c.runner.Stop(sandboxID) }
