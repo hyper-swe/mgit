@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-08T04:37:15Z",
+  "exported_at": "2026-09-08T05:22:01Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6011,15 +6011,15 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "claude-mgit-190",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "39780da55316cfdabcf432aa7e00784442daa5fc3838a2bf9fe23d9f9cc262a1",
       "created_at": "2026-09-03T04:57:41Z",
-      "updated_at": "2026-09-03T04:57:41Z",
+      "updated_at": "2026-09-08T04:53:14Z",
       "uid": "01a065a1-3db4-776e-9208-e6d5e66d1f65"
     },
     {
@@ -6180,23 +6180,48 @@
       "seq": 197,
       "project": "MGIT",
       "title": "One repository, two daemons: the sandbox daemon is keyed by the path's spelling, and a second daemon over the same index deletes the first's live sandbox with a `killed` event that never happened",
-      "description": "FOUND 2026-09-08 while reproducing MGIT-196 (FEAT-7.28): dev pair at main f3cf780, macOS/libkrun, a scratch repository. The daemon socket key is sha256 of the repository root AS SPELLED by the caller's cwd (cmd/mgit/sandbox_connect.go, resolveSandboxPaths; os.Getwd returns the shell's $PWD spelling), with no symlink resolution — and nothing stops two daemons from serving one host root (`\u003crepo\u003e/.mgit/sandbox`, where the SQLite registry lives). Reproduced three ways:\n\n(1) DIVERGENCE. `cd /private/tmp/…/r196` and `cd /tmp/…/r196` (one directory: /tmp is a symlink to private/tmp) spawn two daemons; `mgit sandbox daemons` lists both roots. A sandbox launched through one spelling is \"sandbox not found: task\" through the other, and `sandbox list` differs by spelling (T-3 only via the first, T-4 only via the second). Status/List answer from each daemon's in-memory registry, rehydrated from the shared index only at its start.\n\n(2) DESTRUCTION. With T-1 booted and running under daemon A (`mgit run` answers from the guest), a third daemon C, spawned through a symlink spelling of the same root, rehydrated the shared index — log: registry_rehydrated recovered=[] discarded=[T-1] — wrote a `killed` event whose reason reads \"unsupervised: the daemon that supervised this sandbox exited; its VM could not be verified by the daemon that replaced it\", false on both counts (A had not exited; `mgit run -- hostname` still answered localhost, exit 0, with A's __krun-vm child alive), and DELETED T-1's row from `sandboxes`. From then on A says running (memory), C says not found, the index holds no row, the audit trail records a kill that did not happen, and when A exits the sandbox vanishes without a `destroyed` event.\n\n(3) DUPLICATE TERMINAL EVENTS. `daemons stop --repo-root` of either spelling drained the shared registrations, and both daemons wrote `destroyed` for the same sandbox ids.\n\nThe fact \"which daemon serves this repository's sandbox state\" belongs to the host root that holds the index, not to the spelling of a working directory (MGIT-177's question). Receipts: the reproduction logs (repro196b.log, repro196c.log) and the events query on the scratch index, quoted in PR #109. FOUND WHILE FIXING: the first cut claimed the host root inside the daemon's Run, after the service wiring had rehydrated the index — the refused daemon discarded a live sandbox on its way out. The claim now precedes anything that reads the index, and a test pins the order.",
+      "description": "FOUND 2026-09-08 while reproducing MGIT-196 (FEAT-7.28): dev pair at main f3cf780, macOS/libkrun, a scratch repository. The daemon socket key is sha256 of the repository root AS SPELLED by the caller's cwd (cmd/mgit/sandbox_connect.go, resolveSandboxPaths; os.Getwd returns the shell's $PWD spelling), with no symlink resolution — and nothing stops two daemons from serving one host root (`\u003crepo\u003e/.mgit/sandbox`, where the SQLite registry lives). Reproduced three ways:\n\n(1) DIVERGENCE. `cd /private/tmp/…/r196` and `cd /tmp/…/r196` (one directory: /tmp is a symlink to private/tmp) spawn two daemons; `mgit sandbox daemons` lists both roots. A sandbox launched through one spelling is \"sandbox not found: task\" through the other, and `sandbox list` differs by spelling (T-3 only via the first, T-4 only via the second). Status/List answer from each daemon's in-memory registry, rehydrated from the shared index only at its start.\n\n(2) DESTRUCTION. With T-1 booted and running under daemon A (`mgit run` answers from the guest), a third daemon C, spawned through a symlink spelling of the same root, rehydrated the shared index — log: registry_rehydrated recovered=[] discarded=[T-1] — wrote a `killed` event whose reason reads \"unsupervised: the daemon that supervised this sandbox exited; its VM could not be verified by the daemon that replaced it\", false on both counts (A had not exited; `mgit run -- hostname` still answered localhost, exit 0, with A's __krun-vm child alive), and DELETED T-1's row from `sandboxes`. From then on A says running (memory), C says not found, the index holds no row, the audit trail records a kill that did not happen, and when A exits the sandbox vanishes without a `destroyed` event.\n\n(3) DUPLICATE TERMINAL EVENTS. `daemons stop --repo-root` of either spelling drained the shared registrations, and both daemons wrote `destroyed` for the same sandbox ids.\n\nThe fact \"which daemon serves this repository's sandbox state\" belongs to the host root that holds the index, not to the spelling of a working directory (MGIT-177's question). Receipts: the reproduction logs (repro196b.log, repro196c.log) and the events query on the scratch index, quoted in PR #110. FOUND WHILE FIXING: the first cut claimed the host root inside the daemon's Run, after the service wiring had rehydrated the index — the refused daemon discarded a live sandbox on its way out. The claim now precedes anything that reads the index, and a test pins the order.",
       "prompt": "",
       "acceptance": "- The CLI keys the daemon on the canonical (symlink-resolved) repository root, for a repository root and for a linked worktree's marker store alike; a test spells one root three ways (direct, a symlinked prefix, a symlinked leaf) and asserts one socket path; the test fails with the canonicalization removed.\n- The daemon claims an exclusive lock on its host root (`\u003chost-root\u003e/daemon.lock`, flock, released by the kernel on death) before it serves; a second daemon for the same host root refuses to start naming the holder's pid and socket while the first keeps serving — tested with two real daemons over one host root; the CLI's activation failure carries that refusal.\n- `mgit doctor`'s `daemons/host` row FAILS when two live daemons' roots resolve to one repository, naming both spellings and the stop command for the extra one.\n- The rehydration `killed` reason states what was verified, not what was assumed.\n- Live: the divergence and destruction runs re-run with the fixed pair show one daemon for the three spellings and T-1 surviving with its VM; no duplicate `destroyed` events.\n- CHANGELOG entry with the upgrade note: stop the repository's daemon before upgrading if a sandbox is running on a symlink-spelled root.",
       "node_type": "epic",
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "claude-mgit-197",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
-      "content_hash": "3076e9a3c7588e38e6e4af4058292c10ac09a1985d892ce9ba9d939c70380a8f",
+      "content_hash": "dd81d0ce2688ed7b88961498478c103578cddd30430585203e7ee12933571283",
       "created_at": "2026-09-08T03:50:24Z",
-      "updated_at": "2026-09-08T04:37:14Z",
+      "updated_at": "2026-09-08T04:53:14Z",
       "uid": "01a07f23-736c-7cf4-b52a-9a23729d9c92"
+    },
+    {
+      "id": "MGIT-198",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 198,
+      "project": "MGIT",
+      "title": "mgit no longer builds for Windows since #105: syscall.Kill in cmd/mgit/sandbox_daemons.go is in a platform-agnostic file, and no CI job cross-builds the release matrix",
+      "description": "FOUND 2026-09-08 by a goreleaser snapshot run for MGIT-190's receipt (goreleaser 2.14.3, main f3cf780): the `mgit` build fails for windows_arm64 (and windows_amd64) with\n\n    cmd/mgit/sandbox_daemons.go:38:58: undefined: syscall.Kill\n    cmd/mgit/sandbox_daemons.go:106:17: undefined: syscall.Kill\n\nPR #105 (MGIT-191, merged 2026-09-07) added `mgit sandbox daemons` and `daemons stop`, whose liveness probe and signal use syscall.Kill without a build tag. .goreleaser.yaml builds `mgit` for windows/amd64 and windows/arm64 (Windows runs core mgit without the sandbox in v1 — FR-17 platform scope), so the next release run (v0.6.6) would fail at the build step — and by R-H298 a failed publish burns the tag. CI did not catch it: the Test job builds on ubuntu and macOS only, `make lint` cross-lints GOOS=linux only, and nothing exercises the goreleaser target matrix (the \"one assembler builds anything release-shaped; CI must exercise the layout customers receive\" law).",
+      "prompt": "",
+      "acceptance": "- `GOOS=windows GOARCH=amd64 go build ./cmd/mgit` and `GOOS=windows GOARCH=arm64 go build ./cmd/mgit` succeed: the liveness probe and the stop signal move behind build tags (unix: syscall.Kill; windows: a stated refusal — the sandbox daemon does not run on Windows in v1, so `daemons` lists nothing and `daemons stop` refuses naming MGIT-11.5.3, never a silent success).\n- A CI step cross-builds every goreleaser `mgit` target (and the linux-only mgit-sandboxd / mgit-guest targets) with plain `go build`, on every PR; its target list is pinned to .goreleaser.yaml by a test that reads the config, so the two cannot drift.\n- Negative control: the step shown failing against main's sandbox_daemons.go (the run before the fix, or a mutation that reintroduces the bare syscall.Kill).\n- CHANGELOG entry under Fixed.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "claude-mgit-198",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "492b5ba93dece8b497256181098d8ac25d203f95f4e173cb3894fd1e0e55aee2",
+      "created_at": "2026-09-08T04:47:51Z",
+      "updated_at": "2026-09-08T04:53:14Z",
+      "uid": "01a07f58-0909-70de-af91-73b40bd3a2f7"
     },
     {
       "id": "MGIT-2",
@@ -13541,6 +13566,13 @@
       "last_heartbeat": "2026-09-02T21:10:10Z"
     },
     {
+      "agent_id": "claude-mgit-190",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-190",
+      "last_heartbeat": "2026-09-08T04:53:14Z"
+    },
+    {
       "agent_id": "claude-mgit-191",
       "project": "MGIT",
       "state": "working",
@@ -13560,6 +13592,20 @@
       "state": "working",
       "current_node_id": "MGIT-196",
       "last_heartbeat": "2026-09-08T04:16:46Z"
+    },
+    {
+      "agent_id": "claude-mgit-197",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-197",
+      "last_heartbeat": "2026-09-08T04:53:14Z"
+    },
+    {
+      "agent_id": "claude-mgit-198",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-198",
+      "last_heartbeat": "2026-09-08T04:53:14Z"
     },
     {
       "agent_id": "claude-mgit-6112",
@@ -13737,6 +13783,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 462,
-  "checksum": "d69cf28705c87a210dd2ae018d472ec7a9eeadd0b55bd7536fbcd8fb9296c493"
+  "node_count": 463,
+  "checksum": "02d0923007597d435ea7cb4b93926257e0477afe57a83114cfce5ab931f7c805"
 }
