@@ -31,6 +31,12 @@ func ClaimHostRoot(hostRoot, socket string) (*HostRootClaim, error) {
 	if hostRoot == "" {
 		return nil, nil
 	}
+	// The claim precedes everything that used to create this directory, so on
+	// a repository's first daemon start it does not exist yet; a claim that
+	// cannot open its lock for that reason would stop every fresh repository.
+	if err := os.MkdirAll(hostRoot, 0o700); err != nil {
+		return nil, fmt.Errorf("sandboxd: claim host root %s: %w", hostRoot, err)
+	}
 	path := filepath.Join(hostRoot, hostLockName)
 	lock, err := acquireFileLock(path)
 	if err != nil {

@@ -64,3 +64,22 @@ func TestDaemon_SecondDaemonForOneHostRoot_RefusedNamingTheFirst(t *testing.T) {
 	_, err := os.Stat(filepath.Join(hostRoot, "daemon.lock"))
 	assert.NoError(t, err, "the lock file stays; only the claim on it is released")
 }
+
+// The claim is taken before the wiring that used to create the host root, so
+// on a repository's very first daemon start the directory does not exist yet:
+// the firecracker LIVE leg's fresh repository failed with "open lock …: no
+// such file or directory" and no daemon could ever start there. The claim
+// creates the directory it claims. Refs: MGIT-197
+func TestClaimHostRoot_CreatesAnAbsentHostRoot(t *testing.T) {
+	hostRoot := filepath.Join(t.TempDir(), "repo", ".mgit", "sandbox")
+	claim, err := ClaimHostRoot(hostRoot, "/s/d.sock")
+	require.NoError(t, err)
+	defer claim.Release()
+	info, err := os.Stat(hostRoot)
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm(), "the host root is the operator's alone")
+	data, err := os.ReadFile(filepath.Join(hostRoot, hostLockName))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "socket /s/d.sock")
+}
