@@ -57,6 +57,21 @@ file content, artifact export and the SEC-03 hostile-guest battery all hold
 there exactly as on macOS (MGIT-87). Two residuals do NOT carry over, both
 measured on real hardware and both upstream:
 
+**Which user commands run as.** A guest exec — `mgit run`'s and `sandbox
+exec`'s — runs as the daemon's own user inside the guest: the uid/gid the
+daemon delivered the worktree and the composed base as (the libkrun share
+maps no ids and the firecracker image copies inode owners, so that is the
+identity a command can read the base and write the worktree as). The guest
+gives it a passwd entry named `agent` and a home at `/home/agent`. A daemon
+run as root delivers root-owned trees and its execs stay root. `--as-root`
+escalates one command to root; the daemon records it as an `exec_privileged`
+audit event. The guest reports the identity it ran as with every result, and
+the verb prints `guest exec identity UNVERIFIED` on stderr when the daemon
+cannot confirm it: a base composed before this version carries an older
+guest agent that runs everything as root (recompose it with `mgit sandbox
+base from <image>`), and the container backend does not switch identities
+(MGIT-151).
+
 - **The guest cannot write most of its image root.** `/tmp`, `/etc` and the
   mounted worktree are writable; anything else under `/` fails with `operation
   not supported`, so an agent can build and commit but cannot `apt install`
