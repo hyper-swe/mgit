@@ -142,6 +142,15 @@ func run(args []string, out, logSink io.Writer) int {
 	// actually in force even on a boot that later fails at backend selection.
 	// The policy store opened here is the one the service is wired with below,
 	// so the ceiling and the launch path read the same policy. Refs: MGIT-98
+	// Claim the host root BEFORE anything reads its index: a daemon that
+	// rehydrated first and claimed second discarded a live sandbox another
+	// daemon was serving, with a `killed` event that never happened (MGIT-197).
+	claim, err := sandboxd.ClaimHostRoot(opts.hostRoot, opts.socket)
+	if err != nil {
+		logger.Error("sandbox host root is served by another daemon", "event", "host_root_held", "error", err.Error())
+		return 2
+	}
+	defer claim.Release()
 	policyStore := newPolicyStore(opts.hostRoot, clock, logger)
 	ceiling := resolveFleetCeiling(loadDaemonPolicy(policyStore, logger),
 		opts.maxMemoryMB, hostmem.TotalBytes, logger)
@@ -186,6 +195,7 @@ func run(args []string, out, logSink io.Writer) int {
 
 	dcfg := sandboxd.Config{
 		SocketPath: opts.socket, Manager: manager, RepoRoot: servedRepoRoot(opts),
+		HostRoot: opts.hostRoot, HostRootClaim: claim,
 		Logger: logger, Clock: clock, IdleGrace: opts.idleGrace, MaxConns: opts.maxConns,
 		PeerBinder: peerBinder,
 	}

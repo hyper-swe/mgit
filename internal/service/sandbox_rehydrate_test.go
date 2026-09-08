@@ -189,6 +189,11 @@ func TestRehydrate_RecordedRunningWithNoVM_DiscardsAndAudits(t *testing.T) {
 		"a sandbox that ceased to exist must leave a terminal event explaining it")
 	assert.Contains(t, events.events[0].Detail, "unsupervised",
 		"the record must say WHY it ended, not merely that it did")
+	// The reason states what this daemon VERIFIED — it holds the repository's
+	// daemon lock, so no other daemon supervises this sandbox — rather than
+	// assuming the supervisor exited, which a second daemon over the same
+	// index once asserted about a daemon that was alive (MGIT-197).
+	assert.Contains(t, events.events[0].Detail, "holds the repository's daemon lock")
 }
 
 // TestRehydrate_RecordedRunningVMStillLive_ComesBackRunning covers the other

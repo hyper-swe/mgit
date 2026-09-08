@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -301,4 +302,74 @@ func leakReason(st daemonrec.Status) string {
 		return "its repository root no longer exists"
 	}
 	return fmt.Sprintf("a temp-directory root served for %s", st.Age.Round(time.Hour))
+}
+
+// DuplicateDaemonsCheck fails when two live daemons serve one repository — one
+// per spelling of its path, which is how a repository reached as /tmp/x,
+// /private/tmp/x and through a symlink got three daemons over one index
+// (MGIT-197). Under that condition the daemons' registries diverge, and a
+// fresh daemon's start deletes any sandbox the older one is running, with a
+// `killed` event that never happened. Roots are compared as resolved paths,
+// never as bytes. Refs: MGIT-197, R-H300 rule 5
+type DuplicateDaemonsCheck struct {
+	// List reads and judges every daemon record for this user on this host.
+	List func(ctx context.Context) ([]daemonrec.Listed, error)
+}
+
+// Name implements Check.
+func (DuplicateDaemonsCheck) Name() string { return "daemons/one-per-repository" }
+
+// Run implements Check.
+func (c DuplicateDaemonsCheck) Run(ctx context.Context) Result {
+	r := Result{Name: c.Name(), Incident: "MGIT-197"}
+	listed, err := c.List(ctx)
+	if err != nil {
+		r.Status, r.Reason = StatusNotChecked, err.Error()
+		r.Summary = "could not read this host's sandbox daemon records"
+		return r
+	}
+	byRepo := map[string][]daemonrec.Listed{}
+	var order []string
+	alive := 0
+	for _, d := range listed {
+		if !d.Status.Alive {
+			continue // a stale record, pruned by the list verb; not a daemon
+		}
+		alive++
+		key := resolvedRoot(d.Record.RepoRoot)
+		if _, seen := byRepo[key]; !seen {
+			order = append(order, key)
+		}
+		byRepo[key] = append(byRepo[key], d)
+	}
+	for _, key := range order {
+		ds := byRepo[key]
+		if len(ds) < 2 {
+			continue
+		}
+		parts := make([]string, 0, len(ds))
+		for _, d := range ds {
+			parts = append(parts, fmt.Sprintf("pid %d at %s (socket %s)", d.Record.PID, d.Record.RepoRoot, d.Record.Socket))
+		}
+		r.Status = StatusFailed
+		r.Summary = fmt.Sprintf("%d daemons serve one repository (%s): %s — their registries diverge, and the newer "+
+			"one's start deleted any sandbox the older one was running", len(ds), key, strings.Join(parts, "; "))
+		r.Remedy = fmt.Sprintf("stop the extra daemon by the spelling it was started with: `mgit sandbox daemons stop "+
+			"--repo-root %s` (that drains its sandboxes); from MGIT-197 on, mgit keys the daemon on the resolved path "+
+			"and mgit-sandboxd refuses to serve a repository another daemon holds — upgrade both", ds[1].Record.RepoRoot)
+		return r
+	}
+	r.Status = StatusOK
+	r.Summary = fmt.Sprintf("%d daemon(s) on this host, one per repository", alive)
+	return r
+}
+
+// resolvedRoot compares repository roots as paths: a symlinked prefix or
+// leaf names the same repository. An unresolvable path stands as cleaned.
+func resolvedRoot(p string) string {
+	p = filepath.Clean(p)
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
 }
