@@ -16,6 +16,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -82,7 +84,9 @@ func TestE2E_Notify_RealGuest_AutoLand(t *testing.T) {
 	privDir := filepath.Join(wtPath, ".mgit")
 	_, err = prov.Provision(task, privDir)
 	require.NoError(t, err)
-	newCommit := commitIntoPrivateStore(t, privDir, task)
+	// No commit is made here: the store is delivered as the host knows it, and
+	// the agent's commit happens INSIDE the guest below — the only commit the
+	// land-ready notify is for (MGIT-199).
 
 	mainIdx, err := index.New(filepath.Join(hostRepoRoot, ".mgit", "index.db"), clock)
 	require.NoError(t, err)
@@ -141,13 +145,13 @@ func TestE2E_Notify_RealGuest_AutoLand(t *testing.T) {
 	landSvc, err := service.NewLandService(e2eStubResolver{id: info.ID}, channel, mainIdx,
 		parents, e2eStubAttestor{}, orch, e2eOffPolicy{})
 	require.NoError(t, err)
-	notifyCtrl.SetLander(landerAdapter{svc: landSvc})
+	lands := &countingLander{inner: landerAdapter{svc: landSvc}}
+	notifyCtrl.SetLander(lands)
 
-	// mgit-guest emits the land-ready notify after each completed exec (mirrors
-	// an agent finishing a command), so drive ONE exec to fire it; the guest
-	// boots+serves vsock asynchronously, so retry until it lands. No host-side
-	// land call is made — the auto-land is triggered solely by the guest's
-	// post-exec notify.
+	// The guest boots and serves vsock asynchronously: retry a no-op exec
+	// until it answers. Then two more no-op execs. None of the three moves the
+	// private store, so none may signal the host — before MGIT-199 every exec
+	// did, and a boot cost the host three land passes with nothing to land.
 	execDeadline := time.Now().Add(25 * time.Second)
 	for time.Now().Before(execDeadline) {
 		if _, eerr := mgr.Exec(context.Background(), info.ID,
@@ -156,6 +160,29 @@ func TestE2E_Notify_RealGuest_AutoLand(t *testing.T) {
 		}
 		time.Sleep(400 * time.Millisecond)
 	}
+	for i := 0; i < 2; i++ {
+		_, eerr := mgr.Exec(context.Background(), info.ID, model.ExecRequest{Command: []string{"/bin/sh", "-c", "true"}})
+		require.NoError(t, eerr)
+	}
+	// A notify that WOULD have fired arrives within milliseconds of the exec's
+	// end (three landed within 70 ms of a boot before the fix), so two seconds
+	// is a window that can contain the failure.
+	time.Sleep(2 * time.Second)
+	assert.Equal(t, 0, lands.count(), "no-op execs land nothing: the boot's own execs must not cost the host a land pass")
+
+	// The agent commits INSIDE the guest with the guest's own mgit, against the
+	// SEC-03 private store, and reports the new tip from the store's ref file.
+	// That single exec is the one that moves the store, so it is the one that
+	// may signal.
+	script := "cd " + wtPath + " && printf 'agent work\\n' > agent-change.txt" +
+		" && /bin/mgit add agent-change.txt >/dev/null" +
+		" && /bin/mgit commit -m 'agent commit inside the sandbox' --task " + task + " >/dev/null" +
+		" && cat .mgit/refs/heads/" + model.TaskBranchName(task)
+	res, err := mgr.Exec(context.Background(), info.ID, model.ExecRequest{Command: []string{"/bin/sh", "-c", script}})
+	require.NoError(t, err)
+	require.Equal(t, 0, res.ExitCode, "the in-guest commit must succeed; stderr=%q", string(res.Stderr))
+	newCommit := strings.TrimSpace(string(res.Stdout))
+	require.Len(t, newCommit, 40, "the guest reports the new tip: %q", newCommit)
 
 	// The host per-VM listener authorizes the guest's notify (SEC-10) and
 	// auto-lands. Poll the task branch until it advances to the agent's commit.
@@ -170,9 +197,30 @@ func TestE2E_Notify_RealGuest_AutoLand(t *testing.T) {
 	}
 	require.NoError(t, err)
 	assert.Equal(t, newCommit, tip.HeadCommit, "the guest's notify auto-landed the commit (branch advanced)")
-
 	recs, err := mainIdx.GetTaskCommits(context.Background(), task)
 	require.NoError(t, err)
 	require.Len(t, recs, 1, "the auto-land recorded the commit in the ledger")
 	assert.Equal(t, newCommit, recs[0].CommitHash)
+	assert.Equal(t, 1, lands.count(), "one commit, one notify-triggered land — not one per exec")
+}
+
+// countingLander counts the notify-triggered lands the host ran, so the
+// proof can say how many a boot and a commit cost. Refs: MGIT-199
+type countingLander struct {
+	inner landerAdapter
+	mu    sync.Mutex
+	n     int
+}
+
+func (c *countingLander) Land(ctx context.Context, taskID string) (int, string, error) {
+	c.mu.Lock()
+	c.n++
+	c.mu.Unlock()
+	return c.inner.Land(ctx, taskID)
+}
+
+func (c *countingLander) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
 }
