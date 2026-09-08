@@ -47,6 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`mgit` builds for Windows again (MGIT-198).** The daemon verbs added in
+  MGIT-191 used `syscall.Kill` in a file with no build tag, which broke both
+  Windows targets of `mgit` on main without a red anywhere — the next release
+  run would have failed at the build step. The liveness probe and the stop
+  signal now live behind build tags; on Windows, where the sandbox daemon does
+  not run in v1, `daemons stop` refuses naming MGIT-11.5.3. CI now cross-builds
+  every CGO-free release target on every PR (`scripts/ci/cross-build.sh`), and a
+  test pins that gate's target list to the release config so the two cannot
+  drift.
+
 - **`mgit sandbox sync --force` died on a host-deleted path the guest had
   modified (MGIT-167).** The plan promoted every conflict to an update, so a
   path the host no longer had was "delivered" from a candidate tree that did
