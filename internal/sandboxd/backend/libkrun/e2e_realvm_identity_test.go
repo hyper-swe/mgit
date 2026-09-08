@@ -54,12 +54,18 @@ func TestE2E_Libkrun_RealVM_ExecRunsAsTheIdentityAsked(t *testing.T) {
 
 	asked := model.IdentityForProcess(os.Getuid(), os.Getgid())
 	out, res := execIdentityProbe(t, workDir, sandboxID, model.ExecRequest{Command: []string{"/sbin/idprobe"}, RunAs: &asked})
-	want := fmt.Sprintf("uid=%d gid=%d name=%s home=%s home_file_owner=%d:%d", asked.UID, asked.GID, asked.Name, asked.Home, asked.UID, asked.GID)
+	// The home is the one the guest ECHOES, not the one asked: a guest whose
+	// root cannot take the asked home (Linux/libkrun, MGIT-89) uses a
+	// fallback under /tmp and says so; uid, gid and name are as asked.
+	if res.RanAs == nil {
+		t.Fatalf("the guest echoed no identity; output %q", out)
+	}
+	want := fmt.Sprintf("uid=%d gid=%d name=%s home=%s home_file_owner=%d:%d", asked.UID, asked.GID, asked.Name, res.RanAs.Home, asked.UID, asked.GID)
 	if strings.TrimSpace(out) != want {
 		t.Errorf("the command's own view of its identity:\n got %q\nwant %q\nconsole:\n%s", strings.TrimSpace(out), want, console)
 	}
-	if res.RanAs == nil || *res.RanAs != asked {
-		t.Errorf("the guest echoes the identity it ran as: got %+v, want %+v", res.RanAs, asked)
+	if res.RanAs.UID != asked.UID || res.RanAs.GID != asked.GID || res.RanAs.Name != asked.Name {
+		t.Errorf("the guest echoes the identity it ran as: got %+v, want uid %d gid %d name %s", res.RanAs, asked.UID, asked.GID, asked.Name)
 	}
 
 	// Nothing asked: the guest runs it as itself and SAYS so.

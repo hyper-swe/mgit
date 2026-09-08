@@ -51,6 +51,11 @@ type Supervisor struct {
 	// succeeds and the rule "an owned home is never chowned" would not be
 	// observable otherwise. Refs: MGIT-151
 	Chown func(path string, uid, gid int) error
+	// HomeWritable reports whether a directory can take a file; nil means a
+	// real probe. On Linux/libkrun the overlay refuses writes outside /tmp
+	// and the worktree (MGIT-89), so root's own /root is owned and yet not a
+	// usable home. Refs: MGIT-151, MGIT-89
+	HomeWritable func(dir string) bool
 }
 
 // NewSupervisor returns a supervisor with the default clean base env.

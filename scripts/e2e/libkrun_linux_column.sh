@@ -53,6 +53,7 @@ TestE2E_Libkrun_RealVM_Revoke_KillsEstablishedFlow
 TestE2E_Libkrun_RealVM_Revoke_DrainKeepsEstablishedFlow
 TestE2E_Libkrun_RealVM_ControlChannelIsNotVisibleToTheGuest
 TestE2E_Libkrun_RealVM_Sync_RefusesADeleteOfAPathTheGuestChanged
+TestE2E_Libkrun_RealVM_ExecRunsAsTheIdentityAsked
 "
 
 # NO known gaps remain in this package. The list is kept — not deleted — so
