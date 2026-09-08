@@ -706,6 +706,23 @@ Validated with TestSquashTask_AtomicFailure_RollsBackAllChanges.
 Refs: MGIT-3.1
 ```
 
+### Tool silence (public surfaces carry no attribution)
+
+The commit message ends at its `Refs:` line, and a pull request body ends
+at its last content line. No `Co-Authored-By:` naming a model or a tool, no
+session-link trailer, no "generated with" footer — in commits, PR titles and
+bodies, tickets, README or CHANGELOG. The reason is one line: this
+repository's public surfaces stay tool-silent (0 of the commits on main
+carry such trailers; MGIT-61.14 said so first). An agent harness asks for
+those trailers by default; the project's rule governs its own surfaces.
+Enforcement is the gate reviewer's checklist, line 6: a PR that carries them
+is a red verdict, and the fix costs a message-only amend, a leased force-push
+and a CI re-run (five PRs paid it on 2026-09-02, one more on 2026-09-08).
+Check before every push: `git log -1 --format=%B | tail -3` shows no
+trailer; a PR body's tail shows no footer. The same rule keeps the words a
+sanitization grep looks for OUT of a PR body — "Sanitization grep: zero
+hits." is the whole sentence (MGIT-183).
+
 ---
 
 ## STATIC ANALYSIS
@@ -905,7 +922,10 @@ echo.Start(":8080") → change to "127.0.0.1:8080"
 **Process**
 - A PR merge is not a ticket close — closing, with the incident's
   doctor check and regression scenario, is part of the merge ritual.
-  (MGIT-178; a fixed P0 sat 16 days as a false alarm.)
+  (MGIT-178; a fixed P0 sat 16 days as a false alarm.) And opening a PR
+  is not done until the ticket carries an annotation naming the PR, the
+  branch and the scenario tests — the reviewer's line 3 reads it before the
+  diff. (MGIT-183.)
 - Close tickets on evidence, never inference. (121/103/68 audit.)
 - Preflight sweeps shell gates too, not just Go. (#68's stale assert.)
 - Invasive multi-part changes (staging + supervisor + wire) start in a
