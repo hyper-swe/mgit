@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CI checks every pull request, whatever its base (MGIT-200).** Both
+  workflows triggered on `pull_request: branches: [main]`, so a PR stacked on
+  a feature branch showed zero checks and its evidence lived in
+  hand-dispatched run ids that `gh pr checks` never shows. A pull request is
+  now checked at its head against its base like any other; pushes stay
+  filtered to main.
+
 - **`grants`, `grant`, `export` and `land` refused with a hex opcode when this
   daemon could not serve them (MGIT-171).** MGIT-104's fix reached the policy
   verbs only; the other four still answered `controlproto kind 0x44 not served
