@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-08T07:56:16Z",
+  "exported_at": "2026-09-08T11:40:19Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6213,15 +6213,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-198",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "492b5ba93dece8b497256181098d8ac25d203f95f4e173cb3894fd1e0e55aee2",
       "created_at": "2026-09-08T04:47:51Z",
-      "updated_at": "2026-09-08T04:53:14Z",
+      "updated_at": "2026-09-08T11:33:57Z",
+      "closed_at": "2026-09-08T11:33:57Z",
       "uid": "01a07f58-0909-70de-af91-73b40bd3a2f7"
     },
     {
@@ -6913,16 +6914,42 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-200",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "f57a0e557bc4107abf71d28fbe9486a5c61070108adf73ed6162d29365c0f7d2",
       "created_at": "2026-09-08T05:23:48Z",
-      "updated_at": "2026-09-08T05:34:43Z",
+      "updated_at": "2026-09-08T11:39:02Z",
+      "closed_at": "2026-09-08T11:39:02Z",
       "uid": "01a07f78-f2d9-768b-b0c4-e02c0147c24e"
+    },
+    {
+      "id": "MGIT-201",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 201,
+      "project": "MGIT",
+      "title": "CI gate: a pull request is red unless the latest reviewer VERDICT names its current head — the same mechanism as the swe repository's (a commit status on the head sha; looked-for vs found printed; no verdict = red)",
+      "description": "Approved 2026-09-08 (the queue's item 4b): copy the mechanism the swe repository builds first (swe PR #226: `scripts/verdictgate` + `.github/workflows/verdict.yml`), not its prose. Today a reviewer's PASS lives in a PR comment as \"VERDICT: PASS at \u003csha\u003e\"; a later push moves the head and nothing on the PR turns red, so the merger reads every comment and compares shas by hand — and a PR can read as \"reviewed\" at a head the reviewer never saw (this lane's #110 carried a FAIL at 5ba5f50 while its head was 88d7fc1 for an hour; #109 moved its head three times under a PASS at an older one). The gate reads the first line of every PR comment for `VERDICT: PASS at \u003csha\u003e` / `VERDICT: FAIL at \u003csha\u003e`, takes the newest by comment time, prints the sha it looked for and the one it found, and is green only for a PASS whose sha (7+ hex) is a prefix of the current head; a stale PASS, a FAIL at head, a FAIL at an older head, or no verdict at all is red — never green. It runs on pull_request events and on issue_comment events (the verdict arrives after the push) and writes one commit status `reviewer-verdict-at-head` on the head sha, with the gate's own last line as the description. Branch protection cannot require it on this plan; the merger's standing duty reads the check.",
+      "prompt": "",
+      "acceptance": "- `scripts/verdictgate` (Go, no dependencies beyond the standard library and `gh`) with the same decision table as swe's, and tests whose comment fixtures are laid out by hand: a PASS at head is green and says what it found; a stale PASS is red naming both shas; a FAIL at head is red; a FAIL at an older head is NOT CHECKED, red; no verdict is NOT CHECKED, never green; the newest verdict wins; a verdict line anywhere but a comment's first line is a quotation; fewer than seven hex characters name nothing.\n- `.github/workflows/verdict.yml` runs the gate on pull_request (opened, synchronize, reopened) and issue_comment (created, edited, deleted), skips comments on plain issues, runs a BUILT binary (never `go run`, whose \"exit status N\" trailer would become the status text), and writes one commit status on the head sha with the gate's last `verdictgate:` line as the description.\n- A wiring test (internal/packaging, beside the other workflow pins) reads verdict.yml for those facts.\n- Negative control: the gate run against this PR's own head before any verdict is posted → NOT CHECKED, red (the PR's own first status); after the reviewer's PASS at head → green, with looked-for = found in the run log.\n- CHANGELOG entry under Added.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "claude-mgit-201",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "9d70999dd0251406cc9c2611f09a2127450ca2dce1efe925ab7d88934931a83f",
+      "created_at": "2026-09-08T11:36:10Z",
+      "updated_at": "2026-09-08T11:40:18Z",
+      "uid": "01a080cd-dd57-71f7-a6cc-aafc2e9030a6"
     },
     {
       "id": "MGIT-21",
@@ -13666,6 +13693,13 @@
       "last_heartbeat": "2026-09-08T05:34:43Z"
     },
     {
+      "agent_id": "claude-mgit-201",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-201",
+      "last_heartbeat": "2026-09-08T11:40:18Z"
+    },
+    {
       "agent_id": "claude-mgit-6112",
       "project": "MGIT",
       "state": "working",
@@ -13841,6 +13875,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 465,
-  "checksum": "c1569f7afc243c41759cabf333fbb74a5390e32d121b8b7a7f417929d521878f"
+  "node_count": 466,
+  "checksum": "769f4031ccb4ff420fb2a49cb70e0e7c39d2c0c1f919d8f23b09272f720e1300"
 }
