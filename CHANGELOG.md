@@ -45,6 +45,18 @@ with a test that failed before it and fails again with it removed.
 
 ### Added
 
+- **A pull request is red unless the latest reviewer VERDICT names its
+  current head (MGIT-201).** A reviewer's PASS lives in a comment, and a
+  later push moved the head with nothing turning red, so a PR could read as
+  reviewed at a head the reviewer never saw. `scripts/verdictgate` reads the
+  first line of every comment for `VERDICT: PASS|FAIL at <sha>`, takes the
+  newest, prints the sha it looked for and the one it found, and is green
+  only for a PASS naming the head; a stale PASS, a FAIL, or no verdict at all
+  is red, never green. `.github/workflows/verdict.yml` runs it on pull
+  request and comment events and writes one commit status,
+  `reviewer-verdict-at-head`, on the head sha. The same mechanism as the swe
+  repository's.
+
 - **`mgit doctor` asks a guest whether it reads what was last delivered to it
   (MGIT-164).** A new `guest/delivery` row sends the daemon a sync-verify
   request; the daemon hashes every path in the sandbox's delivered manifest

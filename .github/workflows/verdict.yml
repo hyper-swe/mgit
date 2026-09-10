@@ -1,0 +1,60 @@
+name: verdict
+
+# THE REVIEWER'S VERDICT MUST NAME THE HEAD (MGIT-201). A pull request
+# is green here only when the latest reviewer comment reading
+# "VERDICT: PASS at <sha>" names the PR's current head. A push moves the
+# head and the check goes red until the reviewer re-stamps; a FAIL at
+# head is red; no verdict is NOT CHECKED — red, never green. The job
+# runs on pull request events AND on comment events, because the
+# verdict arrives as a comment after the push; it writes one commit
+# status on the head sha so branch protection can require it.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created, edited, deleted]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  reviewer-verdict-at-head:
+    # a comment on a plain issue is not a verdict on anything
+    if: github.event_name == 'pull_request' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: the latest reviewer verdict names the current head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          # a built binary, not `go run`: go run appends "exit status N" to
+          # stderr on any failure, and that trailer — not the gate's verdict —
+          # is what a tail would hand the commit status (the reviewer's find)
+          go build -o /tmp/verdictgate ./scripts/verdictgate
+          set +e
+          out=$(/tmp/verdictgate -repo "$GITHUB_REPOSITORY" -pr "$PR" 2>&1); code=$?
+          set -e
+          printf '%s\n' "$out"
+          # one status on the head sha, under one context, saying what the gate said:
+          # its description is the gate's own last line, by prefix
+          head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.sha)
+          state=failure; [ "$code" -eq 0 ] && state=success
+          desc=$(printf '%s\n' "$out" | grep '^verdictgate:' | tail -1 | cut -c1-140)
+          [ -n "$desc" ] || desc="verdictgate: NOT CHECKED — the gate printed no verdict line (exit $code)"
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$head" \
+            -f state="$state" -f context=reviewer-verdict-at-head -f description="$desc" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+          # The verdict is the STATUS above and only that. The job exits clean
+          # whatever the gate said: a non-zero exit here makes Actions record a
+          # failing CheckRun under the same name, and check runs are not
+          # last-write-wins the way statuses are — on a fresh head, where no
+          # verdict exists yet by construction, that red would outlive every
+          # later PASS. Found on the original this was copied from (2026-09-09).
+          exit 0
