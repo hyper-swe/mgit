@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A `board-drift` status on every push to main (MGIT-178).** The merged
+  commits' `Refs:` trailers are compared against the tracked board as of its
+  last update; a ticket whose work has merged and which the board still lists
+  as open is named in the status and the job summary. A report, not a gate:
+  a commit that must land while its ticket stays open records why in a
+  `Stays-Open: MGIT-x — reason` trailer, and the report shows the reason
+  instead of counting it. `scripts/boardcheck` is the tool; it runs no git of
+  its own, so the comparison is reproducible from the documented log line.
+
 - **`mgit doctor` now says when the sandbox daemon cannot even load (MGIT-206).**
   A libkrun dependency vanished from a developer's Mac mid-day; every
   `mgit run` died at activation with the loader's "Library not loaded" line —

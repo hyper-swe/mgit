@@ -921,7 +921,11 @@ echo.Start(":8080") → change to "127.0.0.1:8080"
 
 **Process**
 - A PR merge is not a ticket close — closing, with the incident's
-  doctor check and regression scenario, is part of the merge ritual.
+  doctor check and regression scenario, is part of the merge ritual; a
+  merge without a ticket close is an incomplete merge. The `board-drift`
+  status on every main push names the merged tickets the board still
+  lists as open; a commit that must land while its ticket stays open
+  says why in a `Stays-Open: MGIT-x — reason` trailer.
   (MGIT-178; a fixed P0 sat 16 days as a false alarm.) And opening a PR
   is not done until the ticket carries an annotation naming the PR, the
   branch and the scenario tests — the reviewer's line 3 reads it before the

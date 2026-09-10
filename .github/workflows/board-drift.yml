@@ -1,0 +1,50 @@
+# Board drift: on every push to main, the tickets the merged commits' Refs
+# trailers name are compared against the tracked board (.mtix/tasks.json)
+# as of ITS last update. A ticket whose work has merged and which the board
+# still lists as open is drift; a commit that must land while its ticket
+# stays open says so in a `Stays-Open: MGIT-x — reason` trailer, and the
+# report shows the reason instead of counting it.
+#
+# This is a REPORT, not a gate: the job always ends clean, and the verdict
+# lives in the commit status `board-drift` on the pushed sha (state success
+# with a description that says "no drift" or names the drifting tickets) and
+# in the job summary. Gating the merge on the board would block the fix
+# behind the paperwork; the ruling makes the close part of the merge ritual,
+# and this makes a missed close visible the moment it happens. (MGIT-178)
+name: board-drift
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  board-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: tickets referenced since the board's last update, against the board
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          go build -o /tmp/boardcheck ./scripts/boardcheck
+          since=$(git log -1 --format=%H -- .mtix/tasks.json)
+          set +e
+          out=$(git log --no-merges \
+            --format='%h%x09%s%x09%(trailers:key=Refs,valueonly,separator=%x2C)%x09%(trailers:key=Stays-Open,valueonly,separator=%x2C)' \
+            "$since..HEAD" | /tmp/boardcheck -board .mtix/tasks.json 2>&1); code=$?
+          set -e
+          printf '%s\n' "$out"
+          { echo '## Board drift'; echo; echo '```'; printf '%s\n' "$out"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          desc=$(printf '%s\n' "$out" | grep '^boardcheck:' | tail -1 | cut -c1-140)
+          [ -n "$desc" ] || desc="boardcheck: NOT CHECKED — the tool printed no verdict line (exit $code)"
+          state=success; [ "$code" -eq 2 ] && state=error
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state="$state" -f context=board-drift -f description="$desc" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+          exit 0
