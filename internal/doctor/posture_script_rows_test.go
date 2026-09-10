@@ -18,7 +18,7 @@ func TestPostureScript_NamesOnlyRealDoctorRows(t *testing.T) {
 	script, err := os.ReadFile(filepath.Join("..", "..", "scripts", "e2e", "sandbox_posture.sh"))
 	require.NoError(t, err)
 	known := map[string]bool{}
-	for _, c := range []Check{GuestLocalhostCheck{}, BaseCurrencyCheck{}, GuestSyncVerifyCheck{}, GuestDeliveryCheck{}, HostDaemonsCheck{}, DuplicateDaemonsCheck{}} {
+	for _, c := range []Check{GuestLocalhostCheck{}, BaseCurrencyCheck{}, GuestSyncVerifyCheck{}, GuestDeliveryCheck{}, DaemonLoadsCheck{}, HostDaemonsCheck{}, DuplicateDaemonsCheck{}} {
 		known[c.Name()] = true
 	}
 	mentioned := regexp.MustCompile(`expect_row "\$[a-z]+" ([a-z/-]+) `).FindAllStringSubmatch(string(script), -1)

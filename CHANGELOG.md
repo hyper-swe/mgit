@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`mgit doctor` now says when the sandbox daemon cannot even load (MGIT-206).**
+  A libkrun dependency vanished from a developer's Mac mid-day; every
+  `mgit run` died at activation with the loader's "Library not loaded" line —
+  and doctor printed "No check found a known-bad condition", because every
+  daemon row read records of daemons already running and nothing spawned the
+  binary. The new row `daemon/loads` runs this install's `mgit-sandboxd
+  --version` (bounded), reports ok with the version it answered, failed with
+  the missing library and the platform's install commands when the loader
+  refused it, and not-checked with the reason on a core-only install with no
+  daemon binary. The posture gate asserts the row; INSTALL-SANDBOX.md carries
+  the recovery steps.
+
 ### Changed
 
 - **Guest execs run as the daemon's own user, not root (MGIT-151).** Every
