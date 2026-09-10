@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-08T14:19:18Z",
+  "exported_at": "2026-09-10T08:40:59Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4907,15 +4907,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-151",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "28f72b2312d0cbeae34e0aee9880882407d6e41585af4959ee80f51d9ac78c90",
       "created_at": "2026-08-20T13:35:16Z",
-      "updated_at": "2026-08-21T08:53:48Z",
+      "updated_at": "2026-09-10T08:40:58Z",
+      "closed_at": "2026-09-10T08:40:58Z",
       "uid": "01a01f62-153b-702e-8ebd-fb21219805e3"
     },
     {
@@ -5810,15 +5811,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit-183",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "ca5ed75b9a6ce8e40996183eb121e685e24503a651ad25a4fb7e3478829acb62",
       "created_at": "2026-09-02T20:56:56Z",
-      "updated_at": "2026-09-02T20:56:56Z",
+      "updated_at": "2026-09-08T14:56:41Z",
+      "closed_at": "2026-09-08T14:56:41Z",
       "uid": "01a063e9-1a60-7474-9eec-9643bd2066d3"
     },
     {
@@ -6244,15 +6246,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit-199",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "cd9c160c3922de092c1441ab9f86418ffb355e1e20cb427006c4e66fd3cd3718",
       "created_at": "2026-09-08T05:23:18Z",
-      "updated_at": "2026-09-08T05:23:18Z",
+      "updated_at": "2026-09-08T15:08:59Z",
+      "closed_at": "2026-09-08T15:08:59Z",
       "uid": "01a07f78-7f73-775a-935b-ac5fc41c939d"
     },
     {
@@ -6995,15 +6998,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit-203",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "694ba6a963970afb48472a87e9076a92a5e69f7be78ca44e719e661315cee34c",
       "created_at": "2026-09-08T13:30:34Z",
-      "updated_at": "2026-09-08T13:30:34Z",
+      "updated_at": "2026-09-10T08:40:53Z",
+      "closed_at": "2026-09-10T08:40:53Z",
       "uid": "01a08136-9894-71b1-a1a0-6ae3f837a7bd"
     },
     {
@@ -13706,6 +13710,13 @@
       "last_heartbeat": "2026-09-02T21:10:10Z"
     },
     {
+      "agent_id": "claude-mgit-183",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-183",
+      "last_heartbeat": "2026-09-08T14:29:35Z"
+    },
+    {
       "agent_id": "claude-mgit-188",
       "project": "MGIT",
       "state": "working",
@@ -13755,6 +13766,13 @@
       "last_heartbeat": "2026-09-08T04:53:14Z"
     },
     {
+      "agent_id": "claude-mgit-199",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-199",
+      "last_heartbeat": "2026-09-08T14:34:17Z"
+    },
+    {
       "agent_id": "claude-mgit-200",
       "project": "MGIT",
       "state": "working",
@@ -13767,6 +13785,13 @@
       "state": "working",
       "current_node_id": "MGIT-201",
       "last_heartbeat": "2026-09-08T11:40:18Z"
+    },
+    {
+      "agent_id": "claude-mgit-203",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-203",
+      "last_heartbeat": "2026-09-08T14:25:37Z"
     },
     {
       "agent_id": "claude-mgit-6112",
@@ -13945,5 +13970,5 @@
   ],
   "sessions": null,
   "node_count": 468,
-  "checksum": "67c716a2b9c0428f05670fbe4c7c5135f5d4496947f9c34f218206200da55c9c"
+  "checksum": "bcbe66f3f7f75695fe0913ab04f2ce2656abc7828addc8d0099cf9d8ebf4f10a"
 }
