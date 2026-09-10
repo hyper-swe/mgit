@@ -254,12 +254,15 @@ assert_ok "sandbox land succeeds" -- mgit sandbox land --task SB-1
 # waited out a 15 s dial timeout to fail with the same advisory. The kill
 # needs a mount, so it runs --as-root; the minimal firecracker rootfs links no
 # mount, so this scenario is libkrun's (it is the backend a developer runs).
+# The mount point is under /tmp because on Linux/libkrun the guest's root
+# overlay refuses writes anywhere else (MGIT-89): at /mnt the kill would never
+# happen and this step would fail for a reason that is not MGIT-99's.
 if [ "$backend" = "libkrun" ]; then
 	echo "== a dead guest is reported dead and refused at once =="
 	mgit work wt2 --task-id SB-2 --sandbox --image "$MGIT_GUEST_IMAGE" --memory-mb 512 >/dev/null
 	assert_ok "the second guest answers" -- sh -c 'cd wt2 && mgit run -- /bin/echo alive'
 	mgit sandbox exec --task SB-2 --as-root -- sh -c \
-		'mkdir -p /mnt/t && mount -t tmpfs -o size=2g tmpfs /mnt/t && dd if=/dev/zero of=/mnt/t/x bs=1M count=1500' \
+		'mkdir -p /tmp/t && mount -t tmpfs -o size=2g tmpfs /tmp/t && dd if=/dev/zero of=/tmp/t/x bs=1M count=1500' \
 		>/dev/null 2>&1 || true
 	state="$(mgit sandbox status SB-2 --json | sed -n 's/.*"state":"\([^"]*\)".*/\1/p')"
 	[ "$state" = "dead" ] || _e2e_fail "a killed guest reads '$state', expected dead (MGIT-99)"
