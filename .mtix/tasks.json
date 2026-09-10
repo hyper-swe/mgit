@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-10T08:40:59Z",
+  "exported_at": "2026-09-10T12:39:45Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6143,15 +6143,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit-195",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "11eda489d2c65dcb6d2ca2248dc71460994e47a197f4925e5decde3da37e7490",
       "created_at": "2026-09-04T17:56:21Z",
-      "updated_at": "2026-09-04T17:56:21Z",
+      "updated_at": "2026-09-10T12:39:44Z",
+      "closed_at": "2026-09-10T12:39:44Z",
       "uid": "01a06d90-7d9e-7d79-ab92-19cbe7b7329f"
     },
     {
@@ -6948,15 +6949,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-201",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "9d70999dd0251406cc9c2611f09a2127450ca2dce1efe925ab7d88934931a83f",
       "created_at": "2026-09-08T11:36:10Z",
-      "updated_at": "2026-09-08T11:40:18Z",
+      "updated_at": "2026-09-10T12:39:40Z",
+      "closed_at": "2026-09-10T12:39:40Z",
       "uid": "01a080cd-dd57-71f7-a6cc-aafc2e9030a6"
     },
     {
@@ -13745,6 +13747,13 @@
       "last_heartbeat": "2026-09-03T11:33:38Z"
     },
     {
+      "agent_id": "claude-mgit-195",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-195",
+      "last_heartbeat": "2026-09-10T08:42:57Z"
+    },
+    {
       "agent_id": "claude-mgit-196",
       "project": "MGIT",
       "state": "working",
@@ -13970,5 +13979,5 @@
   ],
   "sessions": null,
   "node_count": 468,
-  "checksum": "bcbe66f3f7f75695fe0913ab04f2ce2656abc7828addc8d0099cf9d8ebf4f10a"
+  "checksum": "541994fb0742e97ccbb7f41a89eb2d9eda5073ff552b1cf5267b0c01bc459d49"
 }
