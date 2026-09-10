@@ -201,11 +201,13 @@ if [ "$backend" = "kvm" ]; then
 	# is asserted as the documented state (the MGIT-87 pattern: link the
 	# applet and this line turns red until it is updated), never skipped;
 	# delivery is a launch-time image with nothing to ask, not-checked.
+	expect_row "$docjson" daemon/loads ok
 	expect_row "$docjson" guest/localhost ok
 	expect_row "$docjson" guest/sync-verify failed
 	expect_row "$docjson" guest/delivery not-checked
 	[ "$docrc" -ne 0 ] || _e2e_fail "doctor exited 0 with a failed row"
 else
+	expect_row "$docjson" daemon/loads ok
 	expect_row "$docjson" guest/localhost ok
 	expect_row "$docjson" guest/sync-verify ok
 	expect_row "$docjson" guest/delivery ok

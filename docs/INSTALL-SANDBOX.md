@@ -161,6 +161,23 @@ If you skip this step and try to start a sandbox anyway, nothing silently
 degrades: the daemon cannot load, and `mgit` reports the dynamic loader's
 error together with the three commands above.
 
+**If the sandbox stops starting on a machine where it used to work**, the
+usual cause is a library libkrun links that a Homebrew cleanup removed:
+libkrun lives in a tap Homebrew refuses to load until trusted, so its
+dependencies (virglrenderer, libepoxy, libkrunfw) can look like orphans to
+`brew autoremove`. `mgit doctor` names it — the row `daemon/loads` runs
+`mgit-sandboxd --version` and reports the library the loader refused — and
+so does any sandbox verb at activation. To see it yourself:
+
+```bash
+otool -L "$(brew --prefix)/opt/libkrun/lib/libkrun.dylib"   # what libkrun links
+brew list --versions virglrenderer libepoxy libkrunfw       # which of them are installed
+brew install <the missing one>                              # e.g. brew install virglrenderer
+```
+
+Core mgit is unaffected throughout: only the daemon links these libraries.
+Refs: MGIT-206
+
 ### libkrun builds must have networking enabled
 
 Builds that link the **libkrun** backend — every macOS build, and Linux builds
