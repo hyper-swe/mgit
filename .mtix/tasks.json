@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-10T12:39:45Z",
+  "exported_at": "2026-09-10T13:15:30Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7013,6 +7013,31 @@
       "uid": "01a08136-9894-71b1-a1a0-6ae3f837a7bd"
     },
     {
+      "id": "MGIT-204",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 204,
+      "project": "MGIT",
+      "title": "The daemon binds its socket before it writes its host-wide record: a client can find the socket and no record — failed the v0.6.6 publish on the mac runner",
+      "description": "Found 2026-09-10 by the v0.6.6 release run (34478080045): GoReleaser's `before` hook runs `go test ./... -count=1` on the macOS runner, and TestDaemon_WritesItsRecordBesideTheSocket_AndRemovesItOnExit failed once with `open …/daemon.json: no such file or directory`. Every e2e gate had passed; the tag v0.6.6 exists at f972537 with no release object.\n\nCause, from internal/sandboxd/daemon.go's Run: `listen` (the socket is bound and accepting) → `claimHostRoot` → `writeRecord`. A client that connects the instant the socket answers — the test does exactly that — can read the record's path before the record exists. MGIT-191's contract, \"while it runs a daemon is findable host-wide\", has a window at start-up. On the dev Mac the window was not hit in 100 runs; the mac runner hit it once, which is enough.\n\nFix: claim the host root and write the record BEFORE the socket is bound, and remove the record if the bind fails; a test seam that widens the window (a hook after listen) so the pin fails deterministically on the old order, not by timing.\n\nConsequence for the release: by R-H298 a failed publish burns the number; the founder names the next tag and its commit (DECISION NEEDED in the lane log).",
+      "prompt": "",
+      "acceptance": "- The record exists on disk before the socket accepts; a test with the window widened by a hook fails on the old order and passes on the new, and the existing hygiene test stays green under -count=200.\n- If the bind fails after the record is written, the record is removed.\n- The release hook's test run on the mac runner is green on the next release run.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "claude-mgit-dev-05",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "b33c0429c467d77a4b162967a8a6b1fa9f54e2286c920ecd1f43039d35f438ad",
+      "created_at": "2026-09-10T13:08:32Z",
+      "updated_at": "2026-09-10T13:15:29Z",
+      "uid": "01a08b6f-251b-76f5-88b1-3bdb7753d3a1"
+    },
+    {
       "id": "MGIT-21",
       "parent_id": "",
       "depth": 0,
@@ -13887,6 +13912,13 @@
       "last_heartbeat": "2026-08-12T10:52:09Z"
     },
     {
+      "agent_id": "claude-mgit-dev-05",
+      "project": "MGIT",
+      "state": "working",
+      "current_node_id": "MGIT-204",
+      "last_heartbeat": "2026-09-10T13:15:29Z"
+    },
+    {
       "agent_id": "claude-mgit-lead",
       "project": "MGIT",
       "state": "working",
@@ -13978,6 +14010,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 468,
-  "checksum": "541994fb0742e97ccbb7f41a89eb2d9eda5073ff552b1cf5267b0c01bc459d49"
+  "node_count": 469,
+  "checksum": "de5407cf1d54e64731a32181178e1c49acac159c99f00e384b30e4b119f1a7f6"
 }
