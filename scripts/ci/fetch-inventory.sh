@@ -172,7 +172,10 @@ if [ -f "$ACTIONS_FILE" ]; then
 			bare=$((bare + 1))
 			actions_rows="${actions_rows}$(printf '%-8s %s:%s\t%s\t%s' BARE "${f#"$ROOT"/}" "$n" "uses: $use" "")"$'\n'
 		fi
-	done < <(grep -rn 'uses:' "$ROOT/.github/workflows" 2>/dev/null | grep -v '^[^:]*:[0-9]*:[[:space:]]*#')
+	# Anchored to a STEP KEY: `uses:` at the start of a list item or a key,
+	# never the substring inside `statuses:` (a permission line, which read
+	# as an action named "write" — MGIT-201).
+	done < <(grep -rnE '^[[:space:]]*-?[[:space:]]*uses:' "$ROOT/.github/workflows" 2>/dev/null | grep -v '^[^:]*:[0-9]*:[[:space:]]*#')
 fi
 
 # --- report -----------------------------------------------------------------
