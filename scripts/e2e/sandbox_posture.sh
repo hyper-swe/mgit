@@ -162,6 +162,70 @@ if [ "$runrc" -ne 0 ]; then
 fi
 assert_contains "$runout" "ok" "mgit run -- echo ok executed inside the sandbox"
 
+# `mgit doctor` inside the booted task worktree, asserted BY PROPERTY: each
+# guest row's STATUS from --json, never a rendered sentence. The LIVE legs
+# exercised launch/exec/sync/land and never asked doctor a thing, so a guest
+# row that regressed on Linux was caught by nobody (MGIT-195). Expectations
+# dispatch on the guest input like the launch above: a composed base is the
+# libkrun form, where every guest row can run; a kernel+rootfs image is the
+# firecracker form, which delivers the worktree as a launch-time image, so
+# sync-verify and delivery have nothing to ask and must read not-checked —
+# asserted, not skipped. Refs: MGIT-195, MGIT-159, MGIT-164, MGIT-174, MGIT-192
+echo "== mgit doctor inside the task worktree, rows by status =="
+doctor_status() { # $1 json, $2 row name -> the row's status, or MISSING
+	printf '%s' "$1" | python3 -c '
+import json, sys
+name = sys.argv[1]
+report = json.load(sys.stdin)
+rows = report["checks"] if isinstance(report, dict) else report
+print(next((r["status"] for r in rows if r.get("name") == name), "MISSING"))' "$2"
+}
+expect_row() { # $1 json, $2 row, $3 expected status
+	got="$(doctor_status "$1" "$2")"
+	[ "$got" = "$3" ] || _e2e_fail "doctor row $2: status $got, expected $3"
+	pass "doctor row $2: $3"
+}
+docjson="$(cd wt && mgit doctor --json 2>/dev/null)" && docrc=0 || docrc=$?
+[ -n "$docjson" ] || _e2e_fail "mgit doctor --json printed nothing (exit $docrc)"
+# The backend is what the sandbox REPORTS, not what the script guessed from
+# its inputs: the expectations below are the backend's, and a guess would be
+# a second source of truth for the same fact.
+backend="$(mgit sandbox status SB-1 --json | sed -n 's/.*"backend":"\([^"]*\)".*/\1/p')"
+[ -n "$backend" ] || _e2e_fail "sandbox status --json names no backend"
+pass "sandbox backend: $backend"
+if [ "$backend" = "kvm" ]; then
+	expect_row "$docjson" guest/localhost ok
+	expect_row "$docjson" guest/sync-verify not-checked
+	expect_row "$docjson" guest/delivery not-checked
+else
+	expect_row "$docjson" guest/localhost ok
+	expect_row "$docjson" guest/sync-verify ok
+	expect_row "$docjson" guest/delivery ok
+	expect_row "$docjson" base/currency ok
+	[ "$docrc" -eq 0 ] || _e2e_fail "doctor exited $docrc with every guest row ok"
+	# The tamper: change one delivered byte in the daemon's staged copy of the
+	# worktree on the host — the tree the guest reads — and doctor must say the
+	# guest reads it differently, with exit 1; restore it and doctor recovers.
+	sbid="$(mgit sandbox status SB-1 --json | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')"
+	[ -n "$sbid" ] || _e2e_fail "sandbox status --json printed no id"
+	# The daemon's runtime dir is XDG_RUNTIME_DIR or the temp dir, and the
+	# per-sandbox state dir is named by the TAIL of the sandbox id.
+	runtime_base="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+	staged="$(find "$runtime_base/mgit-$(id -u)" -type d -name worktree-staging -path "*${sbid: -8}*" 2>/dev/null | head -1)"
+	[ -n "$staged" ] || _e2e_fail "no staged tree for sandbox $sbid under $runtime_base/mgit-$(id -u) (libkrun stages the worktree per VM)"
+	victim="$staged/CLAUDE.md"
+	[ -f "$victim" ] || _e2e_fail "the delivered tree has no CLAUDE.md to tamper with"
+	cp "$victim" "$work/victim.orig"
+	printf '\n# tampered on the host after delivery (MGIT-195)\n' >> "$victim"
+	tampered="$(cd wt && mgit doctor --json 2>/dev/null)" && trc=0 || trc=$?
+	expect_row "$tampered" guest/delivery failed
+	[ "$trc" -ne 0 ] || _e2e_fail "doctor exited 0 with a delivered file tampered on the host"
+	pass "doctor exited $trc on the tampered delivery"
+	cp "$work/victim.orig" "$victim"
+	restored="$(cd wt && mgit doctor --json 2>/dev/null)" || true
+	expect_row "$restored" guest/delivery ok
+fi
+
 echo "== land round-trip =="
 ( cd wt
   printf 'contained\n' > built.txt
