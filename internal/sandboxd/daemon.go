@@ -44,8 +44,12 @@ type Config struct {
 	Manager       model.SandboxManager // supervised sandbox backend
 	Logger        *slog.Logger         // structured logging (slog only)
 	Clock         func() time.Time     // injected clock
-	IdleGrace     time.Duration        // zero-sandbox linger before exit
-	PollInterval  time.Duration        // idle-check cadence
+	// afterListen, when set by a test, runs right after the socket is bound and
+	// before the daemon serves: it widens the start-up window the record must
+	// already be written in (MGIT-204).
+	afterListen  func()
+	IdleGrace    time.Duration // zero-sandbox linger before exit
+	PollInterval time.Duration // idle-check cadence
 	// Service dispatches authenticated control requests (launch/exec/
 	// list/remove/status). When nil the daemon greets only — a backend
 	// build without a wired service still authenticates and reports
@@ -178,19 +182,29 @@ func New(cfg Config) (*Daemon, error) {
 // files from crashed predecessors are replaced (restart safety).
 // Refs: FR-17.16, FR-17.34, NFR-17.6
 func (d *Daemon) Run(ctx context.Context) error {
-	listener, lock, err := d.listen(ctx)
-	if err != nil {
-		return err
-	}
-	defer d.cleanupSocket(listener, lock)
+	// The host root's claim and the host-wide record come BEFORE the socket
+	// is bound: the socket answering must imply the record exists. Bound
+	// first and recorded after, a client that connected the instant the
+	// socket answered could read the record's path and find nothing — once,
+	// on the mac runner, in the v0.6.6 release hook (MGIT-204). A record
+	// whose socket is not yet bound is a live pid a reader retries; a socket
+	// whose record is missing was a daemon nobody could find.
 	hostClaim, err := d.claimHostRoot()
 	if err != nil {
 		return err
 	}
 	defer hostClaim.Release()
-	defer d.noteAbandonedPass()
 	d.writeRecord()
 	defer d.removeRecord()
+	listener, lock, err := d.listen(ctx)
+	if err != nil {
+		return err
+	}
+	defer d.cleanupSocket(listener, lock)
+	defer d.noteAbandonedPass()
+	if d.cfg.afterListen != nil {
+		d.cfg.afterListen()
+	}
 
 	d.cfg.Logger.Info("sandboxd started", "event", "started", "socket", d.cfg.SocketPath)
 
