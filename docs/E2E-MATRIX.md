@@ -157,14 +157,16 @@ Three things fall out of the table and shaped the gate:
   profile — bring-up, 2 churn rounds, a ceiling refusal, a daemon SIGKILL with
   execs in flight, a drain, a re-admission, and a concurrent-provisioning check
   — runs in **2m35s**. The long profile (N=8, 4 rounds) is the nightly.
-- **N=8 is where the stock host-wide count cap refuses** (`--max-sandboxes`,
-  default 8), so the long profile also sits exactly on the aggregate limit.
+- **N=8 is where the stock host-wide count cap refuses** (host policy's
+  `max_concurrent_sandboxes`, default 8; `--max-sandboxes` overrides it), so
+  the long profile also sits exactly on the aggregate limit.
 
 The memory ceiling is lowered through host policy (`max_total_memory_percent`
 in `<repo>/.mgit/sandbox/policy.json`) so the aggregate refusal is reachable in
-about one extra boot rather than four. The count dimension cannot be used for
-this: `max_concurrent_sandboxes` in host policy is not wired to the ceiling
-(MGIT-119).
+about one extra boot rather than four. The count dimension is set in the same
+policy file (`max_concurrent_sandboxes`, honored since MGIT-119) to N+2, and
+phase 3b walks into it with launches too small to trouble the memory ceiling,
+so both dimensions of the refusal are proven where policy put them.
 
 Refs: MGIT-48, MGIT-53. Companion: [MCP-PARITY.md](MCP-PARITY.md) (surface
 parity), [release/RELEASE-CHECKLIST.md](release/RELEASE-CHECKLIST.md) (live
