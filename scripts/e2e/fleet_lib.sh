@@ -140,7 +140,12 @@ fleet_set_ceiling() {
 	pct=$(((want_mb * 100 + host_mb - 1) / host_mb))
 	[ "$pct" -ge 1 ] || pct=1
 	mkdir -p "$root/.mgit/sandbox"
-	printf '{"max_total_memory_percent":%d}\n' "$pct" >"$root/.mgit/sandbox/policy.json"
+	# The COUNT cap is set beside the memory one, with the same headroom rule
+	# plus one: the fleet, the churn transient, and one more so phase 3 hits
+	# the MEMORY ceiling first (at fleet+1) and phase 3b can then walk into
+	# the count cap with launches too small to trouble the memory dimension.
+	# Honored since MGIT-119; before it the field was read by nothing.
+	printf '{"max_total_memory_percent":%d,"max_concurrent_sandboxes":%d}\n' "$pct" "$((fleet + 2))" >"$root/.mgit/sandbox/policy.json"
 	printf 'host_mb=%d; ceil_pct=%d; ceil_mb=%d\n' "$host_mb" "$pct" "$((host_mb * pct / 100))"
 }
 

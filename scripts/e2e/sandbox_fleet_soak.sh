@@ -93,23 +93,17 @@ require_mgit
 
 PROFILE="${MGIT_SOAK_PROFILE:-short}"
 
-# STOCK_MAX_CONCURRENT is the host-wide COUNT ceiling every daemon this gate can
-# reach is running under: `mgit-sandboxd --max-sandboxes`, default 8.
+# STOCK_MAX_CONCURRENT is host policy's default max_concurrent_sandboxes (8),
+# the host-wide COUNT ceiling a daemon runs under when nothing sets it.
 #
-# THE SOAK CANNOT RAISE IT. The CLI auto-spawns the daemon with a fixed argument
-# list and never passes that flag, and host policy's max_concurrent_sandboxes is
-# inert (MGIT-119), so no profile and no policy file can move this number.
-#
-# A PROFILE MUST THEREFORE LEAVE ITS OWN HEADROOM. fleet_set_ceiling already
-# leaves exactly one sandbox of headroom in the MEMORY dimension, for the reason
-# it states: "the ceiling must admit FLEET+1 or the soak would be refusing its
-# own setup". The count dimension needs the same headroom and did not get it.
-# The long profile ran a standing fleet of 8 and then created a 9th transient
-# sandbox for churn, which the count cap refuses on EVERY host, so churn round 1
-# could never pass -- and, because the report dropped the reason (MGIT-122), it
-# read as the fleet being disturbed rather than as the gate refusing its own
-# setup. When MGIT-119 lands and the count cap becomes settable from host
-# policy, fleet_set_ceiling can raise it and this can go back to 8.
+# Since MGIT-119 the daemon reads that field from host policy, so
+# fleet_set_ceiling sets it beside the memory percentage — to FLEET+2: the
+# fleet, the churn transient, and one more so that phase 3 meets the MEMORY
+# ceiling first (at FLEET+1) and phase 3b can then walk into the count cap.
+# Before MGIT-119 the field was inert, the CLI never passed --max-sandboxes,
+# and the long profile's standing fleet of 8 plus a 9th transient was refused
+# by the count cap on every host (MGIT-122 hid the reason). The long profile
+# keeps one slot of headroom below the stock 8 as a matter of course.
 STOCK_MAX_CONCURRENT=8
 
 case "$PROFILE" in
@@ -593,6 +587,58 @@ if [ "$ceiling_hit" = "1" ]; then
 else
 	_e2e_fail "INVARIANT I6 (CEILING) BROKE: host policy set the fleet ceiling to ~${ceil_mb} MB, which ${SB_MEM_MB} MB sandboxes must exhaust at $((ceil_mb / SB_MEM_MB)), yet $guard sandboxes were admitted without a single refusal — the aggregate limit is not being enforced, so nothing bounds a worker pool's memory on this host (MGIT-98)"
 fi
+
+# ---------------------------------------------------------------------------
+# PHASE 3b — the COUNT cap binds where host policy says (MGIT-119)
+# ---------------------------------------------------------------------------
+echo
+echo "== phase 3b: walk into the concurrent-sandbox cap host policy set (max_concurrent_sandboxes=$((FLEET + 2))) =="
+# The fleet is FLEET strong and the memory ceiling (~$ceil_mb MB) has room
+# for about half a stock sandbox beyond FLEET+1 -- so launches declaring a
+# small memory never touch the memory dimension and only the COUNT cap can
+# refuse them. Policy says FLEET+2: the (FLEET+1)th and (FLEET+2)th small
+# launches are admitted, the (FLEET+3)th is refused naming the cap. Admitting
+# it is not "a roomy host": it is a policy field the daemon ignored.
+COUNT_CAP=$((FLEET + 2))
+SMALL_MB=$((SB_MEM_MB / 4))
+# Phase 3 leaves the sandboxes the MEMORY ceiling admitted beyond the fleet
+# (at least X-$((FLEET + 1))) running; take them down so this phase starts from
+# exactly FLEET and the arithmetic below is the policy's, not the rounding's.
+k=$FLEET
+while [ "$k" -lt "$guard" ]; do
+	k=$((k + 1))
+	mgit sandbox remove "X-$k" --force >/dev/null 2>&1 || true
+done
+count_hit=0
+count_msg=""
+count_tasks=""
+j=0
+while [ "$j" -lt 3 ]; do
+	j=$((j + 1))
+	t="C-$j"
+	track "$t"
+	count_tasks="$count_tasks $t"
+	provision "$t" || _e2e_fail "could not provision worktree for $t: $(why "$t")"
+	mgit sandbox launch --task-id "$t" --worktree "$work/wt-$t" \
+		--image "$MGIT_GUEST_IMAGE" --memory-mb "$SMALL_MB" --cpus "$SB_CPUS" >/dev/null 2>&1 || true
+	if out="$(mgit sandbox exec --task "$t" -- /bin/echo . 2>&1)"; then
+		[ "$j" -lt 3 ] || _e2e_fail "INVARIANT I6 (COUNT CAP) BROKE: host policy set max_concurrent_sandboxes=$COUNT_CAP, yet a $((FLEET + j))th sandbox was admitted — the policy field is not being enforced (MGIT-119)"
+		continue
+	fi
+	count_hit=1
+	count_msg="$out"
+	[ "$j" -eq 3 ] || _e2e_fail "the count cap refused the $((FLEET + j))th sandbox, below the $COUNT_CAP host policy set (message: $out)"
+	break
+done
+[ "$count_hit" = "1" ] || _e2e_fail "INVARIANT I6 (COUNT CAP) BROKE: no refusal at $((FLEET + 3)) sandboxes under max_concurrent_sandboxes=$COUNT_CAP"
+assert_contains "$count_msg" "host-wide cap $COUNT_CAP" \
+	"I6: the count refusal names the cap host policy set ($COUNT_CAP)"
+assert_contains "$count_msg" "ceiling exceeded" \
+	"I6: the count refusal is the fleet ceiling, not a per-sandbox limit"
+for t in $count_tasks; do
+	mgit sandbox remove "$t" --force >/dev/null 2>&1 || true
+done
+pass "I6: the concurrent-sandbox cap bound at $COUNT_CAP, where host policy put it"
 
 # ---------------------------------------------------------------------------
 # PHASE 4 — chaos: SIGKILL the daemon with execs in flight

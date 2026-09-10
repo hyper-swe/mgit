@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`max_concurrent_sandboxes` in host policy now bounds the fleet (MGIT-119, MGIT-101).**
+  The field was settable, validated, documented and read by nothing: the
+  daemon took its count cap from `--max-sandboxes` alone, whose default of 8
+  the CLI never changed, so an operator who lowered the policy field watched
+  sandboxes boot past it in silence. The count dimension now resolves the way
+  the memory one has since MGIT-98 — the flag if passed (its default is now 0,
+  "resolve from policy"), else the policy field, a policy zero warned about as
+  a deliberate disable — and the daemon's `fleet_memory_ceiling` startup record
+  states both dimensions with their sources. The fleet soak sets the count cap
+  in policy and walks into it (phase 3b).
+
 - **A guest that died is reported `dead`, not `running` (MGIT-99).** When a
   guest's kernel killed everything (memory exhaustion, most often), the
   sandbox stayed `running`, every later command waited out the 15 s dial

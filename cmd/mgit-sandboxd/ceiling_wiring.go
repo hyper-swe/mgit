@@ -72,18 +72,61 @@ type fleetCeiling struct {
 	source string
 	// hostMemoryMB is the measured host physical memory; 0 when unprobed.
 	hostMemoryMB int
+	// maxConcurrent is the count cap handed to CeilingManager; 0 disables the
+	// count dimension and is only ever reached deliberately.
+	maxConcurrent int
+	// concurrentSource is one of the ceilingSource* constants, for the count.
+	concurrentSource string
 }
 
-// resolveFleetCeiling determines the aggregate memory ceiling in force.
+// resolveFleetCount is the count dimension of resolveFleetCeiling: flag, else
+// policy, with a policy zero warned about rather than silently honored — a
+// fleet with no count cap is bounded by memory alone, which on a RAM-rich,
+// core-poor host is the wrong dimension. Refs: FR-17.26, MGIT-119, MGIT-101
+func resolveFleetCount(p model.SandboxPolicy, override int, logger *slog.Logger) (count int, source string) {
+	switch {
+	case override > 0:
+		return override, ceilingSourceFlag
+	case p.MaxConcurrentSandboxes > 0:
+		return p.MaxConcurrentSandboxes, ceilingSourcePolicy
+	default:
+		logger.Warn("concurrent-sandbox cap is DISABLED by host policy (max_concurrent_sandboxes=0); "+
+			"only the memory ceiling bounds the fleet",
+			"event", "fleet_count_cap_disabled", "policy_field", "max_concurrent_sandboxes")
+		return 0, ceilingSourceDisabled
+	}
+}
+
+// ceilingOverrides are the operator's explicit flags for the two fleet
+// dimensions; zero means "not passed — resolve from host policy". Both flags
+// default to zero for exactly that reason: a default of 8 for --max-sandboxes
+// was indistinguishable from an operator choosing 8, and it was the only
+// count ever in force (MGIT-119, MGIT-101).
+type ceilingOverrides struct {
+	memoryMB int
+	count    int
+}
+
+// resolveFleetCeiling determines the aggregate ceiling in force, in both of
+// its dimensions.
 //
-// Precedence: an explicit --max-memory-mb, else the host policy percentage
-// resolved against measured host memory, else — if the host cannot be measured
-// — a conservative absolute. It NEVER resolves to "unlimited" by accident;
-// only an operator who sets max_total_memory_percent to 0 gets that, and it is
-// logged as the deliberate choice it is. Refs: FR-17.26, SEC-09, MGIT-98
-func resolveFleetCeiling(p model.SandboxPolicy, overrideMB int,
+// Memory precedence: an explicit --max-memory-mb, else the host policy
+// percentage resolved against measured host memory, else — if the host cannot
+// be measured — a conservative absolute. It NEVER resolves to "unlimited" by
+// accident; only an operator who sets max_total_memory_percent to 0 gets that,
+// and it is logged as the deliberate choice it is.
+//
+// Count precedence is the same shape: an explicit --max-sandboxes, else host
+// policy's max_concurrent_sandboxes (default 8), and a policy zero is a
+// deliberate, logged disable. Before MGIT-119 the policy field was read by
+// nothing — settable, validated, documented and inert — and the CLI never
+// passes the flag, so every daemon ran at the flag's hard-coded 8.
+// Refs: FR-17.26, SEC-09, MGIT-98, MGIT-119, MGIT-101
+func resolveFleetCeiling(p model.SandboxPolicy, overrides ceilingOverrides,
 	probe func() (uint64, error), logger *slog.Logger) fleetCeiling {
 	c := fleetCeiling{defaultMemoryMB: p.MemoryMB}
+	c.maxConcurrent, c.concurrentSource = resolveFleetCount(p, overrides.count, logger)
+	overrideMB := overrides.memoryMB
 	switch {
 	case overrideMB > 0:
 		c.maxTotalMemoryMB, c.source = overrideMB, ceilingSourceFlag
@@ -150,13 +193,16 @@ func ceilingFromPolicy(percent int, probe func() (uint64, error)) (ceilingMB, ho
 // operator's stated percentage would oversubscribe a host they had sized on
 // purpose. Refs: FR-17.26, MGIT-98
 func logFleetCeiling(c fleetCeiling, p model.SandboxPolicy, logger *slog.Logger) {
-	logger.Info("sandbox fleet memory ceiling resolved",
+	logger.Info("sandbox fleet ceiling resolved: memory and concurrent-sandbox count",
 		"event", "fleet_memory_ceiling",
 		"ceiling_mb", c.maxTotalMemoryMB,
 		"source", c.source,
 		"host_memory_mb", c.hostMemoryMB,
 		"policy_percent", p.MaxTotalMemoryPercent,
 		"accounted_default_mb", c.defaultMemoryMB,
+		"max_concurrent", c.maxConcurrent,
+		"concurrent_source", c.concurrentSource,
+		"policy_max_concurrent", p.MaxConcurrentSandboxes,
 		"counts", "admitted memory (declared per sandbox), not resident memory")
 
 	if c.maxTotalMemoryMB > 0 && c.defaultMemoryMB > 0 && c.maxTotalMemoryMB < c.defaultMemoryMB {

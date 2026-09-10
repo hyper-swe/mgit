@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"os"
@@ -65,7 +66,7 @@ func TestResolveFleetCeiling_FromPolicyPercent_NeedsNoOperatorFlag(t *testing.T)
 			p := model.DefaultSandboxPolicy()
 			p.MaxTotalMemoryPercent = tt.percent
 
-			got := resolveFleetCeiling(p, 0, probeOf(tt.hostMiB), testLogger())
+			got := resolveFleetCeiling(p, ceilingOverrides{}, probeOf(tt.hostMiB), testLogger())
 
 			assert.Equal(t, tt.wantCeiling, got.maxTotalMemoryMB)
 			assert.Equal(t, tt.wantHostMB, got.hostMemoryMB)
@@ -83,7 +84,7 @@ func TestResolveFleetCeiling_FromPolicyPercent_NeedsNoOperatorFlag(t *testing.T)
 func TestResolveFleetCeiling_FlagOverridesPolicy(t *testing.T) {
 	p := model.DefaultSandboxPolicy()
 
-	got := resolveFleetCeiling(p, 3000, probeOf(16384), testLogger())
+	got := resolveFleetCeiling(p, ceilingOverrides{memoryMB: 3000}, probeOf(16384), testLogger())
 
 	assert.Equal(t, 3000, got.maxTotalMemoryMB, "the explicit flag wins over the policy percent")
 	assert.Equal(t, ceilingSourceFlag, got.source)
@@ -98,7 +99,7 @@ func TestResolveFleetCeiling_ProbeFails_FailsClosedNotUnlimited(t *testing.T) {
 	var logs bytes.Buffer
 	p := model.DefaultSandboxPolicy()
 
-	got := resolveFleetCeiling(p, 0, failingProbe, captureLogger(&logs))
+	got := resolveFleetCeiling(p, ceilingOverrides{}, failingProbe, captureLogger(&logs))
 
 	assert.Equal(t, conservativeCeilingMB, got.maxTotalMemoryMB)
 	assert.NotZero(t, got.maxTotalMemoryMB,
@@ -121,7 +122,7 @@ func TestResolveFleetCeiling_PolicyPercentZero_IsAnExplicitDisable(t *testing.T)
 	p := model.DefaultSandboxPolicy()
 	p.MaxTotalMemoryPercent = 0
 
-	got := resolveFleetCeiling(p, 0, probeOf(16384), captureLogger(&logs))
+	got := resolveFleetCeiling(p, ceilingOverrides{}, probeOf(16384), captureLogger(&logs))
 
 	assert.Zero(t, got.maxTotalMemoryMB, "an explicit policy 0 disables the memory dimension")
 	assert.Equal(t, ceilingSourceDisabled, got.source)
@@ -144,7 +145,7 @@ func TestResolveFleetCeiling_SmallHost_ExplainsThatNoDefaultLaunchFits(t *testin
 	var logs bytes.Buffer
 	p := model.DefaultSandboxPolicy() // MemoryMB 2048
 	// A 2 GiB host at 50% leaves 1024 MB — below one default sandbox.
-	got := resolveFleetCeiling(p, 0, probeOf(2048), captureLogger(&logs))
+	got := resolveFleetCeiling(p, ceilingOverrides{}, probeOf(2048), captureLogger(&logs))
 
 	assert.Equal(t, 1024, got.maxTotalMemoryMB, "the operator's stated percentage is honored, not quietly raised")
 	assert.Equal(t, 2048, got.defaultMemoryMB)
@@ -164,7 +165,7 @@ func TestResolveFleetCeiling_NeverRoundsDownToUnlimited(t *testing.T) {
 	p.MaxTotalMemoryPercent = 1
 
 	// 1% of a 64 MiB host truncates to 0 MB.
-	got := resolveFleetCeiling(p, 0, probeOf(64), testLogger())
+	got := resolveFleetCeiling(p, ceilingOverrides{}, probeOf(64), testLogger())
 
 	assert.Positive(t, got.maxTotalMemoryMB,
 		"a rounding artifact must never disable the ceiling; 0 means unlimited downstream")
@@ -189,7 +190,7 @@ func TestResolveFleetCeiling_HostileProbeAndPolicy_FailClosed(t *testing.T) {
 			p := model.DefaultSandboxPolicy()
 			p.MaxTotalMemoryPercent = tt.percent
 
-			got := resolveFleetCeiling(p, 0, tt.probe, testLogger())
+			got := resolveFleetCeiling(p, ceilingOverrides{}, tt.probe, testLogger())
 
 			assert.Equal(t, conservativeCeilingMB, got.maxTotalMemoryMB)
 			assert.Equal(t, ceilingSourceFallback, got.source)
@@ -204,7 +205,7 @@ func TestResolveFleetCeiling_HostileProbeAndPolicy_FailClosed(t *testing.T) {
 func TestResolveFleetCeiling_AbsurdHostSize_StaysAPositiveCeiling(t *testing.T) {
 	p := model.DefaultSandboxPolicy()
 
-	got := resolveFleetCeiling(p, 0, func() (uint64, error) { return math.MaxUint64, nil }, testLogger())
+	got := resolveFleetCeiling(p, ceilingOverrides{}, func() (uint64, error) { return math.MaxUint64, nil }, testLogger())
 
 	assert.Positive(t, got.maxTotalMemoryMB, "an absurd reading must never wrap into a disabled ceiling")
 	assert.Positive(t, got.hostMemoryMB)
@@ -223,7 +224,7 @@ func TestResolveFleetCeiling_RealHostProbe_ResolvesAgainstThisMachine(t *testing
 	}
 	p := model.DefaultSandboxPolicy()
 
-	got := resolveFleetCeiling(p, 0, hostmem.TotalBytes, testLogger())
+	got := resolveFleetCeiling(p, ceilingOverrides{}, hostmem.TotalBytes, testLogger())
 
 	hostMB := int(total >> 20)
 	assert.Equal(t, ceilingSourcePolicy, got.source)
@@ -346,4 +347,92 @@ func findLogRecord(t *testing.T, logOutput, event string) map[string]any {
 		}
 	}
 	return nil
+}
+
+// The COUNT dimension of the FR-17.26 fleet ceiling follows the memory
+// dimension's precedence exactly: an explicit --max-sandboxes, else host
+// policy's max_concurrent_sandboxes, and a policy zero is a deliberate,
+// logged disable. Before MGIT-119/101 the flag's default of 8 was the only
+// number ever in force and the policy field was inert.
+func TestResolveFleetCeiling_CountFollowsPolicyThenFlag(t *testing.T) {
+	tests := []struct {
+		name       string
+		policy     int
+		flag       int
+		wantCount  int
+		wantSource string
+	}{
+		{"policy_set_no_flag_uses_policy", 3, 0, 3, ceilingSourcePolicy},
+		{"flag_overrides_policy", 3, 5, 5, ceilingSourceFlag},
+		{"neither_set_is_the_policy_default", model.DefaultSandboxPolicy().MaxConcurrentSandboxes, 0, 8, ceilingSourcePolicy},
+		{"policy_zero_is_an_explicit_disable", 0, 0, 0, ceilingSourceDisabled},
+		{"flag_beats_a_policy_disable", 0, 2, 2, ceilingSourceFlag},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			p := model.DefaultSandboxPolicy()
+			p.MaxConcurrentSandboxes = tt.policy
+			got := resolveFleetCeiling(p, ceilingOverrides{count: tt.flag}, probeOf(16384), captureLogger(&logs))
+			assert.Equal(t, tt.wantCount, got.maxConcurrent)
+			assert.Equal(t, tt.wantSource, got.concurrentSource)
+			rec := findLogRecord(t, logs.String(), "fleet_memory_ceiling")
+			require.NotNil(t, rec, "both dimensions are stated on the one startup record")
+			assert.Equal(t, float64(tt.wantCount), rec["max_concurrent"])
+			assert.Equal(t, tt.wantSource, rec["concurrent_source"])
+			if tt.wantSource == ceilingSourceDisabled {
+				assert.NotNil(t, findLogRecord(t, logs.String(), "fleet_count_cap_disabled"),
+					"a policy that disables the count cap is warned about, never silent")
+			}
+		})
+	}
+}
+
+// At the CLI level: a daemon started with no resource flags derives its
+// count cap from the host policy file, and the flag overrides it. The
+// container backend without its acknowledgment stops the daemon right
+// after ceiling resolution, so the record is the whole observation.
+func TestRun_CountCap_ComesFromHostPolicy_FlagOverrides(t *testing.T) {
+	hostRoot := t.TempDir()
+	custom := model.DefaultSandboxPolicy()
+	custom.MaxConcurrentSandboxes = 3
+	data, err := json.Marshal(custom)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(hostRoot, "policy.json"), data, 0o600))
+
+	t.Run("no_flag_uses_policy", func(t *testing.T) {
+		var out, logs bytes.Buffer
+		code := run([]string{
+			"--socket", filepath.Join(t.TempDir(), "sandboxd.sock"),
+			"--host-root", hostRoot,
+			"--backend", "container",
+		}, &out, &logs)
+		require.Equal(t, 2, code, "the daemon stops at backend selection, after ceiling resolution:\n%s", logs.String())
+		rec := findLogRecord(t, logs.String(), "fleet_memory_ceiling")
+		require.NotNil(t, rec)
+		assert.Equal(t, float64(3), rec["max_concurrent"], "the policy value, not the flag's old default of 8")
+		assert.Equal(t, ceilingSourcePolicy, rec["concurrent_source"])
+	})
+	t.Run("flag_overrides", func(t *testing.T) {
+		var out, logs bytes.Buffer
+		code := run([]string{
+			"--socket", filepath.Join(t.TempDir(), "sandboxd.sock"),
+			"--host-root", hostRoot,
+			"--backend", "container",
+			"--max-sandboxes", "5",
+		}, &out, &logs)
+		require.Equal(t, 2, code)
+		rec := findLogRecord(t, logs.String(), "fleet_memory_ceiling")
+		require.NotNil(t, rec)
+		assert.Equal(t, float64(5), rec["max_concurrent"])
+		assert.Equal(t, ceilingSourceFlag, rec["concurrent_source"])
+	})
+}
+
+// The flag's default must be distinguishable from an operator's explicit 8:
+// unset means "resolve from policy", as --max-memory-mb already does.
+func TestParseFlags_MaxSandboxesUnset_MeansResolveFromPolicy(t *testing.T) {
+	opts, code := parseFlags([]string{"--socket", "/tmp/x.sock"}, io.Discard)
+	require.Equal(t, 0, code)
+	assert.Equal(t, 0, opts.maxSandboxes)
 }

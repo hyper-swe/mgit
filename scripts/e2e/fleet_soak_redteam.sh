@@ -37,7 +37,7 @@ repo="$(cd "$here/../.." && pwd -P)"
 # The patch itself is a shell function named patch_<name>, applied inside the
 # copied tree. Keeping the expected string here means a case cannot silently
 # start passing for the wrong reason: it must break the RIGHT assertion.
-CASES="reaping honesty capacity isolation trail ceiling"
+CASES="reaping honesty capacity isolation trail ceiling countcap"
 
 case_invariant() {
 	case "$1" in
@@ -47,6 +47,7 @@ case_invariant() {
 	isolation) echo "INVARIANT I4 (ISOLATION) BROKE" ;;
 	trail) echo "INVARIANT I5 (TRAIL) BROKE" ;;
 	ceiling) echo "I6" ;;
+	countcap) echo "INVARIANT I6 (COUNT CAP) BROKE" ;;
 	esac
 }
 
@@ -58,6 +59,7 @@ case_description() {
 	isolation) echo "derive the per-sandbox state dir from a constant, so every sandbox shares one directory" ;;
 	trail) echo "record every audit event twice, so a sandbox's history goes on after it ended" ;;
 	ceiling) echo "disable the aggregate ceiling entirely, so no launch is ever refused" ;;
+	countcap) echo "make host policy's max_concurrent_sandboxes inert again, so the daemon runs at the old constant 8 whatever policy says (the MGIT-119 defect)" ;;
 	esac
 }
 
@@ -151,6 +153,16 @@ patch_trail() {
 	inject_after internal/store/index/sandbox_events.go \
 		'func (s *Store) AppendSandboxEvent(ctx context.Context, ev *model.SandboxEvent) error {' \
 		'	if v, _ := ctx.Value(struct{ rt int }{}).(bool); !v { _ = s.AppendSandboxEvent(context.WithValue(ctx, struct{ rt int }{}, true), ev) } // REDTEAM: every event recorded twice'
+}
+
+patch_countcap() {
+	# resolveFleetCount is where host policy's count cap becomes the ceiling's.
+	# Answering the old constant removes exactly the MGIT-119 fix: the memory
+	# ceiling still binds (phase 3 passes) and the policy's count cap does not
+	# (phase 3b admits a sandbox policy said to refuse).
+	inject_after cmd/mgit-sandboxd/ceiling_wiring.go \
+		'func resolveFleetCount(p model.SandboxPolicy, override int, logger *slog.Logger) (count int, source string) {' \
+		'	return 8, ceilingSourcePolicy // REDTEAM: policy count cap inert'
 }
 
 patch_ceiling() {

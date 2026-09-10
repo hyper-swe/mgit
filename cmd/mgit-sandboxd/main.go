@@ -75,7 +75,8 @@ func parseFlags(args []string, logSink io.Writer) (*daemonOpts, int) {
 	flags.StringVar(&o.repoRoot, "repo-root", "", "mgit repository root the land path imports into (defaults to the host-root's repo)")
 	flags.StringVar(&o.workDir, "work-dir", "", "sandbox-local state root (overlays, sockets); never a worktree")
 	flags.DurationVar(&o.idleGrace, "idle-grace", 30*time.Second, "zero-sandbox linger before exit")
-	flags.IntVar(&o.maxSandboxes, "max-sandboxes", 8, "global concurrent-sandbox ceiling (FR-17.26)")
+	flags.IntVar(&o.maxSandboxes, "max-sandboxes", 0,
+		"explicit override of the FR-17.26 concurrent-sandbox cap (0 = resolve from host policy's max_concurrent_sandboxes, default 8)")
 	flags.IntVar(&o.maxMemoryMB, "max-memory-mb", 0,
 		"explicit override of the FR-17.26 aggregate sandbox memory ceiling in MB "+
 			"(0 = resolve host policy max_total_memory_percent against host physical memory)")
@@ -155,7 +156,7 @@ func run(args []string, out, logSink io.Writer) int {
 	defer claim.Release()
 	policyStore := newPolicyStore(opts.hostRoot, clock, logger)
 	ceiling := resolveFleetCeiling(loadDaemonPolicy(policyStore, logger),
-		opts.maxMemoryMB, hostmem.TotalBytes, logger)
+		ceilingOverrides{memoryMB: opts.maxMemoryMB, count: opts.maxSandboxes}, hostmem.TotalBytes, logger)
 
 	// One PeerBinder is shared: the backend Binds each launch / Invalidates
 	// each teardown to its host-observed peer identity, and the daemon owns
@@ -189,10 +190,12 @@ func run(args []string, out, logSink io.Writer) int {
 
 	// The ceiling wraps whichever backend was selected: launches never
 	// reach a backend unadmitted (SEC-09). Both dimensions are live in a
-	// default install — the memory one resolved from host policy above rather
-	// than from an off-by-default flag (MGIT-98) — and an undeclared launch is
-	// accounted at the policy default it will actually receive.
-	manager := sandboxd.NewCeilingManager(selected, opts.maxSandboxes,
+	// default install and both come from host policy unless a flag overrides
+	// them — memory since MGIT-98, count since MGIT-119 (before which the
+	// policy's max_concurrent_sandboxes drove nothing and every daemon ran at
+	// the flag's hard-coded 8) — and an undeclared launch is accounted at the
+	// policy default it will actually receive.
+	manager := sandboxd.NewCeilingManager(selected, ceiling.maxConcurrent,
 		ceiling.maxTotalMemoryMB, ceiling.defaultMemoryMB)
 
 	dcfg := sandboxd.Config{
