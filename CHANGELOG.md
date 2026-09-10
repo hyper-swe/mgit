@@ -21,6 +21,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   daemon binary. The posture gate asserts the row; INSTALL-SANDBOX.md carries
   the recovery steps.
 
+### Fixed
+
+- **A guest that died is reported `dead`, not `running` (MGIT-99).** When a
+  guest's kernel killed everything (memory exhaustion, most often), the
+  sandbox stayed `running`, every later command waited out the 15 s dial
+  timeout and failed with the same advisory, and doctor's guest rows each
+  waited too. The daemon now marks the sandbox dead on the first
+  reached-then-lost failure (audited as `guest_died`, a deliberate addition to
+  the FR-17.18 vocabulary), `status`/`list` say so, every later exec is
+  refused at once with the remedy — `mgit sandbox remove <task> --force` and
+  the exact relaunch, declared memory kept — and a fresh daemon adopts a dead
+  row as dead. `remove` still stops the VM process that outlived its guest.
+
 ### Changed
 
 - **Guest execs run as the daemon's own user, not root (MGIT-151).** Every

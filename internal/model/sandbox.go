@@ -54,13 +54,21 @@ const (
 	StateLanded = "landed"
 	// StateDestroyed means the sandbox was torn down.
 	StateDestroyed = "destroyed"
+	// StateDead means the guest stopped answering after it had been reached
+	// — its kernel killed everything, most often on memory exhaustion — while
+	// the registration, the VM process and the staged copy of the worktree
+	// remain. Nothing runs in it; every exec is refused at once with the
+	// remedy, and `remove` tears it down. Added deliberately to the closed
+	// vocabulary (FR-17.18) because the alternative was a `running` that
+	// nothing could use and a 15 s dial timeout on every command (MGIT-99).
+	StateDead = "dead"
 )
 
 // validBackends and validStates close the vocabularies above so writers
 // of the append-only audit trail cannot fork them with typos.
 var (
 	validBackends = map[string]bool{BackendKVM: true, BackendVZF: true, BackendHyperV: true, BackendLibkrun: true, BackendContainer: true}
-	validStates   = map[string]bool{StateCreated: true, StateRunning: true, StateSuspended: true, StateLanded: true, StateDestroyed: true}
+	validStates   = map[string]bool{StateCreated: true, StateRunning: true, StateSuspended: true, StateLanded: true, StateDestroyed: true, StateDead: true}
 )
 
 // ValidSandboxState reports whether a state is in the closed lifecycle

@@ -1011,7 +1011,7 @@ CREATE TABLE sandbox_events (
     task_id       TEXT NOT NULL,
     event_type    TEXT NOT NULL,      -- created | suspended | resumed |
                                       -- policy_granted | landed | destroyed |
-                                      -- ttl_expired | killed
+                                      -- ttl_expired | killed | guest_died
     backend       TEXT,               -- kvm | vzf | hyperv | container
     image_digest  TEXT,               -- sha256 of rootfs image
     network_mode  TEXT,               -- none | allowlist | open
@@ -1020,7 +1020,7 @@ CREATE TABLE sandbox_events (
 );
 ```
 
-Sandbox state MUST be derived from the latest event per `sandbox_id`; transitions append, never mutate. `task_commits` gains a nullable `sandbox_id` column written at append time only, making every landed commit traceable to the exact sandbox, image digest, and network policy that produced it. Egress decisions in `allowlist` mode append to `sandbox_egress_log`, which is subject to the same append-only law as `sandbox_events` and `task_commits`: no UPDATE, no DELETE, no retention pruning, ever. Guest-sourced strings MUST be sanitized and length-capped before insertion (AUDIT F-09) — append-only tables make corrupted entries permanent.
+Sandbox state MUST be derived from the latest event per `sandbox_id`; transitions append, never mutate. `guest_died` (state `dead`, MGIT-99) records a guest that was reached and then stopped answering: the registration and VM process remain for `remove`, every exec is refused at once with the remedy, and a `dead` row is adopted as dead by the next daemon. `task_commits` gains a nullable `sandbox_id` column written at append time only, making every landed commit traceable to the exact sandbox, image digest, and network policy that produced it. Egress decisions in `allowlist` mode append to `sandbox_egress_log`, which is subject to the same append-only law as `sandbox_events` and `task_commits`: no UPDATE, no DELETE, no retention pruning, ever. Guest-sourced strings MUST be sanitized and length-capped before insertion (AUDIT F-09) — append-only tables make corrupted entries permanent.
 
 **FR-17.19** Disposability. Destroying a sandbox MUST NOT lose landed work and MUST NOT leave host residue outside the worktree. `mgit sandbox remove` MUST refuse if unlanded commits exist (`ErrUnlandedCommits`) unless `--force` is given; unlanded work is then discarded by design.
 

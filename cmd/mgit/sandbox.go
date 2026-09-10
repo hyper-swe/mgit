@@ -358,7 +358,7 @@ func sandboxStatusCmd(connect connectFunc) *cobra.Command {
 			// agent must be able to READ its ceiling rather than infer it
 			// from a build that died against it (R-H212).
 			return writeSandbox(cmd.OutOrStdout(), info, asJSON,
-				fmt.Sprintf("%s\t%s\t%s\n%s", info.TaskID, info.State, info.ID, capsLine(info)))
+				fmt.Sprintf("%s\t%s\t%s\n%s%s", info.TaskID, info.State, info.ID, capsLine(info), deadLine(info)))
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
@@ -454,4 +454,15 @@ func writeSandbox(w io.Writer, info *model.SandboxInfo, asJSON bool, humanLine s
 func printErr(w io.Writer, err error) error {
 	_, _ = fmt.Fprintf(w, "mgit sandbox: %v\n", err)
 	return err
+}
+
+// deadLine explains a dead sandbox on the status line, so a reader who only
+// asked for status is not left to discover the remedy from a refused exec.
+// Refs: MGIT-99
+func deadLine(info *model.SandboxInfo) string {
+	if info.State != model.StateDead {
+		return ""
+	}
+	return fmt.Sprintf("the guest stopped answering and nothing runs in it: `mgit sandbox remove %s --force`, "+
+		"then relaunch (any `mgit run` prints the exact command, declared memory kept)\n", info.TaskID)
 }

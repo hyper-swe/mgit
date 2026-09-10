@@ -42,6 +42,11 @@ const (
 	EventTTLExpired = "ttl_expired"
 	// EventKilled records a forced stop.
 	EventKilled = "killed"
+	// EventGuestDied records a guest that stopped answering after it had
+	// been reached (StateDead). Detail carries the transport failure that
+	// showed it, sanitized and capped like every guest-sourced string.
+	// Refs: MGIT-99, FR-17.18
+	EventGuestDied = "guest_died"
 	// EventExecPrivileged records an operator's explicit root escalation of one
 	// guest exec (`--as-root`): audit-only, it moves the sandbox to no state.
 	// Refs: MGIT-151, FR-17.18
@@ -93,6 +98,7 @@ var eventStates = map[string]string{
 	EventDestroyed:  StateDestroyed,
 	EventTTLExpired: StateDestroyed,
 	EventKilled:     StateDestroyed,
+	EventGuestDied:  StateDead,
 }
 
 // StateForEvent maps a lifecycle event type to the sandbox state it

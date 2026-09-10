@@ -89,6 +89,13 @@ func (s *SandboxService) verifyLocked(ctx context.Context, row model.SandboxRegi
 	if row.Info.State == model.StateCreated {
 		return model.StateCreated, false, true
 	}
+	if row.Info.State == model.StateDead {
+		// A guest recorded dead stays dead whatever the backend says of its
+		// VM process: booted iff the process is still there to be stopped.
+		// Refs: MGIT-99
+		live, err := s.manager.Resolve(ctx, row.Info.ID)
+		return model.StateDead, err == nil && live != nil, true
+	}
 	live, err := s.manager.Resolve(ctx, row.Info.ID)
 	if err != nil || live == nil {
 		return "", false, false
@@ -116,13 +123,17 @@ func (s *SandboxService) verifyLocked(ctx context.Context, row model.SandboxRegi
 func (s *SandboxService) adoptLocked(row model.SandboxRegistration, state string, booted bool) {
 	info := row.Info
 	info.State = state
-	s.byTask[info.TaskID] = &sandboxReg{
+	reg := &sandboxReg{
 		info:         info,
 		opts:         row.LaunchOptions(),
 		booted:       booted,
 		lastActivity: s.clock().UTC(),
 		expiresAt:    info.ExpiresAt,
 	}
+	if state == model.StateDead {
+		reg.dead = &deadGuest{at: s.clock().UTC(), cause: "recorded dead before this daemon started (MGIT-99)"}
+	}
+	s.byTask[info.TaskID] = reg
 }
 
 // discardLostLocked ends a registration whose VM could not be verified: it

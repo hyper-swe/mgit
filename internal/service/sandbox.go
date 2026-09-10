@@ -150,6 +150,10 @@ type sandboxReg struct {
 	booted       bool
 	lastActivity time.Time // last boot/resume/exec; idle-suspend deadline runs from here
 	expiresAt    time.Time // TTL deadline (registration time + TTL); zero = no TTL
+	// dead is non-nil once the guest was reached and then lost (MGIT-99):
+	// the registration and VM process remain for `remove` to tear down, and
+	// every exec is refused with the remedy instead of dialing.
+	dead *deadGuest
 	// boot is non-nil for exactly as long as a boot is in flight for this
 	// registration. It is the claim that replaces "the service mutex is held
 	// across Launch": set under the lock before the lock is dropped, cleared
@@ -411,6 +415,13 @@ func (s *SandboxService) EnsureRunning(ctx context.Context, taskID string) (*mod
 	if !ok {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("%w: task %q", model.ErrSandboxNotFound, taskID)
+	}
+	if reg.dead != nil {
+		// Refused before any dial: a dead guest cost 15 s per command and an
+		// opaque error, every time, until someone guessed the remedy (MGIT-99).
+		err := deadError(reg)
+		s.mu.Unlock()
+		return nil, err
 	}
 	if reg.booted {
 		info := reg.info
@@ -674,6 +685,11 @@ func (s *SandboxService) Exec(ctx context.Context, taskID string, req model.Exec
 	}
 	res, err := s.manager.Exec(ctx, info.ID, req)
 	if err != nil {
+		// A reached-then-lost guest is dead from here on; the failure that
+		// showed it is still reported as it happened. Refs: MGIT-99
+		if markErr := s.noteExecFailure(ctx, taskID, err); markErr != nil {
+			return nil, fmt.Errorf("sandbox exec: %w (and %w)", err, markErr)
+		}
 		return nil, fmt.Errorf("sandbox exec: %w", err)
 	}
 	verdict := model.VerdictOnExecIdentity(req.RunAs, res.RanAs)

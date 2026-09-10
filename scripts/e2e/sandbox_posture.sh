@@ -245,4 +245,38 @@ echo "== land round-trip =="
 # The land path verifies dual-hash + task binding + host-anchored attestation.
 assert_ok "sandbox land succeeds" -- mgit sandbox land --task SB-1
 
+
+# ---------------------------------------------------------------------------
+# A guest that dies is a DEAD sandbox, not a running one (MGIT-99)
+# ---------------------------------------------------------------------------
+# Kill a second guest from inside — a tmpfs bigger than its memory, filled —
+# then read what mgit says. Before MGIT-99: `running`, and every later command
+# waited out a 15 s dial timeout to fail with the same advisory. The kill
+# needs a mount, so it runs --as-root; the minimal firecracker rootfs links no
+# mount, so this scenario is libkrun's (it is the backend a developer runs).
+if [ "$backend" = "libkrun" ]; then
+	echo "== a dead guest is reported dead and refused at once =="
+	mgit work wt2 --task-id SB-2 --sandbox --image "$MGIT_GUEST_IMAGE" --memory-mb 512 >/dev/null
+	assert_ok "the second guest answers" -- sh -c 'cd wt2 && mgit run -- /bin/echo alive'
+	mgit sandbox exec --task SB-2 --as-root -- sh -c \
+		'mkdir -p /mnt/t && mount -t tmpfs -o size=2g tmpfs /mnt/t && dd if=/dev/zero of=/mnt/t/x bs=1M count=1500' \
+		>/dev/null 2>&1 || true
+	state="$(mgit sandbox status SB-2 --json | sed -n 's/.*"state":"\([^"]*\)".*/\1/p')"
+	[ "$state" = "dead" ] || _e2e_fail "a killed guest reads '$state', expected dead (MGIT-99)"
+	pass "status says dead"
+	t0=$(date +%s)
+	refusal="$(cd wt2 && mgit run -- /bin/echo again 2>&1)" && _e2e_fail "an exec against a dead guest succeeded"
+	elapsed=$(( $(date +%s) - t0 ))
+	[ "$elapsed" -lt 5 ] || _e2e_fail "the refusal took ${elapsed}s — a dead guest must be refused before any dial, not after a 15 s timeout (MGIT-99)"
+	assert_contains "$refusal" "mgit sandbox remove SB-2 --force" "the refusal names the remedy"
+	assert_contains "$refusal" "--memory-mb 512" "the relaunch keeps the declared memory"
+	pass "refused in ${elapsed}s with the remedy"
+	t0=$(date +%s)
+	(cd wt2 && mgit doctor --json >/dev/null 2>&1) || true
+	elapsed=$(( $(date +%s) - t0 ))
+	[ "$elapsed" -lt 10 ] || _e2e_fail "doctor took ${elapsed}s against a dead guest — its guest rows must not each wait out a dial timeout (MGIT-99)"
+	pass "doctor answered in ${elapsed}s"
+	assert_ok "remove tears the dead sandbox down" -- mgit sandbox remove SB-2 --force
+fi
+
 echo "SANDBOX POSTURE E2E: PASS (live)"
