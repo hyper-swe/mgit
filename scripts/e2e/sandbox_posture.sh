@@ -194,9 +194,17 @@ backend="$(mgit sandbox status SB-1 --json | sed -n 's/.*"backend":"\([^"]*\)".*
 [ -n "$backend" ] || _e2e_fail "sandbox status --json names no backend"
 pass "sandbox backend: $backend"
 if [ "$backend" = "kvm" ]; then
+	# firecracker, read live on 2026-09-10 (this gate's first reading of it):
+	# the guest's name table is served; sync-verify reads FAILED, doctor's own
+	# word for a guest with no sha256sum — the minimal busybox rootfs links
+	# none — so nothing delivered into it can be confirmed from inside; that
+	# is asserted as the documented state (the MGIT-87 pattern: link the
+	# applet and this line turns red until it is updated), never skipped;
+	# delivery is a launch-time image with nothing to ask, not-checked.
 	expect_row "$docjson" guest/localhost ok
-	expect_row "$docjson" guest/sync-verify not-checked
+	expect_row "$docjson" guest/sync-verify failed
 	expect_row "$docjson" guest/delivery not-checked
+	[ "$docrc" -ne 0 ] || _e2e_fail "doctor exited 0 with a failed row"
 else
 	expect_row "$docjson" guest/localhost ok
 	expect_row "$docjson" guest/sync-verify ok
