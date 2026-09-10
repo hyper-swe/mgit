@@ -51,4 +51,10 @@ jobs:
           gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$head" \
             -f state="$state" -f context=reviewer-verdict-at-head -f description="$desc" \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
-          exit $code
+          # The verdict is the STATUS above and only that. The job exits clean
+          # whatever the gate said: a non-zero exit here makes Actions record a
+          # failing CheckRun under the same name, and check runs are not
+          # last-write-wins the way statuses are — on a fresh head, where no
+          # verdict exists yet by construction, that red would outlive every
+          # later PASS. Found on the original this was copied from (2026-09-09).
+          exit 0

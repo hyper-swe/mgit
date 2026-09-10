@@ -1,6 +1,7 @@
 package packaging
 
 import (
+	"github.com/stretchr/testify/assert"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,4 +41,18 @@ func TestVerdictGate_IsWiredIntoCI(t *testing.T) {
 	if !strings.Contains(wf, "github.event.issue.pull_request") {
 		t.Error("comment events on plain issues must be skipped: the job's condition must read github.event.issue.pull_request")
 	}
+}
+
+// The gate's verdict lives in the commit STATUS it writes, and only there.
+// The job itself must exit clean: a non-zero exit on a fresh head — every
+// head, since no verdict exists yet by construction — makes Actions record
+// a failing CheckRun under the same name, and check runs are not
+// last-write-wins the way statuses are, so that red would outlive every
+// later PASS (found on swe's original, 2026-09-09). Refs: MGIT-201
+func TestVerdictGate_JobExitsCleanAfterWritingTheStatus(t *testing.T) {
+	cfg := readRepoFile(t, ".github/workflows/verdict.yml")
+	// The statement, at the step's indentation — the status description may
+	// still mention the code in prose.
+	assert.NotContains(t, cfg, "\n          exit $code", "the gate's exit code is the status's state, never the job's")
+	assert.Contains(t, cfg, "\n          exit 0", "the job ends clean once the status is written")
 }
