@@ -60,6 +60,9 @@ func (s *SandboxService) runningSandbox(ctx context.Context, taskID string) (mod
 	if err != nil {
 		return model.SandboxInfo{}, err
 	}
+	if reg.dead != nil {
+		return model.SandboxInfo{}, deadError(reg) // refused at once (MGIT-99)
+	}
 	if !reg.booted {
 		return model.SandboxInfo{}, fmt.Errorf("%w: task %q has a registered sandbox that has not booted; "+
 			"run something in it first", model.ErrSandboxBackendUnavailable, taskID)

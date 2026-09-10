@@ -195,10 +195,13 @@ func sandboxForDir(list []model.SandboxInfo, dir string) *model.SandboxInfo {
 }
 
 // routableState reports whether a sandbox in this state can accept an
-// exec (a created sandbox boots lazily on first exec, FR-17.10).
+// exec (a created sandbox boots lazily on first exec, FR-17.10). A dead
+// sandbox is routed too: the daemon refuses it at once with the remedy,
+// which is the answer the reader needs — "no sandbox bound" is not
+// (MGIT-99).
 func routableState(state string) bool {
 	switch state {
-	case model.StateCreated, model.StateRunning, model.StateSuspended:
+	case model.StateCreated, model.StateRunning, model.StateSuspended, model.StateDead:
 		return true
 	default:
 		return false

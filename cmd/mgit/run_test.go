@@ -306,3 +306,11 @@ func TestRun_NoSandboxBound_NamesTheDaemonAskedAndWhatItHolds(t *testing.T) {
 		assert.Contains(t, out, "which has no sandboxes")
 	})
 }
+
+// A dead sandbox is routable: the daemon's refusal carries the remedy, and
+// "no sandbox bound" would send the reader after the wrong fix (MGIT-99).
+func TestRoutableState_DeadIsRoutedSoTheDaemonCanRefuseWithTheRemedy(t *testing.T) {
+	assert.True(t, routableState(model.StateDead))
+	assert.False(t, routableState(model.StateDestroyed))
+	assert.False(t, routableState(model.StateLanded))
+}

@@ -67,6 +67,9 @@ func (s *SandboxService) syncTarget(ctx context.Context, taskID string) (sandbox
 	if err != nil {
 		return "", false, err
 	}
+	if reg.dead != nil {
+		return "", false, deadError(reg) // refused at once, never a dial that times out (MGIT-99)
+	}
 	return reg.info.ID, reg.booted, nil
 }
 

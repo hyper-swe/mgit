@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS sandbox_events (
     task_id       TEXT NOT NULL,
     event_type    TEXT NOT NULL,      -- created | suspended | resumed |
                                       -- policy_granted | landed | destroyed |
-                                      -- ttl_expired | killed
+                                      -- ttl_expired | killed | guest_died
     backend       TEXT NOT NULL DEFAULT '',      -- kvm | vzf | hyperv | container
     image_digest  TEXT NOT NULL DEFAULT '',      -- sha256 of rootfs image
     network_mode  TEXT NOT NULL DEFAULT '',      -- none | allowlist | open

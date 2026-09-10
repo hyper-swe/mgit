@@ -175,41 +175,13 @@ func isGuestNotServing(err error) bool {
 		strings.Contains(err.Error(), model.ErrGuestNotServing.Error()))
 }
 
-// lostServingMarkers are the transport failures that only a connection to a
-// guest which HAD been reached can produce: a stream that ended mid-frame, a
-// peer that reset or closed it, or a re-dial refused by a guest that was
-// answering a moment ago. Their presence is the positive evidence for
-// phaseLostServing, which since MGIT-118 is claimed rather than inherited.
-//
-// The list is deliberately short, and what it leaves out is the point. A read
-// deadline expiring ("i/o timeout") is NOT here: the host waited and gave up,
-// which is a statement about the host's patience and not about the guest —
-// yet as the leftover branch it was reported as in-guest memory exhaustion on
-// a sandbox that was perfectly healthy (MGIT-122). Anything not listed lands
-// in phaseUnidentified, where a missing marker costs a reader some evidence
-// but never sends them after the wrong fix. Refs: MGIT-118, MGIT-122, MGIT-95
-var lostServingMarkers = []string{
-	"EOF",
-	"connection reset",
-	"broken pipe",
-	"use of closed network connection",
-	"connection refused",
-}
-
 // isLostServing reports whether the evidence shows a guest that was serving
 // and was then lost — the one phase the MGIT-95 cap advisory is written for.
-// Refs: MGIT-118, MGIT-95, R-H212
+// The markers live in the model (model.IsLostServing) because the daemon
+// judges the same failure to mark the sandbox dead (MGIT-99); one list keeps
+// the two layers from disagreeing about one event. Refs: MGIT-118, MGIT-95
 func isLostServing(err error) bool {
-	if err == nil {
-		return false
-	}
-	text := err.Error()
-	for _, marker := range lostServingMarkers {
-		if strings.Contains(text, marker) {
-			return true
-		}
-	}
-	return false
+	return model.IsLostServing(err)
 }
 
 // isDaemonStall reports whether an exec failure is the DAEMON's rather than
