@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-22T06:19:53Z",
+  "exported_at": "2026-09-22T06:59:00Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7210,16 +7210,42 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-mgit-dev-06",
       "creator": "mcp",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "84ad7ddad3ae73b1a2b008513d21bb278f8e6856a66a12804ac9f51427516185",
       "created_at": "2026-09-22T06:14:30Z",
-      "updated_at": "2026-09-22T06:19:52Z",
+      "updated_at": "2026-09-22T06:58:59Z",
+      "closed_at": "2026-09-22T06:58:59Z",
       "uid": "01a0c7c0-67c7-77db-abb8-614bc3025f56"
+    },
+    {
+      "id": "MGIT-211",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 211,
+      "project": "MGIT",
+      "title": "board-drift's commit status truncates its ticket list silently and calls \"not on the tracked board\" merely \"open\" — the 140-char line a human reads understates the condition",
+      "description": "Reported by the watcher lane 2026-09-22 06:35Z from the status on 182a915 (the #141 merge). The status description is built with `cut -c1-140` in .github/workflows/board-drift.yml: on that commit it is 138 characters, claims \"9 ticket(s)\" and names five (MGIT-101, 119, 178, 187, 202) — four dropped with no ellipsis and nothing saying a tail exists. And it reads \"still open on the board\" while two of the nine (MGIT-207, MGIT-208) are NOT on the tracked board at all, a condition scripts/boardcheck/main.go treats as distinct and stricter (it prints \"(not on the tracked board)\" and judges it before the Stays-Open acknowledgement). The job summary carries the full list; the status line is what a person reads, and it both truncates silently and describes the worse condition with the milder word. R-H300: a report must not understate; \"cannot fit\" must be visible.\n\nThe board-drift design is being copied to the swe repository (FEAT-24 on the lab board), so the two fixes here are the reference for that copy.",
+      "prompt": "",
+      "acceptance": "- The status description says how many tickets it names and how many it could not fit (\"… and N more — see the job summary\"), never dropping names silently; a test builds a 30-ticket drift and asserts the count, the tail marker, and the 140-char limit.\n- The description distinguishes the two conditions with their own counts and words, e.g. \"DRIFT — 7 open on the board, 2 not on the tracked board: …\", with the not-tracked ids listed first; a test with one of each asserts the wording.\n- The job summary keeps the full list; boardcheck's own output is unchanged in meaning.\n- Receipt: the status on the first main push after the merge quoted on this ticket.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "claude-mgit-dev-06",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "3b7c2a4ae28781c665301b0155e5a4ae7983cafae87c9b24e8d4db03c75ffd4d",
+      "created_at": "2026-09-22T06:34:34Z",
+      "updated_at": "2026-09-22T06:35:40Z",
+      "uid": "01a0c7d2-c72a-7353-b7c4-4d168c23e52a"
     },
     {
       "id": "MGIT-22",
@@ -14082,7 +14108,7 @@
       "agent_id": "claude-mgit-dev-06",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-210",
+      "current_node_id": "MGIT-211",
       "last_heartbeat": "2026-09-22T06:06:25Z"
     },
     {
@@ -14177,6 +14203,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 475,
-  "checksum": "8bbff5e3ab6cb8dfed366444b5c3617c2301541445cf525d40411220fca6c3d4"
+  "node_count": 476,
+  "checksum": "d2a472644f89bd49a5f17e12e3dc3865626fa9a8530fa128cb2c9be4b2c9ca41"
 }
