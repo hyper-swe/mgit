@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -185,4 +188,83 @@ func TestLocateSandboxd_FollowsASymlinkedInstall(t *testing.T) {
 	resolved, err := filepath.EvalSymlinks(filepath.Join(install, "mgit-sandboxd"))
 	require.NoError(t, err)
 	assert.Equal(t, resolved, got)
+}
+
+// TestOpenDaemonLog_AppendsWithAStartMarkerPerAttempt: five failed spawns in
+// ten seconds once left one empty daemon.log, and the successful start then
+// erased the record of what it had fixed, because every attempt truncated the
+// file (MGIT-214). Attempts now append under a start marker, so the first
+// attempt's words survive the second. Refs: MGIT-215
+func TestOpenDaemonLog_AppendsWithAStartMarkerPerAttempt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	t0 := time.Date(2026, 9, 22, 7, 48, 14, 0, time.UTC)
+
+	f, err := openDaemonLog(path, t0)
+	require.NoError(t, err)
+	_, err = f.WriteString("dyld[1]: Library not loaded: /opt/homebrew/opt/x/lib/libx.dylib\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	f, err = openDaemonLog(path, t0.Add(4*time.Second))
+	require.NoError(t, err)
+	require.NoError(t, f.Close()) // this attempt wrote nothing
+
+	data, err := os.ReadFile(path) //nolint:gosec // a fixture path in a test
+	require.NoError(t, err)
+	log := string(data)
+	assert.Equal(t, 2, strings.Count(log, daemonLogMarker), "one start marker per attempt:\n%s", log)
+	assert.Contains(t, log, "libx.dylib", "the first attempt's words survive the second")
+	assert.Contains(t, log, "2026-09-22T07:48:14Z")
+	assert.Contains(t, log, "2026-09-22T07:48:18Z")
+}
+
+// TestOpenDaemonLog_RotatesOnceAtTheCap: append must not grow without bound;
+// past the cap the file moves aside once and the next attempt starts fresh.
+func TestOpenDaemonLog_RotatesOnceAtTheCap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "daemon.log")
+	require.NoError(t, os.WriteFile(path, bytes.Repeat([]byte("x\n"), daemonLogCap/2+1), 0o600))
+
+	f, err := openDaemonLog(path, time.Now())
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	moved, err := os.Stat(path + ".1")
+	require.NoError(t, err, "the full log moved aside")
+	assert.Greater(t, moved.Size(), int64(daemonLogCap))
+	fresh, err := os.ReadFile(path) //nolint:gosec // a fixture path in a test
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(string(fresh), daemonLogMarker))
+	assert.Less(t, len(fresh), 300, "the new file holds only the marker")
+}
+
+// TestDaemonFailureDetail_ReadsOnlyTheLastAttempt: with attempts appended,
+// the failure text must describe THIS spawn, never a previous one's cause.
+func TestDaemonFailureDetail_ReadsOnlyTheLastAttempt(t *testing.T) {
+	log := daemonLogMarker + " (mgit test, pid 1) at 2026-09-22T07:48:14Z ===\n" +
+		"old cause: the previous attempt's words\n" +
+		daemonLogMarker + " (mgit test, pid 2) at 2026-09-22T07:48:18Z ===\n" +
+		"new cause: this attempt's words\n"
+
+	got := daemonFailureDetail(writeDaemonLog(t, log))
+
+	assert.Contains(t, got, "new cause")
+	assert.NotContains(t, got, "old cause")
+	assert.NotContains(t, got, daemonLogMarker, "the marker is bookkeeping, not a report")
+}
+
+// TestDaemonFailureDetail_EmptyLastAttempt_SaysTheDaemonNeverSpoke: an attempt
+// that wrote nothing under its marker is said so, and on darwin the reader is
+// pointed at the kernel's log, where a code-signature refusal is recorded
+// (MGIT-212, MGIT-214) — rather than shown the previous attempt's words.
+func TestDaemonFailureDetail_EmptyLastAttempt_SaysTheDaemonNeverSpoke(t *testing.T) {
+	log := daemonLogMarker + " (mgit test, pid 1) at 2026-09-22T07:48:14Z ===\n" +
+		"old cause: the previous attempt's words\n" +
+		daemonLogMarker + " (mgit test, pid 2) at 2026-09-22T07:48:18Z ===\n"
+
+	got := daemonFailureDetail(writeDaemonLog(t, log))
+
+	assert.Contains(t, got, "before its first log line")
+	assert.NotContains(t, got, "old cause")
+	if runtime.GOOS == "darwin" {
+		assert.Contains(t, got, "log show", "the kernel holds the answer the daemon could not write")
+	}
 }
