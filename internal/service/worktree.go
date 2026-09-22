@@ -253,10 +253,27 @@ func (s *WorktreeService) resolveBaseCommit(ctx context.Context, baseRef string)
 	return "", fmt.Errorf("resolve --base %q: not a known mgit commit, branch, or HEAD", baseRef)
 }
 
-// List returns all registered worktrees.
-// Refs: FR-16
+// List returns every registered worktree, each marked Prunable when its
+// directory no longer exists. Refs: FR-16, MGIT-194
 func (s *WorktreeService) List(ctx context.Context) ([]model.WorktreeInfo, error) {
-	return s.indexStore.ListWorktrees(ctx)
+	wts, err := s.indexStore.ListWorktrees(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Each row is marked prunable by the one test Prune applies, so the
+	// listing and the prune agree by construction. Refs: MGIT-194
+	for i := range wts {
+		wts[i].Prunable = pathMissing(wts[i].Path)
+	}
+	return wts, nil
+}
+
+// pathMissing is the single place "the worktree directory is gone" is
+// decided: an absent path, not an unreadable one — a permission error is
+// not a reason to prune. Refs: MGIT-194
+func pathMissing(path string) bool {
+	_, err := os.Stat(path)
+	return err != nil && os.IsNotExist(err)
 }
 
 // Remove deletes a worktree registration.
@@ -288,10 +305,7 @@ func (s *WorktreeService) Prune(ctx context.Context, dryRun bool, staleAfter tim
 	now := s.clock()
 	var stale []string
 	for _, wt := range all {
-		isStale := false
-		if _, statErr := os.Stat(wt.Path); statErr != nil && os.IsNotExist(statErr) {
-			isStale = true
-		}
+		isStale := wt.Prunable // List already applied pathMissing
 		if !isStale && staleAfter > 0 && !wt.CreatedAt.IsZero() {
 			if now.Sub(wt.CreatedAt) > staleAfter {
 				isStale = true
