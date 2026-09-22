@@ -259,3 +259,31 @@ func TestSandboxSync_UnverifiedGuestView_IsSaidLoudlyNextToTheDelivery(t *testin
 	assert.Contains(t, out, "1 updated")
 	assert.Contains(t, out, "Warning: delivered on the host, but not verified from inside the guest: the guest has no sha256sum")
 }
+
+// TestSandboxSync_UnchangedWorktree_SaysGuestOnlyEditsAreKept: the no-op
+// message says what the collision policy does with a path only the guest
+// changed, and names the way to discard it — the reading FEAT-6.37 expected
+// from the old text. Refs: MGIT-193, ADR-011
+func TestSandboxSync_UnchangedWorktree_SaysGuestOnlyEditsAreKept(t *testing.T) {
+	c := &fakeSandboxClient{syncReport: &model.WorktreeSyncReport{Skipped: true}}
+
+	out, err := runSandbox(okConnect(c), "sync", "--task", "MGIT-193")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "only the guest changed")
+	assert.Contains(t, out, "kept")
+	assert.Contains(t, out, "change it on the host", "the discard path is named where the surprise happens")
+}
+
+// TestSandboxSync_Help_SaysAConflictNeedsAHostChangeToo: --force overrides
+// CONFLICTS, and a conflict needs both sides changed; the help said "paths the
+// guest changed" and let a reader expect a restore. Refs: MGIT-193
+func TestSandboxSync_Help_SaysAConflictNeedsAHostChangeToo(t *testing.T) {
+	out, err := runSandbox(okConnect(&fakeSandboxClient{}), "sync", "--help")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "only the guest changed is KEPT")
+	assert.Contains(t, out, "both sides changed")
+	assert.Contains(t, out, "sandbox remove", "the other discard path: re-deliver everything")
+	assert.Contains(t, out, "a path only the guest changed is kept", "the --force flag's own line says it too")
+}

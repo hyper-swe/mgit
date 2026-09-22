@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`sandbox sync` says what `--force` means, and what happens to an edit only
+  the guest made (MGIT-193).** The help promised that "paths the guest changed
+  since delivery" are conflicts `--force` overwrites, and a reader took that
+  as a restore: edit a file inside the guest, `sync --force` from an unchanged
+  host, and the delivered content comes back. It does not — a sync carries
+  host changes, a path only the guest changed is kept, and a conflict needs
+  both sides changed (ADR-011). The help, the `--force` flag and the "already
+  up to date" message now say so and name the two ways to discard a guest-only
+  edit: change that path on the host and sync (then `--force` wins), or
+  `sandbox remove --force` and relaunch. A `--restore <path>` verb is not
+  built: the plan compares host against delivered first by design (MGIT-71's
+  affordability) and never consults the guest tree when the host is unchanged;
+  a restore would need that consultation and its own destroy acknowledgement,
+  and the host-side re-save covers the reported use (a delete-subject mutation
+  made inside the guest) without either. Pinned at the syncer: a guest-only
+  edit survives a plain and a forced sync from an unchanged host.
+
 ## [0.6.7] - 2026-09-22
 
 **The first published release since 0.6.5 — v0.6.6 was tagged and never

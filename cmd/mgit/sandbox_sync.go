@@ -29,11 +29,15 @@ func sandboxSyncCmd(connect connectFunc) *cobra.Command {
 		Use:   "sync --task <id>",
 		Short: "Re-stage the host worktree into a task's running sandbox (--dry-run classifies only)",
 		Long: "Propagate host worktree changes into a task's running sandbox.\n\n" +
-			"An unchanged worktree is a genuine no-op. Paths the guest changed since they\n" +
-			"were delivered are a CONFLICT: the sync is refused entirely and every\n" +
-			"conflicting path is named. --force overwrites them and reports each one\n" +
-			"destroyed. --dry-run reports the same classification without touching the\n" +
-			"guest.\n\n" +
+			"An unchanged worktree is a genuine no-op — for paths the guest edited too:\n" +
+			"a path only the guest changed is KEPT, because a sync carries host changes\n" +
+			"and this one carries none. A path both sides changed since delivery is a\n" +
+			"CONFLICT: the sync is refused entirely and every conflicting path is named.\n" +
+			"--force overwrites those and reports each one destroyed. To discard an edit\n" +
+			"only the guest made, change that path on the host (a re-save counts) and\n" +
+			"sync — it is then a conflict --force overwrites — or `mgit sandbox remove\n" +
+			"<task> --force` and relaunch to re-deliver everything. --dry-run reports\n" +
+			"the same classification without touching the guest.\n\n" +
 			"Not every backend can do this: a sandbox whose worktree was delivered as a\n" +
 			"launch-time image must be re-launched to pick up host changes, and says so\n" +
 			"rather than reporting a sync that did not happen.",
@@ -55,7 +59,7 @@ func sandboxSyncCmd(connect connectFunc) *cobra.Command {
 	}
 	bindTaskIDFlag(cmd, &task, "task ID whose sandbox receives the host worktree (required)")
 	cmd.Flags().BoolVar(&force, "force", false,
-		"overwrite paths the guest changed since delivery (each destroyed path is reported)")
+		"overwrite paths both sides changed since delivery (each destroyed path is reported); a path only the guest changed is kept regardless")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"report what a sync would do — including every conflict — without touching the guest")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
@@ -96,7 +100,8 @@ func writeSyncReport(w io.Writer, task string, report *model.WorktreeSyncReport)
 		return
 	case report.Skipped:
 		_, _ = fmt.Fprintf(w,
-			"Sandbox for task %s is already up to date (host worktree unchanged since delivery)\n", task)
+			"Sandbox for task %s is already up to date (host worktree unchanged since delivery; "+
+				"a path only the guest changed is kept — change it on the host and sync to overwrite it)\n", task)
 		return
 	case report.DryRun:
 		writeSyncDryRun(w, task, report)
