@@ -202,10 +202,10 @@ func sandboxConnectFor(ctx context.Context, dir string) (sandboxClient, error) {
 		// Capture what the daemon says. It is detached into its own session,
 		// so without this its explanation for dying — including the dynamic
 		// loader's, which is emitted before the daemon's own code runs — goes
-		// nowhere and every failure looks identical. Truncated per attempt so
-		// the tail always describes THIS spawn. Refs: MGIT-61.14, MGIT-61.15
-		if logFile, lerr := os.OpenFile(p.daemonLog, //nolint:gosec // a path this process derived, owner-only dir
-			os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600); lerr == nil {
+		// nowhere and every failure looks identical. Appended per attempt
+		// under a start marker (never truncated: a retry must not erase the
+		// attempt before it). Refs: MGIT-61.14, MGIT-61.15, MGIT-215
+		if logFile, lerr := openDaemonLog(p.daemonLog, time.Now()); lerr == nil {
 			defer func() { _ = logFile.Close() }()
 			c.Stdout, c.Stderr = logFile, logFile
 		}

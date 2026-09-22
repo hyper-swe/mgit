@@ -39,6 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A failed daemon start no longer erases the attempt before it
+  (MGIT-215).** The sandbox daemon's log was truncated on every spawn, so
+  five failed starts in ten seconds left one empty file and the successful
+  start then deleted the record of what it had fixed — the reason MGIT-214's
+  investigation ran on inference until the kernel's own log was read. Each
+  attempt now appends under a start marker (the CLI's version, pid and
+  time; the file rotates once past 1 MiB), the activation's failure text
+  reads only the last attempt, and an attempt that wrote nothing is said so:
+  "the daemon exited before its first log line", with the path and — on
+  macOS, where that is a code-signature refusal — the `log show` command
+  that holds the answer and the doctor row that names the fixes.
+
 - **`sandbox sync` says what `--force` means, and what happens to an edit only
   the guest made (MGIT-193).** The help promised that "paths the guest changed
   since delivery" are conflicts `--force` overwrites, and a reader took that

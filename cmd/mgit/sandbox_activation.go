@@ -7,7 +7,9 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"runtime"
 	"strings"
+	"time"
 )
 
 // daemonLogName is the per-repo capture of the spawned daemon's output, kept
@@ -43,9 +45,12 @@ var missingLibraryRe = regexp.MustCompile(
 // the child's output, which is why it is captured and read back rather than
 // diagnosed in-process. Refs: MGIT-61.14, MGIT-61.15
 func daemonFailureDetail(logPath string) string {
-	tail := readDaemonLogTail(logPath)
+	tail, marked := lastAttempt(readDaemonLogTail(logPath))
 	if tail == "" {
-		return ""
+		if !marked {
+			return "" // an older CLI's log, or none: nothing to add
+		}
+		return "\nthe daemon exited before its first log line" + neverSpokeHint(logPath)
 	}
 	detail := "\nthe daemon reported:\n  " + strings.ReplaceAll(humanizeDaemonLog(tail), "\n", "\n  ")
 	if lib := missingLibrary(tail); lib != "" {
@@ -152,4 +157,65 @@ func readDaemonLogTail(path string) string {
 		}
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// daemonLogCap bounds daemon.log: past it the file is moved aside once, to
+// <path>.1, before the next attempt appends, so attempts accumulate but the
+// pair never holds more than two caps. Refs: MGIT-215
+const daemonLogCap = 1 << 20
+
+// daemonLogMarker prefixes the line the CLI writes before each spawn, so a
+// reader — and daemonFailureDetail — can tell attempts apart. Refs: MGIT-215
+const daemonLogMarker = "=== mgit spawns mgit-sandboxd"
+
+// openDaemonLog opens the daemon's log for one more attempt: APPEND, never
+// truncate. Five failed spawns in ten seconds once left one empty file, and
+// the successful start then erased the record of what it had fixed
+// (MGIT-214) — the old open truncated per attempt so the tail described
+// "this spawn", which is exactly what deleted the five before it. Each
+// attempt now begins with a start marker naming the CLI's version, its pid
+// and the time; the file rotates once at daemonLogCap. Refs: MGIT-215
+func openDaemonLog(path string, now time.Time) (*os.File, error) {
+	if st, err := os.Stat(path); err == nil && st.Size() > daemonLogCap {
+		_ = os.Rename(path, path+".1") // best effort: a failed move costs one cap of boundedness, never a record
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // a path this process derived, owner-only dir
+	if err != nil {
+		return nil, err
+	}
+	_, _ = fmt.Fprintf(f, "%s (mgit %s, pid %d) at %s ===\n", daemonLogMarker, Version, os.Getpid(), now.UTC().Format(time.RFC3339))
+	return f, nil
+}
+
+// lastAttempt returns the log after its last start marker and whether a
+// marker was present at all: a log written by an older CLI has none and is
+// read whole, as before.
+func lastAttempt(log string) (string, bool) {
+	i := strings.LastIndex(log, daemonLogMarker)
+	if i < 0 {
+		return log, false
+	}
+	rest := log[i:]
+	if j := strings.IndexByte(rest, '\n'); j >= 0 {
+		rest = rest[j+1:]
+	} else {
+		rest = ""
+	}
+	return strings.TrimSpace(rest), true
+}
+
+// neverSpokeHint says where the answer lives when the daemon wrote nothing:
+// the attempts are in the log under their markers, and on darwin a process
+// killed before its first instruction is a code-signature refusal the kernel
+// recorded — eight times during MGIT-214 while daemon.log stayed empty.
+// Refs: MGIT-215, MGIT-212, MGIT-214
+func neverSpokeHint(logPath string) string {
+	s := " (every attempt is appended to " + logPath + " under a start marker; this one wrote nothing)"
+	if runtime.GOOS == "darwin" {
+		s += ".\nOn macOS a daemon killed before it runs is a code-signature refusal — a quarantined download, " +
+			"or a binary overwritten in place while a daemon ran from it — and the kernel recorded it: " +
+			"`log show --predicate 'process == \"kernel\"' --last 10m | grep -E 'AMFI|ASP|code signature'`; " +
+			"`mgit doctor` names the fixes (daemon/loads)"
+	}
+	return s
 }
