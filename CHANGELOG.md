@@ -37,6 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while the daemon's log stayed empty. INSTALL-SANDBOX.md and the release
   checklist say: replace the binary, never overwrite it.
 
+- **Release notes no longer list every merge commit (MGIT-213).** goreleaser's
+  changelog filter dropped `docs`/`test`/`ci`/`chore` subjects (MGIT-190) but
+  not `Merge pull request #N from …` lines, so v0.6.7's generated notes
+  carried 16 of them among 29 lines — one per pull request, including the
+  board PRs whose own commits the filter had correctly removed. `^Merge (pull
+  request|branch) ` is excluded now; the filter test covers merge subjects
+  and, from the repository's own log, every first-parent merge between the
+  v0.6.6 and v0.6.7 tags.
+
 ### Changed
 
 - **`sandbox sync` says what `--force` means, and what happens to an edit only

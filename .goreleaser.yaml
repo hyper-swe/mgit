@@ -212,6 +212,11 @@ changelog:
       # chore(board): and five docs(release): commits until they were pruned
       # by hand. Refs: MGIT-190
       - "^(docs|test|ci|chore)(\\(.*\\))?:"
+      # Merge commits carry a branch name and nothing a reader wants: 16 of
+      # the 29 lines in v0.6.7's generated notes were `Merge pull request #N
+      # from …`, including the board PRs whose own commits the pattern above
+      # correctly dropped. Refs: MGIT-213
+      - "^Merge (pull request|branch) "
 
 release:
   github:

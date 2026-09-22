@@ -521,6 +521,14 @@ func TestReleaseConfig_ChangelogFiltersExcludeScopedHousekeeping(t *testing.T) {
 		{"fix(docs): a fix whose scope is docs stays", false},
 		{"perf(store): faster index reads", false},
 		{"refactor(cli): split run.go", false},
+		// Merge commits: one per pull request, carrying the branch name and
+		// nothing a reader wants — 16 of the 29 lines in v0.6.7's generated
+		// notes, including the board PRs whose own commits the filter
+		// correctly dropped. Refs: MGIT-213
+		{"Merge pull request #144 from hyper-swe/fix/mgit-211-drift-status-line", true},
+		{"Merge pull request #142 from hyper-swe/chore/board-2026-09-22-close-93-119-101-202", true},
+		{"Merge branch 'main' into fix/mgit-212-sigkill-causes", true},
+		{"feat(cli): Merge pull requests faster", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.subject, func(t *testing.T) {
@@ -563,4 +571,28 @@ func changelogExcludes(t *testing.T, cfg string) []*regexp.Regexp {
 		}
 	}
 	return out
+}
+
+// TestReleaseConfig_ChangelogFiltersDropTheRepositoryOwnMergeCommits runs the
+// declared filters over the merge subjects the repository actually carries —
+// every first-parent merge since the burned v0.6.6 tag, read from git, not
+// typed — with Go's regexp, the engine goreleaser applies them with. The case
+// list comes from the log, which this test does not control. Refs: MGIT-213
+func TestReleaseConfig_ChangelogFiltersDropTheRepositoryOwnMergeCommits(t *testing.T) {
+	out, err := exec.Command("git", "-C", repoRoot(t), "log", "--merges", "--first-parent", "--format=%s", "v0.6.6..v0.6.7").Output() //nolint:gosec // git over this repository's own root, in a test
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		t.Skip("the v0.6.6..v0.6.7 range is not available in this checkout")
+	}
+	excludes := changelogExcludes(t, readRepoFile(t, ".goreleaser.yaml"))
+	subjects := strings.Split(strings.TrimSpace(string(out)), "\n")
+	require.GreaterOrEqual(t, len(subjects), 10, "the range carries the release day's merges")
+	for _, subject := range subjects {
+		excluded := false
+		for _, re := range excludes {
+			if re.MatchString(subject) {
+				excluded = true
+			}
+		}
+		assert.True(t, excluded, "a merge commit must not reach the notes: %q", subject)
+	}
 }
