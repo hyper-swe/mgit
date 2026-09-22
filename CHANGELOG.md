@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-09-22
+
+**The base a release vouches for is a digest now, and `mgit doctor` says when
+yours is not it.** Two hosts recomposed "under 0.6.7 from the same tag" on the
+same day ran different guest userspaces, because the tag moved between them and
+nothing said so. This release embeds the guest base image it was smoke-tested
+with — `debian:12` at its image-index digest, the same on every host — so
+`mgit sandbox base from` with no reference composes exactly that, the e2e smoke
+composes it, the release preflight refuses a sha whose record is missing or no
+longer served, and doctor's new `base/release` row states a base composed from
+anything else as a difference, never as ok. `base/currency` now names the
+image a base was composed from beside the substrate that composed it. Also
+shipped: the release preflight as one committed, self-tested check; the
+board-drift report reading the board commit's own trailers; a daemon that
+survives a panic on its idle poll; `sandbox sync` saying what `--force` means
+and keeping a guest-only edit; `worktree list` marking a missing directory
+`prunable`; a rejected sandbox request naming the field; `mgit doctor` naming
+why a daemon binary was killed before it could run; a daemon log that keeps
+every attempt; release notes without the merge commits. The three known
+issues carried by 0.6.7 (MGIT-193, MGIT-194, MGIT-207) are closed here.
+
+A base composed by an mgit before 0.6.8 recorded its platform manifest's
+digest rather than the image index; `base/release` reads such a base as not
+comparable and asks for a recompose — recompose after installing
+(`mgit sandbox base from`, no reference) to be on the base this release was
+tested with.
+
 ### Added
 
 - **A release records the guest base it was smoke-tested with, and compose
