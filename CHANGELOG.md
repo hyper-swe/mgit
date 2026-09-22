@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A malformed task id on `sandbox launch` names the field and the rule
+  (MGIT-207).** `--task-id T99` was refused with a bare `invalid request`:
+  the model's field-level refusal (`task_id: invalid task id "T99": must
+  match PREFIX-BODY …`) was produced at the daemon's wire boundary and then
+  flattened to the text reserved for frames that cannot be decoded. The
+  daemon now answers a field-level refusal with the field and the rule, for
+  every verb and every client, and keeps the bare text for undecodable
+  frames; the CLI additionally refuses a malformed id with the grammar
+  before it resolves a base or dials a daemon.
+
 - **`mgit doctor` names why a daemon binary was killed before it could run
   (MGIT-212).** A code-signature refusal on macOS is a SIGKILL with no
   words, and it has two known causes with different fixes: a quarantined

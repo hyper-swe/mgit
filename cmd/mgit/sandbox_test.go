@@ -677,3 +677,19 @@ func TestSandboxRemove_ClearsTheOwnerRecordOfThatTask(t *testing.T) {
 		})
 	}
 }
+
+// TestSandboxLaunch_MalformedTaskID_NamesTheGrammarBeforeDialing: the CLI
+// already knows the task-id grammar, so a malformed id is refused with the
+// rule before any daemon is dialed — the launch never reaches the client.
+// Refs: MGIT-207
+func TestSandboxLaunch_MalformedTaskID_NamesTheGrammarBeforeDialing(t *testing.T) {
+	fc := &fakeSandboxClient{}
+	t.Chdir(newRepo(t))
+
+	_, err := runSandbox(okConnect(fc), "launch", "--task", "T99", "--worktree", "/w")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"T99"`)
+	assert.Contains(t, err.Error(), "must match", "the accepted grammar is named")
+	assert.Nil(t, fc.launched, "nothing is sent for an id the model would refuse")
+}

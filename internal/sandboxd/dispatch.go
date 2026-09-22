@@ -125,11 +125,25 @@ func (d *Daemon) readRequest(conn net.Conn) (*controlproto.Request, bool) {
 		if !errors.Is(err, io.EOF) {
 			d.cfg.Logger.Warn("sandboxd rejected request",
 				"event", "request_rejected", "error", err.Error())
-			d.writeResponse(conn, &controlproto.Response{Error: "invalid request"})
+			d.writeResponse(conn, &controlproto.Response{Error: rejectionText(err)})
 		}
 		return nil, false
 	}
 	return req, true
+}
+
+// rejectionText is what the sender of a refused frame reads. A field the
+// model refused is named with its rule (`task_id: invalid task id "T99":
+// must match …`), because the sender can fix that. The bare "invalid
+// request" is kept for frames that cannot be decoded at all — an unknown
+// kind, a payload for another kind, malformed JSON — where naming parts
+// would be inventing them. Refs: MGIT-207, FR-17.34
+func rejectionText(err error) string {
+	var ve *model.ValidationError
+	if errors.As(err, &ve) {
+		return ve.Error()
+	}
+	return "invalid request"
 }
 
 // dispatch routes one validated request to the service and replies. Exec

@@ -179,6 +179,11 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 			if task == "" || worktree == "" {
 				return fmt.Errorf("--task-id and --worktree are required")
 			}
+			// The CLI knows the grammar; refuse a malformed id with the rule
+			// before any base is resolved or any daemon dialed. Refs: MGIT-207
+			if _, err := model.ParseTaskID(task); err != nil {
+				return err
+			}
 			if image == "" {
 				var err error
 				if image, err = repoGuestBaseRef(cmd.OutOrStdout()); err != nil {
