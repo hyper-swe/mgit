@@ -486,6 +486,7 @@ func (d *Daemon) handleConn(ctx context.Context, conn net.Conn, authed chan<- st
 	// A panic in one connection handler must NEVER crash the daemon: a hard
 	// crash skips drain and strands every running VM unsupervised. Recover,
 	// audit, and drop only this connection. Refs: MGIT-11.10.8 (security audit)
+
 	defer func() {
 		if r := recover(); r != nil {
 			d.cfg.Logger.Error("sandboxd recovered from handler panic",
@@ -548,7 +549,18 @@ func (d *Daemon) authenticate(conn net.Conn) bool {
 // A service-less build (backend-only, MGIT-11.10.8) still asks the backend:
 // it has no registry to consult, and supervising a running VM is the most it
 // can know. Refs: MGIT-154, MGIT-107, MGIT-110, FR-17.9, FR-17.10, NFR-17.6
-func (d *Daemon) hasSandboxes(ctx context.Context) (bool, error) {
+func (d *Daemon) hasSandboxes(ctx context.Context) (busy bool, err error) {
+	// A panic in the service's or the backend's List on the idle poll would
+	// escape Run — the one path with no recover, beside the handler's
+	// (MGIT-11.10.8) and the drain's (MGIT-107) — and a crashed daemon skips
+	// the drain and strands every running VM. It becomes the list error the
+	// loop already logs and continues on: the answer is "cannot tell", never
+	// "no sandboxes", so the daemon does not idle-exit on it. Refs: MGIT-217
+	defer func() {
+		if r := recover(); r != nil {
+			busy, err = false, fmt.Errorf("panic listing sandboxes on the idle poll: %v", r)
+		}
+	}()
 	if d.cfg.Service != nil {
 		registered, err := d.cfg.Service.List(ctx)
 		if err != nil {

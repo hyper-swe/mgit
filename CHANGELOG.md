@@ -37,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A panic on the daemon's idle poll no longer kills mgit-sandboxd
+  (MGIT-217).** The poll asked the service to list sandboxes with no recover
+  around it, so a panic there escaped the daemon's loop — outside the guards
+  a connection handler (MGIT-11.10.8) and the shutdown drain (MGIT-107)
+  already had — and a crashed daemon skips the drain and strands every
+  running VM. It is now the list error the loop already logs and continues
+  on, read as "cannot tell", never as idle. Found as a CI race: a test that
+  arms a one-shot List panic to prove the handler's recover lost the shot to
+  the poll.
+
 - **A malformed task id on `sandbox launch` names the field and the rule
   (MGIT-207).** `--task-id T99` was refused with a bare `invalid request`:
   the model's field-level refusal (`task_id: invalid task id "T99": must
