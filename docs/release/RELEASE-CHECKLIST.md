@@ -150,6 +150,21 @@ green Linux gate is not evidence about macOS:
 
 ## Publish steps (owner)
 
+**Pin the guest base the release vouches for (MGIT-219).** Before the cut,
+refresh the record the binary embeds and the smoke composes:
+
+```
+scripts/release/pin-guest-base.sh            # resolves the record's image (debian:12) to what its tag points at now
+git diff internal/sandboxd/guestbase/release-base.json
+```
+
+Commit the record with the changelog commit when it moved. The preflight's
+check 7 refuses a sha whose record is missing or whose digest the registry no
+longer serves, and the e2e/posture smoke composes THAT record (`mgit sandbox
+base from` with no reference), so what the release was tested with is what it
+records. `mgit doctor` on any host then states, as a difference, a base
+composed from anything else.
+
 1. Run the committed preflight at the exact sha the tag will point at, and
    tag nothing while it says FAIL:
    ```

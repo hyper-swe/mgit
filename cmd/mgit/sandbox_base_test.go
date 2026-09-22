@@ -465,7 +465,12 @@ func buildImageContent(t *testing.T, files map[string]string, kind string, arche
 		require.NoError(t, err)
 		manifests["v1"] = index
 	} else {
-		manifests["v1"] = manifestFor(arches[0])
+		doc := manifestFor(arches[0])
+		manifests["v1"] = doc
+		// A registry serves every manifest by its digest as well as by tag:
+		// that is what a pull by digest — the release's pinned base — relies on.
+		sum := sha256.Sum256(doc)
+		manifests[hex.EncodeToString(sum[:])] = doc
 	}
 	return imageContent{blobs: blobs, manifests: manifests}
 }

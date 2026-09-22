@@ -30,6 +30,12 @@ const (
 	// a reader who believes a check passed has been misled by the very
 	// instrument they consulted to avoid being misled. Refs: MGIT-162, R-H300
 	StatusNotChecked Status = "not-checked"
+	// StatusDiffers means the check ran and found a DIFFERENCE from what the
+	// release vouches for: not the condition a failure names, and never a
+	// pass. It is stated, with both sides named, for the reader to judge —
+	// an "ok" over a real difference is the silence R-H300 forbids.
+	// Refs: MGIT-219, MGIT-218
+	StatusDiffers Status = "differs"
 )
 
 // Result is one check's outcome.
@@ -85,7 +91,7 @@ func Render(results []Result) string {
 	var b strings.Builder
 	for _, r := range results {
 		fmt.Fprintf(&b, "%-5s %-26s %s\n", marker(r.Status), r.Name, r.Summary)
-		if r.Status == StatusFailed && r.Remedy != "" {
+		if (r.Status == StatusFailed || r.Status == StatusDiffers) && r.Remedy != "" {
 			fmt.Fprintf(&b, "      %-26s remedy: %s\n", "", r.Remedy)
 		}
 		if r.Status == StatusNotChecked && r.Reason != "" {
@@ -95,7 +101,8 @@ func Render(results []Result) string {
 	}
 	if !Failed(results) {
 		b.WriteString("\nNo check found a known-bad condition. " +
-			"A `?` above is an absence of evidence, not a pass.\n")
+			"A `?` above is an absence of evidence, not a pass. " +
+			"A `DIFF` above is a stated difference from what this release was tested with — read it.\n")
 	}
 	return b.String()
 }
@@ -108,6 +115,8 @@ func marker(s Status) string {
 		return "ok"
 	case StatusFailed:
 		return "FAIL"
+	case StatusDiffers:
+		return "DIFF"
 	default:
 		return "?"
 	}

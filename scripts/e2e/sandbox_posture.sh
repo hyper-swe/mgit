@@ -42,8 +42,10 @@
 #                         registration is PER-REPO (.mgit/sandbox), so a ref
 #                         from another repo cannot resolve here. Or
 #     MGIT_GUEST_OCI_REF  the OCI image to compose a directory guest base from,
-#                         for the libkrun backend on either platform
-#                         (macOS default: debian:12).
+#                         for the libkrun backend on either platform. Unset,
+#                         the base this release was smoke-tested with is
+#                         composed (`mgit sandbox base from` with no reference:
+#                         the binary's own record, pulled by digest — MGIT-219).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
@@ -133,8 +135,8 @@ elif [ -n "${MGIT_GUEST_KERNEL:-}" ] && [ -n "${MGIT_GUEST_ROOTFS:-}" ]; then
 	[ -n "$MGIT_GUEST_IMAGE" ] || _e2e_fail "image add produced no reference"
 	pass "registered $MGIT_GUEST_IMAGE"
 else
-	oci_ref="${MGIT_GUEST_OCI_REF:-debian:12}"
-	echo "== compose guest base from $oci_ref (libkrun, OCI) in the scratch repo =="
+	oci_ref="${MGIT_GUEST_OCI_REF:-}"
+	echo "== compose guest base from ${oci_ref:-the release-recorded base} (libkrun, OCI) in the scratch repo =="
 	# fetch-guard: `mgit sandbox base from` pulls an OCI image through the
 	# product's own registry client (internal/sandboxd/guestbase/pull.go),
 	# which already bounds a whole pull at 15 minutes -- clause 2, in Go. It
@@ -142,10 +144,12 @@ else
 	# would guard the wrong layer: a retry outside the client cannot clear the
 	# half-written blob cache inside it. MGIT-145 carries that work.
 	# Refs: MGIT-143, MGIT-145
-	MGIT_GUEST_IMAGE="$(mgit sandbox base from "$oci_ref" --json |
+	# No reference means the release-recorded base — what this release was
+	# smoke-tested with, so the smoke and the record cannot disagree (MGIT-219).
+	MGIT_GUEST_IMAGE="$(mgit sandbox base from ${oci_ref:+"$oci_ref"} --json |
 		sed -n 's/.*"image_ref":"\([^"]*\)".*/\1/p')"
 	[ -n "$MGIT_GUEST_IMAGE" ] || _e2e_fail "sandbox base from produced no reference"
-	pass "composed $MGIT_GUEST_IMAGE from $oci_ref"
+	pass "composed $MGIT_GUEST_IMAGE from ${oci_ref:-the release-recorded base}"
 fi
 
 echo "== launch a task sandbox and exec inside it =="

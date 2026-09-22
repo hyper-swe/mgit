@@ -161,6 +161,7 @@ func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 			return probeGuestLocalhost(ctx, connect, task)
 		}},
 		doctor.BaseCurrencyCheck{Inspect: inspectBaseCurrency},
+		doctor.BaseReleaseCheck{Inspect: inspectBaseCurrency},
 		doctor.ResponseCapCheck{Probe: func(ctx context.Context, bytes int) (doctor.EchoReply, error) {
 			return probeResponseCap(ctx, connect, bytes)
 		}},
@@ -304,6 +305,13 @@ func inspectBaseCurrency() (doctor.BaseIdentity, error) {
 		return none, fmt.Errorf("could not read the guest base's lock entry: %w", err)
 	}
 	id := doctor.BaseIdentity{Running: Version, SourceRef: entry.Source, BaseDigest: entry.Digest}
+	// The base this build vouches for, for the base/release row. A build
+	// without a record leaves it empty and that row says the comparison
+	// cannot be made; a malformed record is a build defect the guestbase
+	// package's own test catches before it ships. Refs: MGIT-219
+	if rel, relErr := releaseBaseRecord(); relErr == nil {
+		id.ReleaseRef = rel.Ref()
+	}
 	rec, readErr := guestbase.ReadComposedBy(resolved.RootfsPath)
 	if errors.Is(readErr, guestbase.ErrComposedByUnknown) {
 		// Not an inspection failure: we looked and it genuinely says nothing.

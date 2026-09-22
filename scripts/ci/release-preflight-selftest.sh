@@ -76,9 +76,39 @@ fixture() {
 	printf '%s' "$changelog" >"$clone/CHANGELOG.md"
 	in_fixture "$clone" sh -c 'git add CHANGELOG.md && git commit -qm changelog'
 	in_fixture "$clone" git push -q origin main
+	record_commit "$clone" "${3-$good_record}"
 	echo "$clone"
 }
 fix_sha() { in_fixture "$1" git log --format=%H --grep='^the fix$' -1; }
+
+# The guest base record every fixture carries (check 7), and a stub mgit whose
+# `sandbox base resolve` answers the digest it was given (or a fixed one for a
+# bare tag) — the registry is never consulted here.
+good_digest="sha256:$(printf 'a%.0s' $(seq 1 64))"
+good_record="$(printf '{\n  "image": "debian:12",\n  "digest": "%s"\n}\n' "$good_digest")"
+MGIT_STUB="$WORK/mgit-stub"
+cat >"$MGIT_STUB" <<'STUB'
+#!/usr/bin/env bash
+# stub mgit: only `sandbox base resolve <ref> --json` is answered
+case "$*" in
+*"sandbox base resolve"*)
+	ref=""; for a in "$@"; do case "$a" in --*|sandbox|base|resolve) ;; *) ref="$a" ;; esac; done
+	case "$ref" in *@sha256:*) d="${ref##*@}" ;; *) d="sha256:$(printf 'c%.0s' $(seq 1 64))" ;; esac
+	printf '{"digest":"%s","image":"%s","ref":"%s@%s"}\n' "$d" "${ref%%@*}" "${ref%%@*}" "$d" ;;
+*) exit 3 ;;
+esac
+STUB
+chmod +x "$MGIT_STUB"
+export MGIT="$MGIT_STUB"
+# record_commit <clone> <record>: commit the guest base record into a fixture (an empty record means no file).
+record_commit() {
+	local clone=$1 record=$2
+	under_work "$clone" || abort "record_commit: not a fixture: '${clone:-}'"
+	[ -n "$record" ] || return 0
+	mkdir -p "$clone/internal/sandboxd/guestbase"
+	printf '%s' "$record" >"$clone/internal/sandboxd/guestbase/release-base.json"
+	in_fixture "$clone" sh -c 'git add internal && git commit -qm "guest base record" && git push -q origin main'
+}
 
 # refuses <clone> <needle> <what> <args...>: the check must exit non-zero AND name the line.
 refuses() {
@@ -127,6 +157,27 @@ refuses "$c" "does not contain" "a sha lacking a required commit is refused" 9.9
 
 c=$(fixture nogh "$good_changelog")
 GH="$WORK/no-such-gh" refuses "$c" "cannot tell" "without gh the workflow checks are a loud FAIL, never a pass" 9.9.9 --ticket MGIT-1
+
+# 7. the guest base record (MGIT-219)
+c=$(fixture norecord "$good_changelog" "")
+refuses "$c" "7. no guest base record" "a sha without the guest base record is refused" 9.9.9 --no-ci
+c=$(fixture badrecord "$good_changelog" '{"image":"debian:12"}')
+refuses "$c" "names no image or no digest" "a record without a digest is refused" 9.9.9 --no-ci
+c=$(fixture unserved "$good_changelog")
+MGIT="$WORK/no-such-mgit" refuses "$c" "cannot tell" "without mgit the record cannot be resolved: a loud FAIL, never a pass" 9.9.9 --no-ci
+cat >"$WORK/mgit-unserved" <<'STUB'
+#!/usr/bin/env bash
+printf '{"digest":"sha256:%s"}\n' "$(printf 'd%.0s' $(seq 1 64))"
+STUB
+chmod +x "$WORK/mgit-unserved"
+MGIT="$WORK/mgit-unserved" refuses "$c" "does not serve the recorded guest base" "a record whose digest the registry no longer serves is refused" 9.9.9 --no-ci
+
+# the pin script writes the record from what the registry answers
+c=$(fixture pin "$good_changelog")
+out="$(cd "$c" && MGIT="$MGIT_STUB" bash "$(dirname "$CHECK")/../release/pin-guest-base.sh" debian:12 2>&1)"; rc=$?
+if [ $rc -eq 0 ] && grep -q "record moved: was $good_digest" <<<"$out" && grep -q "sha256:$(printf 'c%.0s' $(seq 1 64))" "$c/internal/sandboxd/guestbase/release-base.json"; then
+	ok "pin-guest-base.sh rewrites the record with the resolved digest and says what moved"
+else bad "pin-guest-base.sh (rc=$rc)"; sed 's/^/    /' <<<"$out" >&2; fi
 
 # The guard itself: an empty fixture path must abort, never fall through to the current directory.
 if (in_fixture "" true) 2>/dev/null; then bad "an empty fixture path was accepted"; else ok "an empty fixture path aborts the helper (the v9.9.9 lesson)"; fi

@@ -330,7 +330,8 @@ Then compose the Linux userspace the VM boots — from any public OCI image, pul
 
 ```bash
 mgit sandbox image init                # once per repo: create the signing trust root
-mgit sandbox base from debian:12       # or node:22, python:3.12, golang:1.23 …
+mgit sandbox base from                 # the base this release was smoke-tested with (by digest)
+mgit sandbox base from node:22         # or python:3.12, golang:1.23 … — doctor states the difference
 ```
 
 That pulls the image, injects `mgit` and `mgit-guest`, pins the composed tree by content digest and signs it into your repo's trust root. `mgit run` and `mgit work --sandbox` use it automatically from then on.
@@ -421,7 +422,7 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 | `mgit sandbox daemons` / `daemons stop --repo-root PATH` | Every sandbox daemon this user runs on the host — pid, age, root, and what is wrong (temp-root, root-gone, dead, LEAKED) — read from the record each daemon keeps beside its socket, without ps; `stop` signals one repository's daemon by its recorded pid, never the host's. A daemon whose repository root is deleted drains itself within one idle check. `mgit doctor` fails `daemons/host` when a daemon has outlived its repository, and `daemons/one-per-repository` when two live daemons serve one repository (one per spelling of its path — a daemon claims `<repo>/.mgit/sandbox/daemon.lock` before reading the index, and a second one refuses to start naming the holder) |
 | `mgit sandbox grants --task-id ID` / `grant --task-id ID KEY` | Review and approve per-task egress requests |
 | `mgit sandbox policy set/revoke/show --task-id ID` | Change or read a sandbox's egress allowlist without relaunching it. Works **before first boot** too — see below |
-| `mgit sandbox base from <oci-image>` / `set <dir>` | Compose this repo's guest base from an OCI image, or use a tree you built |
+| `mgit sandbox base from [<oci-image>]` / `set <dir>` / `resolve [<ref>]` | Compose this repo's guest base — with no image, the one this release was smoke-tested with, by digest — or use a tree you built; `resolve` prints what a reference points at now |
 | `mgit sandbox image init` / `add --kernel … --rootfs …` | Manage the signed, digest-pinned image set (firecracker kernel + rootfs) |
 
 Sandbox commands require the host daemon and a guest base, and run on macOS (libkrun, Apple Silicon) and Linux (firecracker/KVM).

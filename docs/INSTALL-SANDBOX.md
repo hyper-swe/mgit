@@ -388,27 +388,44 @@ entry and says what changed, naming both digests — it never replaces the old
 one. Every composition is appended to `.mgit/sandbox/base-provenance.jsonl`,
 which `images.lock` cannot express because it holds one entry per name.
 
-**A mutable tag is the intended input; the digest is the identity.** Several
-hosts told to "recompose from the same tag" at different moments can end up on
-different images, and each of them is *current* — the guest binaries inside
-each base are this substrate's. That is by design: what a recompose promises
-is this substrate's guest code on whatever the tag points at now, never the
-same bytes as another host. To hold a fleet to one image, compose from the
-digest (`mgit sandbox base from golang:1.26-bookworm@sha256:…`), which every
-host resolves identically.
-
-Whether two hosts run the same base is a question about digests, and doctor
-answers it: the `base/currency` row names the resolved source and the
-composed base beside the substrate version —
+**The digest is the identity; the tag is documentation.** A release RECORDS
+the guest base image it was smoke-tested with — image name and digest, in
+`internal/sandboxd/guestbase/release-base.json`, embedded in the binary — and
+`mgit sandbox base from` with **no reference** composes exactly that, pulled
+by digest. Every host that recomposes under the same release therefore gets
+the same bytes, whatever the tag points at that day:
 
 ```
-ok    base/currency — the guest base was composed by this substrate (0.6.7); source registry-1.docker.io/library/golang:1.26-bookworm@sha256:37a6…, base sha256:be25…
+mgit sandbox base from                  # the base this release was smoke-tested with
+mgit sandbox base resolve               # print that record (and prove the registry still serves it)
+mgit sandbox base resolve debian:12     # what the tag points at NOW
+```
+
+Composing from a tag you name is still allowed — your toolchain may need
+`node:22` — and the tag is resolved to a digest once and pinned. Several hosts
+that did that at different moments can sit on different images; doctor says
+so. Whether two hosts run the same base is a question about digests, and the
+`base/currency` row names the resolved source and the composed base beside
+the substrate version:
+
+```
+ok    base/currency — the guest base was composed by this substrate (0.6.8); source registry-1.docker.io/library/debian:12@sha256:9a2b…, base sha256:9e61…
 ```
 
 Two hosts are on the same base exactly when that line agrees on `base
-sha256:…`; compare `mgit doctor --json` on each (the row's `summary`) and diff.
-A base registered from a directory with `sandbox base set` has no OCI source,
-and the row says so beside its digest.
+sha256:…`; compare `mgit doctor --json` on each (the row's `summary`) and
+diff. The `base/release` row then compares your base with the release's
+record and states a mismatch as a **difference**, never as ok:
+
+```
+ok    base/release  — the guest base is the image this release was smoke-tested with: registry-1.docker.io/library/debian:12@sha256:9a2b…
+DIFF  base/release  — the guest base was composed from registry-1.docker.io/library/golang:1.26-bookworm@sha256:37a6… but this release was smoke-tested with registry-1.docker.io/library/debian:12@sha256:9a2b… — a different image, so the guest userspace is not the one this release was tested with
+      remedy: recompose from the release's base with `mgit sandbox base from` (no reference), or keep this image knowingly — this row then stays a stated difference
+```
+
+A `DIFF` is neither a pass nor a failure of the exit code: it is a stated
+difference for you to read. A base registered from a directory with
+`sandbox base set` has no OCI source, and both rows say so beside its digest.
 
 **Pick the image your task's toolchain needs.** The base IS the environment
 your agent works in, so start from something that already carries it:

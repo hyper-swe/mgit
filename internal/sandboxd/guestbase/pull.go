@@ -90,19 +90,7 @@ func Pull(ctx context.Context, ref Ref, destDir string, opts PullOptions) (Ref, 
 	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
 
-	c := &client{
-		http:      opts.HTTPClient,
-		scheme:    "https",
-		plainHTTP: opts.PlainHTTP,
-		progress:  opts.Progress,
-	}
-	if c.http == nil {
-		c.http = &http.Client{Timeout: pullTimeout}
-	}
-	if opts.PlainHTTP {
-		c.scheme = "http"
-	}
-
+	c := newClient(opts)
 	manifest, resolved, err := c.resolveManifest(ctx, ref)
 	if err != nil {
 		return Ref{}, err
@@ -134,6 +122,37 @@ func Pull(ctx context.Context, ref Ref, destDir string, opts PullOptions) (Ref, 
 		c.reportf("image declares PATH=%s", declared)
 	}
 	return resolved, nil
+}
+
+// Resolve answers what a reference points at NOW — the manifest digest the
+// registry serves for it, with the tag kept beside it — without composing
+// anything. It is the pin script's and the release preflight's instrument,
+// and a person's, when the question is whether upstream moved. A reference
+// that already carries a digest resolves to itself when the registry still
+// serves that manifest, which is how a pinned record is proved live.
+// Refs: MGIT-219, MGIT-147
+func Resolve(ctx context.Context, ref Ref, opts PullOptions) (Ref, error) {
+	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
+	defer cancel()
+	_, resolved, err := newClient(opts).resolveManifest(ctx, ref)
+	return resolved, err
+}
+
+// newClient builds the per-pull HTTP state from the options.
+func newClient(opts PullOptions) *client {
+	c := &client{
+		http:      opts.HTTPClient,
+		scheme:    "https",
+		plainHTTP: opts.PlainHTTP,
+		progress:  opts.Progress,
+	}
+	if c.http == nil {
+		c.http = &http.Client{Timeout: pullTimeout}
+	}
+	if opts.PlainHTTP {
+		c.scheme = "http"
+	}
+	return c
 }
 
 // client carries the per-pull HTTP state, including the bearer token a

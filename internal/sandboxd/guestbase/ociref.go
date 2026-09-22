@@ -107,9 +107,9 @@ func ParseRef(in string) (Ref, error) {
 			return Ref{}, fmt.Errorf("guest base: %q has an empty tag", in)
 		}
 		remainder = repo
-		if ref.Digest == "" {
-			ref.Tag = tag
-		}
+		// Beside a digest the tag is documentation, and it is kept: the pull
+		// goes by the digest, the record reads by the tag. Refs: MGIT-219
+		ref.Tag = tag
 	}
 	if remainder == "" {
 		return Ref{}, fmt.Errorf("guest base: %q names no repository", in)

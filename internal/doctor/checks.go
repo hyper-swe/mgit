@@ -126,6 +126,64 @@ type BaseIdentity struct {
 	Running    string // the mgit version running now
 	SourceRef  string // resolved OCI source, tag@digest; "" for a directory base
 	BaseDigest string // digest of the composed tree, as pinned in images.lock
+	ReleaseRef string // the base this build vouches for, tag@digest; "" when the build records none
+}
+
+// BaseReleaseCheck reports whether this repository's guest base is the image
+// the running release was smoke-tested with. Refs: MGIT-219
+type BaseReleaseCheck struct {
+	Inspect func() (BaseIdentity, error)
+}
+
+// Name implements Check.
+func (BaseReleaseCheck) Name() string { return "base/release" }
+
+// Run implements Check.
+//
+// The comparison is digest to digest. A same-name/different-digest case is
+// the one a moving tag produces and is named as such; a different image
+// name is named as a different image; a base registered from a directory
+// was composed from no image at all. Each is a DIFFERENCE with both sides
+// stated, never an ok — and a build that records no release base says the
+// comparison cannot be made rather than passing it. Refs: MGIT-219, MGIT-218
+func (c BaseReleaseCheck) Run(context.Context) Result {
+	r := Result{Name: c.Name(), Incident: "MGIT-219"}
+	id, err := c.Inspect()
+	if err != nil {
+		r.Status, r.Reason = StatusNotChecked, err.Error()
+		r.Summary = "could not determine which image this repository's guest base was composed from"
+		return r
+	}
+	if id.ReleaseRef == "" {
+		r.Status = StatusNotChecked
+		r.Reason = "this build records no release guest base"
+		r.Summary = "the composed base cannot be compared with a release-tested one: this build records no release guest base"
+		return r
+	}
+	const remedy = "recompose from the release's base with `mgit sandbox base from` (no reference), " +
+		"or keep this image knowingly — this row then stays a stated difference"
+	relTag, relDigest := guestbase.SourceTag(id.ReleaseRef), guestbase.SourceDigest(id.ReleaseRef)
+	srcTag, srcDigest := guestbase.SourceTag(id.SourceRef), guestbase.SourceDigest(id.SourceRef)
+	switch {
+	case id.SourceRef == "":
+		r.Status, r.Remedy = StatusDiffers, remedy
+		r.Summary = fmt.Sprintf("the guest base was registered from a directory, composed from no image, "+
+			"while this release was smoke-tested with %s@%s", relTag, relDigest)
+	case srcTag == relTag && srcDigest == relDigest:
+		r.Status = StatusOK
+		r.Summary = fmt.Sprintf("the guest base is the image this release was smoke-tested with: %s@%s", relTag, relDigest)
+	case srcTag == relTag:
+		r.Status, r.Remedy = StatusDiffers, remedy
+		r.Summary = fmt.Sprintf("the guest base was composed from %s@%s but this release was smoke-tested with "+
+			"%s@%s — the same tag pointed at different bytes, so the guest userspace is not the one this "+
+			"release was tested with", srcTag, srcDigest, relTag, relDigest)
+	default:
+		r.Status, r.Remedy = StatusDiffers, remedy
+		r.Summary = fmt.Sprintf("the guest base was composed from %s@%s but this release was smoke-tested with "+
+			"%s@%s — a different image, so the guest userspace is not the one this release was tested with",
+			srcTag, srcDigest, relTag, relDigest)
+	}
+	return r
 }
 
 // Name implements Check.

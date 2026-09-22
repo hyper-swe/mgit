@@ -52,7 +52,7 @@ func sandboxBaseCmd() *cobra.Command {
 			"recomposing publishes a NEW entry rather than rewriting the one somebody\n" +
 			"else pinned.",
 	}
-	cmd.AddCommand(sandboxBaseSetCmd(), sandboxBaseFromCmd())
+	cmd.AddCommand(sandboxBaseSetCmd(), sandboxBaseFromCmd(), newSandboxBaseResolveCmd())
 	return cmd
 }
 
@@ -169,16 +169,22 @@ func sandboxBaseFromCmd() *cobra.Command {
 	var name, guestBinDir string
 	var plainHTTP, asJSON bool
 	cmd := &cobra.Command{
-		Use:   "from <oci-ref>",
-		Short: "Compose this repo's guest base from an OCI image (e.g. debian:12, node:22-slim)",
+		Use:   "from [<oci-ref>]",
+		Short: "Compose this repo's guest base from an OCI image (default: the base this release was tested with)",
 		Long: "Pulls a public OCI image, composes its layers into a guest base in this\n" +
 			"machine's base cache, injects mgit and mgit-guest, then pins the composed\n" +
 			"tree by content digest and signs that digest into this repo's images.lock.\n" +
 			"No base bytes are written inside the repository.\n\n" +
-			"The tag is resolved to a digest ONCE and recorded as provenance: a tag can\n" +
-			"point twice, a digest cannot. Re-composing the same tag onto different\n" +
-			"bytes produces a new cache entry and says what changed; it never replaces\n" +
-			"what you had pinned.\n\n" +
+			"With no reference, the base this release was smoke-tested with is composed,\n" +
+			"pulled BY DIGEST: every host that recomposes under this release gets the\n" +
+			"same bytes, whatever the tag points at today. `mgit sandbox base resolve`\n" +
+			"prints that record.\n\n" +
+			"With a reference, the tag is resolved to a digest ONCE and recorded as\n" +
+			"provenance: a tag can point twice, a digest cannot, and the tag is\n" +
+			"documentation only. Re-composing the same tag onto different bytes\n" +
+			"produces a new cache entry and says what changed; it never replaces what\n" +
+			"you had pinned. `mgit doctor` states, beside the release's record, when a\n" +
+			"base was composed from something else.\n\n" +
 			"The image supplies the Linux userspace your agent's toolchain needs; mgit\n" +
 			"supplies the supervisor and the CLI. Because YOU pull the image, mgit\n" +
 			"redistributes nothing.\n\n" +
@@ -187,10 +193,14 @@ func sandboxBaseFromCmd() *cobra.Command {
 			"burns a throwaway microVM. The host store, egress policy, land airlock and\n" +
 			"attestation signing are all enforced host-side and are unaffected by what\n" +
 			"the base contains.",
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := composeOptions{name: name, guestBinDir: guestBinDir, plainHTTP: plainHTTP}
-			res, err := composeBaseFromImage(cmd, args[0], opts)
+			refArg, err := composeRefOrRelease(cmd, args)
+			if err != nil {
+				return err
+			}
+			res, err := composeBaseFromImage(cmd, refArg, opts)
 			if err != nil {
 				return err
 			}
@@ -208,6 +218,74 @@ func sandboxBaseFromCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&plainHTTP, "plain-http", false,
 		"talk to the registry over http (local mirrors and tests only)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output the digest-pinned reference as JSON")
+	return cmd
+}
+
+// releaseBaseRecord is the base this build vouches for. A variable so the
+// tests can point it at a fixture registry; the product reads the embedded
+// record. Refs: MGIT-219
+var releaseBaseRecord = guestbase.ReleaseBaseRecord
+
+// composeRefOrRelease returns the reference to compose: the one given, or,
+// with none, the release's recorded base — pulled by its digest, and said so
+// before the pull starts. A build with no record refuses rather than guessing
+// a tag. Refs: MGIT-219
+func composeRefOrRelease(cmd *cobra.Command, args []string) (string, error) {
+	if len(args) == 1 {
+		return args[0], nil
+	}
+	rec, err := releaseBaseRecord()
+	if err != nil {
+		return "", fmt.Errorf("%w; give an image reference to compose from", err)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Composing the base this release was smoke-tested with: %s\n", rec.Ref())
+	return rec.Ref(), nil
+}
+
+// newSandboxBaseResolveCmd answers what a reference points at now, or proves
+// a pinned digest is still served, without composing. Refs: MGIT-219
+func newSandboxBaseResolveCmd() *cobra.Command {
+	var plainHTTP, asJSON bool
+	cmd := &cobra.Command{
+		Use:   "resolve [<oci-ref>]",
+		Short: "Print the digest an image reference points at now (default: this release's recorded base)",
+		Long: "Asks the registry which manifest a reference names right now and prints the\n" +
+			"fully-resolved reference, registry/repo:tag@sha256:…, composing nothing.\n" +
+			"A tag answers with whatever it points at today; a digest answers with\n" +
+			"itself while the registry still serves it. With no reference, the base\n" +
+			"this release was smoke-tested with is resolved — which proves the record\n" +
+			"is still pullable. scripts/release/pin-guest-base.sh writes the record\n" +
+			"from this output.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var refArg string
+			if len(args) == 1 {
+				refArg = args[0]
+			} else {
+				rec, err := releaseBaseRecord()
+				if err != nil {
+					return err
+				}
+				refArg = rec.Ref()
+			}
+			ref, err := guestbase.ParseRef(refArg)
+			if err != nil {
+				return err
+			}
+			resolved, err := guestbase.Resolve(cmd.Context(), ref, guestbase.PullOptions{PlainHTTP: plainHTTP})
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]string{
+					"ref": resolved.String(), "image": guestbase.SourceTag(resolved.String()), "digest": resolved.Digest})
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), resolved.String())
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&plainHTTP, "plain-http", false, "talk to the registry over http (local mirrors and tests only)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print {ref, image, digest} as JSON")
 	return cmd
 }
 

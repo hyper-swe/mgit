@@ -28,6 +28,11 @@
 #   6. e2e.yml push run at the sha, or at the nearest first-parent ancestor
 #      that has one (a docs-only commit skips e2e by paths-ignore), with the
 #      files changed between them stated
+#   7. the guest base record at the sha (internal/sandboxd/guestbase/
+#      release-base.json — the base the release is smoke-tested with):
+#      present, naming an image and a digest, and that digest still served
+#      by the registry (`mgit sandbox base resolve <image>@<digest>`); MGIT
+#      picks the binary, and a missing binary is a loud FAIL
 # fetch-guard-file: this script fetches nothing; `gh` reads the API and `git fetch` updates refs
 set -uo pipefail
 
@@ -51,6 +56,7 @@ done
 [ -n "$version" ] || { echo "usage: $0 <version> [<sha>] [--require <commit>]... [--ticket <id>]... [--no-ci]" >&2; exit 2; }
 tag="v$version"
 GH="${GH:-gh}" # the selftest points this at a stub; a missing gh is a loud FAIL, never a pass
+MGIT="${MGIT:-mgit}" # likewise for the guest base record's resolve (check 7)
 
 fail=0
 pass() { echo "  PASS $*"; }
@@ -127,6 +133,25 @@ else
 		id=${run%% *}; st=${run##* }
 		if [ "$st" = "completed" ]; then jobs_green "$id" "6. e2e.yml push at ${cur:0:12} ($hops hop(s) back)"; else bad "6. e2e.yml run $id at ${cur:0:12} is '$st', not completed"; fi
 		[ $hops -gt 0 ] && tell "6. files changed ${cur:0:12}..${sha:0:12}: $(git diff --name-only "$cur" "$sha" | tr '\n' ' ')"
+	fi
+fi
+
+# 7. the guest base record at the sha, and its digest still served (MGIT-219)
+record_path="internal/sandboxd/guestbase/release-base.json"
+record="$(git show "$sha:$record_path" 2>/dev/null)" || record=""
+if [ -z "$(tr -d '[:space:]' <<<"$record")" ]; then
+	bad "7. no guest base record at ${sha:0:12} ($record_path): a release records the base it is smoke-tested with"
+else
+	rec_image=$(sed -n 's/.*"image": *"\([^"]*\)".*/\1/p' <<<"$record" | head -1)
+	rec_digest=$(grep -o 'sha256:[0-9a-f]\{64\}' <<<"$record" | head -1 || true)
+	if [ -z "$rec_image" ] || [ -z "$rec_digest" ]; then
+		bad "7. the guest base record at ${sha:0:12} names no image or no digest"
+	elif ! command -v "$MGIT" >/dev/null 2>&1; then
+		bad "7. $MGIT is not available: the recorded guest base cannot be resolved (cannot tell)"
+	else
+		served=$("$MGIT" sandbox base resolve "$rec_image@$rec_digest" --json 2>/dev/null | sed -n 's/.*"digest":"\(sha256:[0-9a-f]\{64\}\)".*/\1/p' | head -1) || served=""
+		if [ "$served" = "$rec_digest" ]; then pass "7. guest base record $rec_image@${rec_digest:0:19}… is still served by the registry"
+		else bad "7. the registry does not serve the recorded guest base $rec_image@$rec_digest (cannot tell)"; fi
 	fi
 fi
 
