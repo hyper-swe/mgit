@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-22T13:11:19Z",
+  "exported_at": "2026-09-22T13:51:00Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7423,15 +7423,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit-dev-06",
       "creator": "mcp",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "4289fc770978498cfcc85cabe925d4262de8a27a5f7d66745cf436675765221a",
       "created_at": "2026-09-22T12:29:06Z",
-      "updated_at": "2026-09-22T12:29:06Z",
+      "updated_at": "2026-09-22T13:50:59Z",
+      "closed_at": "2026-09-22T13:50:59Z",
       "uid": "01a0c917-5bf4-70c3-b207-26872d5e1ea3"
     },
     {
@@ -14295,7 +14296,7 @@
       "agent_id": "claude-mgit-dev-06",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-217",
+      "current_node_id": "MGIT-218",
       "last_heartbeat": "2026-09-22T06:06:25Z"
     },
     {
@@ -14391,5 +14392,5 @@
   ],
   "sessions": null,
   "node_count": 483,
-  "checksum": "5d81cb0d1db988a4b04d572bce31b5006d09097625806ba88d1e59f399898026"
+  "checksum": "f96aac832b2fab6c21755a32a13f08b6a02c90a33b0db3d0d85cd43e6e9ef638"
 }
