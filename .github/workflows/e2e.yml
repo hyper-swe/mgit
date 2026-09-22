@@ -601,9 +601,11 @@ jobs:
           # libkrun needs no kernel or rootfs of its own: libkrunfw supplies the
           # kernel and the guest base is a DIRECTORY composed from an OCI image —
           # the one this release records (internal/sandboxd/guestbase/
-          # release-base.json), composed by digest when MGIT_GUEST_OCI_REF is
-          # unset, so the base this leg tests is the base the release vouches
-          # for. (MGIT-219)
+          # release-base.json), composed by digest, so the base this leg tests
+          # is the base the release vouches for. The variable is the guard's
+          # input: on Linux the posture script cannot tell which backend the
+          # daemon links without one, and a SKIP here is a failure. (MGIT-219)
+          MGIT_GUEST_RELEASE_BASE: "1"
         # This is the SAME shared script sandbox-live-linux requires of
         # firecracker, and it is a requirement again rather than a tripwire:
         # until MGIT-91 the first `mgit run` after a launch was reset by the

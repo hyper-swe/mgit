@@ -46,6 +46,10 @@
 #                         the base this release was smoke-tested with is
 #                         composed (`mgit sandbox base from` with no reference:
 #                         the binary's own record, pulled by digest — MGIT-219).
+#     MGIT_GUEST_RELEASE_BASE=1  on Linux, says "libkrun, compose that record"
+#                         where the guard would otherwise not know which of the
+#                         two backends the daemon links (macOS needs no such
+#                         hint: the OCI form is its default).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
@@ -70,9 +74,12 @@ case "$os" in
 Linux)
 	[ -e /dev/kvm ] || skip "no /dev/kvm (host lacks KVM / nested virt)"
 	[ -r /dev/kvm ] && [ -w /dev/kvm ] || skip "/dev/kvm not accessible to this user"
-	if [ -z "${MGIT_GUEST_IMAGE:-}" ] && [ -z "${MGIT_GUEST_OCI_REF:-}" ] &&
+	# Linux has two backends and they take different guests, so an input is
+	# required to say which: MGIT_GUEST_RELEASE_BASE=1 means "libkrun; compose
+	# the base this release records" — the one input that names no tag.
+	if [ -z "${MGIT_GUEST_IMAGE:-}" ] && [ -z "${MGIT_GUEST_OCI_REF:-}" ] && [ -z "${MGIT_GUEST_RELEASE_BASE:-}" ] &&
 		{ [ -z "${MGIT_GUEST_KERNEL:-}" ] || [ -z "${MGIT_GUEST_ROOTFS:-}" ]; }; then
-		skip "no guest input (set MGIT_GUEST_IMAGE, or MGIT_GUEST_KERNEL + MGIT_GUEST_ROOTFS for firecracker, or MGIT_GUEST_OCI_REF for a libkrun-linked daemon) — Linux has two backends and they take different guests"
+		skip "no guest input (set MGIT_GUEST_IMAGE, or MGIT_GUEST_KERNEL + MGIT_GUEST_ROOTFS for firecracker, or MGIT_GUEST_OCI_REF / MGIT_GUEST_RELEASE_BASE=1 for a libkrun-linked daemon) — Linux has two backends and they take different guests"
 	fi
 	;;
 Darwin)

@@ -18,12 +18,21 @@ func TestGuestBase_TheSmokeComposesTheReleaseRecordNotABareTag(t *testing.T) {
 	wf := readRepoFile(t, filepath.Join(".github", "workflows", "e2e.yml"))
 	assert.NotContains(t, wf, "MGIT_GUEST_OCI_REF: debian:12",
 		"the e2e leg must compose the record, not pin a moving tag in the workflow")
+	// Linux has two backends and the posture script cannot tell which one the
+	// daemon links without an input: the libkrun leg says "the release's
+	// recorded base" in words the guard understands, or it SKIPs — and a SKIP
+	// there is a failure (the first complete run of this change did exactly that).
+	assert.Contains(t, wf, `MGIT_GUEST_RELEASE_BASE: "1"`,
+		"the libkrun leg names the release-recorded base as its guest input")
 
 	for _, script := range []string{"sandbox_posture.sh", "sandbox_cli_surface.sh"} {
 		s := readRepoFile(t, filepath.Join("scripts", "e2e", script))
 		assert.NotContains(t, s, ":-debian:12}", "%s: no bare-tag default — the record is the default", script)
 		assert.Contains(t, s, "sandbox base from", "%s composes a base", script)
 		assert.Contains(t, s, "release", "%s says it composes the release's recorded base when no image is given", script)
+		if script == "sandbox_posture.sh" {
+			assert.Contains(t, s, "MGIT_GUEST_RELEASE_BASE", "%s: the Linux guard accepts the release-recorded base as an input", script)
+		}
 	}
 
 	// The record itself is committed beside the code that embeds it.
