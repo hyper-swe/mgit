@@ -172,6 +172,17 @@ func (c BaseReleaseCheck) Run(context.Context) Result {
 	case srcTag == relTag && srcDigest == relDigest:
 		r.Status = StatusOK
 		r.Summary = fmt.Sprintf("the guest base is the image this release was smoke-tested with: %s@%s", relTag, relDigest)
+	case !guestbase.PinsIndexDigest(id.Composed):
+		// Before 0.6.8 a compose recorded the platform manifest's digest; the
+		// record pins the image index. Different digests, possibly the same
+		// image — not a difference and not a pass: not comparable until
+		// recomposed.
+		r.Status = StatusNotChecked
+		r.Reason = fmt.Sprintf("the base was composed by mgit %q, which recorded the platform manifest digest; "+
+			"the release record pins the image index", composedOrUnrecorded(id.Composed))
+		r.Summary = fmt.Sprintf("the guest base (composed by mgit %s from %s@%s) cannot be compared with the base this "+
+			"release was smoke-tested with (%s@%s): composes before 0.6.8 recorded the platform manifest, not the image "+
+			"index — recompose with `mgit sandbox base from` to compare", composedOrUnrecorded(id.Composed), srcTag, srcDigest, relTag, relDigest)
 	case srcTag == relTag:
 		r.Status, r.Remedy = StatusDiffers, remedy
 		r.Summary = fmt.Sprintf("the guest base was composed from %s@%s but this release was smoke-tested with "+
@@ -220,6 +231,14 @@ func (c BaseCurrencyCheck) Run(context.Context) Result {
 		r.Remedy = "recompose it with `mgit sandbox base from <image>`"
 	}
 	return r
+}
+
+// composedOrUnrecorded names a composing version, or says it is unrecorded.
+func composedOrUnrecorded(v string) string {
+	if v == "" {
+		return "(unrecorded)"
+	}
+	return v
 }
 
 // describe renders the base's identity as the row's tail, set off by a

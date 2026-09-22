@@ -156,7 +156,10 @@ func reportComposition(out io.Writer, res composeResult) {
 				"        was  %s  (base %s)\n"+
 				"        now  %s  (base %s)\n"+
 				"        Nothing was replaced: the previous base is still in the cache, and\n"+
-				"        anything already pinned to it keeps resolving.\n",
+				"        anything already pinned to it keeps resolving. (Since mgit 0.6.8 the\n"+
+				"        pinned digest is the image index, the same on every host; a base\n"+
+				"        composed by an older mgit recorded its platform manifest, whose digest\n"+
+				"        differs even when nothing moved.)\n",
 			res.Record.SourceTag,
 			guestbase.SourceDigest(res.Record.PrevSourceRef), res.Record.PrevBaseDigest,
 			guestbase.SourceDigest(res.Record.SourceRef), res.Record.BaseDigest)

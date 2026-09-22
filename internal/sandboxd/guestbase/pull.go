@@ -184,6 +184,13 @@ func (c *client) resolveManifest(ctx context.Context, ref Ref) (manifestDoc, Ref
 	if err != nil {
 		return manifestDoc{}, Ref{}, err
 	}
+	// The digest of record is what the reference itself resolved to: the
+	// IMAGE INDEX when the tag names one. It is the same on every host, and
+	// a pull by it selects each host's own platform below — while the
+	// platform manifest's digest is different per architecture, and a record
+	// pinned to it on one host composes the wrong userspace on another
+	// (an arm64 Mac's pin booted "exec format error" on x86_64). Refs: MGIT-219
+	pin := digest
 
 	// An index lists per-platform manifests; pick the host's and fetch it.
 	if len(doc.Manifests) > 0 {
@@ -192,7 +199,7 @@ func (c *client) resolveManifest(ctx context.Context, ref Ref) (manifestDoc, Ref
 			return manifestDoc{}, Ref{}, err
 		}
 		c.reportf("index: selected %s", shortDigest(pick.Digest))
-		doc, digest, err = c.fetchManifest(ctx, ref, pick.Digest)
+		doc, _, err = c.fetchManifest(ctx, ref, pick.Digest)
 		if err != nil {
 			return manifestDoc{}, Ref{}, err
 		}
@@ -203,7 +210,7 @@ func (c *client) resolveManifest(ctx context.Context, ref Ref) (manifestDoc, Ref
 	}
 
 	resolved := ref
-	resolved.Digest = digest
+	resolved.Digest = pin
 	return doc, resolved, nil
 }
 

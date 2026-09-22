@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -74,4 +75,39 @@ func (r ReleaseBase) Ref() string {
 	}
 	ref.Digest = r.Digest
 	return ref.String()
+}
+
+// PinsIndexDigest reports whether the mgit version that composed a base
+// recorded its source as the IMAGE INDEX digest — the identity every host
+// shares — rather than the digest of the platform manifest the composing host
+// selected. Bases composed before 0.6.8 recorded the platform manifest, so
+// their source digest differs from a release record even when nothing moved;
+// a comparison against them says so instead of calling it a difference. A
+// dev build pins the index. Unknown or unparsable versions do not.
+// Refs: MGIT-219
+func PinsIndexDigest(version string) bool {
+	v := strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if v == "dev" {
+		return true
+	}
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) != 3 {
+		return false
+	}
+	var n [3]int
+	for i, p := range parts {
+		x, err := strconv.Atoi(strings.SplitN(p, "-", 2)[0])
+		if err != nil {
+			return false
+		}
+		n[i] = x
+	}
+	switch {
+	case n[0] > 0:
+		return true
+	case n[1] > 6:
+		return true
+	default:
+		return n[1] == 6 && n[2] >= 8
+	}
 }

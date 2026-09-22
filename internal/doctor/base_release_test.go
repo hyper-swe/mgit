@@ -39,17 +39,17 @@ func TestBaseReleaseCheck_StatesADifferenceAndNeverOkOverOne(t *testing.T) {
 		},
 		{
 			name:       "same_name_different_digest_is_a_DIFFERENCE_naming_both_digests",
-			id:         BaseIdentity{SourceRef: relName + "@" + movedD, BaseDigest: baseD, ReleaseRef: relName + "@" + relDig},
+			id:         BaseIdentity{Composed: "0.6.8", SourceRef: relName + "@" + movedD, BaseDigest: baseD, ReleaseRef: relName + "@" + relDig},
 			wantStatus: StatusDiffers, wantIn: []string{movedD, relDig, "not the one this release was tested with"},
 		},
 		{
 			name:       "different_image_name_is_a_DIFFERENCE_that_says_the_name_differs",
-			id:         BaseIdentity{SourceRef: otherN + "@" + otherD, BaseDigest: baseD, ReleaseRef: relName + "@" + relDig},
+			id:         BaseIdentity{Composed: "dev", SourceRef: otherN + "@" + otherD, BaseDigest: baseD, ReleaseRef: relName + "@" + relDig},
 			wantStatus: StatusDiffers, wantIn: []string{otherN, otherD, relName, relDig, "different image"},
 		},
 		{
 			name:       "a_directory_base_was_composed_from_no_image_at_all",
-			id:         BaseIdentity{BaseDigest: baseD, ReleaseRef: relName + "@" + relDig},
+			id:         BaseIdentity{Composed: "0.6.8", BaseDigest: baseD, ReleaseRef: relName + "@" + relDig},
 			wantStatus: StatusDiffers, wantIn: []string{"directory", relName, relDig},
 		},
 		{
@@ -90,4 +90,25 @@ func TestRender_ADifferenceIsNeitherOkNorFail(t *testing.T) {
 	assert.Contains(t, out, "remedy: recompose")
 	assert.Contains(t, out, "DIFF", "the closing note tells the reader what a DIFF is")
 	assert.False(t, Failed([]Result{r}), "a stated difference does not flip the exit code; it is read")
+}
+
+// A base composed by an mgit before 0.6.8 recorded the platform manifest's
+// digest, not the image index the record pins: its digest differs from the
+// record's even when nothing moved. The row says it cannot compare and asks
+// for a recompose — never a false DIFF, never an ok. Refs: MGIT-219
+func TestBaseReleaseCheck_ABaseComposedBeforeIndexPinning_IsNotComparableNotDifferent(t *testing.T) {
+	old := BaseIdentity{Composed: "0.6.7", Running: "0.6.8", SourceRef: relName + "@" + movedD, BaseDigest: baseD, ReleaseRef: relName + "@" + relDig}
+	got := BaseReleaseCheck{Inspect: func() (BaseIdentity, error) { return old, nil }}.Run(context.Background())
+	assert.Equal(t, StatusNotChecked, got.Status, got.Summary)
+	assert.Contains(t, got.Summary+" "+got.Reason, "0.6.7")
+	assert.Contains(t, got.Summary+" "+got.Reason, "platform manifest")
+	assert.Contains(t, got.Summary, "sandbox base from", "the way to make it comparable is named")
+
+	// Equal digests are equal whatever composed the base.
+	same := BaseIdentity{Composed: "0.6.7", Running: "0.6.8", SourceRef: relName + "@" + relDig, BaseDigest: baseD, ReleaseRef: relName + "@" + relDig}
+	assert.Equal(t, StatusOK, BaseReleaseCheck{Inspect: func() (BaseIdentity, error) { return same, nil }}.Run(context.Background()).Status)
+
+	// A base that does not say what composed it cannot be compared either.
+	unknown := BaseIdentity{Running: "0.6.8", SourceRef: relName + "@" + movedD, BaseDigest: baseD, ReleaseRef: relName + "@" + relDig}
+	assert.Equal(t, StatusNotChecked, BaseReleaseCheck{Inspect: func() (BaseIdentity, error) { return unknown, nil }}.Run(context.Background()).Status)
 }

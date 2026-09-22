@@ -407,3 +407,102 @@ func TestExtract_AbsolutePathsRootUnderTheBase(t *testing.T) {
 		t.Errorf("content = %q", b)
 	}
 }
+
+// indexFixture serves one tag naming an index over the host's and another
+// architecture, and returns the index digest and the host manifest digest.
+func indexFixture(t *testing.T) (*fakeRegistry, *httptest.Server, Ref, string, string) {
+	t.Helper()
+	reg := newFakeRegistry(t)
+	srv := reg.start()
+	reg.setBase(srv.URL)
+	mk := func(arch, marker string) string {
+		layer := layerTarGz(t, map[string]string{"arch": marker})
+		ld := reg.addBlob(layer)
+		cd := reg.addBlob([]byte(`{"architecture":"` + arch + `","os":"linux"}`))
+		return reg.addManifest("", mediaTypeOCIManifest, map[string]any{
+			"schemaVersion": 2, "mediaType": mediaTypeOCIManifest,
+			"config": map[string]any{"digest": cd, "size": 40},
+			"layers": []map[string]any{{"mediaType": mediaTypeOCILayerGzip, "digest": ld, "size": len(layer)}},
+		})
+	}
+	hostManifest := mk(ociArch(), "HOST")
+	otherManifest := mk("s390x", "OTHER")
+	index := reg.addManifest("multi", mediaTypeOCIIndex, map[string]any{
+		"schemaVersion": 2, "mediaType": mediaTypeOCIIndex,
+		"manifests": []map[string]any{
+			{"mediaType": mediaTypeOCIManifest, "digest": otherManifest,
+				"platform": map[string]string{"os": "linux", "architecture": "s390x"}},
+			{"mediaType": mediaTypeOCIManifest, "digest": hostManifest,
+				"platform": map[string]string{"os": "linux", "architecture": ociArch()}},
+		},
+	})
+	ref := Ref{Registry: strings.TrimPrefix(srv.URL, "http://"), Repository: "acme/multi", Tag: "multi"}
+	return reg, srv, ref, index, hostManifest
+}
+
+// A TAG RESOLVES TO THE IMAGE INDEX DIGEST, NOT TO THE RESOLVING HOST'S
+// PLATFORM MANIFEST. The release record pinned on an arm64 Mac named debian's
+// arm64 manifest, and an x86_64 runner that composed it by that digest booted
+// an arm64 userspace ("exec format error"). The index digest is the same on
+// every host and a pull by it selects each host's own platform. Refs: MGIT-219
+func TestResolve_ATagNamingAnIndexResolvesToTheIndexDigest(t *testing.T) {
+	_, srv, ref, index, hostManifest := indexFixture(t)
+	defer srv.Close()
+	got, err := Resolve(context.Background(), ref, PullOptions{PlainHTTP: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Digest != index {
+		t.Fatalf("resolved to %s; want the index %s (the host's platform manifest is %s)", got.Digest, index, hostManifest)
+	}
+	if got.Tag != "multi" {
+		t.Errorf("the tag rides along as documentation: %+v", got)
+	}
+}
+
+func TestPull_ByAnIndexDigest_SelectsTheHostPlatformAndRecordsTheIndex(t *testing.T) {
+	_, srv, ref, index, _ := indexFixture(t)
+	defer srv.Close()
+	dest := t.TempDir()
+	pinned := Ref{Registry: ref.Registry, Repository: ref.Repository, Tag: "multi", Digest: index}
+	resolved, err := Pull(context.Background(), pinned, dest, PullOptions{PlainHTTP: true})
+	if err != nil {
+		t.Fatalf("Pull by index digest: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dest, "arch")) //nolint:gosec // test-owned temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "HOST" {
+		t.Errorf("a pull by the index digest must still select the host's platform; got %s", b)
+	}
+	if resolved.Digest != index {
+		t.Errorf("the source of record is the index the pull went by, got %s", resolved.Digest)
+	}
+}
+
+func TestPull_ByATag_RecordsTheIndexDigestAsTheSource(t *testing.T) {
+	_, srv, ref, index, hostManifest := indexFixture(t)
+	defer srv.Close()
+	resolved, err := Pull(context.Background(), ref, t.TempDir(), PullOptions{PlainHTTP: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Digest != index {
+		t.Errorf("provenance records the index (%s), the identity every host shares; got %s (the host manifest is %s)", index, resolved.Digest, hostManifest)
+	}
+}
+
+// A base composed by an mgit before 0.6.8 recorded its platform manifest's
+// digest; the release record pins the index. The two are not comparable, and
+// the version gate says which builds pin which. Refs: MGIT-219
+func TestPinsIndexDigest(t *testing.T) {
+	for v, want := range map[string]bool{
+		"dev": true, "0.6.8": true, "0.6.9": true, "0.7.0": true, "1.0.0": true, "v0.6.8": true,
+		"0.6.7": false, "0.6.4": false, "0.5.0": false, "": false, "0.6": false, "garbage": false,
+	} {
+		if got := PinsIndexDigest(v); got != want {
+			t.Errorf("PinsIndexDigest(%q) = %v, want %v", v, got, want)
+		}
+	}
+}

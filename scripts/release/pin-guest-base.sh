@@ -42,3 +42,7 @@ echo "$image → $new"
 if [ -z "$old" ]; then echo "record written: $rec"
 elif [ "$old" = "$new" ]; then echo "record unchanged"
 else echo "record moved: was $old"; fi
+# The record is EMBEDDED at build time: a binary built before this run still
+# carries the previous one. Say so, so the next `mgit sandbox base from` is
+# not composed from a stale record by a stale binary.
+[ "$old" = "$new" ] || echo "rebuild mgit to embed the new record (go build -o build/mgit ./cmd/mgit/); the digest above is the image index — the same on every host — so a pin made here composes each host's own platform"
