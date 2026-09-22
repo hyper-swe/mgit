@@ -186,3 +186,45 @@ func TestParseStaysOpen_KeepsTheReasonAfterTheEmDash(t *testing.T) {
 	ack = parseStaysOpen("MGIT-164 - root cause unreproduced, MGIT-9 — ninety")
 	assert.Equal(t, map[string]string{"MGIT-164": "root cause unreproduced", "MGIT-9": "ninety"}, ack, "a hyphen works too; commas separate tickets")
 }
+
+// An acknowledgement is visible exactly when it is written: a Stays-Open
+// trailer for a ticket no windowed commit names in Refs still gets its row
+// — the commit that named the ticket may lie before the window (the board
+// commit is the boundary), and the export commit is where the reason for
+// not closing it is recorded. Refs: MGIT-216
+func TestBoardcheck_StaysOpenWithoutARefsInTheWindowIsShownNotSilent(t *testing.T) {
+	log := "fbf8741\tchore(board): close MGIT-191 on its merge\tMGIT-191\tMGIT-164 — root cause unreproduced; verification shipped\n"
+	var out bytes.Buffer
+	code := run(strings.NewReader(log), &out, boardFile(t), true)
+	s := out.String()
+	assert.Equal(t, 0, code)
+	assert.Contains(t, s, "MGIT-191  done         closed")
+	assert.Contains(t, s, "MGIT-164  open         stays open (root cause unreproduced; verification shipped)",
+		"the acknowledgement rides the commit that carries it, whether or not a Refs in the window names the ticket")
+	assert.Contains(t, s, "boardcheck: no drift")
+}
+
+// A commit that carries only a Stays-Open trailer is a commit that names a
+// ticket: it is read, not dropped as "references nothing".
+func TestBoardcheck_StaysOpenOnlyCommitIsRead(t *testing.T) {
+	log := "a1b2c3d\tdocs: what stays open and why\t\tMGIT-164 — the fix is a later delivery\n"
+	var out bytes.Buffer
+	code := run(strings.NewReader(log), &out, boardFile(t), true)
+	s := out.String()
+	assert.Equal(t, 0, code)
+	assert.NotContains(t, s, "no commits since the board's last update", "a Stays-Open-only commit is not an empty window")
+	assert.Contains(t, s, "MGIT-164  open         stays open (the fix is a later delivery)")
+}
+
+// The stricter condition holds for acknowledgements too: a Stays-Open that
+// names a ticket the tracked board does not carry is drift of its own kind,
+// whatever reason it gives.
+func TestBoardcheck_StaysOpenForAnUntrackedTicketIsStillDrift(t *testing.T) {
+	log := "a1b2c3d\tdocs: note\t\tMGIT-999 — filed locally only\n"
+	var out bytes.Buffer
+	code := run(strings.NewReader(log), &out, boardFile(t), true)
+	s := out.String()
+	assert.Equal(t, 1, code, "-strict: an untracked id is drift even when acknowledged")
+	assert.Contains(t, s, "MGIT-999  (not on the tracked board)  — a1b2c3d docs: note")
+	assert.Contains(t, s, "1 not on the tracked board")
+}

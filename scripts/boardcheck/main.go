@@ -19,7 +19,12 @@
 //
 //	git log --no-merges \
 //	  --format='%h%x09%s%x09%(trailers:key=Refs,valueonly,separator=%x2C)%x09%(trailers:key=Stays-Open,valueonly,separator=%x2C)' \
-//	  "$(git log -1 --format=%H -- .mtix/tasks.json)..HEAD" | boardcheck -board .mtix/tasks.json
+//	  "$(git log -1 --format=%H -- .mtix/tasks.json)^..HEAD" | boardcheck -board .mtix/tasks.json
+//
+// The window starts at the board commit's PARENT: the board commit is the
+// boundary and its own trailers are read, so the export commit can carry the
+// Stays-Open for a ticket it could not close instead of resetting that
+// ticket's drift out of the report unacknowledged (MGIT-216).
 //
 // It is a REPORT: exit 0 whatever it finds, unless -strict asks for exit 1
 // on unacknowledged drift; exit 2 when the board cannot be read (not
@@ -200,7 +205,7 @@ func readBoard(path string) (map[string]string, error) {
 }
 
 // parseLog reads the four-field lines the workflow's git log prints;
-// commits that reference nothing are dropped.
+// commits that name nothing — no Refs, no Stays-Open — are dropped.
 func parseLog(r io.Reader) []commit {
 	var commits []commit
 	sc := bufio.NewScanner(r)
@@ -214,7 +219,7 @@ func parseLog(r io.Reader) []commit {
 		if len(f) > 3 {
 			c.staysOpen = parseStaysOpen(f[3])
 		}
-		if len(c.refs) > 0 {
+		if len(c.refs) > 0 || len(c.staysOpen) > 0 {
 			commits = append(commits, c)
 		}
 	}
@@ -250,10 +255,16 @@ func parseStaysOpen(s string) map[string]string {
 	return ack
 }
 
-// judge produces one row per referenced ticket and, sorted, the two kinds
-// of unacknowledged drift: tickets the tracked board does not carry at all
-// (the stricter condition, judged before any acknowledgement) and tickets
-// it still lists as open.
+// judge produces one row per ticket the window names — by a Refs or by a
+// Stays-Open — and, sorted, the two kinds of unacknowledged drift: tickets
+// the tracked board does not carry at all (the stricter condition, judged
+// before any acknowledgement) and tickets it still lists as open.
+//
+// A Stays-Open names its ticket even when no Refs in the window does: the
+// commit that referenced the ticket may lie before the window (the board
+// commit is the boundary), and the export commit is where the reason for
+// not closing it is written — an acknowledgement is visible exactly when it
+// is written, never dependent on what else the window holds. Refs: MGIT-216
 func judge(commits []commit, statuses map[string]string) (rows, notTracked, open []string) {
 	first := map[string]commit{}
 	ack := map[string]string{}
@@ -265,6 +276,9 @@ func judge(commits []commit, statuses map[string]string) (rows, notTracked, open
 		}
 		for id, reason := range c.staysOpen {
 			ack[id] = reason
+			if _, seen := first[id]; !seen {
+				first[id] = c
+			}
 		}
 	}
 	ids := make([]string, 0, len(first))

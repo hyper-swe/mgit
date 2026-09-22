@@ -71,6 +71,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and, from the repository's own log, every first-parent merge between the
   v0.6.6 and v0.6.7 tags.
 
+- **The board-drift report reads the board commit's own trailers (MGIT-216).**
+  The comparison window ran from the last board commit exclusive, so a ticket
+  a merged commit named without closing left the report the moment the next
+  board export landed, and a `Stays-Open` on that export was never read: the
+  eighth ticket on a status naming eight vanished by reset. The window now
+  starts at the board commit's parent, so the export commit is the boundary
+  and acknowledges what it does not close.
+
 ### Changed
 
 - **A failed daemon start no longer erases the attempt before it
