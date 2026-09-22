@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -63,10 +65,10 @@ func worktreeCmd() *cobra.Command {
 	addCmd.Flags().StringVar(&wtBranch, "branch", "", "Branch name (default: task/<task-id>)")
 
 	// mgit worktree list
-	var porcelainList bool
+	var porcelainList, listJSON bool
 	listCmd := &cobra.Command{
 		Use:   "list",
-		Short: "List linked worktrees",
+		Short: "List linked worktrees (a row whose directory is gone is marked prunable)",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			app, err := openAppFromCwd()
 			if err != nil {
@@ -81,23 +83,11 @@ func worktreeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if porcelainList {
-				for _, wt := range wts {
-					_, _ = fmt.Fprintf(os.Stdout, "%s [%s] %s\n", wt.Path, wt.Branch, wt.TaskID)
-				}
-				return nil
-			}
-			if len(wts) == 0 {
-				_, _ = fmt.Fprintln(os.Stdout, "No linked worktrees")
-				return nil
-			}
-			for _, wt := range wts {
-				_, _ = fmt.Fprintf(os.Stdout, "%-30s %s\t%s\n", wt.Path, wt.TaskID, wt.Branch)
-			}
-			return nil
+			return writeWorktreeList(os.Stdout, wts, porcelainList, listJSON)
 		},
 	}
-	listCmd.Flags().BoolVar(&porcelainList, "porcelain", false, "Machine-readable output")
+	listCmd.Flags().BoolVar(&porcelainList, "porcelain", false, "Machine-readable output (a prunable row ends with the word)")
+	listCmd.Flags().BoolVar(&listJSON, "json", false, "output as JSON (prunable is a field)")
 
 	// mgit worktree remove
 	var wtForce bool
@@ -162,4 +152,44 @@ func worktreeCmd() *cobra.Command {
 
 	cmd.AddCommand(addCmd, listCmd, removeCmd, pruneCmd)
 	return cmd
+}
+
+// writeWorktreeList renders the registry: one row per worktree, a trailing
+// `prunable` (git's word) on a row whose directory is gone, and one line
+// saying how to clear those — the registry otherwise shows a stale binding
+// as a live one and gives a reader no reason to run prune. Refs: MGIT-194
+func writeWorktreeList(w io.Writer, wts []model.WorktreeInfo, porcelain, asJSON bool) error {
+	if asJSON {
+		return json.NewEncoder(w).Encode(wts)
+	}
+	if porcelain {
+		for _, wt := range wts {
+			_, _ = fmt.Fprintf(w, "%s [%s] %s%s\n", wt.Path, wt.Branch, wt.TaskID, prunableWord(wt, " prunable"))
+		}
+		return nil
+	}
+	if len(wts) == 0 {
+		_, _ = fmt.Fprintln(w, "No linked worktrees")
+		return nil
+	}
+	prunable := 0
+	for _, wt := range wts {
+		if wt.Prunable {
+			prunable++
+		}
+		_, _ = fmt.Fprintf(w, "%-30s %s\t%s%s\n", wt.Path, wt.TaskID, wt.Branch, prunableWord(wt, "\tprunable"))
+	}
+	if prunable > 0 {
+		_, _ = fmt.Fprintf(w, "%d prunable: the directory is gone but the registration remains — "+
+			"`mgit worktree prune` clears it (--dry-run lists them first)\n", prunable)
+	}
+	return nil
+}
+
+// prunableWord is the marker for a prunable row, or nothing.
+func prunableWord(wt model.WorktreeInfo, word string) string {
+	if wt.Prunable {
+		return word
+	}
+	return ""
 }

@@ -519,3 +519,33 @@ func TestAuditService_ExportAuditLog_Empty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "null")
 }
+
+// TestWorktreeService_List_MarksAMissingPathPrunable: the rows come from the
+// registry, which the listing code does not control; one directory is
+// removed behind the registry's back and only that row is marked — by the
+// same test Prune applies, so the listing and the prune agree by
+// construction. Refs: MGIT-194, FR-16
+func TestWorktreeService_List_MarksAMissingPathPrunable(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, fixedClock())
+	keep := filepath.Join(t.TempDir(), "keep")
+	gone := filepath.Join(t.TempDir(), "gone")
+	for _, tc := range []struct{ path, task string }{{keep, "MGIT-194.1"}, {gone, "MGIT-194.2"}} {
+		_, err := wtSvc.Add(ctx, model.WorktreeAddOptions{Path: tc.path, TaskID: tc.task, AgentID: "a1"})
+		require.NoError(t, err)
+	}
+	require.NoError(t, os.RemoveAll(gone))
+
+	wts, err := wtSvc.List(ctx)
+	require.NoError(t, err)
+	marked := map[string]bool{}
+	for _, wt := range wts {
+		marked[wt.Path] = wt.Prunable
+	}
+	assert.Equal(t, map[string]bool{keep: false, gone: true}, marked, "only the missing path is prunable")
+
+	stale, err := wtSvc.Prune(ctx, true, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []string{gone}, stale, "prune --dry-run names exactly the marked rows")
+}

@@ -399,7 +399,7 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 |---------|-------------|
 | `mgit work PATH --task-id ID [--sandbox]` | Start an agent on a task: task-bound worktree + agent-shell wiring + optional sandbox |
 | `mgit worktree add PATH --task-id ID [--branch]` | Create an isolated worktree without the agent-shell wiring |
-| `mgit worktree list [--porcelain]` | List active worktrees |
+| `mgit worktree list [--porcelain]` | List active worktrees; a row whose directory is gone is marked `prunable` and the listing says to run `worktree prune`; `--json` carries it as a field |
 | `mgit worktree remove PATH [--force]` | Remove a worktree |
 | `mgit worktree prune [--dry-run]` | Remove stale worktree metadata |
 

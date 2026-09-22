@@ -21,6 +21,12 @@ type WorktreeInfo struct {
 	// creation. squash/diff compute against it so a later base resync never
 	// corrupts the task's net change (ADR-008 §4). Refs: MGIT-35
 	ForkBase string `json:"fork_base,omitempty"`
+	// Prunable reports that the registered path no longer exists on disk: the
+	// row is stale and `mgit worktree prune` clears it — git's word for the
+	// same state. Computed by the service's List from the filesystem, never
+	// stored: the registry records what was registered, the listing says what
+	// is still there. Refs: MGIT-194, FR-16
+	Prunable bool `json:"prunable,omitempty"`
 }
 
 // Validate checks that the WorktreeInfo has required fields.

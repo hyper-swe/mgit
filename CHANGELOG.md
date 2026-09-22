@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`mgit worktree list` marks a row whose directory is gone as `prunable`,
+  says how to clear it, and gains `--json` (MGIT-194).** Eight task worktrees
+  under /tmp had been deleted by hand and the registry still listed them as
+  live bindings, with nothing telling a reader to run `worktree prune` — so
+  stale task/branch/path bindings sat for weeks and a `mgit work` for a task
+  that still showed as bound could be refused. Each row is now marked by the
+  same test `prune` applies (the service decides it once, so the listing and
+  the prune agree by construction), the text listing ends with the count and
+  the verb, `--porcelain` appends the word, and `--json` carries `prunable`
+  as a field.
+
 ### Changed
 
 - **`sandbox sync` says what `--force` means, and what happens to an edit only
