@@ -57,6 +57,13 @@ func TestProbeDaemonLoadsAt(t *testing.T) {
 		{"dies_for_another_reason", `echo "panic: something else" >&2; exit 2`,
 			0, "", "", "panic: something else", ""},
 		{"hangs_is_bounded", `sleep 30`, 2 * time.Second, "", "", "no answer within", ""},
+		// A SIGKILL before the first instruction is what a code-signature
+		// refusal looks like on darwin (a quarantined download, or a binary
+		// overwritten in place); there are no words to read, so the remedy
+		// names both causes and where the kernel wrote the answer. Refs: MGIT-212
+		{"killed_by_sigkill", `kill -9 $$`, 0, "", "", "SIGKILL", sigkillRemedyWanted()},
+		// Any other signal is not that class: no remedy is invented for it.
+		{"dies_by_sigterm", `kill -TERM $$`, 0, "", "", "signal: terminated", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -76,8 +83,8 @@ func TestProbeDaemonLoadsAt(t *testing.T) {
 			assert.Equal(t, tt.wantLib, got.MissingLibrary)
 			assert.Contains(t, got.Output, tt.wantOut)
 			assert.Contains(t, got.Remedy, tt.wantRemedy)
-			if tt.wantLib == "" {
-				assert.Empty(t, got.Remedy, "no remedy is invented for a library nobody named")
+			if tt.wantLib == "" && tt.wantRemedy == "" {
+				assert.Empty(t, got.Remedy, "no remedy is invented for a cause nobody named")
 			}
 		})
 	}
@@ -89,4 +96,29 @@ func TestProbeDaemonLoadsAt_NoBinary_Errors(t *testing.T) {
 	_, err := probeDaemonLoadsAt(context.Background(), filepath.Join(t.TempDir(), "absent"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "absent")
+}
+
+// sigkillRemedyWanted is the substring the SIGKILL case must carry on darwin —
+// the in-place-replace fix, beside the quarantine one and the kernel-log
+// pointer — and nothing on other platforms, where the probe knows no cause.
+func sigkillRemedyWanted() string {
+	if runtime.GOOS == "darwin" {
+		return "do not overwrite it"
+	}
+	return ""
+}
+
+// TestProbeDaemonLoadsAt_SIGKILLRemedy_NamesBothCausesAndTheKernelLog pins the
+// three parts of the darwin remedy separately, since a reader arrives at
+// whichever one bit them. Refs: MGIT-212, MGIT-64
+func TestProbeDaemonLoadsAt_SIGKILLRemedy_NamesBothCausesAndTheKernelLog(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("the code-signature refusal is a darwin behavior")
+	}
+	got, err := probeDaemonLoadsAt(context.Background(), fakeDaemon(t, `kill -9 $$`))
+	require.NoError(t, err)
+	assert.Contains(t, got.Remedy, "com.apple.quarantine", "cause 1: a quarantined download (MGIT-64)")
+	assert.Contains(t, got.Remedy, "do not overwrite it", "cause 2: replaced in place")
+	assert.Contains(t, got.Remedy, "log show", "where the kernel wrote the answer")
+	assert.Contains(t, got.Output, "SIGKILL")
 }

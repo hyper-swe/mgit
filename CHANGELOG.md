@@ -20,6 +20,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the verb, `--porcelain` appends the word, and `--json` carries `prunable`
   as a field.
 
+### Fixed
+
+- **`mgit doctor` names why a daemon binary was killed before it could run
+  (MGIT-212).** A code-signature refusal on macOS is a SIGKILL with no
+  words, and it has two known causes with different fixes: a quarantined
+  download (`xattr -d com.apple.quarantine`, MGIT-64) and a binary
+  overwritten in place while a daemon runs from it — `cp` over the installed
+  `mgit-sandboxd` rewrites the inode under the running process's cached
+  signature, which is how a hand upgrade to 0.6.7 broke the shared install
+  on a developer Mac for two minutes (reproduced on demand against a scratch
+  copy). The `daemon/loads`
+  row now reports `killed before it could run (SIGKILL)`, names both causes
+  and their fixes, and points at the kernel's own record
+  (`log show --predicate 'process == "kernel"'`), which held eight refusals
+  while the daemon's log stayed empty. INSTALL-SANDBOX.md and the release
+  checklist say: replace the binary, never overwrite it.
+
 ### Changed
 
 - **`sandbox sync` says what `--force` means, and what happens to an edit only
@@ -676,7 +693,6 @@ asks to be kept current.
 > drift impossible rather than detected, which is the same rule this release
 > applies to the guest base's digest. No artifact was ever published under it.
 
-
 The substrate release. Cut because sandbox execution became mandatory for every
 agent lane, and v0.5.0 could not carry that: on it, **any command running longer
 than 30 seconds was killed** — the daemon buffers output and relays it on
@@ -1162,7 +1178,6 @@ v0.4.5 and is not a regression in this release. Fix is P1 and next.
   sees a dropped exec channel and a refused vsock dial, never an exit code. So
   mgit reports what it knows for certain — the cap in force — and leaves the
   conclusion to the caller. (MGIT-95)
-
 
 ## [0.4.5] - 2026-08-12
 

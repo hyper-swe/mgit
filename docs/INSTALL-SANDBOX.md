@@ -267,6 +267,23 @@ xattr -d com.apple.quarantine mgit mgit-sandboxd
 After that, both binaries run normally; the binaries themselves are fine,
 this is purely a distribution/signing gap.
 
+**Upgrading by hand: replace the binaries, never overwrite them.** macOS caches
+a binary's code signature per inode while a process runs from it, so writing
+a new `mgit-sandboxd` over the installed file (`cp new mgit-sandboxd`,
+`cp -f`, a shell `>`) while the daemon is running from it — which it normally
+is — leaves an inode whose content no longer matches the cached signature, and
+the kernel SIGKILLs every later exec of it, again with no words (`Killed: 9`);
+the running daemon itself dies on its next page-in. Reproduced on demand
+(MGIT-212): a daemon up from a scratch copy, the copy overwritten with other
+signed bytes, the next `--version` killed, four `ASP: Security policy would not
+allow process` lines in the kernel's log. Remove the old file
+and copy the new one in (`rm mgit-sandboxd && cp new mgit-sandboxd`), or use
+`install -m 0755`, which unlinks first — `install.sh` and Homebrew do this
+for you. `mgit doctor`'s `daemon/loads` row names both this and the
+quarantine case when the daemon is killed before it can run, and points at
+the kernel's record: `log show --predicate 'process == "kernel"' --last 30m`
+shows `AMFI … code signature` lines for each refused exec. Refs: MGIT-212
+
 > Whether a Homebrew install carries the same problem is **not yet
 > verified** — brew's own install step may or may not clear the quarantine
 > attribute it inherits from whatever fetched the bottle. Treat this as an

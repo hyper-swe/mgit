@@ -282,6 +282,12 @@ green Linux gate is not evidence about macOS:
    does not have; a gate that cannot pass teaches an operator to ignore it.
    If a quarantined binary ever DOES run, notarization or a policy change has
    landed — update MGIT-64, INSTALL-SANDBOX.md and the script.
+   Install by unlinking then copying (`install -m 0755`, or `rm` then `cp`),
+   never by writing over the previous binary while a daemon runs from it (one
+   normally does): macOS keeps the running binary's code signature per inode
+   and SIGKILLs a binary rewritten in place — the same `Killed: 9`
+   as the quarantine case, with a different fix, which doctor's `daemon/loads`
+   row now names (MGIT-212).
    While on that machine, also run the archive-only first-run funnel
    (`mgit sandbox base from <image>` → `mgit work --sandbox` → `mgit run`):
    same "installed archive, no Go toolchain" precondition MGIT-65 requires,
