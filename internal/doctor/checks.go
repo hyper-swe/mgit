@@ -106,8 +106,26 @@ func (c GuestLocalhostCheck) Run(ctx context.Context) Result {
 // lacks the guest-side fixes of every release since it was composed — while
 // the release notes say those fixes shipped. Refs: MGIT-162, MGIT-174
 type BaseCurrencyCheck struct {
-	// Inspect reports the base's composing version and the running one.
-	Inspect func() (composed, running string, err error)
+	// Inspect reports the base's composing substrate, the running one, and
+	// the base's own identity.
+	Inspect func() (BaseIdentity, error)
+}
+
+// BaseIdentity is what doctor knows about a repository's guest base: the
+// substrate that composed it, the substrate running now, and the base's own
+// identity — the resolved OCI source it was composed from (registry/repo:tag
+// @sha256:…, empty for a tree registered from a directory) and the digest of
+// the composed tree itself.
+//
+// The identity is what tells two hosts apart. "Composed by this substrate" is
+// true of every host that recomposed after the same upgrade, whatever image a
+// moving tag gave each of them; only the digests say whether they run the
+// same base. Refs: MGIT-218, MGIT-147
+type BaseIdentity struct {
+	Composed   string // the mgit version that composed the base ("" when unrecorded)
+	Running    string // the mgit version running now
+	SourceRef  string // resolved OCI source, tag@digest; "" for a directory base
+	BaseDigest string // digest of the composed tree, as pinned in images.lock
 }
 
 // Name implements Check.
@@ -116,7 +134,8 @@ func (BaseCurrencyCheck) Name() string { return "base/currency" }
 // Run implements Check.
 func (c BaseCurrencyCheck) Run(context.Context) Result {
 	r := Result{Name: c.Name(), Incident: "MGIT-174"}
-	composed, running, err := c.Inspect()
+	id, err := c.Inspect()
+	composed, running := id.Composed, id.Running
 	if err != nil {
 		r.Status, r.Reason = StatusNotChecked, err.Error()
 		r.Summary = "could not determine which mgit composed this repository's guest base"
@@ -125,24 +144,40 @@ func (c BaseCurrencyCheck) Run(context.Context) Result {
 	switch guestbase.BaseCurrency(composed, running) {
 	case guestbase.CurrencyCurrent:
 		r.Status = StatusOK
-		r.Summary = fmt.Sprintf("the guest base was composed by this substrate (%s)", running)
+		r.Summary = fmt.Sprintf("the guest base was composed by this substrate (%s)%s", running, id.describe())
 	case guestbase.CurrencyUnknown:
 		// Deliberately NOT ok. Reporting silence as currency is the exact
 		// failure being fixed: for two releases the absence of a warning was
 		// read as an assurance.
 		r.Status = StatusFailed
 		r.Summary = "this guest base does not record what composed it, so whether its guest " +
-			"binaries match this substrate cannot be established"
+			"binaries match this substrate cannot be established" + id.describe()
 		r.Remedy = "recompose it with `mgit sandbox base from <image>`; bases composed before " +
 			"mgit recorded this carry no marker"
 	default:
 		r.Status = StatusFailed
 		r.Summary = fmt.Sprintf("the guest base was composed by mgit %s but this substrate is %s, "+
 			"so the guest binaries frozen into it are not this build's — it silently lacks every "+
-			"guest-side fix since %s", composed, running, composed)
+			"guest-side fix since %s%s", composed, running, composed, id.describe())
 		r.Remedy = "recompose it with `mgit sandbox base from <image>`"
 	}
 	return r
+}
+
+// describe renders the base's identity as the row's tail, set off by a
+// semicolon so it reads the same after every verdict: the resolved source
+// (tag@digest) and the composed tree's digest, or the digest alone with a
+// plain statement that no OCI source was recorded. Empty when nothing is
+// known. Refs: MGIT-218
+func (id BaseIdentity) describe() string {
+	switch {
+	case id.SourceRef != "":
+		return fmt.Sprintf("; source %s, base %s", id.SourceRef, id.BaseDigest)
+	case id.BaseDigest != "":
+		return fmt.Sprintf("; base %s, no OCI source recorded (registered from a directory)", id.BaseDigest)
+	default:
+		return ""
+	}
 }
 
 // GuestSyncVerifyCheck reports whether a task's guest can confirm a worktree

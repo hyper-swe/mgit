@@ -274,38 +274,48 @@ func probeResponseCap(ctx context.Context, connect connectFunc, bytes int) (doct
 // the pin that boots it. A base with no marker returns "" and is reported as
 // unknown, which the check treats as a failure rather than a pass.
 // Refs: MGIT-174
-func inspectBaseCurrency() (composed, running string, err error) {
+func inspectBaseCurrency() (doctor.BaseIdentity, error) {
+	none := doctor.BaseIdentity{}
 	hostRoot, err := sandboxHostRoot()
 	if err != nil {
-		return "", "", fmt.Errorf("no sandbox host root for this repository: %w", err)
+		return none, fmt.Errorf("no sandbox host root for this repository: %w", err)
 	}
 	ref, err := images.PinnedRef(hostRoot, defaultGuestBaseName)
 	if err != nil {
-		return "", "", fmt.Errorf("no guest base registered for this repository: %w", err)
+		return none, fmt.Errorf("no guest base registered for this repository: %w", err)
 	}
 	cache, cacheErr := openBaseCache()
 	if cacheErr != nil {
-		return "", "", fmt.Errorf("could not open the base cache: %w", cacheErr)
+		return none, fmt.Errorf("could not open the base cache: %w", cacheErr)
 	}
 	store, err := images.NewStoreWithBaseCache(hostRoot, func() time.Time { return time.Now().UTC() }, cache)
 	if err != nil {
-		return "", "", fmt.Errorf("could not open the image store: %w", err)
+		return none, fmt.Errorf("could not open the image store: %w", err)
 	}
 	resolved, err := store.Resolve(ref)
 	if err != nil {
-		return "", "", fmt.Errorf("could not resolve the pinned guest base: %w", err)
+		return none, fmt.Errorf("could not resolve the pinned guest base: %w", err)
 	}
+	// The base's identity comes from the lock, not the tree: the lock is what
+	// boot verifies against, and its Source is the resolved reference — the
+	// digest a moving tag pointed at when THIS host composed. Refs: MGIT-218
+	entry, err := images.LookupEntry(hostRoot, defaultGuestBaseName)
+	if err != nil {
+		return none, fmt.Errorf("could not read the guest base's lock entry: %w", err)
+	}
+	id := doctor.BaseIdentity{Running: Version, SourceRef: entry.Source, BaseDigest: entry.Digest}
 	rec, readErr := guestbase.ReadComposedBy(resolved.RootfsPath)
 	if errors.Is(readErr, guestbase.ErrComposedByUnknown) {
 		// Not an inspection failure: we looked and it genuinely says nothing.
 		// That distinction matters — "could not look" and "looked and found no
 		// record" are different facts, and only the second is a finding.
-		return "", Version, nil
+		return id, nil
 	}
 	if readErr != nil {
-		return "", "", readErr
+		return none, readErr
 	}
-	return rec.Version, Version, nil
+	id.Composed = rec.Version
+	return id, nil
 }
 
 // probeGuestLocalhost reads the task guest's own name table and returns the

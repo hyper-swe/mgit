@@ -91,6 +91,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **doctor's `base/currency` row names which image the guest base was composed
+  from, not only which substrate composed it (MGIT-218).** A fleet recomposed
+  "under 0.6.7 from the same tag" at different moments sat on different images
+  once the tag moved, and every host read `ok … composed by this substrate
+  (0.6.7)` — true, and silent about the difference. The row now carries the
+  resolved source (`tag@sha256:…`) and the composed base's own digest, from
+  `images.lock`, so two hosts are compared by reading their rows; a base
+  registered from a directory says it has no OCI source beside its digest.
+  INSTALL-SANDBOX records the decision: a mutable tag is the intended input
+  and the digest is the identity — compose from the digest to hold a fleet to
+  one image.
+
 - **A failed daemon start no longer erases the attempt before it
   (MGIT-215).** The sandbox daemon's log was truncated on every spawn, so
   five failed starts in ten seconds left one empty file and the successful
