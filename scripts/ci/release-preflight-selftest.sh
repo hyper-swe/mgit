@@ -170,7 +170,19 @@ cat >"$WORK/mgit-unserved" <<'STUB'
 printf '{"digest":"sha256:%s"}\n' "$(printf 'd%.0s' $(seq 1 64))"
 STUB
 chmod +x "$WORK/mgit-unserved"
-MGIT="$WORK/mgit-unserved" refuses "$c" "does not serve the recorded guest base" "a record whose digest the registry no longer serves is refused" 9.9.9 --no-ci
+MGIT="$WORK/mgit-unserved" refuses "$c" "the registry answered" "a record the registry resolves to a different digest is refused, saying what it answered" 9.9.9 --no-ci
+cat >"$WORK/mgit-old" <<'STUB'
+#!/usr/bin/env bash
+echo 'Error: unknown command "resolve" for "mgit sandbox base"' >&2; exit 1
+STUB
+chmod +x "$WORK/mgit-old"
+MGIT="$WORK/mgit-old" refuses "$c" "does not know" "an mgit without the resolve verb (the installed release) is named as such, not as a registry miss" 9.9.9 --no-ci
+cat >"$WORK/mgit-registryfail" <<'STUB'
+#!/usr/bin/env bash
+echo 'Error: guest base: https://registry/v2/library/debian/manifests/sha256:... : 404 Not Found' >&2; exit 1
+STUB
+chmod +x "$WORK/mgit-registryfail"
+MGIT="$WORK/mgit-registryfail" refuses "$c" "resolving the recorded guest base failed" "a registry error is quoted as the reason" 9.9.9 --no-ci
 
 # the pin script writes the record from what the registry answers
 c=$(fixture pin "$good_changelog")

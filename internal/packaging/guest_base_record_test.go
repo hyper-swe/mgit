@@ -46,4 +46,11 @@ func TestGuestBase_ThePinScriptAndThePreflightConditionExist(t *testing.T) {
 
 	self := readRepoFile(t, filepath.Join("scripts", "ci", "release-preflight-selftest.sh"))
 	assert.Contains(t, self, "release-base.json", "the self-test exercises the record condition")
+
+	// The checklist runs the preflight and the pin script with the binary
+	// BUILT FROM THE SHA: the installed release may predate the resolve verb,
+	// and check 7 through it would fail closed for the wrong stated reason.
+	checklist := readRepoFile(t, filepath.Join("docs", "release", "RELEASE-CHECKLIST.md"))
+	assert.Contains(t, checklist, "MGIT=build/mgit scripts/ci/release-preflight.sh", "the checklist names the built binary for the preflight")
+	assert.Contains(t, checklist, "MGIT=build/mgit scripts/release/pin-guest-base.sh", "and for the pin script")
 }

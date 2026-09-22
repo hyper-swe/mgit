@@ -32,7 +32,9 @@
 #      release-base.json — the base the release is smoke-tested with):
 #      present, naming an image and a digest, and that digest still served
 #      by the registry (`mgit sandbox base resolve <image>@<digest>`); MGIT
-#      picks the binary, and a missing binary is a loud FAIL
+#      picks the binary — the one BUILT FROM THE SHA, since an installed
+#      release may predate the verb — and a missing or verb-less binary is
+#      a loud FAIL that says which
 # fetch-guard-file: this script fetches nothing; `gh` reads the API and `git fetch` updates refs
 set -uo pipefail
 
@@ -149,9 +151,19 @@ else
 	elif ! command -v "$MGIT" >/dev/null 2>&1; then
 		bad "7. $MGIT is not available: the recorded guest base cannot be resolved (cannot tell)"
 	else
-		served=$("$MGIT" sandbox base resolve "$rec_image@$rec_digest" --json 2>/dev/null | sed -n 's/.*"digest":"\(sha256:[0-9a-f]\{64\}\)".*/\1/p' | head -1) || served=""
-		if [ "$served" = "$rec_digest" ]; then pass "7. guest base record $rec_image@${rec_digest:0:19}… is still served by the registry"
-		else bad "7. the registry does not serve the recorded guest base $rec_image@$rec_digest (cannot tell)"; fi
+		# Three refusals, each with its own reason: an mgit without the verb (the
+		# installed release predates it — run this with MGIT=<the binary built from
+		# the sha>), a registry error, and a registry that answers a different digest.
+		out=$("$MGIT" sandbox base resolve "$rec_image@$rec_digest" --json 2>&1); rc=$?
+		served=$(sed -n 's/.*"digest":"\(sha256:[0-9a-f]\{64\}\)".*/\1/p' <<<"$out" | head -1)
+		if [ $rc -ne 0 ] && grep -qiE 'unknown (command|flag|shorthand)' <<<"$out"; then
+			bad "7. $MGIT does not know \`sandbox base resolve\` (exit $rc): set MGIT=<the mgit built from ${sha:0:12}> (cannot tell)"
+		elif [ $rc -ne 0 ]; then
+			bad "7. resolving the recorded guest base failed (exit $rc): $(head -1 <<<"$out") (cannot tell)"
+		elif [ -z "$served" ]; then
+			bad "7. \`$MGIT sandbox base resolve\` printed no digest: $(head -1 <<<"$out") (cannot tell)"
+		elif [ "$served" = "$rec_digest" ]; then pass "7. guest base record $rec_image@${rec_digest:0:19}… is still served by the registry"
+		else bad "7. the registry answered $served for $rec_image, not the recorded $rec_digest — the record does not resolve to itself"; fi
 	fi
 fi
 

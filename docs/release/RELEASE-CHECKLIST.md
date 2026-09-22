@@ -154,7 +154,8 @@ green Linux gate is not evidence about macOS:
 refresh the record the binary embeds and the smoke composes:
 
 ```
-scripts/release/pin-guest-base.sh            # resolves the record's image (debian:12) to what its tag points at now
+go build -o build/mgit ./cmd/mgit/                       # the binary built from the sha: the installed release may predate `sandbox base resolve`
+MGIT=build/mgit scripts/release/pin-guest-base.sh        # resolves the record's image (debian:12) to what its tag points at now
 git diff internal/sandboxd/guestbase/release-base.json
 ```
 
@@ -168,8 +169,11 @@ composed from anything else.
 1. Run the committed preflight at the exact sha the tag will point at, and
    tag nothing while it says FAIL:
    ```
-   scripts/ci/release-preflight.sh <version> <sha> --require <fix-commit>... --ticket <MGIT-id>...
+   MGIT=build/mgit scripts/ci/release-preflight.sh <version> <sha> --require <fix-commit>... --ticket <MGIT-id>...
    ```
+   (`MGIT=` names the binary built from the sha above: check 7 resolves the
+   guest base record through `mgit sandbox base resolve`, and an installed
+   release without that verb would fail closed for the wrong stated reason.)
    It checks, in the order the release decision names them: the sha is on
    `origin/main`; it contains every `--require` commit; CHANGELOG at the sha
    has an empty `[Unreleased]`, a dated `## [<version>]` heading and names
