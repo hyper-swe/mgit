@@ -388,6 +388,28 @@ entry and says what changed, naming both digests — it never replaces the old
 one. Every composition is appended to `.mgit/sandbox/base-provenance.jsonl`,
 which `images.lock` cannot express because it holds one entry per name.
 
+**A mutable tag is the intended input; the digest is the identity.** Several
+hosts told to "recompose from the same tag" at different moments can end up on
+different images, and each of them is *current* — the guest binaries inside
+each base are this substrate's. That is by design: what a recompose promises
+is this substrate's guest code on whatever the tag points at now, never the
+same bytes as another host. To hold a fleet to one image, compose from the
+digest (`mgit sandbox base from golang:1.26-bookworm@sha256:…`), which every
+host resolves identically.
+
+Whether two hosts run the same base is a question about digests, and doctor
+answers it: the `base/currency` row names the resolved source and the
+composed base beside the substrate version —
+
+```
+ok    base/currency — the guest base was composed by this substrate (0.6.7); source registry-1.docker.io/library/golang:1.26-bookworm@sha256:37a6…, base sha256:be25…
+```
+
+Two hosts are on the same base exactly when that line agrees on `base
+sha256:…`; compare `mgit doctor --json` on each (the row's `summary`) and diff.
+A base registered from a directory with `sandbox base set` has no OCI source,
+and the row says so beside its digest.
+
 **Pick the image your task's toolchain needs.** The base IS the environment
 your agent works in, so start from something that already carries it:
 

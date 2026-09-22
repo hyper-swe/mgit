@@ -171,8 +171,8 @@ func TestBaseCurrencyCheck(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := BaseCurrencyCheck{Inspect: func() (string, string, error) {
-				return tt.composed, tt.running, tt.inspectErr
+			c := BaseCurrencyCheck{Inspect: func() (BaseIdentity, error) {
+				return BaseIdentity{Composed: tt.composed, Running: tt.running}, tt.inspectErr
 			}}
 			got := c.Run(context.Background())
 
@@ -190,4 +190,71 @@ func TestBaseCurrencyCheck(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TWO BASES THAT DIFFER ONLY IN WHAT THEY WERE COMPOSED FROM MUST READ AS TWO
+// DIFFERENT ROWS. A fleet recomposed "under 0.6.7 from the same tag" at
+// different moments sits on different images once the tag moves, and every
+// host read `ok … composed by this substrate (0.6.7)` — a verdict about WHICH
+// SUBSTRATE, silent about WHICH IMAGE. The row now carries the base's
+// identity, so two hosts can be compared by reading their doctor output.
+// Refs: MGIT-218
+func TestBaseCurrencyCheck_TwoBasesDifferingOnlyInSourceDigest_GiveTwoDifferentRows(t *testing.T) {
+	const (
+		tag = "registry-1.docker.io/library/golang:1.26-bookworm"
+		d1  = "sha256:37a6d96e0000000000000000000000000000000000000000000000000000aaaa"
+		d2  = "sha256:be25e8de0000000000000000000000000000000000000000000000000000bbbb"
+		b1  = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		b2  = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	)
+	row := func(id BaseIdentity) Result {
+		return BaseCurrencyCheck{Inspect: func() (BaseIdentity, error) { return id, nil }}.Run(context.Background())
+	}
+	laneA := row(BaseIdentity{Composed: "0.6.7", Running: "0.6.7", SourceRef: tag + "@" + d1, BaseDigest: b1})
+	laneB := row(BaseIdentity{Composed: "0.6.7", Running: "0.6.7", SourceRef: tag + "@" + d2, BaseDigest: b2})
+
+	assert.Equal(t, StatusOK, laneA.Status)
+	assert.Equal(t, StatusOK, laneB.Status)
+	assert.NotEqual(t, laneA.Summary, laneB.Summary,
+		"two bases composed from different images read as the same row — the ok is silent about a real difference")
+	assert.Contains(t, laneA.Summary, d1, "the row names the source digest it was composed from")
+	assert.Contains(t, laneA.Summary, b1, "the row names the composed base's own digest")
+	assert.Contains(t, laneA.Summary, tag, "the tag rides along as provenance")
+	assert.NotContains(t, laneA.Summary, d2)
+	assert.Contains(t, laneB.Summary, d2)
+	assert.Contains(t, laneB.Summary, b2)
+}
+
+// A base registered from a directory (`sandbox base set <dir>`) has no OCI
+// source; the row says so instead of printing an empty "from".
+func TestBaseCurrencyCheck_DirectoryBase_SaysNoOCISourceAndStillNamesItsDigest(t *testing.T) {
+	const b = "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+	got := BaseCurrencyCheck{Inspect: func() (BaseIdentity, error) {
+		return BaseIdentity{Composed: "0.6.7", Running: "0.6.7", BaseDigest: b}, nil
+	}}.Run(context.Background())
+	assert.Equal(t, StatusOK, got.Status)
+	assert.Contains(t, got.Summary, b)
+	assert.Contains(t, got.Summary, "no OCI source")
+	assert.NotContains(t, got.Summary, "source ,", "no empty source is printed for a directory base")
+}
+
+// A stale or unrecorded base carries its identity too: the reader deciding
+// whether to recompose wants to know which bytes they are looking at.
+func TestBaseCurrencyCheck_StaleAndUnrecordedRows_CarryTheBaseDigest(t *testing.T) {
+	const (
+		src = "docker.io/library/debian:12@sha256:4444444444444444444444444444444444444444444444444444444444444444"
+		b   = "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+	)
+	stale := BaseCurrencyCheck{Inspect: func() (BaseIdentity, error) {
+		return BaseIdentity{Composed: "0.6.6", Running: "0.6.7", SourceRef: src, BaseDigest: b}, nil
+	}}.Run(context.Background())
+	assert.Equal(t, StatusFailed, stale.Status)
+	assert.Contains(t, stale.Summary, b)
+	assert.Contains(t, stale.Summary, src)
+
+	unknown := BaseCurrencyCheck{Inspect: func() (BaseIdentity, error) {
+		return BaseIdentity{Running: "0.6.7", SourceRef: src, BaseDigest: b}, nil
+	}}.Run(context.Background())
+	assert.Equal(t, StatusFailed, unknown.Status)
+	assert.Contains(t, unknown.Summary, b, "even a base that does not say what composed it has a digest a reader can compare")
 }
