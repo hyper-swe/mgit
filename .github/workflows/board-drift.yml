@@ -41,8 +41,11 @@ jobs:
           set -e
           printf '%s\n' "$out"
           { echo '## Board drift'; echo; echo '```'; printf '%s\n' "$out"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          desc=$(printf '%s\n' "$out" | grep '^boardcheck:' | tail -1 | cut -c1-140)
-          [ -n "$desc" ] || desc="boardcheck: NOT CHECKED — the tool printed no verdict line (exit $code)"
+          # The tool's own `status:` line: bounded to GitHub's 140 characters
+          # by the tool, which says how many ids it left out rather than
+          # cutting names silently as the old 140-character cut did here. (MGIT-211)
+          desc=$(printf '%s\n' "$out" | grep '^status: ' | tail -1 | sed 's/^status: //')
+          [ -n "$desc" ] || desc="boardcheck: NOT CHECKED — the tool printed no status line (exit $code)"
           state=success; [ "$code" -eq 2 ] && state=error
           gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state="$state" -f context=board-drift -f description="$desc" \
