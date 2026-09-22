@@ -454,6 +454,12 @@ func TestDaemon_PanicInHandler_DaemonSurvives(t *testing.T) {
 	skipUnsupportedHostIPC(t)
 	svc := &fakeDispatcher{panicOn: "list"}
 	cfg, logs := dispatchConfig(t, svc)
+	// The fault is one-shot and the idle poll calls the same List: at the
+	// default 20 ms poll the tick reached it before this test's request did
+	// (CI at fbf8741), consumed the shot, and the handler under test never
+	// panicked. The poll is pinned beyond the test's life; the idle-poll
+	// path has its own test below. Refs: MGIT-217
+	cfg.PollInterval = time.Hour
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := runDaemon(ctx, t, cfg)
@@ -470,6 +476,35 @@ func TestDaemon_PanicInHandler_DaemonSurvives(t *testing.T) {
 	// The daemon is still alive and authenticating.
 	conn2 := dialAuthed(t, cfg.SocketPath)
 	defer func() { _ = conn2.Close() }()
+
+	cancel()
+	require.NoError(t, <-done, "the daemon drained cleanly; it never crashed")
+}
+
+// TestDaemon_PanicInIdlePollList_DaemonSurvives verifies a panic in
+// Service.List on the idle poll — the daemon's own tick, no client involved
+// — is converted into a logged error and the daemon keeps running: a crash
+// there skips the drain and strands every running VM, the failure the
+// handler's recover (MGIT-11.10.8) and the drain's (MGIT-107) already
+// prevent on their paths. Refs: MGIT-217
+func TestDaemon_PanicInIdlePollList_DaemonSurvives(t *testing.T) {
+	skipUnsupportedHostIPC(t)
+	svc := &fakeDispatcher{panicOn: "list"}
+	cfg, logs := dispatchConfig(t, svc)
+	cfg.PollInterval = 10 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := runDaemon(ctx, t, cfg)
+
+	// No request is sent: only the idle poll calls List, and it panics once.
+	require.Eventually(t, func() bool {
+		s := logs.String()
+		return strings.Contains(s, `"list_error"`) && strings.Contains(s, "panic")
+	}, 2*time.Second, 5*time.Millisecond, "the poll's panic must be logged as a list failure, not escape Run")
+
+	// The daemon is still alive and authenticating after the tick that panicked.
+	conn := dialAuthed(t, cfg.SocketPath)
+	_ = conn.Close()
 
 	cancel()
 	require.NoError(t, <-done, "the daemon drained cleanly; it never crashed")
