@@ -150,7 +150,22 @@ green Linux gate is not evidence about macOS:
 
 ## Publish steps (owner)
 
-1. Ensure `main` is green and the CHANGELOG `[Unreleased]` section is ready.
+1. Run the committed preflight at the exact sha the tag will point at, and
+   tag nothing while it says FAIL:
+   ```
+   scripts/ci/release-preflight.sh <version> <sha> --require <fix-commit>... --ticket <MGIT-id>...
+   ```
+   It checks, in the order the release decision names them: the sha is on
+   `origin/main`; it contains every `--require` commit; CHANGELOG at the sha
+   has an empty `[Unreleased]`, a dated `## [<version>]` heading and names
+   every `--ticket`; no `v<version>` tag exists locally or on the remote;
+   `ci.yml` and `e2e.yml` job conclusions at the sha (or, for a docs-only
+   commit e2e skipped, at the nearest ancestor that ran it, with the diff
+   stated). A check that cannot run prints FAIL with "cannot tell", never
+   PASS; `--no-ci` is for an offline read and must not precede a tag. The
+   v0.6.7 cut ran exactly these by hand from a scratchpad; this is that
+   script, committed (MGIT-209). Then ensure the CHANGELOG `[Unreleased]`
+   section is ready for the next cycle.
    Carry the macOS quarantine remedy (MGIT-64, docs/INSTALL-SANDBOX.md) into
    `.goreleaser.yaml`'s `release.header` (the actual release-notes text) if
    it isn't there yet — that file is out of scope for this checklist edit,
