@@ -119,3 +119,24 @@ func TestRef_String_KeepsBothTheTagAndTheResolvedDigest(t *testing.T) {
 		})
 	}
 }
+
+// A reference that names BOTH a tag and a digest keeps both: the digest is
+// what the pull uses, the tag is what a reader recognizes — the shape the
+// release record and every provenance line carry. Refs: MGIT-219
+func TestParseRef_KeepsTheTagBesideADigest(t *testing.T) {
+	d := "sha256:" + strings.Repeat("b", 64)
+	ref, err := ParseRef("debian:12@" + d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Tag != "12" || ref.Digest != d {
+		t.Fatalf("tag/digest = %q/%q, want 12/%s", ref.Tag, ref.Digest, d)
+	}
+	if got := ref.String(); got != "registry-1.docker.io/library/debian:12@"+d {
+		t.Fatalf("String() = %q", got)
+	}
+	back, err := ParseRef(ref.String())
+	if err != nil || back != ref {
+		t.Fatalf("round trip: %+v (%v)", back, err)
+	}
+}

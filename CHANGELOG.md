@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A release records the guest base it was smoke-tested with, and compose
+  pulls it by digest (MGIT-219).** The compose tag `golang:1.26-bookworm`
+  moved between two hosts' recomposes on the same day, so "the same 0.6.7"
+  ran different guest userspaces and nothing said which base the release
+  vouched for. The binary now embeds `internal/sandboxd/guestbase/
+  release-base.json` — image and digest, refreshed by
+  `scripts/release/pin-guest-base.sh` before a cut and refused by the release
+  preflight when missing or no longer served; `mgit sandbox base from` with no
+  reference composes it by digest; the e2e and posture smoke compose it too,
+  so what is tested is what is recorded; `mgit sandbox base resolve [<ref>]`
+  prints what a reference points at now. `mgit doctor` gains a `base/release`
+  row that prints the composed source digest beside the release's and states
+  a mismatch as a `DIFF` — a different digest under the same tag, a different
+  image, or a directory base — never an ok over a difference, and never a
+  failure of the exit code: a stated difference, with the recompose and the
+  keep-it-knowingly paths both named. A reference that names a tag beside a
+  digest now keeps both. The digest is the identity; the tag is documentation.
+
 - **The pre-tag conditions of a release are one committed check (MGIT-209).**
   `scripts/ci/release-preflight.sh <version> <sha> --require <commit>...
   --ticket <id>...` verifies what the v0.6.7 cut verified by hand from a

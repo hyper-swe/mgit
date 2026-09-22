@@ -25,7 +25,8 @@
 # Usage: sandbox_cli_surface.sh [bindir]
 #   Linux: MGIT_GUEST_KERNEL + MGIT_GUEST_ROOTFS [+ MGIT_GUEST_CMDLINE], or
 #          MGIT_GUEST_IMAGE (an already-registered ref)
-#   macOS: nothing; the base is composed from MGIT_GUEST_OCI_REF (default debian:12)
+#   macOS: nothing; the base is composed from MGIT_GUEST_OCI_REF, or, unset, the
+#          base this release was smoke-tested with (the binary's record, MGIT-219)
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
@@ -88,7 +89,7 @@ Linux)
 	fi
 	;;
 Darwin)
-	echo "== compose the guest base from ${MGIT_GUEST_OCI_REF:-debian:12} =="
+	echo "== compose the guest base from ${MGIT_GUEST_OCI_REF:-the release-recorded base} =="
 	# fetch-guard: `mgit sandbox base from` pulls an OCI image through the
 	# product's own registry client (internal/sandboxd/guestbase/pull.go),
 	# which already bounds a whole pull at 15 minutes -- clause 2, in Go. It
@@ -96,7 +97,8 @@ Darwin)
 	# would guard the wrong layer: a retry outside the client cannot clear the
 	# half-written blob cache inside it. MGIT-145 carries that work.
 	# Refs: MGIT-143, MGIT-145
-	MGIT_GUEST_IMAGE="$(mgit sandbox base from "${MGIT_GUEST_OCI_REF:-debian:12}" --json |
+	# No reference means the release-recorded base (MGIT-219).
+	MGIT_GUEST_IMAGE="$(mgit sandbox base from ${MGIT_GUEST_OCI_REF:+"$MGIT_GUEST_OCI_REF"} --json |
 		sed -n 's/.*"image_ref":"\([^"]*\)".*/\1/p')"
 	[ -n "$MGIT_GUEST_IMAGE" ] || _e2e_fail "sandbox base from produced no reference"
 	;;
