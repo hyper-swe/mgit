@@ -24,6 +24,14 @@
 // It is a REPORT: exit 0 whatever it finds, unless -strict asks for exit 1
 // on unacknowledged drift; exit 2 when the board cannot be read (not
 // checked is a verdict of its own, never a pass). Refs: MGIT-178, MGIT-187
+//
+// The last line of every run is `status: <description>` — the text the
+// workflow writes as the commit status, bounded here to GitHub's 140
+// characters. It counts the two drift conditions separately, lists the
+// stricter one (not on the tracked board) first, and when ids do not fit
+// says how many were left out instead of dropping them: the workflow used
+// to cut the verdict line at 140, so a status once claimed nine tickets and
+// named five. Refs: MGIT-211
 package main
 
 import (
@@ -36,6 +44,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // idRe matches a ticket id as the Refs convention writes it, dotted
@@ -69,29 +78,106 @@ func main() {
 func run(log io.Reader, out io.Writer, boardPath string, strict bool) int {
 	statuses, err := readBoard(boardPath)
 	if err != nil {
-		fmt.Fprintf(out, "boardcheck: NOT CHECKED — %v\n", err)
+		notChecked := fmt.Sprintf("boardcheck: NOT CHECKED — %v", err)
+		fmt.Fprintln(out, notChecked)
+		fmt.Fprintln(out, "status: "+fit(notChecked, statusLimit))
 		return 2
 	}
 	commits := parseLog(log)
 	if len(commits) == 0 {
-		fmt.Fprintln(out, "boardcheck: no commits since the board's last update — nothing to compare")
+		const none = "boardcheck: no commits since the board's last update — nothing to compare"
+		fmt.Fprintln(out, none)
+		fmt.Fprintln(out, "status: "+none)
 		return 0
 	}
-	rows, drift := judge(commits, statuses)
+	rows, notTracked, open := judge(commits, statuses)
 	fmt.Fprintf(out, "boardcheck: %d commit(s) since the board's last update reference %d ticket(s)\n", len(commits), len(rows))
 	for _, r := range rows {
 		fmt.Fprintln(out, r)
 	}
-	if len(drift) == 0 {
-		fmt.Fprintln(out, "boardcheck: no drift — every ticket referenced since the board's last update is closed or acknowledged")
+	if len(notTracked)+len(open) == 0 {
+		const clean = "boardcheck: no drift — every ticket referenced since the board's last update is closed or acknowledged"
+		fmt.Fprintln(out, clean)
+		fmt.Fprintln(out, "status: "+clean)
 		return 0
 	}
-	fmt.Fprintf(out, "boardcheck: DRIFT — %d ticket(s) referenced by merged commits are still open on the board: %s\n",
-		len(drift), strings.Join(drift, ", "))
+	fmt.Fprintln(out, verdict(notTracked, open, 0))
+	fmt.Fprintln(out, "status: "+verdict(notTracked, open, statusLimit))
 	if strict {
 		return 1
 	}
 	return 0
+}
+
+// statusLimit is GitHub's cap on a commit status description; a longer one
+// is rejected outright. Refs: MGIT-211
+const statusLimit = 140
+
+// verdict renders the DRIFT line: both counts named, the not-tracked ids
+// before the open ones (the stricter condition, where a short read still
+// catches it), the groups separated by " | ". With limit > 0 the line is at
+// most limit runes: ids that do not fit — open ones first — give way to a
+// visible "… and N more — see the job summary" tail. Refs: MGIT-211
+func verdict(notTracked, open []string, limit int) string {
+	var counts []string
+	if len(notTracked) > 0 {
+		counts = append(counts, fmt.Sprintf("%d not on the tracked board", len(notTracked)))
+	}
+	if len(open) > 0 {
+		counts = append(counts, fmt.Sprintf("%d open on the board", len(open)))
+	}
+	head := "boardcheck: DRIFT — " + strings.Join(counts, " + ") + ":"
+	total := len(notTracked) + len(open)
+	for shown := total; shown >= 0; shown-- {
+		line := head + listIDs(notTracked, open, shown)
+		if shown < total {
+			line += fmt.Sprintf(" … and %d more — see the job summary", total-shown)
+		}
+		if limit == 0 || utf8.RuneCountInString(line) <= limit {
+			return line
+		}
+	}
+	return fit(head, limit) // only if the counts alone exceed the cap
+}
+
+// listIDs renders the first n ids, not-tracked ones first, " | " between
+// the two groups when both are represented in what is shown.
+func listIDs(notTracked, open []string, n int) string {
+	var b strings.Builder
+	for i, id := range notTracked {
+		if i >= n {
+			return b.String()
+		}
+		if i == 0 {
+			b.WriteString(" ")
+		} else {
+			b.WriteString(", ")
+		}
+		b.WriteString(id)
+	}
+	for i, id := range open {
+		if len(notTracked)+i >= n {
+			break
+		}
+		switch {
+		case i == 0 && len(notTracked) > 0:
+			b.WriteString(" | ")
+		case i == 0:
+			b.WriteString(" ")
+		default:
+			b.WriteString(", ")
+		}
+		b.WriteString(id)
+	}
+	return b.String()
+}
+
+// fit bounds s to limit runes with a visible ellipsis (limit 0: unbounded).
+func fit(s string, limit int) string {
+	if limit == 0 || utf8.RuneCountInString(s) <= limit {
+		return s
+	}
+	return string([]rune(s)[:limit-1]) + "…"
 }
 
 // readBoard maps every tracked ticket to its status.
@@ -164,9 +250,11 @@ func parseStaysOpen(s string) map[string]string {
 	return ack
 }
 
-// judge produces one row per referenced ticket and the sorted list of
-// those that are unacknowledged drift.
-func judge(commits []commit, statuses map[string]string) (rows []string, drift []string) {
+// judge produces one row per referenced ticket and, sorted, the two kinds
+// of unacknowledged drift: tickets the tracked board does not carry at all
+// (the stricter condition, judged before any acknowledgement) and tickets
+// it still lists as open.
+func judge(commits []commit, statuses map[string]string) (rows, notTracked, open []string) {
 	first := map[string]commit{}
 	ack := map[string]string{}
 	for _, c := range commits {
@@ -190,17 +278,17 @@ func judge(commits []commit, statuses map[string]string) (rows []string, drift [
 		switch {
 		case !tracked:
 			rows = append(rows, fmt.Sprintf("  %s  (not on the tracked board)  — %s %s", id, c.sha, c.subject))
-			drift = append(drift, id)
+			notTracked = append(notTracked, id)
 		case closedStatuses[status]:
 			rows = append(rows, fmt.Sprintf("  %s  %-11s  closed", id, status))
 		case ack[id] != "" || hasAck(ack, id):
 			rows = append(rows, fmt.Sprintf("  %s  %-11s  stays open (%s)", id, status, ack[id]))
 		default:
 			rows = append(rows, fmt.Sprintf("  %s  %-11s  still open  — %s %s", id, status, c.sha, c.subject))
-			drift = append(drift, id)
+			open = append(open, id)
 		}
 	}
-	return rows, drift
+	return rows, notTracked, open
 }
 
 func hasAck(ack map[string]string, id string) bool { _, ok := ack[id]; return ok }

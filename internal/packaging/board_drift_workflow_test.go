@@ -25,10 +25,12 @@ func TestBoardDrift_IsWiredToPushesOnMain(t *testing.T) {
 		"%(trailers:key=Refs,valueonly,separator=%x2C)",
 		"%(trailers:key=Stays-Open,valueonly,separator=%x2C)",
 		"-f context=board-drift",
+		"grep '^status: '",
 		"\n          exit 0",
 	} {
 		assert.Contains(t, wf, want)
 	}
+	assert.NotContains(t, wf, "cut -c1-140", "the tool bounds its own status line and names what it left out; the workflow no longer cuts names silently (MGIT-211)")
 	assert.NotContains(t, wf, "pull_request", "a PR head is not main; the board is compared where merges land")
 	assert.NotContains(t, wf, "-strict", "a report, not a gate: the ruling makes the close part of the ritual, not a merge blocker")
 	assert.NotContains(t, wf, "\n          exit $code")
