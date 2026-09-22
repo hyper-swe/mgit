@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-09-22
+
+**The first published release since 0.6.5 — v0.6.6 was tagged and never
+shipped.** Its publish failed inside goreleaser's test hook on the release
+runner, on a start-up race that run was the first to hit (MGIT-204); by the
+rule that a tag never points twice, the number was retired, and this release
+carries everything listed under [0.6.6] together with the seven tickets
+below: guest execs no longer run as root, a guest that died is reported
+`dead` rather than `running`, host policy's concurrent-sandbox cap now binds
+the fleet, `mgit doctor` says when the daemon binary cannot load, every push
+to main reports the tickets it closed, and the daemon's host-wide record
+exists before its socket answers.
+
 ### Added
 
 - **A `board-drift` status on every push to main (MGIT-178).** The merged
@@ -31,6 +44,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the recovery steps.
 
 ### Fixed
+
+- **The daemon's host-wide record exists before its socket answers (MGIT-204).**
+  The record that makes a running daemon findable host-wide (`mgit sandbox
+  daemons`, MGIT-191) was written after the socket had started accepting, so
+  a client connecting the instant the socket answered could read the record's
+  path and find nothing. The dev Mac never hit the window in a hundred runs;
+  the v0.6.6 release run hit it once, inside goreleaser's `go test` hook, and
+  that was the publish that failed. The daemon now claims the host root and
+  writes the record before it listens, removes the record if the bind fails,
+  and a test seam holds the daemon right after its bind so the pin fails on
+  the old order by construction rather than by timing.
 
 - **`max_concurrent_sandboxes` in host policy now bounds the fleet (MGIT-119, MGIT-101).**
   The field was settable, validated, documented and read by nothing: the
@@ -78,7 +102,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unprivileged CI half, from the command's own view of its uid, gid, name,
   home and the owner of what it wrote.
 
+### Known issues carried
+
+- `sync --force` does not restore a file the guest edited when the host did
+  not change it: `--force` overrides conflicts, it never resets (MGIT-193).
+- `mgit worktree list` shows registry rows whose paths no longer exist
+  without a prunable marker (MGIT-194).
+- A malformed task id on `mgit sandbox launch` (`--task-id T99`, no
+  dash-number form) is refused as a bare "invalid request" (MGIT-207).
+
 ## [0.6.6] - 2026-09-08
+
+*Tagged 2026-09-10 at this section's commit (f972537); the publish failed on
+MGIT-204 and, because a tag never points twice, the number was retired with
+no release behind it. Everything below first shipped in 0.6.7.*
 
 **The daemon knows which repository it serves, and every verb says which
 daemon it asked.** Twelve tickets, found by using the substrate and by reading
