@@ -1,6 +1,7 @@
 # Board drift: on every push to main, the tickets the merged commits' Refs
 # trailers name are compared against the tracked board (.mtix/tasks.json)
-# as of ITS last update. A ticket whose work has merged and which the board
+# as of ITS last update — the window starts at the board commit's parent, so
+# the board commit's own trailers are read (MGIT-216). A ticket whose work has merged and which the board
 # still lists as open is drift; a commit that must land while its ticket
 # stays open says so in a `Stays-Open: MGIT-x — reason` trailer, and the
 # report shows the reason instead of counting it.
@@ -33,11 +34,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           go build -o /tmp/boardcheck ./scripts/boardcheck
+          # The window INCLUDES the commit that last touched the board: it is
+          # the boundary, and its own trailers — the Refs it closes, or the
+          # Stays-Open that acknowledges the ticket the export could not yet
+          # close — must be read. The old `$since..HEAD` excluded it, so a
+          # ticket named before the board commit left the report by reset, and
+          # the board commit could never say why. (MGIT-216)
           since=$(git log -1 --format=%H -- .mtix/tasks.json)
+          from="$since^"; git rev-parse --verify -q "$from" >/dev/null || from=""
           set +e
           out=$(git log --no-merges \
             --format='%h%x09%s%x09%(trailers:key=Refs,valueonly,separator=%x2C)%x09%(trailers:key=Stays-Open,valueonly,separator=%x2C)' \
-            "$since..HEAD" | /tmp/boardcheck -board .mtix/tasks.json 2>&1); code=$?
+            ${from:+"$from..HEAD"} ${from:-HEAD} | /tmp/boardcheck -board .mtix/tasks.json 2>&1); code=$?
           set -e
           printf '%s\n' "$out"
           { echo '## Board drift'; echo; echo '```'; printf '%s\n' "$out"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
