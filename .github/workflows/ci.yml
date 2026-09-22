@@ -77,6 +77,16 @@ jobs:
           bash scripts/ci/check-pinned-tools.sh
           bash scripts/ci/check-pinned-tools-selftest.sh
 
+      # The pre-tag conditions of a release are one committed check, not a
+      # scratchpad script that vanishes with a session (v0.6.6's cut script
+      # tripped three of its own defects and was gone by the next release).
+      # The self-test proves the check refuses each condition on fixture
+      # repositories it builds under its own scratch root, accepts the one
+      # shape a cut may have, and reports a check that cannot run as a loud
+      # failure rather than a pass. Refs: MGIT-209
+      - name: Release preflight — the check's own refusals
+        run: bash scripts/ci/release-preflight-selftest.sh
+
       # Every target the release ships compiles on every PR, so a platform
       # break cannot reach a tag: a syscall.Kill in an untagged file broke the
       # Windows targets of mgit on main and nothing here noticed, because the

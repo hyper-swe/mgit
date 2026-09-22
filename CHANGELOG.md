@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The pre-tag conditions of a release are one committed check (MGIT-209).**
+  `scripts/ci/release-preflight.sh <version> <sha> --require <commit>...
+  --ticket <id>...` verifies what the v0.6.7 cut verified by hand from a
+  scratchpad script that vanished with its session: the sha is on main and
+  contains the named fixes; CHANGELOG at the sha has an empty `[Unreleased]`,
+  a dated section and the named tickets; no tag of that version exists
+  anywhere; `ci.yml` and `e2e.yml` job conclusions at the sha (e2e at the
+  nearest ancestor that ran it for a docs-only commit, diff stated). A check
+  that cannot run is a loud FAIL, never a pass. Its self-test builds fixture
+  repositories under its own scratch root — and proves, before any git
+  command, that it is inside them: a first draft ran in the real repository
+  through an empty path that `cd` accepted silently, and a `v9.9.9` tag
+  reached the remote for four minutes before it was caught and removed.
+  RELEASE-CHECKLIST's publish step names the script; CI runs the self-test.
+
 - **`mgit worktree list` marks a row whose directory is gone as `prunable`,
   says how to clear it, and gains `--json` (MGIT-194).** Eight task worktrees
   under /tmp had been deleted by hand and the registry still listed them as
