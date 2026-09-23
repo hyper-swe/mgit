@@ -43,6 +43,24 @@ func TestE2E_AScheduledRunPublishesItsResultWithItsAge(t *testing.T) {
 		"it reports on every job of the run, so a green that hides a failure cannot be published as one")
 	assert.NotRegexp(t, `due=.*"today 0?3:00"`, job,
 		"the hour must come from the cron line, not be restated: a second copy drifts from the schedule")
+	// THE JOB RUNS AT THE END OF THE RUN, so its own clock is the run's END:
+	// "started" must come from the run's own metadata, or the published delay
+	// is the scheduling lateness plus however long the run took (median 0.20h
+	// here, max 6.00h). And the times are absolute, because an age baked at
+	// publication is wrong for every reader after it.
+	for _, want := range []string{
+		"actions: read",      // the runs API is not readable under statuses:write alone
+		"run_started_at",     // the authority for when this run began
+		"published",          // the second, distinct instant
+		`[ "$state" = success ] || exit 1`, // the job's conclusion agrees with its own text
+		"state=error",  // a timing it could not read is not a pass
+		"for attempt", // …but a transient API blip is retried before it reds a green night
+	} {
+		assert.Contains(t, job, want, "the schedule-age job must carry %q", want)
+	}
+	assert.NotContains(t, job, "this result is",
+		"an age baked at publication decays: print absolute instants and let the reader subtract")
+
 	// "0 3 * * *" reads 03:00Z, not 3:0Z. A time the reader has to decode is
 	// a time they will misread, and this status exists to be read at a glance.
 	assert.Contains(t, job, "%02d", "the cron's fields are zero-padded for the reader")
