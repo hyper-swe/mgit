@@ -689,3 +689,112 @@ jobs:
             "$RUNNER_TEMP/libkrun-validated.log" "$RUNNER_TEMP/libkrun-gap.log"
           echo "== Linux/libkrun live evidence =="
           grep -E 'REAL VM PASS' "$RUNNER_TEMP/libkrun-validated.log" || true
+
+  schedule-age:
+    # A LATE PASS LOOKS EXACTLY LIKE A PROMPT ONE. Since 2026-08-27 this
+    # workflow's scheduled run has been created about five hours after its
+    # cron — 25 days measured, the cause outside anything we can see — and
+    # nobody noticed, precisely because it stays green: the run is green, the
+    # list is green, and a reader between the cron and the run is reading
+    # YESTERDAY's result believing it is today's. So the scheduled run
+    # publishes its result WITH its timing, on the commit it tested, where
+    # the green is read.
+    #
+    # THE JOB'S CONCLUSION IS NOT THE VERDICT — THE STATUS TEXT IS, and the
+    # two must not be able to disagree. A reporting job that always exits 0
+    # shows a green conclusion while its own description reads NOT green;
+    # that shape cost a sibling lane an hour today, reading `completed/
+    # success` three times while the text said DRIFT. So this job exits with
+    # its own state. It can only say NOT green when one of the jobs it needs
+    # was already red, so the run was failing anyway and no new red is
+    # invented here.
+    #
+    # HOW TO READ THIS STATUS, in three cases rather than two, because the
+    # obvious rule ("a missing status is not a pass") would block every merge
+    # here: it is posted ONLY by a scheduled run, so on a push commit it is
+    # ABSENT — not a pass, not a red, no information at all. Present and
+    # success is the nightly green together with its measured age. Present and
+    # failure means one of the four jobs it needs was already red; present and
+    # error means the instrument could not do the one thing it exists for.
+    # Refs: MGIT-220, MGIT-174
+    name: Scheduled-run age
+    if: ${{ always() && github.event_name == 'schedule' }}
+    needs: [posture, install-channels, sandbox-live-linux, sandbox-live-linux-libkrun]
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      actions: read # to read this run's own run_started_at; statuses:write alone cannot
+    steps:
+      - uses: actions/checkout@v4
+      - name: publish this run's result together with its timing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POSTURE: ${{ needs.posture.result }}
+          INSTALL: ${{ needs.install-channels.result }}
+          FIRECRACKER: ${{ needs.sandbox-live-linux.result }}
+          LIBKRUN: ${{ needs.sandbox-live-linux-libkrun.result }}
+        run: |
+          set -u
+          # The cron is READ FROM THIS FILE, never restated here: a second
+          # copy of the hour drifts from the schedule it claims to measure,
+          # and that drift would be invisible — the very failure this job ends.
+          cron=$(grep -o 'cron: *"[^"]*"' .github/workflows/e2e.yml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          min=${cron%% *}; rest=${cron#* }; hour=${rest%% *}
+          # "0 3 * * *" is 03:00Z, not 3:0Z — a time a reader has to decode is
+          # a time they will misread. A non-numeric field (a step or a range)
+          # is printed as written rather than forced into two digits.
+          pad() { case "$1" in '' | *[!0-9]*) printf '%s' "$1" ;; *) printf '%02d' "$1" ;; esac; }
+          hh=$(pad "$hour"); mm=$(pad "$min")
+          # THIS JOB RUNS LAST, so its own clock is the run's END. The lateness
+          # being reported is the SCHEDULING lateness, so it is measured from
+          # the run's own start; using `now` would silently add however long
+          # the run took (median 0.20h here, once 6.00h). Unreadable is said
+          # out loud rather than quietly replaced by a wrong number.
+          # A NON-EMPTY CAPTURE IS NOT A VALUE. On a failed request gh writes
+          # the ERROR BODY to stdout and does not apply --jq — measured on gh
+          # 2.88.1 against this repo, a 404 prints {"message":"Not Found",…}
+          # and exits 1 — so the previous form stored that JSON as the
+          # timestamp, stopped retrying, failed to parse it, counted the empty
+          # parse as zero and published a nonsense delay as a PASS. The value
+          # is taken only if gh exited 0 AND the result is an instant `date`
+          # accepts. Retried, because a transient read must not red an
+          # otherwise green night; a persistent one must, and does below.
+          started_epoch=""
+          for attempt in 1 2 3; do
+            if raw=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at 2>/dev/null) &&
+              [ -n "$raw" ] && started_epoch=$(date -u -d "$raw" +%s 2>/dev/null); then
+              break
+            fi
+            started_epoch=""
+            sleep 5
+          done
+          now=$(date -u +%s)
+          due=$(date -u -d "today ${hh}:${mm}" +%s)
+          [ "$now" -lt "$due" ] && due=$((due - 86400))
+          if [ -n "$started_epoch" ]; then
+            tenths=$(( (started_epoch - due) * 10 / 3600 ))
+            timing="started $(date -u -d "@$started_epoch" +%H:%MZ) (+$((tenths / 10)).$((tenths % 10))h)"
+          else
+            timing="started UNREADABLE (this run's metadata could not be read; actions:read?)"
+          fi
+          bad=""
+          for j in "posture=$POSTURE" "install=$INSTALL" "firecracker=$FIRECRACKER" "libkrun=$LIBKRUN"; do
+            case "${j#*=}" in success | skipped) ;; *) bad="$bad ${j%%=*}:${j#*=}" ;; esac
+          done
+          # A timing this job could not read is NOT a pass: the instrument
+          # failed at the one thing it exists to do, and `error` says that
+          # without claiming the jobs were bad. A red job outranks it.
+          state=success; verdict="all jobs passed"
+          [ -z "$started_epoch" ] && state=error
+          if [ -n "$bad" ]; then state=failure; verdict="NOT green —$bad"; fi
+          # Absolute instants, not an age: an age computed here is wrong for
+          # every reader after this second. They can subtract.
+          desc="$verdict; cron ${hh}:${mm}Z → $timing, published $(date -u -d "@$now" +%H:%MZ)"
+          printf 'e2e-schedule-age: %s\n' "$desc"
+          { echo '## Scheduled-run age'; echo; echo "$desc"; } >> "$GITHUB_STEP_SUMMARY"
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state="$state" -f context=e2e-schedule-age \
+            -f description="$(printf '%s' "$desc" | cut -c1-139)" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null ||
+            { echo "could not publish the status"; exit 1; }
+          [ "$state" = success ] || exit 1
