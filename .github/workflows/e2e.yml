@@ -708,6 +708,14 @@ jobs:
     # its own state. It can only say NOT green when one of the jobs it needs
     # was already red, so the run was failing anyway and no new red is
     # invented here.
+    #
+    # HOW TO READ THIS STATUS, in three cases rather than two, because the
+    # obvious rule ("a missing status is not a pass") would block every merge
+    # here: it is posted ONLY by a scheduled run, so on a push commit it is
+    # ABSENT — not a pass, not a red, no information at all. Present and
+    # success is the nightly green together with its measured age. Present and
+    # failure means one of the four jobs it needs was already red; present and
+    # error means the instrument could not do the one thing it exists for.
     # Refs: MGIT-220, MGIT-174
     name: Scheduled-run age
     if: ${{ always() && github.event_name == 'schedule' }}
