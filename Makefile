@@ -55,7 +55,7 @@ e2e:
 # mgit-sandboxd too and signs it on macOS: an UNSIGNED daemon cannot create a VM
 # at all and hands back a vacuous SKIP. Point it at a guest base with
 # MGIT_GUEST_BASE (what `mgit sandbox base from` builds) or MGIT_GUEST_IMAGE.
-# MGIT_SOAK_PROFILE=short (default, what every push runs) or long (nightly).
+# MGIT_SOAK_PROFILE=short (default, what every push runs) or long (the daily scheduled run).
 # Refs: MGIT-113
 .PHONY: soak
 soak:

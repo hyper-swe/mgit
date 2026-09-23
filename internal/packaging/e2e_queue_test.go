@@ -13,7 +13,7 @@ const e2eWorkflow = ".github/workflows/e2e.yml"
 // A push to a pull request cancels the e2e run it supersedes — 34 of the 97
 // PR runs in the eight days to 2026-09-08 were overtaken by a newer push
 // before they finished, each a full matrix nobody would read. Every other
-// event (a push to main, the nightly, a release's call, a dispatch) produces
+// event (a push to main, the daily scheduled run, a release's call, a dispatch) produces
 // evidence and gets a group of its own: a shared group holds one pending run
 // and cancels the rest. Refs: MGIT-202
 func TestE2E_CancelsOnlySupersededPullRequestRuns(t *testing.T) {

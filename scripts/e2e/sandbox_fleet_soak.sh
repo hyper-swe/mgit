@@ -39,7 +39,7 @@
 # races live in the overlap, and the daemon SIGKILL lands with execs in flight.
 #
 # BOUNDED, AND IT SAYS WHICH PROFILE RAN. `short` gates every push; `long` is
-# the nightly soak. The final line always names the profile and the fleet width,
+# the daily scheduled run's soak. The final line always names the profile and the fleet width,
 # because a short run that reads as a full soak is the same lie as a SKIP that
 # reads as a pass.
 #
@@ -50,8 +50,8 @@
 # 6.2 s; concurrent remove 37 ms / 88 ms / 1.5 s. N=8 is also exactly where the
 # stock host-wide count cap refuses. N=4 is therefore the widest fleet that
 # still costs well under two minutes with churn (the push gate), and N=7 the
-# widest the nightly can drive -- see STOCK_MAX_CONCURRENT below for why the
-# nightly is not 8.
+# widest the scheduled run can drive -- see STOCK_MAX_CONCURRENT below for why
+# the scheduled run is not 8.
 #
 # Gates the same way sandbox_cli_surface.sh and sandbox_registry_durability.sh
 # do: a missing prerequisite SKIPs and exits 0, but a SKIP is NOT a pass -- only
@@ -354,8 +354,8 @@ churn_reason() {
 # disturbed by concurrent create/destroy". That was a symptom presented as a
 # diagnosis, and twice misleading: for a failed launch of the TRANSIENT sandbox
 # the standing fleet had not been disturbed at all, and the underlying error --
-# already on disk, written by launch_sandbox -- was dropped. The nightly that
-# found MGIT-122 printed "churn round 1: launch C1-1" and nothing else, so the
+# already on disk, written by launch_sandbox -- was dropped. The scheduled run
+# that found MGIT-122 printed "churn round 1: launch C1-1" and nothing else, so the
 # read-exec-stream timeout that WAS the defect had to be reproduced by hand
 # before anyone could see it. A diagnostic that names no cause is worse than
 # none. Refs: MGIT-122, MGIT-113
@@ -475,7 +475,7 @@ for r in $(seq 1 "$CHURN_ROUNDS"); do
 	# Steady load: keep execing the standing fleet throughout the round.
 	#
 	# The output of a failed exec is CAPTURED, not discarded. Discarding it is
-	# what left the nightly reporting "exec F-3" with no cause; the whole point
+	# what left the scheduled run reporting "exec F-3" with no cause; the whole point
 	# of steady load is to catch a healthy sandbox being disturbed, and that
 	# finding is worth nothing without the error it produced.
 	for i in $(seq 1 "$FLEET"); do
@@ -794,8 +794,8 @@ fi
 if [ "$PROFILE" = "short" ]; then
 	echo
 	echo "SANDBOX FLEET SOAK: PASS (short profile — fleet=$FLEET, $CHURN_ROUNDS churn rounds)"
-	echo "  The LONG profile (fleet=$((STOCK_MAX_CONCURRENT - 1)), 4 rounds) did NOT run here; it is the nightly"
-	echo "  soak. A short run is not evidence for the wide fleet."
+	echo "  The LONG profile (fleet=$((STOCK_MAX_CONCURRENT - 1)), 4 rounds) did NOT run here; it is the daily"
+	echo "  scheduled run's soak. A short run is not evidence for the wide fleet."
 else
 	echo
 	echo "SANDBOX FLEET SOAK: PASS (long profile — fleet=$FLEET, $CHURN_ROUNDS churn rounds)"
