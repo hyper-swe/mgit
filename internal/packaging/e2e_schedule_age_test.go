@@ -49,12 +49,12 @@ func TestE2E_AScheduledRunPublishesItsResultWithItsAge(t *testing.T) {
 	// here, max 6.00h). And the times are absolute, because an age baked at
 	// publication is wrong for every reader after it.
 	for _, want := range []string{
-		"actions: read",      // the runs API is not readable under statuses:write alone
-		"run_started_at",     // the authority for when this run began
-		"published",          // the second, distinct instant
+		"actions: read",                    // the runs API is not readable under statuses:write alone
+		"run_started_at",                   // the authority for when this run began
+		"published",                        // the second, distinct instant
 		`[ "$state" = success ] || exit 1`, // the job's conclusion agrees with its own text
-		"state=error",  // a timing it could not read is not a pass
-		"for attempt", // …but a transient API blip is retried before it reds a green night
+		"state=error",                      // a timing it could not read is not a pass
+		"for attempt",                      // …but a transient API blip is retried before it reds a green night
 	} {
 		assert.Contains(t, job, want, "the schedule-age job must carry %q", want)
 	}
