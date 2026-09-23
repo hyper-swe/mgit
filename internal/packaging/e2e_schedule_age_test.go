@@ -1,7 +1,10 @@
 package packaging
 
 import (
+	"io/fs"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -61,7 +64,7 @@ func TestE2E_AScheduledRunPublishesItsResultWithItsAge(t *testing.T) {
 		"published",                        // the second, distinct instant
 		`[ "$state" = success ] || exit 1`, // the job's conclusion agrees with its own text
 		"state=error",                      // a timing it could not read is not a pass
-		"for attempt",                      // …but a transient API blip is retried before it reds a green night
+		"for attempt",                      // …but a transient API blip is retried before it reds a green run
 	} {
 		assert.Contains(t, job, want, "the schedule-age job must carry %q", want)
 	}
@@ -74,6 +77,55 @@ func TestE2E_AScheduledRunPublishesItsResultWithItsAge(t *testing.T) {
 	// a time they will misread, and this status exists to be read at a glance.
 	assert.Contains(t, job, "%02d", "the cron's fields are zero-padded for the reader")
 	assert.Contains(t, job, "${hh}:${mm}Z", "and the padded pair is what the description prints")
+}
+
+// "NIGHTLY" WAS A CLAIM ABOUT TIME, AND IT WAS FALSE. The scheduled run is
+// created hours after its 03:00Z cron — +5.3h on the first run that said so
+// (the e2e-schedule-age status) — so it lands mid-morning UTC and in working
+// hours further east, and "the nightly" told a reader it had happened while
+// they slept. Every place the gate is read calls it what it is: the daily
+// scheduled run. The files are WALKED, not listed, so a new document cannot
+// bring the word back unnoticed; the source of the case list is the tree, not
+// this test. Refs: MGIT-220
+func TestE2E_TheScheduledRunIsNotCalledNightly(t *testing.T) {
+	root := repoRoot(t)
+	var hits []string
+	for _, dir := range []string{".github", "docs", "scripts"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			hits = append(hits, nightlyLines(t, root, p)...)
+			return nil
+		})
+		require.NoError(t, err, "walk %s", dir)
+	}
+	top, err := os.ReadDir(root)
+	require.NoError(t, err)
+	for _, e := range top {
+		if !e.IsDir() && (e.Name() == "Makefile" || strings.HasSuffix(e.Name(), ".md")) {
+			hits = append(hits, nightlyLines(t, root, filepath.Join(root, e.Name()))...)
+		}
+	}
+	assert.Empty(t, hits, "the scheduled e2e run is daily and hours late, not nightly — say what it is")
+}
+
+// nightlyLines returns "path:line" for every line of one file that calls
+// something "nightly", case-insensitively.
+func nightlyLines(t *testing.T, root, p string) []string {
+	t.Helper()
+	//nolint:gosec // G304: test-only; p comes from walking the module's own tree
+	b, err := os.ReadFile(p)
+	require.NoError(t, err)
+	rel, err := filepath.Rel(root, p)
+	require.NoError(t, err)
+	var out []string
+	for i, line := range strings.Split(string(b), "\n") {
+		if strings.Contains(strings.ToLower(line), "nightly") {
+			out = append(out, rel+":"+strconv.Itoa(i+1))
+		}
+	}
+	return out
 }
 
 // jobBlock returns one job's YAML block, from its key to the next job at the

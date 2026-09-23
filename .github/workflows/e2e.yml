@@ -40,18 +40,19 @@ on:
   # On-demand: re-run the live containment gate against a branch without
   # waiting for a release tag. Refs: MGIT-78
   workflow_dispatch: {}
-  # Nightly. The fleet soak runs its SHORT profile on every push and its LONG
-  # profile here: a wide fleet costs minutes of real VM boots, and a gate that
-  # slow on every push gets disabled rather than fixed. The soak names the
-  # profile that ran in its own output, so a short run can never be read as the
-  # wide one. Refs: MGIT-113
+  # Daily, and hours late: GitHub creates this run well after the cron, and
+  # the e2e-schedule-age status below says by how much. The fleet soak runs its
+  # SHORT profile on every push and its LONG profile here: a wide fleet costs
+  # minutes of real VM boots, and a gate that slow on every push gets disabled
+  # rather than fixed. The soak names the profile that ran in its own output,
+  # so a short run can never be read as the wide one. Refs: MGIT-113, MGIT-220
   schedule:
     - cron: "0 3 * * *"
 
 # A push to a pull request cancels the run it supersedes: 34 of the 97 PR
 # runs in the eight days to 2026-09-08 were overtaken by a newer push before
 # they finished, each a full matrix nobody would read. Every other event —
-# a push to main, the nightly, a release's call, a dispatch — produces
+# a push to main, the daily scheduled run, a release's call, a dispatch — produces
 # evidence and gets a group of its own, so it is never queued behind or
 # cancelled by another run (a shared group holds one pending run and cancels
 # the rest). Refs: MGIT-202
@@ -339,7 +340,7 @@ jobs:
       # with genuine overlap, SIGKILLs the daemon with execs in flight, and
       # asserts six invariants -- reaping, registry honesty, capacity floor,
       # state-dir isolation, audit-trail coherence, and a clean ceiling refusal.
-      # Short profile here (every push); the nightly schedule runs the wide one.
+      # Short profile here (every push); the daily scheduled run runs the wide one.
       # Refs: MGIT-113, MGIT-98, MGIT-102, MGIT-103
       - name: Fleet soak + chaos gate (concurrent sandboxes under churn)
         env:
@@ -358,7 +359,7 @@ jobs:
           grep -q 'SANDBOX FLEET SOAK: PASS' "$RUNNER_TEMP/soak.log" || {
             echo "FATAL: the fleet soak did not pass (a SKIP is a failure here)"; exit 1; }
           # Say what ran. The soak names its own profile, and this asserts the
-          # one that ran is the one this event asked for -- otherwise a nightly
+          # one that ran is the one this event asked for -- otherwise a scheduled run
           # could quietly report a short run's result as the wide soak's.
           grep -q "$MGIT_SOAK_PROFILE profile" "$RUNNER_TEMP/soak.log" || {
             echo "FATAL: expected the $MGIT_SOAK_PROFILE profile; the soak reports otherwise"
@@ -713,7 +714,7 @@ jobs:
     # obvious rule ("a missing status is not a pass") would block every merge
     # here: it is posted ONLY by a scheduled run, so on a push commit it is
     # ABSENT — not a pass, not a red, no information at all. Present and
-    # success is the nightly green together with its measured age. Present and
+    # success is the scheduled run's green together with its measured age. Present and
     # failure means one of the four jobs it needs was already red; present and
     # error means the instrument could not do the one thing it exists for.
     # Refs: MGIT-220, MGIT-174
