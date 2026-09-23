@@ -54,6 +54,10 @@ func TestE2E_AScheduledRunPublishesItsResultWithItsAge(t *testing.T) {
 		// permission comment beside it, and a pin a comment satisfies pins
 		// nothing — with the API read deleted, this test still passed.
 		"--jq .run_started_at",
+		// gh writes an ERROR BODY to stdout and skips --jq when the request
+		// fails, so a non-empty capture is not a value: it is taken only if
+		// gh exited 0 AND `date` accepts it as an instant.
+		`started_epoch=$(date -u -d "$raw" +%s 2>/dev/null)`,
 		"published",                        // the second, distinct instant
 		`[ "$state" = success ] || exit 1`, // the job's conclusion agrees with its own text
 		"state=error",                      // a timing it could not read is not a pass
@@ -61,6 +65,8 @@ func TestE2E_AScheduledRunPublishesItsResultWithItsAge(t *testing.T) {
 	} {
 		assert.Contains(t, job, want, "the schedule-age job must carry %q", want)
 	}
+	assert.NotContains(t, job, `--jq .run_started_at 2>/dev/null || true`,
+		"the bare capture stores gh's error body as the timestamp")
 	assert.NotContains(t, job, "this result is",
 		"an age baked at publication decays: print absolute instants and let the reader subtract")
 

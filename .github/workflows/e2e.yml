@@ -750,21 +750,30 @@ jobs:
           # the run's own start; using `now` would silently add however long
           # the run took (median 0.20h here, once 6.00h). Unreadable is said
           # out loud rather than quietly replaced by a wrong number.
-          # Retried, because a transient read failure must not red an
+          # A NON-EMPTY CAPTURE IS NOT A VALUE. On a failed request gh writes
+          # the ERROR BODY to stdout and does not apply --jq — measured on gh
+          # 2.88.1 against this repo, a 404 prints {"message":"Not Found",…}
+          # and exits 1 — so the previous form stored that JSON as the
+          # timestamp, stopped retrying, failed to parse it, counted the empty
+          # parse as zero and published a nonsense delay as a PASS. The value
+          # is taken only if gh exited 0 AND the result is an instant `date`
+          # accepts. Retried, because a transient read must not red an
           # otherwise green night; a persistent one must, and does below.
-          started_iso=""
+          started_epoch=""
           for attempt in 1 2 3; do
-            started_iso=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at 2>/dev/null || true)
-            [ -n "$started_iso" ] && break
+            if raw=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at 2>/dev/null) &&
+              [ -n "$raw" ] && started_epoch=$(date -u -d "$raw" +%s 2>/dev/null); then
+              break
+            fi
+            started_epoch=""
             sleep 5
           done
           now=$(date -u +%s)
           due=$(date -u -d "today ${hh}:${mm}" +%s)
           [ "$now" -lt "$due" ] && due=$((due - 86400))
-          if [ -n "$started_iso" ]; then
-            started=$(date -u -d "$started_iso" +%s)
-            tenths=$(( (started - due) * 10 / 3600 ))
-            timing="started $(date -u -d "$started_iso" +%H:%MZ) (+$((tenths / 10)).$((tenths % 10))h)"
+          if [ -n "$started_epoch" ]; then
+            tenths=$(( (started_epoch - due) * 10 / 3600 ))
+            timing="started $(date -u -d "@$started_epoch" +%H:%MZ) (+$((tenths / 10)).$((tenths % 10))h)"
           else
             timing="started UNREADABLE (this run's metadata could not be read; actions:read?)"
           fi
@@ -776,7 +785,7 @@ jobs:
           # failed at the one thing it exists to do, and `error` says that
           # without claiming the jobs were bad. A red job outranks it.
           state=success; verdict="all jobs passed"
-          [ -z "$started_iso" ] && state=error
+          [ -z "$started_epoch" ] && state=error
           if [ -n "$bad" ]; then state=failure; verdict="NOT green —$bad"; fi
           # Absolute instants, not an age: an age computed here is wrong for
           # every reader after this second. They can subtract.
