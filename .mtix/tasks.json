@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-23T08:55:22Z",
+  "exported_at": "2026-09-23T12:32:58Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7640,6 +7640,57 @@
       "uid": "01a0cd35-5616-755b-8e85-be68800949e3"
     },
     {
+      "id": "MGIT-226",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 226,
+      "project": "MGIT",
+      "title": "sandbox base set \u003cdir\u003e injects the guest payload INTO the given directory in place — pointed at a machine-wide cache entry it rewrites another repository's pinned base under its content key",
+      "description": "Found 2026-09-23 by another working directory whose guest stopped booting; RCA done here from source, and a reproduction follows on this ticket. `setRepoGuestBase` (cmd/mgit/sandbox_base.go, the bring-your-own `mgit sandbox base set \u003cdir\u003e`; present at v0.6.7, v0.6.8 and main) calls `injectGuestBinaries(baseDir, …)` on the user-supplied directory ITSELF. That writes usr/bin/mgit, usr/sbin/mgit-guest and etc/mgit/composed-by.json in place, then pins the result. `refuseInRepoBaseTree` refuses a tree inside the repository, but nothing refuses a directory inside mgit's own content-addressed cache (~/Library/Caches/mgit/bases/sha256/\u003cdigest\u003e). OBSERVED: at 10:00:12Z a 0.6.7 `base set` was pointed at the cache entry sha256:94a5cfeb… (a cimg/go:1.26.8-node base composed 2026-09-10 and pinned in another repository's signed images.lock), from a scratch repository. It rewrote those three files; composed-by.json now reads {\"version\":\"0.6.7\"}. The entry now hashes to sha256:fddfacf1…, still under the directory named 94a5cfeb…. Every launch pinned to 94a5cfeb fails closed: `verification failed: … hashes to sha256:fddfacf1…, pinned sha256:94a5cfeb…`. Integrity held, because verification caught it. Availability broke for every repository pinned to that key, and a verb run in one repository did it to another. Same class as MGIT-222: a write into a tree mgit does not own, done before or without the check that should refuse it.",
+      "prompt": "",
+      "acceptance": "RED FIRST (cmd-level, scratch HOME/cache): compose a base in repository A, then run `mgit sandbox base set \u003cA's cache entry path\u003e` from repository B. At main this exits 0, A's next launch fails verification, and the entry's files change. FIX: `base set` never writes into a directory it does not own. EITHER it refuses any path inside the base cache root (resolved through symlinks, like refuseInRepoBaseTree), naming the cache and telling the user to register a copy, OR it stages a COPY into a new cache entry and injects there, leaving the source byte-identical. The test asserts the source tree's digest is unchanged and A still launches. DELETE-SUBJECT: remove the refusal/copy → the test fails. Receipt: the reproduction on this ticket re-run with the fixed build.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[\"sandbox\",\"guestbase\",\"integrity\"]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-mgit-dev-06",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "3c7a2cb4fdeb7446a6957a9b8fbeef30ebf29e6327c0a7055e0310b109941cef",
+      "created_at": "2026-09-23T10:55:43Z",
+      "updated_at": "2026-09-23T12:32:58Z",
+      "closed_at": "2026-09-23T12:32:58Z",
+      "uid": "01a0cde8-38da-71e0-bf71-48690acf34ac"
+    },
+    {
+      "id": "MGIT-227",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 227,
+      "project": "MGIT",
+      "title": "a guest base set through a SYMLINK pins sha256 of nothing: TreeDigest stats the root through the link but walks the link itself",
+      "description": "Found 2026-09-23 while writing MGIT-226's red test. `mgit sandbox base set \u003cpath\u003e` where \u003cpath\u003e is a symlink to a real base directory registered `base@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`, which is the SHA-256 of empty input. Cause, read in internal/sandboxd/images/treedigest.go: TreeDigest checks the root with os.Stat, which follows the link (IsDir is true), then hashes via filepath.WalkDir(abs). WalkDir does not follow a symlinked root, so it visits only \".\" (skipped), and nothing is hashed. The pin therefore covers no bytes. Verification at launch recomputes the same empty digest over the same link, so it passes whatever the link points to, however the tree behind it changes. The pin is vacuous: exactly the silent swap MGIT-61.15's tree pinning exists to prevent. `base set` also injects the guest payload through the link, into the real tree.",
+      "prompt": "",
+      "acceptance": "RED FIRST: (a) images.TreeDigest over a symlink to a directory returns the same digest as over the directory itself, or refuses; it never returns the empty-input digest. (b) `base set \u003csymlink\u003e` pins the resolved tree, and a change to a file behind the link fails verification at the next launch. Both fail at main. FIX: TreeDigest resolves a symlinked root (EvalSymlinks) before walking, or refuses one. `base set` resolves the path it is given and records the resolved path in images.lock. DELETE-SUBJECT: restore the unresolved walk → (a) and (b) fail. Also check every other TreeDigest caller for the same root-symlink assumption.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[\"sandbox\",\"guestbase\",\"integrity\"]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "efde8422b803cb26a3ba8579b94adfcadee961708b8b4d11f2b051fa225d044b",
+      "created_at": "2026-09-23T11:39:18Z",
+      "updated_at": "2026-09-23T11:39:18Z",
+      "uid": "01a0ce10-21b5-7e5f-b7b4-5889376fa704"
+    },
+    {
       "id": "MGIT-23",
       "parent_id": "",
       "depth": 0,
@@ -14474,7 +14525,7 @@
       "agent_id": "claude-mgit-dev-06",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-220",
+      "current_node_id": "MGIT-226",
       "last_heartbeat": "2026-09-22T06:06:25Z"
     },
     {
@@ -14569,6 +14620,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 490,
-  "checksum": "6dce11c9a6fa0f1d4364cc91eca0e599fc4408a7c2091ff564d85ee29186313e"
+  "node_count": 492,
+  "checksum": "ed6c1d76db5b8e2d8dd949b3d4c15669ee8be8bd0b0926a93e76468375f35615"
 }
