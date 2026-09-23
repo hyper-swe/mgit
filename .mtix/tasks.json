@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-22T15:46:39Z",
+  "exported_at": "2026-09-23T06:05:20Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7489,6 +7489,31 @@
       "uid": "019eef3e-04db-7e82-92fd-c3d00fb1a525"
     },
     {
+      "id": "MGIT-220",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 220,
+      "project": "MGIT",
+      "title": "The e2e \"nightly\" has not been nightly since 2026-08-27: it lands ~5h after its cron every day, and a late pass is indistinguishable from a prompt one wherever the result is read",
+      "description": "Measured 2026-09-23 from the full scheduled-run history of e2e.yml (37 rows, `gh run list --workflow e2e.yml --event schedule`), after a peer lane caught two sampling errors that had hidden it.\n\nTHE SERIES. 2026-08-17 through 2026-08-26, ten consecutive days, the run was created 42–55 minutes after its `cron: \"0 3 * * *\"` — ordinary jitter. Then 08-27 at +10.88h and 08-28 at +12.01h, and from 08-29 a new plateau: +4.5h to +6.8h, every day, 25 days without exception, most recently 09-22 at +5.31h. Whole-series min 0.71h, max 12.01h, mean 4.37h.\n\nWHAT IS ESTABLISHED, EACH BY ITS OWN CHECK.\n- Not the workflow file: the last edit to e2e.yml before the break is 08-24 (the goreleaser pin), and the two days AFTER it still ran at +0.83h and +0.91h. The `cron:` line itself has never changed since it was added on 08-16.\n- Not our own Actions load: the break began in the repository's QUIETEST week. Counted through the Actions API over a `created=` range rather than read off a list — 2026-08-25..09-01 carries EIGHT e2e runs total, one a day, and ZERO push-driven runs. The heavy days sit outside the onset: 08-19 has 25 e2e runs (49 across all workflows), 08-20 has 30, 09-03 has 54 (108 across all workflows). The intuitive story is the opposite of the data.\n  [Corrected 2026-09-23: an earlier draft of this ticket cited \"08-19 with 30 runs\" — 30 is 08-20's count, misread from the row above; and a peer's 49/108 for those days count ALL workflows where these count e2e alone. Both numbers were right about different questions, which is why the scope is now stated with each.]\n- Cause therefore NOT ESTABLISHED from our side; GitHub's scheduling is the remaining candidate and we cannot see it. That is stated rather than guessed at.\n\nTHE EXPOSURE, which is the part that belongs to us whatever the cause. A late pass looks exactly like a prompt pass everywhere a result is read: the run is green, the badge is green, the run list is green. Anyone consulting e2e between 03:00Z and ~08:00Z is reading YESTERDAY's result while believing it is today's, and nobody noticed for 25 days precisely BECAUSE it stays green — the same shape as every other defect found this week, an instrument whose failure mode is silence that looks like health (MGIT-174's phantom door, MGIT-218's row that read ok over a real difference).\n\nNot affected: the release preflight's check 6, which reads PUSH-driven e2e job conclusions at a named sha and never the scheduled row.\n\nMETHOD NOTE, worth keeping: `gh run list -L N` answers \"the newest N rows\", not \"the runs in this period\", and the two are indistinguishable in the output — a page size silently becomes the scope of the claim. Four counts stated between two lanes today came from a limit rather than a count. Use `/repos/{o}/{r}/actions/workflows/{file}/runs?created=\u003crange\u003e\u0026per_page=1` and read `total_count`.",
+      "prompt": "",
+      "acceptance": "- The scheduled e2e run publishes, on the commit it tested, a commit status whose description carries BOTH the result and the observed age — the sha, the aggregate job conclusion, and the delay from the stated cron (\"scheduled 03:00Z, started +5.3h\") — so a reader of \"e2e is green\" can see how old that green is without leaving the commit.\n- The cron literal the step measures against and the `schedule:` line agree, pinned by a Go test in internal/packaging (the board-drift workflow test is the shape); red first, and delete-subject: remove the status step and the test fails.\n- The word \"nightly\" is not used for this gate anywhere it is read (workflow name, docs, release checklist) unless it is true; where it is kept, the text says what it actually is.\n- Receipt on this ticket: the status text as it appears on the next scheduled run, with its measured delay, quoted verbatim.\n- Not in scope: moving the cron. An off-the-hour experiment is running on a sibling repository (`cron: \"17 2 * * *\"`, first opportunity today); its result is recorded here before any cron is touched.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "claude-mgit-dev-06",
+      "creator": "mcp",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "c7ce852e6fa74f74d30e7ac51edf54ef4748a8e1c1a80c7f34031dc0e7cd923f",
+      "created_at": "2026-09-23T05:26:06Z",
+      "updated_at": "2026-09-23T05:31:35Z",
+      "uid": "01a0ccba-7443-74a7-ab0a-dadb71d00bb5"
+    },
+    {
       "id": "MGIT-23",
       "parent_id": "",
       "depth": 0,
@@ -14323,7 +14348,7 @@
       "agent_id": "claude-mgit-dev-06",
       "project": "MGIT",
       "state": "working",
-      "current_node_id": "MGIT-219",
+      "current_node_id": "MGIT-220",
       "last_heartbeat": "2026-09-22T06:06:25Z"
     },
     {
@@ -14418,6 +14443,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 484,
-  "checksum": "3c5a2541ca237965358ec23ece6d51bba707c523d30c91e10e4a2094c7be3e06"
+  "node_count": 485,
+  "checksum": "4e8a4fe1515997a71bad997148f4140eca2f016b476605894c08e202f82626f5"
 }
