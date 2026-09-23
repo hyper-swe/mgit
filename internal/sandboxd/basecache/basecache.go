@@ -156,6 +156,9 @@ func (c *Cache) Has(digest string) bool {
 // The caller owns the returned tree until it Commits (which consumes it) or
 // Discards it. A crashed compose leaves it behind; PruneStaging collects it.
 func (c *Cache) Stage() (string, error) {
+	if err := c.markRoot(); err != nil {
+		return "", fmt.Errorf("base cache: create staging area: %w", err)
+	}
 	parent := filepath.Join(c.root, stagingDir)
 	if err := os.MkdirAll(parent, 0o750); err != nil {
 		return "", fmt.Errorf("base cache: create staging area: %w", err)
@@ -198,6 +201,9 @@ func (c *Cache) Commit(staging string, digestTree TreeDigester) (Entry, error) {
 	final, err := c.Path(digest)
 	if err != nil {
 		return Entry{}, err
+	}
+	if err := c.markRoot(); err != nil {
+		return Entry{}, fmt.Errorf("base cache: create entries directory: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(final), 0o750); err != nil {
 		return Entry{}, fmt.Errorf("base cache: create entries directory: %w", err)
@@ -245,6 +251,9 @@ func (c *Cache) Adopt(dir string, digestTree TreeDigester) (Entry, error) {
 	final, err := c.Path(digest)
 	if err != nil {
 		return Entry{}, err
+	}
+	if err := c.markRoot(); err != nil {
+		return Entry{}, fmt.Errorf("base cache: create entries directory: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(final), 0o750); err != nil {
 		return Entry{}, fmt.Errorf("base cache: create entries directory: %w", err)

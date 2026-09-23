@@ -320,6 +320,112 @@ func TestSandboxBaseSet_ATreeInsideTheRepository_IsRefusedWithTheReason(t *testi
 	assert.Contains(t, msg, "mgit sandbox base from", "the refusal must name the alternative")
 }
 
+// ONE MACHINE, ONE CACHE, MANY REPOSITORIES. `base set` writes the guest
+// payload INTO the tree it is given, because the pin must cover what boots.
+// Given another repository's cache entry, it rewrote that entry under its
+// content key, and every launch pinned to it failed verification. That was
+// seen live on 2026-09-23. An entry is refused under EVERY spelling that
+// names it, because the check compares identity, not strings: its path, a
+// symlink, a case variant, the firmlink path, and any path at all while this
+// process's own cache root is elsewhere. It stays byte-identical, and the
+// owner's pin still resolves the way a launch resolves it. Refs: MGIT-226
+func TestSandboxBaseSet_ACachedEntry_IsRefusedAndLeftByteIdentical(t *testing.T) {
+	// Another substrate's payload, as in the field (0.6.7 over a 0.6.5
+	// entry): the same bytes would rewrite the entry without changing it.
+	newerBins := t.TempDir()
+	for _, n := range []string{"mgit", "mgit-guest"} {
+		require.NoError(t, os.WriteFile(filepath.Join(newerBins, n), []byte("ELF-newer-"+n), 0o600))
+	}
+	for _, name := range []string{"the entry's path", "a symlink to it", "while this process's cache is another root",
+		"a case variant above the cache root", "the firmlink path",
+		"a pre-marker cache while this process's cache is another root"} {
+		t.Run(name, func(t *testing.T) {
+			// Each spelling gets its own owner: one rewrite must not
+			// pollute the next spelling's evidence.
+			srv, ref := fakeImageServer(t, map[string]string{"bin/sh": "#!/bin/sh"})
+			defer srv.Close()
+			owner := newRepo(t)
+			_, err := initTrustRoot(t, owner)
+			require.NoError(t, err)
+			composeInto(t, owner, ref)
+			entryDir := cachedBaseDir(t, owner)
+			pinned, err := images.LookupEntry(filepath.Join(owner, ".mgit", "sandbox"), defaultGuestBaseName)
+			require.NoError(t, err)
+			shared := os.Getenv(basecache.EnvRoot)
+			dir, processRoot := spellCacheEntry(t, name, entryDir, shared)
+
+			other := newRepo(t)
+			t.Setenv(basecache.EnvRoot, processRoot)
+			_, err = initTrustRoot(t, other)
+			require.NoError(t, err)
+			out, err := runBase(t, other, "set", dir, "--guest-bin-dir", newerBins)
+
+			now, digestErr := images.TreeDigest(entryDir)
+			require.NoError(t, digestErr)
+			assert.Equal(t, pinned.Digest, now, "the entry the owner pins must be byte-identical afterwards")
+			assert.NoError(t, resolveOwnerPin(t, owner, shared, pinned.Digest), "the owner's launch-time check")
+			require.Error(t, err, "a cache entry must be refused, got %q", out)
+			assert.Contains(t, err.Error(), "base cache", "the refusal must say whose tree it is")
+			assert.Contains(t, err.Error(), "mgit sandbox base from", "and name the alternative")
+		})
+	}
+}
+
+// spellCacheEntry names entryDir the way the named spelling does, and says
+// which cache root the naming process believes in. A spelling this host
+// cannot produce (a case-sensitive filesystem; no firmlink) is skipped, never
+// passed. Refs: MGIT-226
+func spellCacheEntry(t *testing.T, name, entryDir, shared string) (dir, processRoot string) {
+	t.Helper()
+	switch name {
+	case "a symlink to it":
+		link := filepath.Join(t.TempDir(), "looks-like-my-own-tree")
+		require.NoError(t, os.Symlink(entryDir, link))
+		return link, shared
+	case "while this process's cache is another root":
+		return entryDir, t.TempDir()
+	case "a pre-marker cache while this process's cache is another root":
+		// A cache an older mgit composed carries no marker, and this root is
+		// neither this process's nor the machine-wide one. Only the entry's
+		// own layout can say what it is.
+		require.NoError(t, os.Remove(filepath.Join(shared, basecache.RootMarker))) //nolint:gosec // G703: test-only; shared is this test's own temp cache root
+		return entryDir, t.TempDir()
+	case "a case variant above the cache root":
+		// Upper-case a lettered directory ABOVE the cache root (a temp root's
+		// own name is often digits): every string comparison against the
+		// root then reads "outside".
+		above := filepath.Dir(shared)
+		upper := filepath.Join(filepath.Dir(above), strings.ToUpper(filepath.Base(above)))
+		variant := upper + strings.TrimPrefix(entryDir, above)
+		a, errA := os.Stat(entryDir)
+		b, errB := os.Stat(variant) //nolint:gosec // G703: test-only; variant is a case spelling of this test's own temp dir
+		if variant == entryDir || errA != nil || errB != nil || !os.SameFile(a, b) {
+			t.Skip("this filesystem is case-sensitive: no case variant names the same directory")
+		}
+		return variant, shared
+	case "the firmlink path":
+		resolved, err := filepath.EvalSymlinks(entryDir)
+		fl := "/System/Volumes/Data" + resolved
+		if _, statErr := os.Stat(fl); runtime.GOOS != "darwin" || err != nil || statErr != nil {
+			t.Skip("no data-volume firmlink on this host")
+		}
+		return fl, shared
+	}
+	return entryDir, shared
+}
+
+// resolveOwnerPin resolves the owner's pinned base the way a launch does,
+// digest check included.
+func resolveOwnerPin(t *testing.T, owner, cacheRoot, digest string) error {
+	t.Helper()
+	cache, err := basecache.New(cacheRoot)
+	require.NoError(t, err)
+	store, err := images.NewStoreWithBaseCache(filepath.Join(owner, ".mgit", "sandbox"), time.Now, cache)
+	require.NoError(t, err)
+	_, err = store.Resolve(defaultGuestBaseName + "@" + digest)
+	return err
+}
+
 // Composing the same image twice must reuse the cached entry rather than
 // unpacking it again — the second-order win of content addressing, and the
 // reason N repos on a machine stop paying N copies. Refs: MGIT-147
@@ -338,4 +444,38 @@ func TestSandboxBaseFrom_RecomposingTheSameImage_ReusesTheCachedEntry(t *testing
 	assert.Equal(t, first["cache_path"], second["cache_path"])
 	assert.Equal(t, false, first["reused"])
 	assert.Equal(t, true, second["reused"], "identical bytes must be reused, not re-unpacked")
+}
+
+// Where the cache cannot be located, whether a tree is inside it cannot be
+// told, and that must read as a refusal, never as "not the cache's".
+// Refs: MGIT-226
+func TestRefuseCachedBaseTree_AnUnlocatableCache_IsARefusalNotAPass(t *testing.T) {
+	t.Setenv(basecache.EnvRoot, "relative/cache")
+	err := refuseCachedBaseTree(t.TempDir())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot tell whether")
+
+	t.Setenv(basecache.EnvRoot, t.TempDir())
+	assert.NoError(t, refuseCachedBaseTree(t.TempDir()), "a tree outside the cache is the user's to set")
+}
+
+// The machine-wide cache on every host that upgrades to this build predates
+// the root marker. A process whose own cache root points elsewhere must still
+// recognize it, by identity with the machine-wide location. Refs: MGIT-226
+func TestRefuseCachedBaseTree_TheMachineCacheWithoutAMarker_IsRefusedFromAnotherRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	sys, err := basecache.SystemRoot()
+	require.NoError(t, err)
+	// Not entry-shaped (a staging tree), so the layout cannot decide: only
+	// the machine-wide root's identity can.
+	entry := filepath.Join(sys, "staging", "compose-1")
+	require.NoError(t, os.MkdirAll(entry, 0o750))
+	require.NoFileExists(t, filepath.Join(sys, basecache.RootMarker), "the pre-marker cache this test is about")
+	t.Setenv(basecache.EnvRoot, t.TempDir()) // this process's cache is another root
+
+	err = refuseCachedBaseTree(entry)
+	require.Error(t, err, "the machine-wide cache must be recognized without its marker")
+	assert.Contains(t, err.Error(), "base cache")
 }
