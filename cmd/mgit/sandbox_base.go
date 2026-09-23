@@ -103,6 +103,9 @@ func setRepoGuestBase(cmd *cobra.Command, dir string, opts composeOptions) (ref,
 	if err := refuseInRepoBaseTree(baseDir, hostRoot); err != nil {
 		return "", "", err
 	}
+	if err := refuseCachedBaseTree(baseDir); err != nil {
+		return "", "", err
+	}
 	// The signing key stays host-side and never enters a guest (SEC-01). First
 	// run has no trust root, and telling a user to go and make one — after mgit
 	// told them to run THIS command — is guidance that leads into a second

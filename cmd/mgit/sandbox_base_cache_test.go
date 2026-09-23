@@ -320,6 +320,52 @@ func TestSandboxBaseSet_ATreeInsideTheRepository_IsRefusedWithTheReason(t *testi
 	assert.Contains(t, msg, "mgit sandbox base from", "the refusal must name the alternative")
 }
 
+// ONE MACHINE, ONE CACHE, MANY REPOSITORIES. `base set` writes the guest
+// payload INTO the tree it is given, because the pin must cover what boots.
+// Given another repository's cache entry, it rewrote that entry under its
+// content key, and every launch pinned to it failed verification. That was
+// seen live on 2026-09-23. An entry is refused, by its path or through a
+// symlink to it, and it stays byte-identical, so the repository that pinned
+// it still verifies. Refs: MGIT-226, MGIT-147
+func TestSandboxBaseSet_ACachedEntry_IsRefusedAndLeftByteIdentical(t *testing.T) {
+	srv, ref := fakeImageServer(t, map[string]string{"bin/sh": "#!/bin/sh"})
+	defer srv.Close()
+	owner := newRepo(t)
+	_, err := initTrustRoot(t, owner)
+	require.NoError(t, err)
+	composeInto(t, owner, ref)
+	entryDir := cachedBaseDir(t, owner)
+	pinned, err := images.LookupEntry(filepath.Join(owner, ".mgit", "sandbox"), defaultGuestBaseName)
+	require.NoError(t, err)
+	shared := os.Getenv(basecache.EnvRoot)
+
+	link := filepath.Join(t.TempDir(), "looks-like-my-own-tree")
+	require.NoError(t, os.Symlink(entryDir, link))
+	// Another substrate's payload, as in the field (0.6.7 over a 0.6.5
+	// entry): the same bytes would rewrite the entry without changing it.
+	newerBins := t.TempDir()
+	for _, n := range []string{"mgit", "mgit-guest"} {
+		require.NoError(t, os.WriteFile(filepath.Join(newerBins, n), []byte("ELF-newer-"+n), 0o600))
+	}
+	for _, tc := range []struct{ name, dir string }{{"the entry's path", entryDir}, {"a symlink to it", link}} {
+		t.Run(tc.name, func(t *testing.T) {
+			other := newRepo(t)
+			t.Setenv(basecache.EnvRoot, shared) // the machine-wide cache, as in the field
+			_, err := initTrustRoot(t, other)
+			require.NoError(t, err)
+
+			out, err := runBase(t, other, "set", tc.dir, "--guest-bin-dir", newerBins)
+
+			now, digestErr := images.TreeDigest(entryDir)
+			require.NoError(t, digestErr)
+			assert.Equal(t, pinned.Digest, now, "the entry the owner pins must be byte-identical afterwards")
+			require.Error(t, err, "a cache entry must be refused, got %q", out)
+			assert.Contains(t, err.Error(), "base cache", "the refusal must say whose tree it is")
+			assert.Contains(t, err.Error(), "mgit sandbox base from", "and name the alternative")
+		})
+	}
+}
+
 // Composing the same image twice must reuse the cached entry rather than
 // unpacking it again — the second-order win of content addressing, and the
 // reason N repos on a machine stop paying N copies. Refs: MGIT-147
@@ -338,4 +384,17 @@ func TestSandboxBaseFrom_RecomposingTheSameImage_ReusesTheCachedEntry(t *testing
 	assert.Equal(t, first["cache_path"], second["cache_path"])
 	assert.Equal(t, false, first["reused"])
 	assert.Equal(t, true, second["reused"], "identical bytes must be reused, not re-unpacked")
+}
+
+// Where the cache cannot be located, whether a tree is inside it cannot be
+// told, and that must read as a refusal, never as "not the cache's".
+// Refs: MGIT-226
+func TestRefuseCachedBaseTree_AnUnlocatableCache_IsARefusalNotAPass(t *testing.T) {
+	t.Setenv(basecache.EnvRoot, "relative/cache")
+	err := refuseCachedBaseTree(t.TempDir())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot tell whether")
+
+	t.Setenv(basecache.EnvRoot, t.TempDir())
+	assert.NoError(t, refuseCachedBaseTree(t.TempDir()), "a tree outside the cache is the user's to set")
 }
