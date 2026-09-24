@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -163,10 +164,33 @@ func validateBaseTree(baseDir string) error {
 	if len(missing) > 0 {
 		return fmt.Errorf(
 			"guest base %s is missing the mount points the guest supervisor "+
-				"needs at boot: %v. Create them first:\n  mkdir -p %s%v",
-			baseDir, missing, baseDir, missing)
+				"needs at boot: %s. Create them first:\n  %s",
+			baseDir, strings.Join(missing, ", "), mkdirFix(baseDir, missing))
 	}
 	return nil
+}
+
+// mkdirFix is the command that creates the missing mount points IN the tree:
+// one shell word per directory, each joined onto the tree's path and quoted
+// when the path needs it, so a reader can paste it. Refs: MGIT-249
+func mkdirFix(root string, missing []string) string {
+	words := make([]string, 0, 2+len(missing))
+	words = append(words, "mkdir", "-p")
+	for _, d := range missing {
+		words = append(words, shellWord(filepath.Join(root, d)))
+	}
+	return strings.Join(words, " ")
+}
+
+// plainShellWord matches a word no POSIX shell treats specially.
+var plainShellWord = regexp.MustCompile(`^[A-Za-z0-9_./@%+=:,-]+$`)
+
+// shellWord single-quotes s for a POSIX shell unless it is plain.
+func shellWord(s string) string {
+	if plainShellWord.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // sandboxBaseFromCmd composes this repo's guest base from an OCI image.

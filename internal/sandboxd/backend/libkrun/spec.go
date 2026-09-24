@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -194,11 +195,34 @@ func validateGuestBase(rootDir, execPath string) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf(
-			"%w: guest base %s is missing the mount points mgit-guest needs at boot: %s. "+
-				"Create them in the base tree (mkdir -p %s); without them the guest fails "+
-				"with a bare \"no such file or directory\" during mount",
+			"%w: guest base %s is missing the mount points mgit-guest needs at boot: %s; "+
+				"without them the guest fails with a bare \"no such file or directory\" during "+
+				"mount. Create them in the base tree:\n  %s",
 			model.ErrGuestBaseUnbootable, rootDir,
-			strings.Join(missing, ", "), strings.Join(missing, " "))
+			strings.Join(missing, ", "), mkdirFix(rootDir, missing))
 	}
 	return nil
+}
+
+// mkdirFix is the command that creates the missing mount points IN the tree:
+// one shell word per directory, each joined onto the tree's path and quoted
+// when the path needs it, so a reader can paste it. Refs: MGIT-249
+func mkdirFix(root string, missing []string) string {
+	words := make([]string, 0, 2+len(missing))
+	words = append(words, "mkdir", "-p")
+	for _, d := range missing {
+		words = append(words, shellWord(filepath.Join(root, d)))
+	}
+	return strings.Join(words, " ")
+}
+
+// plainShellWord matches a word no POSIX shell treats specially.
+var plainShellWord = regexp.MustCompile(`^[A-Za-z0-9_./@%+=:,-]+$`)
+
+// shellWord single-quotes s for a POSIX shell unless it is plain.
+func shellWord(s string) string {
+	if plainShellWord.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
