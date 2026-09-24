@@ -10,7 +10,7 @@ import (
 	"github.com/hyper-swe/mgit/internal/model"
 )
 
-// The first boot still refuses a worktree that holds the store, as defence
+// The first boot still refuses a worktree that holds the store, as defense
 // in depth behind registration's refusal. Its error names the cause exactly,
 // so the footer saying mgit could not identify what failed is wrong for it,
 // and so is its "do not resize the sandbox" advice: no VM was started and the

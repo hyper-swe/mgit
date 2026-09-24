@@ -53,7 +53,7 @@ func TestSandboxLaunchCLI_AWorktreeThatHoldsTheStore_RefusedBeforeAnyWrite(t *te
 		if err != nil {
 			msg += err.Error()
 		}
-		assert.Contains(t, msg, filepath.Join("repo", ".mgit"), "the refusal names the store")
+		assert.Contains(t, msg, filepath.Join(filepath.Base(repo), ".mgit"), "the refusal names the store")
 		assert.Contains(t, msg, "mgit work", "the refusal names the remedy")
 
 		got, readErr := os.ReadFile(filepath.Join(repo, "CLAUDE.md")) //nolint:gosec // G304: this test's own fixture

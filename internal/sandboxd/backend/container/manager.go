@@ -304,6 +304,16 @@ func (m *Manager) newSandboxInfo(id string, opts model.SandboxLaunchOptions) mod
 	return info
 }
 
+// CheckWorktreeLayout satisfies model.WorktreeLayoutChecker with the
+// provisioner's shared store and the quarantine's own check, the ones this
+// backend's boot uses; it provisions nothing. Refs: MGIT-222, SEC-03
+func (m *Manager) CheckWorktreeLayout(worktreePath string) error {
+	if m.cfg.StoreProvisioner == nil {
+		return nil
+	}
+	return quarantine.CheckSharedStore(worktreePath, m.cfg.StoreProvisioner.SharedDir())
+}
+
 // List returns every supervised sandbox.
 func (m *Manager) List(_ context.Context) ([]model.SandboxInfo, error) {
 	m.mu.Lock()

@@ -21,8 +21,8 @@ type checkingManager struct {
 	networkErr, layoutErr error
 }
 
-func (m *checkingManager) SupportsNetworkMode(string) error   { return m.networkErr }
-func (m *checkingManager) CheckWorktreeLayout(string) error    { return m.layoutErr }
+func (m *checkingManager) SupportsNetworkMode(string) error { return m.networkErr }
+func (m *checkingManager) CheckWorktreeLayout(string) error { return m.layoutErr }
 
 // THE WRAPPER MUST NOT HIDE THE BACKEND'S CHECKS (MGIT-251). The daemon hands
 // the service a CeilingManager, and the service asks its manager for optional

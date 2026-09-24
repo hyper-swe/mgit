@@ -45,6 +45,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it, with the Linux remedy (reinstall the archive) or the macOS one (the
   libkrun formula).
 
+### Fixed
+
+- **`mgit sandbox launch` refuses a worktree that holds the repository's
+  store before it registers or writes anything (MGIT-222).** A launch with
+  the repository root, or a directory containing it, as its worktree
+  registered, and wrote mgit's generated block into the project's tracked
+  CLAUDE.md and created AGENTS.md. Only the first boot refused, and
+  `sandbox remove` left the block behind. Registration now asks the
+  backend the same layout question its boot asks, by file identity, so a
+  symlinked or case-variant spelling is refused too. The refusal names the
+  store and what to mount instead. The first boot still refuses, as
+  defense in depth, now with its own diagnosis rather than the
+  "could not identify" footer. The generated block names the command that
+  wrote it.
+- **A sandbox daemon asks its backend's registration checks through the
+  capacity ceiling (MGIT-251).** The ceiling that wraps every backend
+  forwarded only the checks added to it by hand. The registration-time
+  refusal of a network mode the backend cannot enforce (MGIT-111) never
+  ran in a real daemon: the first boot refused instead. Every optional
+  check the service asks for is now forwarded, and a test enumerates them
+  from the service's own source.
+
 ## [0.6.8] - 2026-09-22
 
 **The base a release vouches for is a digest now, and `mgit doctor` says when

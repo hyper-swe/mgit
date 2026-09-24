@@ -60,11 +60,26 @@ func NewCeilingManager(inner model.SandboxManager, maxConcurrent, maxTotalMemory
 	}
 }
 
-// SupportsNetworkMode satisfies model.NetworkModeEnforcer. RED: not forwarded.
-func (c *CeilingManager) SupportsNetworkMode(string) error { return nil }
+// SupportsNetworkMode forwards the backend's model.NetworkModeEnforcer check.
+// The daemon hands the service this wrapper, and the service finds optional
+// checks by type assertion, so a check the wrapper does not forward never
+// runs: MGIT-111's registration-time refusal did not, until MGIT-251. A
+// backend without the check has no objection. Refs: MGIT-251, MGIT-111
+func (c *CeilingManager) SupportsNetworkMode(mode string) error {
+	if e, ok := c.inner.(model.NetworkModeEnforcer); ok {
+		return e.SupportsNetworkMode(mode)
+	}
+	return nil
+}
 
-// CheckWorktreeLayout satisfies model.WorktreeLayoutChecker. RED: not forwarded.
-func (c *CeilingManager) CheckWorktreeLayout(string) error { return nil }
+// CheckWorktreeLayout forwards the backend's model.WorktreeLayoutChecker
+// check, for the same reason. Refs: MGIT-251, MGIT-222
+func (c *CeilingManager) CheckWorktreeLayout(worktreePath string) error {
+	if e, ok := c.inner.(model.WorktreeLayoutChecker); ok {
+		return e.CheckWorktreeLayout(worktreePath)
+	}
+	return nil
+}
 
 // Launch admits the request against the ceiling, then delegates.
 // Refs: FR-17.26

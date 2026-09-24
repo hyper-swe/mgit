@@ -147,19 +147,53 @@ func (p Plan) BindPrivateStore(privateStoreDir, sharedStoreDir string) (Plan, er
 	return p, nil
 }
 
-// isWithin reports whether path is dir or nested under dir (both cleaned,
-// absolute). Used to enforce the SEC-03 containment invariants.
-// CheckSharedStore reports whether a guest mounting worktree could reach the
-// host shared store. RED: string comparison only. Refs: MGIT-222, SEC-03
+// CheckSharedStore returns an error wrapping ErrSharedStoreReachable when a
+// guest that mounts worktree could reach the host shared store: the store is
+// the worktree or lies beneath it. Registration asks it (through a backend's
+// CheckWorktreeLayout) and the boot asks it (through BindPrivateStore), so the
+// two cannot disagree (MGIT-222).
+//
+// Paths are compared by what they NAME, not by how they are spelled: first
+// as cleaned strings, then by file identity, walking up from the store and
+// comparing each ancestor with the worktree (os.SameFile). A worktree reached
+// through a symlink, or in another letter case on a case-insensitive volume,
+// is the same directory and is refused the same way. Refs: MGIT-222, SEC-03,
+// R-H300 rule 5
 func CheckSharedStore(worktree, shared string) error {
 	shared, worktree = filepath.Clean(shared), filepath.Clean(worktree)
-	if isWithin(shared, worktree) {
+	if isWithin(shared, worktree) || storeBeneath(worktree, shared) {
 		return fmt.Errorf("%w: shared store %q is inside the mounted worktree %q",
 			model.ErrSharedStoreReachable, shared, worktree)
 	}
 	return nil
 }
 
+// storeBeneath reports, by file identity, whether worktree is shared or one
+// of its ancestors. An unreadable worktree names no directory, so it holds
+// nothing.
+func storeBeneath(worktree, shared string) bool {
+	wt, err := os.Stat(worktree)
+	if err != nil {
+		return false
+	}
+	p := shared
+	if resolved, err := filepath.EvalSymlinks(shared); err == nil {
+		p = resolved
+	}
+	for {
+		if fi, err := os.Stat(p); err == nil && os.SameFile(fi, wt) {
+			return true
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false
+		}
+		p = parent
+	}
+}
+
+// isWithin reports whether path is dir or nested under dir (both cleaned,
+// absolute). Used to enforce the SEC-03 containment invariants.
 func isWithin(path, dir string) bool {
 	if path == dir {
 		return true

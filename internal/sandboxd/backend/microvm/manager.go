@@ -566,8 +566,17 @@ func (m *Manager) SupportsNetworkMode(mode string) error {
 	return m.cfg.NetworkModeCheck(mode)
 }
 
-// CheckWorktreeLayout satisfies model.WorktreeLayoutChecker. RED: no check.
-func (m *Manager) CheckWorktreeLayout(string) error { return nil }
+// CheckWorktreeLayout satisfies model.WorktreeLayoutChecker: registration's
+// SEC-03 layout question, answered with the provisioner's shared store and the
+// quarantine's own check, the ones quarantine() uses at boot. It provisions
+// nothing. With no provisioner there is no store to protect, and no
+// objection, as at boot. Refs: MGIT-222, SEC-03
+func (m *Manager) CheckWorktreeLayout(worktreePath string) error {
+	if m.cfg.StoreProvisioner == nil {
+		return nil
+	}
+	return quarantine.CheckSharedStore(worktreePath, m.cfg.StoreProvisioner.SharedDir())
+}
 
 // List returns every supervised sandbox.
 func (m *Manager) List(_ context.Context) ([]model.SandboxInfo, error) {

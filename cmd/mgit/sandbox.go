@@ -218,7 +218,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 			recordSandboxOwner(cmd.ErrOrStderr(), cl, info)
 			// Regenerate the worktree's CLAUDE.md env section to match this
 			// sandbox's network posture (MGIT-11.11.2).
-			writeSandboxEnvDoc(cmd.ErrOrStderr(), info)
+			writeSandboxEnvDoc(cmd.ErrOrStderr(), info, "mgit sandbox launch")
 			return writeSandbox(cmd.OutOrStdout(), info, asJSON, launchMessage(info))
 		},
 	}
