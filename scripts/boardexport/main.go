@@ -187,6 +187,22 @@ func redact(d *exportData) int {
 	return blanked
 }
 
+// rewrite applies redactFn to the board and encodes it, then proves the
+// result loads (reproducible, checksum verifying) before handing the bytes
+// on: a redaction that leaves the board inconsistent is refused with
+// nothing to write, never published as a board the tracker would reject.
+func rewrite(d *exportData, redactFn func(*exportData) int) ([]byte, int, error) {
+	blanked := redactFn(d)
+	body, err := encode(d)
+	if err != nil {
+		return nil, 0, err
+	}
+	if _, err := load(body); err != nil {
+		return nil, 0, fmt.Errorf("the redacted board does not verify, nothing written: %w", err)
+	}
+	return body, blanked, nil
+}
+
 // run redacts the board at in into out, or with check only reports.
 func run(in, out string, check bool) error {
 	raw, err := os.ReadFile(in) //nolint:gosec // G304: the board path is the operator's argument
@@ -209,13 +225,9 @@ func run(in, out string, check bool) error {
 		return fmt.Errorf("REFUSING: %s sits beside a live tracker database (%s): the tracker would auto-import this board in REPLACE mode and lose the database's assignees, agents and annotations. Cut board exports in a fresh worktree",
 			out, filepath.Join(filepath.Dir(out), "data"))
 	}
-	blanked := redact(d)
-	body, err := encode(d)
+	body, blanked, err := rewrite(d, redact)
 	if err != nil {
 		return err
-	}
-	if _, err := load(body); err != nil {
-		return fmt.Errorf("the redacted board does not verify, nothing written: %w", err)
 	}
 	tmp := out + ".tmp"
 	if err := os.WriteFile(tmp, body, 0o644); err != nil { //nolint:gosec // G306: the tracked board is a public, world-readable file
