@@ -12,50 +12,76 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A LATE PASS LOOKS EXACTLY LIKE A PROMPT ONE. This workflow's scheduled run
-// has been created about five hours after its cron every day since
-// 2026-08-27 — 25 days, measured — and nobody noticed because it stays green:
-// the run is green, the list is green, and a reader between the cron and the
-// run is reading YESTERDAY's result believing it is today's. The scheduled
-// run therefore publishes its result WITH its age on the commit it tested,
-// and the age is measured against the cron READ FROM THIS FILE, never a
-// second copy that could drift from the schedule it claims to measure.
-// Refs: MGIT-220, MGIT-174
+// A LATE PASS LOOKS EXACTLY LIKE A PROMPT ONE. e2e's scheduled run has been
+// created about five hours after its cron every day since 2026-08-27 (25 days,
+// measured), and nobody noticed because it stays green: the run is green, the
+// list is green, and a reader between the cron and the run is reading
+// YESTERDAY's result believing it is today's. The scheduled run's result is
+// therefore published WITH its timing on the commit it tested, and the timing
+// is measured against the cron READ FROM e2e.yml, never a second copy that
+// could drift from the schedule it claims to measure.
+//
+// The publisher is its own workflow, run when e2e completes. As a job of
+// e2e.yml it stopped release.yml from starting at all, because the release
+// calls e2e.yml and could not grant it statuses:write (MGIT-244). The move is
+// where a port goes wrong silently, so this pins the run it reads: ITS start,
+// ITS conclusion and ITS commit, never this workflow's own.
+// Refs: MGIT-220, MGIT-174, MGIT-244
 func TestE2E_AScheduledRunPublishesItsResultWithItsAge(t *testing.T) {
-	wf := readRepoFile(t, filepath.Join(".github", "workflows", "e2e.yml"))
-	require.Contains(t, wf, `cron: "0 3 * * *"`, "the schedule this job measures against")
+	e2e := readRepoFile(t, filepath.Join(".github", "workflows", "e2e.yml"))
+	require.Contains(t, e2e, `cron: "0 3 * * *"`, "the schedule this job measures against")
+	require.Contains(t, e2e, "\nname: e2e\n", "the workflow name the publisher's trigger names")
+
+	const file = "e2e-schedule-age.yml"
+	wf := readRepoFile(t, filepath.Join(".github", "workflows", file))
+	for _, want := range []string{"workflow_run:", "workflows: [e2e]", "types: [completed]"} {
+		assert.Contains(t, wf, want, "the publisher runs when an e2e run completes: %q", want)
+	}
+	perms := parseWorkflowPerms(t, file, wf)
+	// statuses:write alone cannot read the runs API
+	assert.Equal(t, map[string]string{"statuses": "write", "actions": "read"}, perms.top)
 
 	job := jobBlock(t, wf, "schedule-age")
 	for _, want := range []string{
-		"if: ${{ always() && github.event_name == 'schedule' }}",
-		"statuses: write",
+		"if: ${{ github.event.workflow_run.event == 'schedule' }}",
 		"actions/checkout@v4",
 		// the cron is read from the file, so there is nothing to keep in step
 		".github/workflows/e2e.yml",
 		"grep -o 'cron:",
 		"-f context=e2e-schedule-age",
-		// both halves in the one description a reader sees on the commit
-		"needs.posture.result",
-		"needs.install-channels.result",
-		"needs.sandbox-live-linux.result",
-		"needs.sandbox-live-linux-libkrun.result",
+		// the COMPLETED RUN's fields: its conclusion covers every job of it,
+		// including jobs added to e2e.yml after this was written
+		"CONCLUSION: ${{ github.event.workflow_run.conclusion }}",
+		`[ "$CONCLUSION" != success ]`,
+		"RUN_ID: ${{ github.event.workflow_run.id }}",
+		`actions/runs/$RUN_ID"`,
+		"RUN_SHA: ${{ github.event.workflow_run.head_sha }}",
+		`statuses/$RUN_SHA"`,
 	} {
 		assert.Contains(t, job, want, "the schedule-age job must carry %q", want)
 	}
-	assert.Regexp(t, `needs:.*posture.*install-channels.*sandbox-live-linux.*sandbox-live-linux-libkrun`, job,
-		"it reports on every job of the run, so a green that hides a failure cannot be published as one")
+	// This workflow's OWN run starts after e2e ends, and its own commit is
+	// the default branch's head, not the one e2e tested. Either would publish
+	// a wrong fact that reads right.
+	assert.NotContains(t, job, "$GITHUB_RUN_ID", "the start measured must be the scheduled run's, not this one's")
+	assert.NotContains(t, job, "$GITHUB_SHA", "the status belongs on the commit the scheduled run tested")
+	// A write token runs this: the run's fields reach the script as data.
+	at := strings.Index(job, "run: |")
+	require.GreaterOrEqual(t, at, 0, "the publisher's script is a `run: |` block")
+	script := job[at:]
+	assert.NotContains(t, script, "${{", "no expression is spliced into the script this write token runs")
+
 	assert.NotRegexp(t, `due=.*"today 0?3:00"`, job,
 		"the hour must come from the cron line, not be restated: a second copy drifts from the schedule")
-	// THE JOB RUNS AT THE END OF THE RUN, so its own clock is the run's END:
-	// "started" must come from the run's own metadata, or the published delay
-	// is the scheduling lateness plus however long the run took (median 0.20h
-	// here, max 6.00h). And the times are absolute, because an age baked at
-	// publication is wrong for every reader after it.
+	// THE PUBLISHER RUNS AFTER THE RUN ENDS, so its own clock is later than
+	// the run's end: "started" must come from the run's own metadata, or the
+	// published delay is the scheduling lateness plus however long the run
+	// took (median 0.20h here, max 6.00h). And the times are absolute,
+	// because an age baked at publication is wrong for every reader after it.
 	for _, want := range []string{
-		"actions: read", // the runs API is not readable under statuses:write alone
 		// the CALL SITE, not the word: `run_started_at` also appears in the
-		// permission comment beside it, and a pin a comment satisfies pins
-		// nothing — with the API read deleted, this test still passed.
+		// permission comment, and a pin a comment satisfies pins nothing.
+		// With the API read deleted, an earlier form of this test still passed.
 		"--jq .run_started_at",
 		// gh writes an ERROR BODY to stdout and skips --jq when the request
 		// fails, so a non-empty capture is not a value: it is taken only if
