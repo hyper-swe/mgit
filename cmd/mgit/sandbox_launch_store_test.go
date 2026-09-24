@@ -74,3 +74,37 @@ func TestSandboxLaunchCLI_AWorktreeThatHoldsTheStore_RefusedBeforeAnyWrite(t *te
 	_, err = cl.Status(context.Background(), "MGIT-222.2")
 	require.NoError(t, err)
 }
+
+// THE MIRROR CASE (MGIT-255): a worktree inside the store. `--worktree
+// <repo>/.mgit/objects` registered, so a guest would have mounted the shared
+// object store, and the CLI would then have written its agent blocks and
+// owner marker INTO the store. Refused before anything is registered or
+// written. Refs: MGIT-255, MGIT-222, SEC-03
+func TestSandboxLaunchCLI_AWorktreeInsideTheStore_RefusedBeforeAnyWrite(t *testing.T) {
+	repo := projectWithGit(t)
+	store := filepath.Join(repo, ".mgit")
+	objects := filepath.Join(store, "objects")
+	require.DirExists(t, objects, "an mgit store has an object directory")
+	before := dirNames(t, objects)
+	mgr := &storeLayoutManager{shared: store}
+	connect := startResourceDaemon(t, model.DefaultSandboxPolicy(), sandboxd.NewCeilingManager(mgr, 8, 0, 0))
+
+	out, err := runSandbox(connect, "launch", "--task-id", "MGIT-255", "--worktree", objects,
+		"--image", "base@sha256:"+strings.Repeat("e", 64))
+	assert.Error(t, err, "a worktree inside the store is refused: %s", out)
+	assert.Equal(t, before, dirNames(t, objects), "nothing was written into the store")
+	list, err := runSandbox(connect, "list")
+	require.NoError(t, err)
+	assert.Contains(t, list, "no sandboxes", "nothing was registered")
+}
+
+func dirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}

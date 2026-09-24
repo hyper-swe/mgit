@@ -73,3 +73,52 @@ func caseVariant(repo string) string {
 	}
 	return up
 }
+
+// A WORKTREE INSIDE THE STORE IS THE SAME BREACH FROM THE OTHER SIDE
+// (MGIT-255). The check asked only whether the store sat at or under the
+// worktree; a worktree at <repo>/.mgit/objects passed it, registered and
+// booted, and its guest mounted the repository's shared object store. Any
+// worktree that is the store or lies inside it is refused, compared by file
+// identity; a sibling of the store is not. Refs: MGIT-255, MGIT-222, SEC-03
+func TestCheckSharedStore_RefusesAWorktreeInsideTheStore(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	store := filepath.Join(repo, ".mgit")
+	objects := filepath.Join(store, "objects")
+	heads := filepath.Join(store, "refs", "heads")
+	for _, d := range []string{objects, heads, filepath.Join(repo, "sub")} {
+		require.NoError(t, os.MkdirAll(d, 0o750))
+	}
+	link := filepath.Join(t.TempDir(), "objects-link")
+	require.NoError(t, os.Symlink(objects, link))
+
+	tests := []struct {
+		name     string
+		worktree string
+		refused  bool
+	}{
+		{"the_store_itself", store, true},
+		{"the_object_store", objects, true},
+		{"a_nested_directory_of_the_store", heads, true},
+		{"the_object_store_through_a_symlink", link, true},
+		{"a_sibling_of_the_store", filepath.Join(repo, "sub"), false},
+	}
+	if upper := caseVariant(objects); upper != "" {
+		tests = append(tests, struct {
+			name     string
+			worktree string
+			refused  bool
+		}{"the_object_store_in_another_case", upper, true})
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CheckSharedStore(tt.worktree, store)
+			if !tt.refused {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, model.ErrSharedStoreReachable), "a refusal is the SEC-03 sentinel: %v", err)
+			assert.Contains(t, err.Error(), store, "the refusal names the store")
+		})
+	}
+}
