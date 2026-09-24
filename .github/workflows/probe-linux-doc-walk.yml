@@ -31,3 +31,37 @@ jobs:
         with:
           name: linux-doc-walk-v0.6.8
           path: ${{ runner.temp }}/walk-v0.6.8.log
+  arm64-kvm:
+    # Does a hosted arm64 Linux runner expose a usable /dev/kvm? Decides
+    # whether the linux_arm64 libkrun daemon can be boot-validated in CI.
+    name: arm64 KVM capability (hosted ubuntu-24.04-arm)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - name: KVM capability
+        run: |
+          uname -a
+          grep -E '^(PRETTY_NAME)=' /etc/os-release
+          ldd --version | head -1
+          ls -l /dev/kvm || echo "no /dev/kvm node"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules || true
+          sudo udevadm trigger --name-match=kvm || true
+          ls -l /dev/kvm || echo "no /dev/kvm node after the udev rule"
+          python3 - <<'PY'
+          import fcntl, os
+          try:
+              fd = os.open("/dev/kvm", os.O_RDWR)
+          except OSError as e:
+              print("open /dev/kvm:", e); raise SystemExit(0)
+          KVM_GET_API_VERSION = 0xAE00
+          KVM_CREATE_VM = 0xAE01
+          print("KVM_GET_API_VERSION =", fcntl.ioctl(fd, KVM_GET_API_VERSION, 0))
+          try:
+              vm = fcntl.ioctl(fd, KVM_CREATE_VM, 0)
+              print("KVM_CREATE_VM ok, fd", vm)
+          except OSError as e:
+              print("KVM_CREATE_VM:", e)
+          PY
+          docker run --rm --device /dev/kvm ubuntu:20.04 sh -c 'uname -m; ls -l /dev/kvm' || echo "container with /dev/kvm failed"
