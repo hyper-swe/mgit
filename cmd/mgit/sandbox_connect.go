@@ -188,8 +188,10 @@ func sandboxConnectFor(ctx context.Context, dir string) (sandboxClient, error) {
 	if err != nil {
 		return nil, err
 	}
+	var bin string // the daemon started, for the failure detail's remedy
 	spawn := func() error {
-		bin, lerr := locateSandboxd()
+		var lerr error
+		bin, lerr = locateSandboxd()
 		if lerr != nil {
 			return lerr
 		}
@@ -215,7 +217,7 @@ func sandboxConnectFor(ctx context.Context, dir string) (sandboxClient, error) {
 	if err := sandboxd.EnsureRunning(ctx, p.socket, spawn); err != nil {
 		return nil, fmt.Errorf(
 			"sandbox daemon unavailable (no fallback — task work runs only inside the sandbox): %w%s",
-			err, daemonFailureDetail(p.daemonLog))
+			err, daemonFailureDetail(p.daemonLog, bin))
 	}
 	return &ownedClient{
 		Client:   sandboxd.NewClient(p.socket, func() time.Time { return time.Now().UTC() }),

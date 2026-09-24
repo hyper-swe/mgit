@@ -40,7 +40,11 @@ and where its libraries resolved, and `mgit doctor`'s `daemon/vmm` row says the
 same. The Linux release archives carry the libkrun daemon from the first
 release that bundles libkrun (see the CHANGELOG); earlier Linux archives, and
 any `go install` or plain `go build` of the daemon on Linux, carry firecracker.
-Refs: MGIT-229, ADR-016
+Each backend boots one shape of guest base (see "Provisioning the guest base"
+below), and `mgit doctor`'s `base/boots` row sets the daemon's VMM against the
+registered base's shape: firecracker with a composed directory, for example,
+is a FAIL that names both and the command that fixes it.
+Refs: MGIT-229, MGIT-230.4, ADR-016
 
 libkrun and vzf share the worktree as a host **directory** over virtio-fs, so
 the host can re-stage into it and read out of it. firecracker packs it into an

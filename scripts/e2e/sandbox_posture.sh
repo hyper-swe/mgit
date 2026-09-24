@@ -243,6 +243,9 @@ if [ "$backend" = "kvm" ]; then
 	expect_row "$docjson" guest/localhost ok
 	expect_row "$docjson" guest/sync-verify failed
 	expect_row "$docjson" guest/delivery not-checked
+	# The daemon links firecracker and the base is a kernel + rootfs image:
+	# the one shape it boots. Refs: MGIT-230.4
+	expect_row "$docjson" base/boots ok
 	[ "$docrc" -ne 0 ] || _e2e_fail "doctor exited 0 with a failed row"
 else
 	expect_row "$docjson" daemon/loads ok
@@ -251,6 +254,8 @@ else
 	expect_row "$docjson" guest/sync-verify ok
 	expect_row "$docjson" guest/delivery ok
 	expect_row "$docjson" base/currency ok
+	# libkrun and a composed directory: the one shape it boots. Refs: MGIT-230.4
+	expect_row "$docjson" base/boots ok
 	[ "$docrc" -eq 0 ] || _e2e_fail "doctor exited $docrc with every guest row ok"
 	# The tamper: change one delivered byte in the daemon's staged copy of the
 	# worktree on the host — the tree the guest reads — and doctor must say the
