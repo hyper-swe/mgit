@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,4 +43,40 @@ func TestImageInstall_TheDefaultSourceWithoutABundle_SaysSoAndNamesFrom(t *testi
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 404")
 	assert.NotContains(t, err.Error(), "releases do not carry", "an explicit --from is not the release")
+}
+
+// Only the MANIFEST missing from the default source means "releases carry no
+// bundle". A found manifest whose artifact answers 404 is a broken bundle,
+// not an absent one, and a 500 is the server's answer; neither gets the
+// explanation. Refs: MGIT-234.1, MGIT-234
+func TestImageInstall_OnlyAMissingManifestIsExplainedAsNoBundle(t *testing.T) {
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	manifest := fmt.Sprintf(`{"schema":1,"images":{%q:{"kernel":"vmlinux","kernel_sha256":"sha256:%s",`+
+		`"rootfs":"rootfs.ext4","rootfs_sha256":"sha256:%s","cmdline":"console=hvc0"}}}`,
+		platform, strings.Repeat("a", 64), strings.Repeat("b", 64))
+	for name, handler := range map[string]http.HandlerFunc{
+		"an_artifact_404s": func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/manifest.json") {
+				_, _ = w.Write([]byte(manifest))
+				return
+			}
+			http.NotFound(w, r)
+		},
+		"the_manifest_500s": func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "boom", http.StatusInternalServerError)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(handler)
+			defer srv.Close()
+			repo := newRepo(t)
+			_, err := runImage(t, repo, "init")
+			require.NoError(t, err)
+			t.Chdir(repo)
+			var out bytes.Buffer
+			err = installImage(context.Background(), &out, imageInstallArgs{source: srv.URL, defaulted: true, name: "base"})
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "releases do not carry", "only a missing manifest is an absent bundle: %v", err)
+		})
+	}
 }
