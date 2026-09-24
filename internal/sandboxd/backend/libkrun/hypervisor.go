@@ -76,12 +76,12 @@ type Hypervisor struct {
 // executable once: if the binary cannot re-exec itself, no VM can ever start,
 // so fail at construction rather than at the first launch.
 func NewHypervisor(logger *slog.Logger) (*Hypervisor, error) {
-	return newHypervisor(logger, newCapabilityProbe())
+	return newHypervisor(logger, newCapabilityProbe(), realBundleCheck())
 }
 
 // newHypervisor is NewHypervisor with the capability probe injected, so the
 // fail-closed path can be tested without a deliberately-broken libkrun.
-func newHypervisor(logger *slog.Logger, probe netCapabilityProbe) (*Hypervisor, error) {
+func newHypervisor(logger *slog.Logger, probe netCapabilityProbe, bundle bundleCheck) (*Hypervisor, error) {
 	if logger == nil {
 		return nil, fmt.Errorf("libkrun hypervisor: logger must not be nil")
 	}

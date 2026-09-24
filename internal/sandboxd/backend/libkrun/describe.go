@@ -17,7 +17,7 @@ import (
 // libkrun this daemon links find one": libkrun dlopen()s libkrunfw by leaf
 // name from inside its own code, so only its search path counts.
 // Refs: MGIT-229
-func describeLoaded(loaded []string, netErr error) model.VMMReport {
+func describeLoaded(loaded []string, netErr, bundleErr error) model.VMMReport {
 	krun, krunfw := findLibrary(loaded, isLibkrun), findLibrary(loaded, isLibkrunfw)
 	r := model.VMMReport{
 		VMM: model.BackendLibkrun,

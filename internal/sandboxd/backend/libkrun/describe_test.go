@@ -63,7 +63,7 @@ func TestDescribeLoaded_ReportsWhereEachLibraryResolved(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := describeLoaded(tt.loaded, tt.netErr)
+			r := describeLoaded(tt.loaded, tt.netErr, nil)
 			assert.Equal(t, model.BackendLibkrun, r.VMM)
 			assert.Equal(t, tt.wantKrun, libraryPath(r, "libkrun"), "libkrun path")
 			assert.Equal(t, tt.wantKrunfw, libraryPath(r, "libkrunfw"), "libkrunfw path")
@@ -80,7 +80,7 @@ func TestDescribeLoaded_ReportsWhereEachLibraryResolved(t *testing.T) {
 // libkrunfw's name starts with libkrun's, so a prefix match would report
 // libkrunfw's path as libkrun's and hide a missing libkrun behind it.
 func TestDescribeLoaded_DoesNotMistakeLibkrunfwForLibkrun(t *testing.T) {
-	r := describeLoaded([]string{"/x/libkrunfw.so.5"}, nil)
+	r := describeLoaded([]string{"/x/libkrunfw.so.5"}, nil, nil)
 	assert.Empty(t, libraryPath(r, "libkrun"))
 	assert.Equal(t, "/x/libkrunfw.so.5", libraryPath(r, "libkrunfw"))
 	assert.False(t, r.CanBoot())
