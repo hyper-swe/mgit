@@ -34,9 +34,9 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -44,7 +44,7 @@ jobs:
         run: go test ./... -race -count=1
 
       - name: Run linter
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7.0.1
         with:
           version: v2.11.3
 
@@ -119,11 +119,11 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -146,9 +146,9 @@ jobs:
     name: libkrun backend (tagged build, macOS)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -164,7 +164,7 @@ jobs:
       # building something unexpected. restore-keys lets an older entry serve a
       # newer formula's unchanged sources. Refs: MGIT-119
       - name: Cache Homebrew downloads
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/Library/Caches/Homebrew/downloads
           key: brew-downloads-${{ runner.os }}-libkrun-v1-${{ github.run_id }}
@@ -211,9 +211,9 @@ jobs:
     name: brew install without libkrun (first-hour macOS install)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -283,7 +283,7 @@ jobs:
           echo "apt bootstrap: all 3 attempts failed; the apt output above is the evidence"
           exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Build prerequisites (toolchains, guarded)
         # apt (the libkrun build toolchain incl. libclang-18 from focal-updates),
@@ -306,7 +306,7 @@ jobs:
       # network, so this can only make the run faster, never weaker.
       # Refs: MGIT-163, MGIT-147
       - name: Cache the pinned libkrunfw kernel tarball
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/mgit-libkrun
           key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}

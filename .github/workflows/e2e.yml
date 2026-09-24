@@ -85,8 +85,8 @@ jobs:
     name: Posture (daemon-less core loop + MCP)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -126,8 +126,8 @@ jobs:
       matrix:
         channel: [go-install, release-archive]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -140,7 +140,7 @@ jobs:
           test -x "$bin/mgit-sandboxd" || { echo "mgit-sandboxd not installed by go install"; exit 1; }
           echo "BINDIR=$bin" >> "$GITHUB_ENV"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: matrix.channel == 'release-archive'
         with:
           name: linux-sandboxd-amd64
@@ -249,7 +249,7 @@ jobs:
           echo "apt bootstrap: all 3 attempts failed; the apt output above is the evidence"
           exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # goreleaser stamps {{.ShortCommit}} and {{.CommitDate}} from a full
           # clone; the daemon must be stamped from the same history.
@@ -262,7 +262,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache the pinned libkrunfw kernel tarball
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/mgit-libkrun
           key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}
@@ -300,13 +300,13 @@ jobs:
             --prefix="libkrun-$LIBKRUN_VERSION/" -o "$src/libkrun-$LIBKRUN_VERSION-source.tar.gz" HEAD
           ls -l "$src"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-sandboxd-${{ matrix.arch }}
           path: ${{ runner.temp }}/prebuilt/
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: matrix.arch == 'amd64' && github.ref_type == 'tag'
         with:
           name: linux-sources
@@ -340,11 +340,11 @@ jobs:
         # path. Refs: MGIT-230.1
         install: [archive, install-script]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # the same full history the linux-sandboxd job stamped from
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -359,7 +359,7 @@ jobs:
           [ -r /dev/kvm ] && [ -w /dev/kvm ] \
             || { echo "FATAL: /dev/kvm not usable — the user path cannot run"; exit 1; }
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: linux-sandboxd-amd64
           path: ${{ runner.temp }}/prebuilt
@@ -442,8 +442,8 @@ jobs:
     name: Sandbox LIVE (Linux/KVM firecracker)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -781,7 +781,7 @@ jobs:
           echo "apt bootstrap: all 3 attempts failed; the apt output above is the evidence"
           exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Build prerequisites (toolchains, guarded)
         # apt (the libkrun build toolchain incl. libclang-18 from focal-updates),
@@ -814,7 +814,7 @@ jobs:
       # network, so this can only make the run faster, never weaker.
       # Refs: MGIT-163, MGIT-147
       - name: Cache the pinned libkrunfw kernel tarball
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/mgit-libkrun
           key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}

@@ -34,11 +34,11 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -49,7 +49,7 @@ jobs:
         run: go test ./... -race -count=1
 
       - name: Run linter
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7.0.1
         with:
           version: v2.11.3
 
@@ -93,16 +93,16 @@ jobs:
     needs: [preflight, e2e]
     runs-on: macos-14 # Apple Silicon — builds+signs the darwin daemon natively
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
         with:
           cosign-release: v2.4.1
 
@@ -127,12 +127,12 @@ jobs:
       # scripts/release/gobinary-prebuilt.sh (verified against their manifests
       # and this release's stamps) and publishes the sources under the signed
       # checksums. Refs: MGIT-229
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: linux-sandboxd-*
           path: dist-prebuilt
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: linux-sources
           path: dist-sources
@@ -140,7 +140,7 @@ jobs:
       # goreleaser CGO-builds + entitlement-signs the darwin daemon (post
       # hook in .goreleaser.yaml) and cross-builds the rest.
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           # PINNED for the same reason as e2e.yml's install, and this is the
           # site that matters most: `latest` here resolves at RELEASE time,
@@ -159,7 +159,7 @@ jobs:
           COSIGN_EXPERIMENTAL: 1
 
       - name: Upload signature
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: checksums.txt.bundle
 
@@ -177,7 +177,7 @@ jobs:
           ENVEOF
 
       - name: Upload build environment
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: dist/BUILD-ENVIRONMENT.json
 
@@ -193,7 +193,7 @@ jobs:
     # us exactly that. Refs: MGIT-84, MGIT-64, MGIT-65
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # Install libkrun so this gate can actually exercise the DAEMON. Without
       # it mgit-sandboxd cannot load (it links libkrun by absolute path), so the
       # daemon liveness check, the mgit/mgit-sandboxd build-agreement check and
@@ -247,7 +247,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger homebrew-tap update
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3.0.0
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           repository: hyper-swe/homebrew-tap

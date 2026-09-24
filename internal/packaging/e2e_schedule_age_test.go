@@ -44,7 +44,7 @@ func TestE2E_AScheduledRunPublishesItsResultWithItsAge(t *testing.T) {
 	job := jobBlock(t, wf, "schedule-age")
 	for _, want := range []string{
 		"if: ${{ github.event.workflow_run.event == 'schedule' }}",
-		"actions/checkout@v4",
+		"actions/checkout@", // it reads the workflow file, so it checks the repository out (pinned: MGIT-246)
 		// the cron is read from the file, so there is nothing to keep in step
 		".github/workflows/e2e.yml",
 		"grep -o 'cron:",

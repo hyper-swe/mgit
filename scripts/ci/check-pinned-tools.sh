@@ -33,10 +33,13 @@
 # WHAT COUNTS AS FLOATING:
 #   - go install / go run of a module at latest, master, main or HEAD
 #   - a `uses:` action whose ref is a branch or anything that is not an exact
-#     tag or a full SHA. A BARE MAJOR (actions/checkout@v4) is accepted: it is
-#     mutable by the ecosystem's convention, and refusing it would force full
-#     SHAs on every action, which this repository has not decided to do —
-#     scripts/ci/fetch-guard-actions.txt is where each action is declared.
+#     tag or a full SHA. This gate asks only whether a fetch is reproducible,
+#     so it does not itself refuse a bare major (actions/checkout@v4). The
+#     stronger rule holds everywhere else: every third-party action is pinned
+#     to a full commit SHA with its release in a trailing comment, enforced by
+#     TestWorkflows_PinEveryThirdPartyActionToAFullCommitSHA (MGIT-246; the
+#     update procedure is in CONTRIBUTING.md). scripts/ci/fetch-guard-actions.txt
+#     is where each action is declared.
 #   - a *version key (version:, goreleaser-version:, go-version:, …) set to
 #     latest, stable, main or master
 #   - a release URL resolved at latest (…/releases/latest/…, …/latest/download/…)
