@@ -43,6 +43,7 @@ func fakeRelease(t *testing.T, version string, files map[string]string) string {
 	data, err := os.ReadFile(filepath.Join(dir, name)) //nolint:gosec // a t.TempDir path
 	require.NoError(t, err)
 	sum := sha256.Sum256(data)
+	//nolint:gosec // G703: dir is this test's own t.TempDir and the name a constant
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "checksums.txt"),
 		[]byte(hex.EncodeToString(sum[:])+"  "+name+"\n"), 0o600))
 	return dir
