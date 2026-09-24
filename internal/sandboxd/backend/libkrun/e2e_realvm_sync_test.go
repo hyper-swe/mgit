@@ -196,11 +196,19 @@ type syncSandbox struct {
 // beneath it. Refs: MGIT-76, MGIT-71, ADR-011
 func launchRealVMForSync(t *testing.T, sandboxID, taskID string) syncSandbox {
 	t.Helper()
+	return launchRealVMForSyncIn(t, sandboxID, taskID, "")
+}
+
+// launchRealVMForSyncIn is launchRealVMForSync with the worktree created under
+// worktreeParent ("" = a t.TempDir()), for the tests whose subject is WHERE
+// the worktree lives. Refs: MGIT-230.7
+func launchRealVMForSyncIn(t *testing.T, sandboxID, taskID, worktreeParent string) syncSandbox {
+	t.Helper()
 	guestRoot := buildGuestSupervisor(t)
 	// The manager provisions the SEC-03 private store itself, from the same
 	// production provisioner — so only the project and its worktree are
 	// seeded here.
-	project, worktree := seedProjectWithLinkedWorktree(t, taskID)
+	project, worktree := seedProjectWithLinkedWorktreeIn(t, taskID, worktreeParent)
 
 	workDir := shortTempDir(t)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -273,10 +281,20 @@ func launchRealVMForSync(t *testing.T, sandboxID, taskID string) syncSandbox {
 // one HyperSwe runs. Refs: SEC-03, FR-16, MGIT-76
 func seedProjectWithLinkedWorktree(t *testing.T, taskID string) (project, worktree string) {
 	t.Helper()
+	return seedProjectWithLinkedWorktreeIn(t, taskID, "")
+}
+
+// seedProjectWithLinkedWorktreeIn is seedProjectWithLinkedWorktree with the
+// worktree placed under parent ("" = a t.TempDir()).
+func seedProjectWithLinkedWorktreeIn(t *testing.T, taskID, parent string) (project, worktree string) {
+	t.Helper()
 	project = t.TempDir()
 	// The worktree must sit outside the project, so the project's .mgit — the
 	// shared store — is not inside the mount handed to the guest.
-	worktree = filepath.Join(t.TempDir(), "wt")
+	if parent == "" {
+		parent = t.TempDir()
+	}
+	worktree = filepath.Join(parent, "wt")
 
 	mgitBin := filepath.Join(t.TempDir(), "mgit-host")
 	build := exec.Command("go", "build", "-o", mgitBin, "./cmd/mgit") //nolint:gosec // fixed argv
