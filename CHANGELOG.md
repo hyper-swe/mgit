@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Every third-party action in the workflows is pinned to a full commit
+  SHA (MGIT-246).** Whoever controls an action's repository can move a tag
+  to other code, and the release workflow runs its actions with the
+  signing identity. Each action now names a release's commit, with the
+  release in a trailing comment. A test refuses any other form, and
+  CONTRIBUTING.md has the procedure for moving a pin.
+
 - **The Linux release ships the libkrun sandbox daemon, with libkrun and
   libkrunfw bundled beside it (MGIT-229, hyper-swe/mgit#12, ADR-016).** The
   Linux archives carried the firecracker daemon, which could not serve the
