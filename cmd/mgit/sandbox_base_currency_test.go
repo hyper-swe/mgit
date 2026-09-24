@@ -62,11 +62,12 @@ func runSplit(t *testing.T, cmdOut func() (*bytes.Buffer, *bytes.Buffer, error))
 	return stdout.String(), stderr.String()
 }
 
-// The moments that matter: `sandbox status`, the launch, and the one exec
-// that boots the VM. The note goes to stderr, so every verb's stdout is what
-// it was, and it is said once per boot, not once per command: an exec into
-// a sandbox that is already running says nothing. It never refuses and
-// never changes an exit code. Refs: MGIT-224, MGIT-174
+// The moments that matter: `sandbox status`, the launch (and `mgit work
+// --sandbox`'s), and the `mgit run` that boots the VM. The note goes to
+// stderr, so every verb's stdout is what it was, and it is said once per
+// boot, not once per command: an exec into a sandbox that is already
+// running says nothing. It never refuses and never changes an exit code.
+// Refs: MGIT-224, MGIT-174
 func TestStaleBase_IsWarnedAtStatusLaunchAndTheExecThatBoots(t *testing.T) {
 	t.Setenv(basecache.EnvRoot, t.TempDir())
 	stale := baseFixture(t, "0.6.7")
@@ -113,8 +114,24 @@ func TestStaleBase_IsWarnedAtStatusLaunchAndTheExecThatBoots(t *testing.T) {
 	_, errOut = runSplit(t, runCmdWith(running, dir))
 	assert.NotContains(t, errOut, warning, "an exec into a running sandbox says nothing")
 
-	out, errOut = runSplit(t, sandboxCmd(&fakeSandboxClient{execStdout: "uid=501\n", statusInfo: sandbox(model.StateCreated, dir)},
+	// `sandbox exec` is not given a pre-exec Status call to learn the state:
+	// that round trip before every exec is the cost MGIT-133 removed from
+	// this verb. Launch, status and `mgit run` carry the warning.
+	_, errOut = runSplit(t, sandboxCmd(&fakeSandboxClient{execStdout: "uid=501\n", statusInfo: sandbox(model.StateCreated, dir)},
 		"exec", "--task-id", "MGIT-224", "--", "id"))
-	assert.Equal(t, 1, strings.Count(errOut, warning), "sandbox exec warns at the boot too: %q", errOut)
-	assert.Equal(t, "uid=501\n", out)
+	assert.NotContains(t, errOut, warning)
+}
+
+// `mgit work --sandbox` is the launch a loop's orchestrator runs, so its
+// output carries the warning too. Refs: MGIT-224
+func TestStaleBase_IsWarnedWhenMgitWorkLaunchesTheSandbox(t *testing.T) {
+	t.Setenv(basecache.EnvRoot, t.TempDir())
+	stale := baseFixture(t, "0.6.7")
+	opts := workOptions{
+		Path: filepath.Join(t.TempDir(), "wt"), TaskID: "MGIT-224", LaunchSandbox: true,
+		Image: "base@" + stale, Network: model.NetworkModeNone,
+	}
+	out, _, err := runWorkSetup(t, &fakeWorktreeAdder{}, opts, okConnect(&fakeSandboxClient{}))
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(out, "composed by mgit 0.6.7"), "work --sandbox warns once: %s", out)
 }

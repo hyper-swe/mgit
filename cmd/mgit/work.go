@@ -272,6 +272,7 @@ func launchWorkSandbox(ctx context.Context, out io.Writer, deps workDeps, opts w
 	recordSandboxOwner(out, cl, info)
 	writeSandboxEnvDoc(out, info, "mgit work")
 	_, _ = fmt.Fprint(out, launchMessage(info))
+	warnStaleBase(out, imageRefDigest(image)) // Refs: MGIT-224
 }
 
 // upsertWorktreeEnvDoc writes the worktree's CLAUDE.md sandbox-env block for the
