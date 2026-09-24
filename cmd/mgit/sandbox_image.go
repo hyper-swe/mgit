@@ -57,34 +57,45 @@ func sandboxImageInstallCmd() *cobra.Command {
 		Short: "Fetch, verify, and register a shipped guest image (activates the sandbox)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			source := resolveInstallSource(from)
-			hostRoot, err := sandboxHostRoot()
-			if err != nil {
-				return err
-			}
-			in := &imageinstall.Installer{
-				HostRoot: hostRoot,
-				Audit:    printTrustRootAuditor{w: cmd.OutOrStdout()},
-			}
-			res, err := in.Install(cmd.Context(), source, name)
-			if err != nil {
-				return err
-			}
-			if asJSON {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]string{
-					"image_ref": res.Ref, "platform": res.Platform,
-				})
-			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-				"Installed %s for %s\nThe sandbox will use it automatically; or pass --image %s to mgit work.\n",
-				res.Ref, res.Platform, res.Ref)
-			return nil
+			return installImage(cmd.Context(), cmd.OutOrStdout(), imageInstallArgs{
+				source: resolveInstallSource(from), defaulted: from == "", name: name, asJSON: asJSON,
+			})
 		},
 	}
 	cmd.Flags().StringVar(&from, "from", "", "directory or https URL with manifest.json + guest artifacts (default: the latest mgit release's published bundle)")
 	cmd.Flags().StringVar(&name, "name", "base", "image name to register")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output the digest-pinned reference as JSON")
 	return cmd
+}
+
+// imageInstallArgs is one `sandbox image install`: where from, whether that
+// source is the default (the latest release) rather than a --from, the name
+// to register, and the output form.
+type imageInstallArgs struct {
+	source    string
+	defaulted bool
+	name      string
+	asJSON    bool
+}
+
+// installImage fetches, verifies and registers a guest image bundle.
+// Refs: MGIT-61.1, MGIT-61.2, MGIT-234
+func installImage(ctx context.Context, w io.Writer, a imageInstallArgs) error {
+	hostRoot, err := sandboxHostRoot()
+	if err != nil {
+		return err
+	}
+	in := &imageinstall.Installer{HostRoot: hostRoot, Audit: printTrustRootAuditor{w: w}}
+	res, err := in.Install(ctx, a.source, a.name)
+	if err != nil {
+		return err
+	}
+	if a.asJSON {
+		return json.NewEncoder(w).Encode(map[string]string{"image_ref": res.Ref, "platform": res.Platform})
+	}
+	_, _ = fmt.Fprintf(w, "Installed %s for %s\nThe sandbox will use it automatically; or pass --image %s to mgit work.\n",
+		res.Ref, res.Platform, res.Ref)
+	return nil
 }
 
 // sandboxImageInitCmd generates the image-signing trust root (run once
