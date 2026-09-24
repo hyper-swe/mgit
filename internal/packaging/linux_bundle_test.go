@@ -1,6 +1,7 @@
 package packaging
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -72,6 +73,12 @@ func TestGoreleaser_LinuxSandboxdIsTheBundledLibkrunDaemon(t *testing.T) {
 		"the Linux daemon must come from the ubuntu:20.04 assembler, never a CGO-free compile of the firecracker build")
 	assert.NotContains(t, block, "CGO_ENABLED=0",
 		"the Linux daemon links libkrun through cgo; a CGO_ENABLED=0 here would state the opposite of what ships")
+	// goreleaser EXECS its build tool; the self-test runs it through bash and
+	// cannot see a missing executable bit, which is how the first CI run of
+	// this config failed with "fork/exec …: permission denied".
+	info, err := os.Stat(filepath.Join(repoRoot(t), "scripts", "release", "gobinary-prebuilt.sh"))
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode().Perm()&0o111, "scripts/release/gobinary-prebuilt.sh must be executable")
 	assert.Regexp(t, `goos:\s*\n\s*- linux\s*\n\s*goarch:`, block, "linux only")
 	for _, arch := range []string{"- amd64", "- arm64"} {
 		assert.Contains(t, block, arch)
