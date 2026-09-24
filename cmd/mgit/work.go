@@ -270,7 +270,7 @@ func launchWorkSandbox(ctx context.Context, out io.Writer, deps workDeps, opts w
 		return
 	}
 	recordSandboxOwner(out, cl, info)
-	writeSandboxEnvDoc(out, info)
+	writeSandboxEnvDoc(out, info, "mgit work")
 	_, _ = fmt.Fprint(out, launchMessage(info))
 }
 

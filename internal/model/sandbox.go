@@ -444,6 +444,25 @@ type NetworkModeEnforcer interface {
 	SupportsNetworkMode(mode string) error
 }
 
+// WorktreeLayoutChecker is an OPTIONAL SandboxManager extension by which a
+// backend answers, at registration, the layout question its boot asks: would
+// the host's shared object store be reachable from a guest that mounts this
+// worktree (SEC-03)?
+//
+// It exists for the reason NetworkModeEnforcer does. The boot refuses such a
+// layout (fail closed), but provisioning is lazy, so `sandbox launch
+// --worktree <the repository root>` registered, reported created, and let the
+// CLI write agent scaffolding into the project's tracked files before the
+// first use refused it (MGIT-222). Implementations MUST delegate to the same
+// function their boot uses, so registration and boot cannot disagree.
+// Refs: MGIT-222, SEC-03
+type WorktreeLayoutChecker interface {
+	// CheckWorktreeLayout returns nil when a guest mounting worktreePath
+	// could not reach the shared store, or an error wrapping
+	// ErrSharedStoreReachable that names the store and the worktree.
+	CheckWorktreeLayout(worktreePath string) error
+}
+
 // SandboxManager abstracts microVM lifecycle per platform backend.
 // Mirrors WorktreeManager (ADR-004); backends live in mgit-sandboxd.
 // The verb set is fixed by FR-17.15; prune (FR-17.2, FR-17.9) is a

@@ -50,6 +50,10 @@ type SandboxEnv struct {
 	// Refs: R-H212
 	CPUs     int
 	MemoryMB int
+	// WrittenBy is the mgit verb writing this block, named in it so a reader
+	// is sent to the command that ran, not one that did not. Empty means
+	// `mgit work`, which writes most of them. Refs: MGIT-222
+	WrittenBy string
 }
 
 // ContainmentStatusLine is the single machine-parseable line `mgit work` prints
@@ -101,7 +105,7 @@ func RenderClaudeMdSection(env SandboxEnv) string {
 	default: // ContainmentActive
 		b.WriteString(renderActiveBody(env))
 	}
-	b.WriteString(renderWorkingDiscipline(env.Containment))
+	b.WriteString(renderWorkingDiscipline(env.Containment, env.WrittenBy))
 	b.WriteString(claudeMdEndMarker)
 	return b.String()
 }
@@ -189,7 +193,7 @@ func renderOpenBody() string {
 // (ADR-013), not an instruction the agent must remember: the exclusion is
 // implemented in the staging walk, so an agent that never reads this bullet
 // still cannot land mgit's files. Refs: MGIT-29, MGIT-28, MGIT-77, MGIT-80
-func renderWorkingDiscipline(c Containment) string {
+func renderWorkingDiscipline(c Containment, writtenBy string) string {
 	return "\n### mgit working discipline\n\n" +
 		"This worktree is version-controlled by **mgit** and bound to one task. " +
 		disciplineRoutingSentence(c) + "\n\n" +
@@ -212,9 +216,8 @@ func renderWorkingDiscipline(c Containment) string {
 		"mangled on its way into the record. Do not reach for `-m \"$(cat msg.txt)\"`: " +
 		"that hands the shell responsibility for an audit artifact. `-m` and `-F` " +
 		"together are refused.\n" +
-		"- **mgit's own generated files are not your work.** `mgit work` wrote this " +
-		"worktree's agent scaffolding (this generated CLAUDE.md block, and the agent " +
-		"config under `.claude/`), and `mgit commit -a` deliberately SKIPS it, so it " +
+		"- **mgit's own generated files are not your work.** " + scaffoldingWriter(writtenBy) +
+		", and `mgit commit -a` deliberately SKIPS it, so it " +
 		"never lands in the project. You do not need to remember an exception. If you " +
 		"genuinely mean to change one of those files — a real project directive, not " +
 		"mgit's generated block — stage it by name: `mgit add CLAUDE.md`.\n" +
@@ -231,6 +234,18 @@ func renderWorkingDiscipline(c Containment) string {
 // disciplineRoutingSentence is the one posture-specific sentence in the working
 // discipline: only the Active posture may claim the shell already routes through
 // `mgit run`. Pending/Open must not (that claim is the MGIT-47 bug). Refs: MGIT-47
+// scaffoldingWriter names the verb that wrote this worktree's scaffolding and
+// what it wrote: only `mgit work` writes the agent config under .claude/.
+// Refs: MGIT-222
+func scaffoldingWriter(writtenBy string) string {
+	if writtenBy == "" || writtenBy == "mgit work" {
+		return "`mgit work` wrote this worktree's agent scaffolding (this generated CLAUDE.md block, " +
+			"and the agent config under `.claude/`)"
+	}
+	return "`" + writtenBy + "` wrote this worktree's agent scaffolding (this generated CLAUDE.md block, " +
+		"and the one in AGENTS.md)"
+}
+
 func disciplineRoutingSentence(c Containment) string {
 	switch c {
 	case ContainmentActive:

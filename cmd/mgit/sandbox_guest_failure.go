@@ -75,6 +75,13 @@ const (
 	// launch is not too big", is what MGIT-118 was filed for.
 	// Refs: MGIT-118, MGIT-98, FR-17.26
 	phaseAdmissionRefused
+	// phaseLayoutRefused: the host refused to boot this sandbox because its
+	// worktree holds the repository's own object store (SEC-03), so no VM was
+	// started. Registration refuses that layout since MGIT-222; the boot's
+	// refusal stays as defense in depth, for a sandbox registered before
+	// then. Its error names the cause exactly, so the unidentified footer,
+	// with its "do not resize" advice, is wrong for it. Refs: MGIT-222, SEC-03
+	phaseLayoutRefused
 )
 
 // vmStartMarkers are console-log markers that appear ONLY when the VMM itself
@@ -134,6 +141,8 @@ func classifyGuestFailure(err error, ent entitlementState) guestFailure {
 		return guestFailure{phase: phaseDaemonStalled}
 	case isAdmissionRefused(err):
 		return guestFailure{phase: phaseAdmissionRefused}
+	case isLayoutRefused(err):
+		return guestFailure{phase: phaseLayoutRefused}
 	}
 	if detail := vmStartFailure(err.Error()); detail != "" {
 		return guestFailure{phase: phaseNeverStarted, startDetail: detail, entitlement: ent}
@@ -164,6 +173,14 @@ func classifyGuestFailure(err error, ent entitlementState) guestFailure {
 func isAdmissionRefused(err error) bool {
 	return err != nil && (errors.Is(err, model.ErrSandboxCeilingExceeded) ||
 		strings.Contains(err.Error(), model.ErrSandboxCeilingExceeded.Error()))
+}
+
+// isLayoutRefused reports the host's SEC-03 refusal of a worktree that holds
+// the shared store. Matched by text as well as by errors.Is, for the reason
+// given on classifyGuestFailure. Refs: MGIT-222, SEC-03
+func isLayoutRefused(err error) bool {
+	return err != nil && (errors.Is(err, model.ErrSharedStoreReachable) ||
+		strings.Contains(err.Error(), model.ErrSharedStoreReachable.Error()))
 }
 
 // isGuestNotServing reports the launch fail-closed sentinel: the VMM started
@@ -298,6 +315,8 @@ func writeGuestFailure(w io.Writer, info *model.SandboxInfo, f guestFailure) {
 		writeDaemonStall(w, info)
 	case phaseAdmissionRefused:
 		writeAdmissionRefused(w, info)
+	case phaseLayoutRefused:
+		writeLayoutRefused(w, info)
 	case phaseNeverStarted:
 		writeStartFailure(w, info, f)
 	case phaseLostServing:
@@ -330,6 +349,18 @@ func writeAdmissionRefused(w io.Writer, info *model.SandboxInfo) {
 		"and do not reshape the build.\n")
 	_, _ = fmt.Fprint(w, "Free host capacity instead: `mgit sandbox list` shows what is holding it, and "+
 		"`mgit sandbox remove <task>` releases one. Then retry this command unchanged.\n")
+}
+
+// writeLayoutRefused reports a boot refused because the worktree holds the
+// repository's own store. The fix is the worktree, so it names what to mount
+// instead, and says what is NOT implicated. Refs: MGIT-222, SEC-03
+func writeLayoutRefused(w io.Writer, info *model.SandboxInfo) {
+	_, _ = fmt.Fprintf(w, "\nmgit: the host refused to boot this sandbox%s because its worktree holds this "+
+		"repository's own object store, which a guest must never reach — so no VM was started and no command "+
+		"ran. Neither the workload nor the sandbox's size is implicated.\n", taskSuffix(info))
+	_, _ = fmt.Fprintf(w, "Mount a linked worktree instead (`mgit work <dir> --task-id <id>`, or `mgit worktree "+
+		"add`), or a directory outside this repository: `mgit sandbox remove %s` drops this registration first.\n",
+		taskName(info))
 }
 
 // writeUnidentified reports a failure mgit could not place — and reports that
