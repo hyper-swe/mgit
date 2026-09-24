@@ -245,69 +245,46 @@ jobs:
     runs-on: ubuntu-latest
     container: ubuntu:20.04
     steps:
-      # DECLARED EXCEPTION to the MGIT-143 fetch guard, and the only one in
-      # this repository that is an ordering problem rather than a judgement.
-      # This step runs BEFORE actions/checkout, so scripts/ci/guard-fetch.sh
-      # does not exist on disk yet. Moving checkout first would make it fall
-      # back to the REST tarball path (a bare ubuntu:20.04 has no git, which is
-      # what this very step installs), and re-validating that is not what this
-      # ticket is for -- MGIT-144 carries it.
-      #
-      # Clause 2 is still served, natively: timeout-minutes converts a hang
-      # into a failure. 5 minutes is the MGIT-143 rule applied to this step's
-      # own history -- worst SUCCESSFUL run 56s across n=256, 4x that rounded
-      # up the ladder. Clauses 1 and 3 are NOT served here; a failure is a red
-      # to re-run by hand, and the log will say apt failed rather than
-      # pretending three attempts were made.
+      # The ONLY apt before checkout, and the smallest: git (so the checkout
+      # carries history), ca-certificates and curl. The fetch guard's script
+      # arrives WITH the checkout, so its three clauses are served inline here:
+      # three attempts, each bounded at 180 s by timeout(1) and each saying
+      # when it started and how it ended, apt's state cleared between them.
+      # Everything heavier is installed after checkout by
+      # scripts/release/linux-build-prereqs.sh, through the guard. This used to
+      # install the whole toolchain in one unretried run under a flat 5-minute
+      # bound, and a slow archive mirror timed it out on main (d1535db) with
+      # nothing saying what it was doing. Refs: MGIT-143, MGIT-144, MGIT-229
       # fetch-guard: runs before actions/checkout, so the guard script is not
-      # on disk yet; clause 2 is served by timeout-minutes below, clauses 1
-      # and 3 are not served. Refs: MGIT-143, MGIT-144
-      - name: Install build prerequisites
-        timeout-minutes: 5
+      # on disk yet; its clauses are served inline below. Refs: MGIT-143
+      - name: Bootstrap git (bounded, retried, before checkout)
+        timeout-minutes: 12
         run: |
-          apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential flex bison libelf-dev python3-pyelftools bc \
-            pkg-config curl git ca-certificates patchelf \
-            libclang1-18 libclang-18-dev libclang-common-18-dev libllvm18
+          for attempt in 1 2 3; do
+            echo "apt bootstrap: attempt $attempt/3 started $(date -u +%H:%M:%SZ): apt-get update + install git ca-certificates curl (bound 180s)"
+            if timeout 180 sh -c 'apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends git ca-certificates curl'; then
+              echo "apt bootstrap: ok on attempt $attempt at $(date -u +%H:%M:%SZ)"
+              exit 0
+            fi
+            echo "apt bootstrap: attempt $attempt failed or hit its 180s bound at $(date -u +%H:%M:%SZ); clearing apt state before the next"
+            rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/partial/*
+            dpkg --configure -a || true
+            sleep $((attempt * 15))
+          done
+          echo "apt bootstrap: all 3 attempts failed; the apt output above is the evidence"
+          exit 1
 
       - uses: actions/checkout@v4
 
-      # -t 120 is the floor: this step's worst success is 5s (n=246). The
-      # restore is the load-bearing part -- `curl: (18) transfer closed` leaves
-      # a TRUNCATED /tmp/go.tgz, and without removing it the retry re-extracts
-      # the same corrupt archive and dies identically at `tar`, which is the
-      # exact failure MGIT-119 spent three attempts and a confident diagnosis
-      # on. Refs: MGIT-143 clause 3
-      - name: Install Go
+      - name: Build prerequisites (toolchains, guarded)
+        # apt (the libkrun build toolchain incl. libclang-18 from focal-updates),
+        # the pinned Go and rustup with the musl target, every fetch through the
+        # guard: the same recipe the release's Linux daemon is built with.
+        # Refs: MGIT-229, MGIT-143
         run: |
-          bash scripts/ci/guard-fetch.sh -t 120 -l go-toolchain-tarball \
-            -c 'rm -f /tmp/go.tgz' -- \
-            curl -fsSL https://go.dev/dl/go1.26.6.linux-amd64.tar.gz -o /tmp/go.tgz
-          tar -C /usr/local -xzf /tmp/go.tgz
+          bash scripts/release/linux-build-prereqs.sh
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
-
-      - name: Install Rust (distro rustc is far too old for libkrun)
-        # krun-init-blob's build.rs links krun-init as a static musl binary
-        # (so it runs as the guest's PID 1 with no libc dependency) and
-        # panics if the musl target isn't installed -- caught on this job's
-        # first real run in Actions (2026-07-30); a local container repro
-        # in an earlier session evidently pre-had this target cached.
-        #
-        # Three fetches, three guards: the installer script, the toolchain the
-        # installer downloads, and the musl target. -t 120 is the floor; this
-        # step's worst success is 26s (n=246). Refs: MGIT-143
-        run: |
-          bash scripts/ci/guard-fetch.sh -t 120 -l rustup-installer \
-            -c 'rm -f /tmp/rustup.sh' -- \
-            curl -sSf https://sh.rustup.rs -o /tmp/rustup.sh
-          bash scripts/ci/guard-fetch.sh -t 120 -l rustup-toolchain \
-            -c 'rm -rf "$HOME/.rustup" "$HOME/.cargo"' -- \
-            sh /tmp/rustup.sh -y --default-toolchain stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          bash scripts/ci/guard-fetch.sh -t 120 -l rustup-musl-target \
-            -c none:'rustup unpacks a component into a temp directory and moves it into place only once the download is complete and hash-checked; a failed target add leaves the toolchain exactly as it was' -- \
-            "$HOME/.cargo/bin/rustup" target add "$(uname -m)-unknown-linux-musl"
 
       # The pinned kernel tarball, cached across runs.
       #

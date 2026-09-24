@@ -29,9 +29,11 @@ aarch64) goarch=arm64 ;;
 esac
 
 apt_restore='rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/partial/*; dpkg --configure -a'
-"$GUARD" -t 300 -l apt-update -c "$apt_restore" -- apt-get update -qq
+# -q, not -qq: apt then prints each fetch as it happens, so a slow mirror is
+# visible while it is slow rather than as a silent bound expiring (MGIT-229).
+"$GUARD" -t 300 -l apt-update -c "$apt_restore" -- apt-get update -q
 DEBIAN_FRONTEND=noninteractive "$GUARD" -t 600 -l apt-install-libkrun-prereqs -c "$apt_restore" -- \
-	apt-get install -y -qq --no-install-recommends \
+	apt-get install -y -q --no-install-recommends \
 	build-essential flex bison libelf-dev python3-pyelftools bc cpio \
 	pkg-config curl git ca-certificates patchelf binutils \
 	libclang1-18 libclang-18-dev libclang-common-18-dev libllvm18
