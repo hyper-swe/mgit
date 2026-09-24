@@ -112,6 +112,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ran in a real daemon: the first boot refused instead. Every optional
   check the service asks for is now forwarded, and a test enumerates them
   from the service's own source.
+- **A guest base composed by another mgit is warned about where it
+  matters, not only in doctor (MGIT-224, MGIT-174's second half).** A base
+  carries the guest binaries of the mgit that composed it. After an
+  upgrade, a loop round ran every command on the previous release's guest
+  with no word said, and only `mgit doctor` noticed. `mgit sandbox
+  launch`, `mgit work --sandbox`, `mgit sandbox status` and the `mgit run`
+  that boots the VM now print one warning on stderr. It names both
+  versions and the exact `mgit sandbox base from <image>` to recompose
+  with, and says UNKNOWN when the base does not record its composer. It is
+  said once per boot, never refuses, and never changes an exit code.
 
 ## [0.6.8] - 2026-09-22
 

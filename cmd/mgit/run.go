@@ -80,6 +80,12 @@ func runExec(cmd *cobra.Command, connect connectFunc, getwd func() (string, erro
 		}
 		return printRunErr(cmd.ErrOrStderr(), err)
 	}
+	// The exec that boots the VM is the first use a loop's agent sees, so a
+	// stale base is said here once per boot; a running sandbox says nothing.
+	// Refs: MGIT-224
+	if sb.State == model.StateCreated {
+		warnStaleBase(cmd.ErrOrStderr(), sb.ImageDigest)
+	}
 	// argv as a list — no host shell — and only explicit --env injections;
 	// the host environment is never forwarded into the hostile guest.
 	out, err := cl.Exec(cmd.Context(), sb.TaskID,

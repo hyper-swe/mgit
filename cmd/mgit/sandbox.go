@@ -219,7 +219,13 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 			// Regenerate the worktree's CLAUDE.md env section to match this
 			// sandbox's network posture (MGIT-11.11.2).
 			writeSandboxEnvDoc(cmd.ErrOrStderr(), info, "mgit sandbox launch")
-			return writeSandbox(cmd.OutOrStdout(), info, asJSON, launchMessage(info))
+			if err := writeSandbox(cmd.OutOrStdout(), info, asJSON, launchMessage(info)); err != nil {
+				return err
+			}
+			// A base composed by another mgit is said here, where the sandbox
+			// is created, not only in doctor. Refs: MGIT-224
+			warnStaleBase(cmd.ErrOrStderr(), imageRefDigest(image))
+			return nil
 		},
 	}
 	bindTaskIDFlag(cmd, &task, "task ID to bind (required)")
@@ -362,8 +368,12 @@ func sandboxStatusCmd(connect connectFunc) *cobra.Command {
 			// The effective resource caps are part of status on purpose: an
 			// agent must be able to READ its ceiling rather than infer it
 			// from a build that died against it (R-H212).
-			return writeSandbox(cmd.OutOrStdout(), info, asJSON,
-				fmt.Sprintf("%s\t%s\t%s\n%s%s", info.TaskID, info.State, info.ID, capsLine(info), deadLine(info)))
+			if err := writeSandbox(cmd.OutOrStdout(), info, asJSON,
+				fmt.Sprintf("%s\t%s\t%s\n%s%s", info.TaskID, info.State, info.ID, capsLine(info), deadLine(info))); err != nil {
+				return err
+			}
+			warnStaleBase(cmd.ErrOrStderr(), info.ImageDigest) // Refs: MGIT-224
+			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
