@@ -192,6 +192,30 @@ brew install <the missing one>                              # e.g. brew install 
 Core mgit is unaffected throughout: only the daemon links these libraries.
 Refs: MGIT-206
 
+### On macOS, `ls -l` names a dangling symlink in the worktree as an error
+
+In a sandbox on macOS, `ls -l` of a directory that holds a **dangling**
+symlink prints, on stderr, a line such as
+
+```
+ls: src/dangling: No such file or directory
+```
+
+and still lists the link correctly (`dangling -> missing.go`). It is harmless:
+the link is delivered as it is, `stat`, `cp -a` and `tar` handle it, and a
+valid symlink prints nothing. It is not a delivery failure.
+
+The cause is libkrun's virtio-fs on macOS (measured with libkrun 1.19.4).
+It answers the guest's attribute queries on a symlink (`llistxattr`,
+`lgetxattr`) for the link's **target**: its host calls pass no
+`XATTR_NOFOLLOW`. GNU `ls -l` asks those questions for every entry. For a
+dangling link the target does not exist, so the answer is `ENOENT`, and `ls`
+prints it. The same path also shows a valid link's target's attributes on
+the link, including host ones such as `com.apple.provenance`. mgit cannot
+change this: libkrun offers no switch for it, and on macOS it comes from
+Homebrew. It needs a libkrun fix. The Linux libkrun backend uses a
+different virtio-fs server and has not been measured for it. Refs: MGIT-225
+
 ### libkrun builds must have networking enabled
 
 Builds that link the **libkrun** backend — every macOS build, the Linux
