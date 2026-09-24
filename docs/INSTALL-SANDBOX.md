@@ -14,7 +14,7 @@ The sandbox has three distribution artifacts:
 | Artifact | What it is | Where it lives |
 |----------|-----------|----------------|
 | `mgit` | Core CLI (pure Go, no CGO). | Host `PATH`. |
-| `mgit-sandboxd` | Per-platform host daemon that owns the VMM (FR-17.16). | Host, **next to `mgit`** or on `PATH`. |
+| `mgit-sandboxd` | Per-platform host daemon that owns the VMM (FR-17.16). On Linux it links libkrun, and the release archive carries libkrun and libkrunfw beside it in `lib/`. | Host, **next to `mgit`** or on `PATH`; on Linux, with its `lib/` beside it. |
 | Guest base | The Linux userspace the microVM boots; runs `mgit-guest` as PID 1. Under libkrun it is a **directory** you compose from any OCI image; under firecracker/vzf a kernel + ext4 rootfs. | Per repo, digest-pinned in `.mgit/sandbox/images.lock`. **Not** on host `PATH`. |
 
 `mgit` locates `mgit-sandboxd` beside its own executable first, then on `PATH`
@@ -26,14 +26,21 @@ every channel below does — is what makes `mgit run` find the daemon.
 Pick this before the prerequisites, because it decides what your agent loop can
 do — the backends are not interchangeable:
 
-| | macOS / libkrun | Linux / firecracker | Linux / libkrun (`-tags libkrun`) |
+| | macOS / libkrun | Linux / libkrun (the release archive) | Linux / firecracker (`go install`, source builds) |
 |---|---|---|---|
 | launch, exec, land | live-validated | live-validated (CI-gated) | live-validated (CI-gated) |
 | hostile-guest containment (SEC-03) | yes | yes | yes |
-| guest networking + live egress policy | yes | yes | live-validated (CI-gated) |
-| host edits reach a **running** guest (`sandbox sync`) | yes | **refused** | live-validated (CI-gated) |
-| artifact export (`sandbox export`) | yes | **refused** | yes |
-| guest can write outside `/tmp`, `/etc` and its worktree | yes | yes | **no** (upstream, MGIT-89) |
+| guest networking + live egress policy | yes | live-validated (CI-gated) | yes |
+| host edits reach a **running** guest (`sandbox sync`) | yes | live-validated (CI-gated) | **refused** |
+| artifact export (`sandbox export`) | yes | yes | **refused** |
+| guest can write outside `/tmp`, `/etc`, its worktree and its home | yes | **no** (upstream, MGIT-89) | yes |
+
+**Which one you have:** `mgit-sandboxd --vmm` prints the VMM the daemon links
+and where its libraries resolved, and `mgit doctor`'s `daemon/vmm` row says the
+same. The Linux release archives carry the libkrun daemon from the first
+release that bundles libkrun (see the CHANGELOG); earlier Linux archives, and
+any `go install` or plain `go build` of the daemon on Linux, carry firecracker.
+Refs: MGIT-229, ADR-016
 
 libkrun and vzf share the worktree as a host **directory** over virtio-fs, so
 the host can re-stage into it and read out of it. firecracker packs it into an
@@ -50,7 +57,8 @@ sandbox, or work only returns via `land`, firecracker is fine.
 
 ### Linux libkrun: what it does and does not do
 
-Linux libkrun (`-tags libkrun`, not the Linux default) was live-validated on
+Linux libkrun (what the Linux release archive ships; `-tags libkrun` in a
+source build) was live-validated on
 real KVM and is now gated in CI on every push — the boot that had "never
 completed" on Linux does complete, and guest exec over vsock, `sandbox sync` of
 file content, artifact export and the SEC-03 hostile-guest battery all hold
@@ -104,19 +112,25 @@ base from <image>`), and the container backend does not switch identities
 
 Use libkrun when the loop needs host edits delivered into a running guest or
 artifacts read back out — it now has working egress and live policy too, so
-that combination is served on Linux (it was not before MGIT-89). Use
-firecracker when the agent must write across the image root, e.g. `apt
-install`.
+that combination is served on Linux (it was not before MGIT-89). Use a
+firecracker source build when the agent must write across the image root,
+e.g. `apt install`.
 
 The exact capability set the CI gate asserts — and the tests that stand for
-each gap — is `scripts/e2e/libkrun_linux_column.sh`. Building libkrun itself on
-Linux is a from-source step with pinned versions:
-`scripts/sandbox-image/build-libkrun.sh`.
+each gap — is `scripts/e2e/libkrun_linux_column.sh`. You do not build libkrun
+yourself to use the release: the archive carries it (next section). Building it
+from source, with the pinned versions, is `scripts/sandbox-image/build-libkrun.sh`.
 
 ## Platform prerequisites
 
-- **Linux:** KVM (`/dev/kvm` present and accessible) and the `firecracker`
-  binary on `PATH`. The daemon is pure Go and needs no CGO.
+- **Linux:** `/dev/kvm` present and read-writable by your user, and glibc
+  2.31 or newer (Ubuntu 20.04, Debian 11 and later). Nothing else: the release
+  archive carries libkrun and libkrunfw in `lib/` beside `mgit-sandboxd`, and
+  the daemon finds them there by itself (no `LD_LIBRARY_PATH`, no package to
+  install). Keep `mgit-sandboxd` next to that `lib/` directory — see
+  [the Linux archive](#the-linux-archive-and-what-it-carries). A daemon built
+  from source without `-tags libkrun` is the firecracker build instead, which
+  needs the `firecracker` binary on `PATH` and refuses `sync`/`export`.
 - **macOS:** Apple Silicon (arm64), **macOS 14+**. The daemon links **libkrun**
   — the default backend since GA (ADR-010) — via CGO, and must be code-signed
   with the `com.apple.security.hypervisor` entitlement (the release archive and
@@ -180,8 +194,10 @@ Refs: MGIT-206
 
 ### libkrun builds must have networking enabled
 
-Builds that link the **libkrun** backend — every macOS build, and Linux builds
-using `-tags libkrun` — need a libkrun **built with networking support**. This is not the default: upstream gates the
+Builds that link the **libkrun** backend — every macOS build, the Linux
+release archive, and Linux builds using `-tags libkrun` — need a libkrun
+**built with networking support**. The Linux archive's bundled libkrun is
+checked for it before a release ships. This is not the default: upstream gates the
 `krun_add_net_*` API behind an opt-in build flag, and a libkrun built without
 it exports none of those symbols while still declaring them in its header — so
 the failure is a bare missing-symbol error at link time.
@@ -198,8 +214,8 @@ Check the library you have:
 ```bash
 # macOS
 nm -gU "$(brew --prefix libkrun)/lib/libkrun.dylib" | grep krun_add_net_unixgram
-# Linux
-nm -D /usr/lib/libkrun.so | grep krun_add_net_unixgram
+# Linux (the release archive's bundled copy)
+nm -D lib/libkrun.so.1 | grep krun_add_net_unixgram
 ```
 
 A match means networking is enabled. If there is none, rebuild libkrun with
@@ -248,7 +264,39 @@ is not yet verified — see the note in "Release archive".
 Download `mgit_<version>_<os>_<arch>.tar.gz` from the
 [releases](https://github.com/hyper-swe/mgit/releases) page. Linux and
 macOS-arm64 archives contain **both** binaries; extract them into one directory
-on your `PATH`. (Windows and Intel-macOS archives contain `mgit` only.)
+on your `PATH`. (Windows and Intel-macOS archives contain `mgit` only.) On
+Linux, extract the **whole** archive: `mgit-sandboxd` needs the `lib/`
+directory beside it.
+
+### The Linux archive and what it carries
+
+From the first release that bundles libkrun (see the CHANGELOG), a Linux
+archive holds:
+
+| Path | What |
+|---|---|
+| `mgit`, `mgit-sandboxd` | the host binaries; `mgit-sandboxd` links libkrun |
+| `lib/libkrun.so.1`, `lib/libkrunfw.so.5` | libkrun (Apache-2.0) and libkrunfw, which carries the guest's Linux kernel (GPL-2.0-only; its glue is LGPL-2.1-only) |
+| `THIRD_PARTY/` | their license texts, and `SOURCES.txt`, which names the source assets below |
+| `guest/` | the Linux `mgit` and `mgit-guest` that `sandbox base from` injects |
+
+The daemon finds `lib/` by its own run path (`$ORIGIN/lib`, and
+`$ORIGIN/../lib/mgit` for an install that puts binaries in `bin/` and the
+libraries in `lib/mgit/`). The bundled libkrun finds libkrunfw beside itself
+before any system copy, so the pair that ships is the pair that runs. Built
+in ubuntu:20.04, the bundle needs glibc 2.31 or newer.
+
+Because libkrunfw's kernel is GPL-2.0, **every release that bundles it
+publishes its corresponding source** as release assets, under the same signed
+checksums as the binaries: `libkrunfw-<v>-kernel-linux-<kernel>.tar.xz` (the
+kernel source, byte-identical to kernel.org's), `libkrunfw-<v>-source.tar.gz`
+(the patches, configuration and build scripts applied to it) and
+`libkrun-<v>-source.tar.gz`.
+
+`linux_arm64` archives are built and load-checked like `linux_amd64`, but no
+hosted CI runner exposes KVM on arm64, so no guest boots from them before a
+release; `linux_amd64` boots the documented user path on every change
+(MGIT-230.5). Refs: MGIT-229, ADR-016
 
 **macOS: a downloaded archive will not run until you clear quarantine.**
 Any transfer that sets the `com.apple.quarantine` extended attribute — a
@@ -300,7 +348,11 @@ go install github.com/hyper-swe/mgit/cmd/mgit@latest
 go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest
 ```
 
-`go install` of the daemon works fully **on Linux**. **On macOS** it produces
+`go install` of the daemon **on Linux** builds the firecracker daemon — the
+CGO-free default, which refuses `sandbox sync` and `sandbox export` (see the
+backend table). For the agent loop on Linux use the release archive, or build
+with `-tags libkrun` against your own libkrun (`PKG_CONFIG_PATH` pointed at its
+`lib64/pkgconfig`). **On macOS** it produces
 an *unsigned* binary that lacks the hypervisor entitlement, so libkrun will
 refuse to start a VM (and it needs `PKG_CONFIG_PATH` set at build time, above).
 Either sign it yourself —
@@ -320,10 +372,10 @@ different shapes:
 
 | Backend | What it boots | How you provision it |
 |---------|---------------|----------------------|
-| **libkrun** (macOS default, and Linux with `-tags libkrun`) | A **directory**: libkrunfw supplies the kernel, and the guest root is shared over virtio-fs. | `mgit sandbox base from <oci-image>` |
-| firecracker (Linux) / vzf (`-tags vzf`) | A kernel + ext4 **rootfs image**. | `mgit sandbox image install` |
+| **libkrun** (macOS, and the Linux release archive) | A **directory**: libkrunfw supplies the kernel, and the guest root is shared over virtio-fs. | `mgit sandbox base from <oci-image>` |
+| firecracker (Linux source builds) / vzf (`-tags vzf`) | A kernel + ext4 **rootfs image**. | `mgit sandbox image install` |
 
-If you are on macOS, you want the first row.
+With the macOS install or the Linux release archive, you want the first row.
 
 ### Compose a base from any Linux image (libkrun)
 
@@ -559,4 +611,4 @@ useful. So the boundary is:
 - **A kernel+rootfs image** (firecracker / vzf) carries `mgit-guest` inside it,
   pinned in `images.lock`.
 
-Refs: MGIT-44, MGIT-30, MGIT-61.15, ADR-005, ADR-010, FR-17.15, FR-17.16
+Refs: MGIT-44, MGIT-30, MGIT-61.15, MGIT-229, ADR-005, ADR-010, ADR-016, FR-17.15, FR-17.16

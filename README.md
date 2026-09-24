@@ -108,7 +108,7 @@ mgit provides that containment, and pairs it with a working history built for ho
 
 ## How containment works
 
-mgit runs the agent's untrusted execution inside a **per-task microVM** (Firecracker on Linux/KVM; Apple Virtualization.framework on macOS, running a Linux guest), so the blast radius of a compromised package is a disposable VM, not your host:
+mgit runs the agent's untrusted execution inside a **per-task microVM** (libkrun on Linux/KVM and on macOS/Apple Silicon, running a Linux guest), so the blast radius of a compromised package is a disposable VM, not your host:
 
 - **Hardware-isolated execution.** Installs, builds, and tests run in the guest VM. The host filesystem, your other repos, and your credentials are never mounted in. The microVM boundary is the same one cloud providers trust to isolate tenants.
 - **Default-deny egress.** The guest gets no direct network route. A per-task allowlist permits only the destinations a task actually needs (e.g. your package registry), enforced at the IP/flow layer by a host-side proxy. Raw-IP, QUIC, DNS-tunnelling, and metadata-endpoint tricks are denied. (`none` / `allowlist` / `open` modes.)
@@ -244,15 +244,21 @@ Everything above installs the `mgit` binary, which is all you need for the versi
 The two GA backends deliver the worktree differently, and the difference is
 visible to an agent loop rather than an implementation detail:
 
-| | macOS / libkrun | Linux / firecracker | Linux / libkrun (`-tags libkrun`) |
+| | macOS / libkrun | Linux / libkrun (the release archive) | Linux / firecracker (`go install`, source builds) |
 |---|---|---|---|
 | launch, exec, land | ✅ live-validated | ✅ live-validated (CI-gated) | ✅ live-validated (CI-gated) |
 | hostile-guest containment (SEC-03) | ✅ | ✅ | ✅ |
-| guest networking + live egress policy | ✅ | ✅ | ✅ live-validated (CI-gated) |
-| guest can write outside `/tmp`, `/etc` and its worktree | ✅ | ✅ | ❌ (upstream, MGIT-89) |
-| host edits reach a **running** guest (`sandbox sync`) | ✅ | ❌ refused | ✅ live-validated (CI-gated) |
-| artifact export (`sandbox export`) | ✅ | ❌ refused | ✅ |
-| the VM dies with a **crashed** daemon (`kill -9`) | ✅ live-validated | ✅ CI-gated | ✅ live-validated |
+| guest networking + live egress policy | ✅ | ✅ live-validated (CI-gated) | ✅ |
+| guest can write outside `/tmp`, `/etc`, its worktree and its home | ✅ | ❌ (upstream, MGIT-89) | ✅ |
+| host edits reach a **running** guest (`sandbox sync`) | ✅ | ✅ live-validated (CI-gated) | ❌ refused |
+| artifact export (`sandbox export`) | ✅ | ✅ | ❌ refused |
+| the VM dies with a **crashed** daemon (`kill -9`) | ✅ live-validated | ✅ live-validated | ✅ CI-gated |
+
+The Linux release archive carries the libkrun daemon, with libkrun and
+libkrunfw bundled beside it, from the first release that bundles libkrun (see
+the CHANGELOG); earlier Linux archives, and a `go install` of the daemon, are
+the firecracker build. `mgit-sandboxd --vmm` says which one you have
+(ADR-016).
 
 firecracker packs the worktree into an ext4 image at launch and the guest
 mounts it, so there is no host directory to re-stage into or read out of. Both
@@ -305,8 +311,10 @@ do not carry over from macOS, both measured on real hardware and both upstream:
 
 So on Linux, **libkrun now does the whole loop**: guest egress with live
 policy, host edits re-staged into a long-lived guest, and artifacts read back
-out. That combination had no backend at all before MGIT-89. firecracker remains the choice when the agent must write
-freely across the image root (`apt install`), which libkrun cannot do here.
+out, and it is what the Linux release ships. That combination had no backend
+at all before MGIT-89. A firecracker source build remains the choice when the
+agent must write freely across the image root (`apt install`), which libkrun
+cannot do here.
 The capability set above is exactly what CI asserts on every push, named test
 by test in `scripts/e2e/libkrun_linux_column.sh`.
 
@@ -321,7 +329,7 @@ The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Li
   ```
 
   `brew install libkrun` on its own fails, and so does the fully-qualified name — see [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#installing-libkrun-on-macos) for why, and for why mgit no longer tries to install it for you. The release/brew daemon links libkrun and is code-signed with the hypervisor entitlement (a `go install`-ed daemon is unsigned and must be signed locally).
-- **Linux** requires KVM (`/dev/kvm`) and the `firecracker` binary on `PATH`.
+- **Linux** requires `/dev/kvm` (read-writable by your user) and glibc 2.31+, and nothing else: the release archive carries libkrun and libkrunfw in `lib/` beside `mgit-sandboxd`, so extract the whole archive and keep them together. The kernel inside libkrunfw is GPL-2.0; its source is published with every release that bundles it ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#the-linux-archive-and-what-it-carries)).
 - **Windows and Intel macOS** have no sandbox backend yet; core mgit runs without it.
 
 Skipping the hypervisor step degrades nothing silently: the daemon refuses to start, and `mgit` reports the missing library together with the commands that fix it.
@@ -425,7 +433,7 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 | `mgit sandbox base from [<oci-image>]` / `set <dir>` / `resolve [<ref>]` | Compose this repo's guest base — with no image, the one this release was smoke-tested with, by digest — or use a tree you built; `resolve` prints what a reference points at now |
 | `mgit sandbox image init` / `add --kernel … --rootfs …` | Manage the signed, digest-pinned image set (firecracker kernel + rootfs) |
 
-Sandbox commands require the host daemon and a guest base, and run on macOS (libkrun, Apple Silicon) and Linux (firecracker/KVM).
+Sandbox commands require the host daemon and a guest base, and run on macOS (libkrun, Apple Silicon) and Linux (libkrun/KVM in the release archive; firecracker in a source build).
 
 **Egress policy before the microVM boots.** Provisioning is lazy: `mgit work --sandbox` and `mgit sandbox launch` *register* a sandbox and the microVM starts on first use. `mgit sandbox policy set/revoke` work at that point too — the policy is **staged onto the pending launch**, so the VM comes up already enforcing it and never runs under the policy you were replacing, not even for the instant between boot and mutation. `policy show` reports a staged policy as `PENDING`, never as one in force: *"is being enforced"* and *"will be enforced once something starts"* are different facts, and a caller who confuses them runs untrusted code believing a line is being held that nothing is holding yet. Once the VM is up, the same verbs mutate the live enforcer and `show` reads back from it.
 
@@ -514,7 +522,7 @@ mgit's sandbox is designed around one premise: **the guest is the hostile party*
 
 | Seam | Control |
 |------|---------|
-| **Execution boundary** | Per-task microVM (Firecracker / Virtualization.framework). Untrusted installs/builds/tests run in the guest; the host disk and credentials are never mounted in. |
+| **Execution boundary** | Per-task microVM (libkrun on Linux/KVM and macOS/HVF; firecracker in a Linux source build). Untrusted installs/builds/tests run in the guest; the host disk and credentials are never mounted in. |
 | **Network egress** | Default-deny at the IP/flow layer. Per-task allowlist via a host proxy + restricted DNS; RFC1918, link-local, and cloud-metadata destinations denied unconditionally; UDP/QUIC blocked. |
 | **Worktree mount** | The guest sees working-tree files only; the host's shared object store, index, and other tasks' data are not part of the guest view. |
 | **Land / attestation** | Commits are re-verified host-side (dual-hash + task binding) and carry a **host-anchored attestation**: the guest holds no signing key and cannot forge provenance. Land is the only path from the guest's private store to your repo, and it is append-only. |
@@ -527,7 +535,7 @@ This model has been **adversarially audited**: a red-team design audit plus an i
 
 mgit is in beta, and this section states plainly what is and is not there yet.
 
-- **Sandbox platforms.** The microVM sandbox ships for Linux (Firecracker/KVM) and macOS, where the default profile runs a **Linux guest** under Apple Virtualization.framework (the right fit for Linux and cross-platform workloads). A mac-native profile for Swift/Xcode/Homebrew workloads is a planned opt-in. On Windows, mgit's core version control runs without the sandbox until the native backend lands.
+- **Sandbox platforms.** The microVM sandbox ships for Linux (libkrun/KVM, bundled in the release archive) and macOS, where the default profile runs a **Linux guest** under libkrun on Apple's Hypervisor.framework (the right fit for Linux and cross-platform workloads). A mac-native profile for Swift/Xcode/Homebrew workloads is a planned opt-in. On Windows, mgit's core version control runs without the sandbox until the native backend lands.
 - **What mgit is underneath.** mgit is git (go-git) plus an isolated store; the value is the agent workflow and the sandbox-to-land integration, not novel storage. The closest alternative is "git + a scratch-branch convention."
 - **Course-correction maturity.** The backtrack/fork/salvage loop is content-restoring (rollback and restore recover working-tree state, cherry-pick applies real changes, all conflict-safe), e2e-tested, and instructed in the agent skills, but autonomous use by agents has not yet been validated head-to-head. Today the most reliable actor directing course-correction is a reviewer reading the history.
 - **When plain git worktrees are enough.** If you push WIP freely and your agent runs only trusted code, native `git worktree` is lighter and git-native. mgit earns its keep when you can't or won't push WIP (an mgit worktree carries your unpushed local state), when you want a task-to-commit audit trail, and above all when the agent runs untrusted code, which is the capability plain worktrees fundamentally lack.
