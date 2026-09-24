@@ -470,7 +470,7 @@ func (m *Manager) quarantine(taskID, worktreePath, stateDir string) (string, err
 		return "", nil // quarantine not wired (legacy/direct path)
 	}
 	privDir := filepath.Join(stateDir, privateStoreDirName)
-	store, err := m.cfg.StoreProvisioner.Provision(taskID, privDir)
+	store, err := m.cfg.StoreProvisioner.Provision(taskID, worktreePath, privDir)
 	if err != nil {
 		return "", fmt.Errorf("provision private store: %w", err)
 	}

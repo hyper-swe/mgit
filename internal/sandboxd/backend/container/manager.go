@@ -239,7 +239,7 @@ func (m *Manager) quarantine(id string, opts model.SandboxLaunchOptions) (stateD
 	if mkErr := os.MkdirAll(stateDir, 0o700); mkErr != nil {
 		return "", "", fmt.Errorf("create sandbox state dir: %w", mkErr)
 	}
-	store, pErr := m.cfg.StoreProvisioner.Provision(opts.TaskID, filepath.Join(stateDir, privateStoreDirName))
+	store, pErr := m.cfg.StoreProvisioner.Provision(opts.TaskID, opts.WorktreePath, filepath.Join(stateDir, privateStoreDirName))
 	if pErr != nil {
 		_ = os.RemoveAll(stateDir)
 		return "", "", fmt.Errorf("provision private store: %w", pErr)

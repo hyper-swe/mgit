@@ -102,7 +102,7 @@ func deliverGuestTree(t *testing.T, hostRepo, taskID string) string {
 	require.NoError(t, err, "private-store provisioner")
 
 	privDir := filepath.Join(t.TempDir(), "private-store")
-	store, err := prov.Provision(taskID, privDir)
+	store, err := prov.Provision(taskID, hostRepo, privDir)
 	require.NoError(t, err, "provision the SEC-03 private store")
 
 	guestTree := filepath.Join(t.TempDir(), "staged")
@@ -206,7 +206,7 @@ func TestFirstUse_CommitThenSandbox_NoSquashRequired(t *testing.T) {
 	// Deliberately NO squash here — that is the whole point of the ticket.
 	prov, err := provision.NewStoreProvisioner(repo)
 	require.NoError(t, err)
-	store, err := prov.Provision(taskID, filepath.Join(t.TempDir(), "private-store"))
+	store, err := prov.Provision(taskID, repo, filepath.Join(t.TempDir(), "private-store"))
 	require.NoError(t, err, "work -> commit -> sandbox must not require a squash first")
 
 	guestTree := filepath.Join(t.TempDir(), "staged")
