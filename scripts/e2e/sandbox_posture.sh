@@ -223,6 +223,13 @@ docjson="$(cd wt && mgit doctor --json 2>/dev/null)" && docrc=0 || docrc=$?
 backend="$(mgit sandbox status SB-1 --json | sed -n 's/.*"backend":"\([^"]*\)".*/\1/p')"
 [ -n "$backend" ] || _e2e_fail "sandbox status --json names no backend"
 pass "sandbox backend: $backend"
+# The daemon answering this repository is this CLI's build (MGIT-221). What
+# the row can say depends on what the binaries REPORT, read here rather than
+# guessed from the job: stamped builds compare as ok; a build with no stamp
+# (commit: none, as a -buildvcs=false build is) cannot be told apart from
+# another, and the row says not-checked rather than vouch for it.
+case "$(mgit --version)" in *"commit: none"*) serving=not-checked ;; *) serving=ok ;; esac
+expect_row "$docjson" daemon/serving-version "$serving"
 if [ "$backend" = "kvm" ]; then
 	# firecracker, read live on 2026-09-10 (this gate's first reading of it):
 	# the guest's name table is served; sync-verify reads FAILED, doctor's own

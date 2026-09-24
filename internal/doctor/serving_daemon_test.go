@@ -51,6 +51,8 @@ func TestServingDaemonVersionCheck_ComparesTheDaemonThatAnswers(t *testing.T) {
 			StatusDiffers, []string{"pid 9", "recorded no version"}},
 		{"the_repository_reached_through_a_symlink", []daemonrec.Listed{rec(12, filepath.Join(link, "repo"), "0.6.7 (commit: 487e143, built: y)", alive)},
 			StatusDiffers, []string{"pid 12", "0.6.7"}},
+		{"an_unstamped_daemon_against_a_release_cli", []daemonrec.Listed{rec(21, repo, "dev (commit: none, built: unknown)", alive)},
+			StatusDiffers, []string{"pid 21", "dev (commit: none)"}},
 		{"only_another_repositorys_daemon_runs", []daemonrec.Listed{rec(5, other, "0.6.7 (commit: 487e143, built: y)", alive)},
 			StatusNotChecked, []string{"no daemon serves this repository"}},
 		{"only_a_dead_record_for_this_repository", []daemonrec.Listed{rec(6, repo, "0.6.7 (commit: 487e143, built: y)", daemonrec.Status{})},
@@ -70,6 +72,39 @@ func TestServingDaemonVersionCheck_ComparesTheDaemonThatAnswers(t *testing.T) {
 			for _, w := range tt.wantIn {
 				assert.Contains(t, got.Summary+" "+got.Remedy+" "+got.Reason, w)
 			}
+		})
+	}
+}
+
+// A build with neither -ldflags nor version-control information reports
+// commit "none", and two such builds look identical whatever they were built
+// from. Against such a CLI, a daemon at the same version token cannot be
+// told apart: that is stated as not-checked with the reason, never ok. A
+// different version token is still a difference. Refs: MGIT-221
+func TestServingDaemonVersionCheck_AnUnstampedBuildCannotBeToldApart(t *testing.T) {
+	repo := t.TempDir()
+	alive := daemonrec.Status{Alive: true}
+	tests := []struct {
+		name, cli, daemon string
+		want              Status
+		wantIn            string
+	}{
+		{"both_unstamped", "dev (commit: none, built: unknown)", "dev (commit: none, built: unknown)", StatusNotChecked, "no build stamp"},
+		{"the_daemon_unstamped", "dev (commit: 65606a5, built: x)", "dev (commit: none, built: unknown)", StatusNotChecked, "no build stamp"},
+		{"an_unstamped_cli_and_a_release_daemon", "dev (commit: none, built: unknown)", "0.6.7 (commit: 487e143, built: y)", StatusDiffers, "0.6.7 (commit: 487e143)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := ServingDaemonVersionCheck{
+				List: func(context.Context) ([]daemonrec.Listed, error) {
+					return []daemonrec.Listed{{Record: daemonrec.Record{PID: 3, RepoRoot: repo, Version: tt.daemon}, Status: alive}}, nil
+				},
+				RepoRoot: func() (string, error) { return repo, nil },
+				CLI:      tt.cli,
+			}
+			got := c.Run(context.Background())
+			assert.Equal(t, tt.want, got.Status, got.Summary)
+			assert.Contains(t, got.Summary+" "+got.Reason, tt.wantIn)
 		})
 	}
 }
