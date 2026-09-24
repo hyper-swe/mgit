@@ -60,7 +60,7 @@ func TestDaemonFailureDetail_NamesTheMissingLibraryAndHowToGetIt(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := daemonFailureDetail(writeDaemonLog(t, tt.log))
+			got := daemonFailureDetail(writeDaemonLog(t, tt.log), "")
 			for _, want := range tt.want {
 				assert.Contains(t, got, want, "the remedy must be actionable, got %q", got)
 			}
@@ -108,6 +108,18 @@ func TestMissingLibraryRemedy_LibkrunHintTrustsTheWholeTapNotOneFormula(t *testi
 		"per-formula trust does not cover libkrun's own libkrunfw dependency, got %q", got)
 }
 
+// The activation path reads the same loader words as doctor's row, so an old
+// glibc is named there too, with the floor, and never as a missing library.
+// Refs: MGIT-230.4
+func TestDaemonFailureDetail_AnOldGlibcIsNamed(t *testing.T) {
+	got := daemonFailureDetail(writeDaemonLog(t,
+		"/opt/mgit/bin/mgit-sandboxd: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.30' not found "+
+			"(required by /opt/mgit/bin/mgit-sandboxd)\n"), "/opt/mgit/bin/mgit-sandboxd")
+	assert.Contains(t, got, "GLIBC_2.30")
+	assert.Contains(t, got, "glibc "+linuxGlibcFloor)
+	assert.NotContains(t, got, "is missing")
+}
+
 func TestDaemonFailureDetail_ReadsTheDaemonsOwnLogFormat(t *testing.T) {
 	// Not every failure has a remedy we can name. What every failure has is
 	// the daemon's own message — but the daemon logs JSON, and handing a user
@@ -115,7 +127,7 @@ func TestDaemonFailureDetail_ReadsTheDaemonsOwnLogFormat(t *testing.T) {
 	got := daemonFailureDetail(writeDaemonLog(t,
 		`{"time":"2026-07-30T16:28:58Z","level":"INFO","msg":"sandbox VMM linked at build time"}`+"\n"+
 			`{"time":"2026-07-30T16:28:58Z","level":"ERROR","msg":"sandbox service wiring failed",`+
-			`"error":"open sandbox audit index: unable to open database file"}`+"\n"))
+			`"error":"open sandbox audit index: unable to open database file"}`+"\n"), "")
 
 	assert.Contains(t, got, "sandbox service wiring failed")
 	assert.Contains(t, got, "open sandbox audit index",
@@ -129,7 +141,7 @@ func TestDaemonFailureDetail_UnparseableOutputSurvivesVerbatim(t *testing.T) {
 	// The case that matters most is not JSON at all: the dynamic loader
 	// writes plain text, and losing it to a failed decode would lose the one
 	// failure we most need to explain.
-	got := daemonFailureDetail(writeDaemonLog(t, "panic: something went very wrong\n\tmain.go:1\n"))
+	got := daemonFailureDetail(writeDaemonLog(t, "panic: something went very wrong\n\tmain.go:1\n"), "")
 
 	assert.Contains(t, got, "panic: something went very wrong")
 }
@@ -137,8 +149,8 @@ func TestDaemonFailureDetail_UnparseableOutputSurvivesVerbatim(t *testing.T) {
 func TestDaemonFailureDetail_SaysNothingWhenItKnowsNothing(t *testing.T) {
 	// A daemon that failed before writing anything, or a log we cannot read,
 	// must add no noise to the error the user already has.
-	assert.Empty(t, daemonFailureDetail(filepath.Join(t.TempDir(), "absent.log")))
-	assert.Empty(t, daemonFailureDetail(writeDaemonLog(t, "   \n\n")))
+	assert.Empty(t, daemonFailureDetail(filepath.Join(t.TempDir(), "absent.log"), ""))
+	assert.Empty(t, daemonFailureDetail(writeDaemonLog(t, "   \n\n"), ""))
 }
 
 func TestDaemonFailureDetail_KeepsTheTailOfANoisyLog(t *testing.T) {
@@ -152,7 +164,7 @@ func TestDaemonFailureDetail_KeepsTheTailOfANoisyLog(t *testing.T) {
 	}
 	b.WriteString("the actual cause\n")
 
-	got := daemonFailureDetail(writeDaemonLog(t, b.String()))
+	got := daemonFailureDetail(writeDaemonLog(t, b.String()), "")
 
 	assert.Contains(t, got, "the actual cause")
 	assert.Less(t, len(got), 2000, "the detail must stay readable, got %d bytes", len(got))
@@ -244,7 +256,7 @@ func TestDaemonFailureDetail_ReadsOnlyTheLastAttempt(t *testing.T) {
 		daemonLogMarker + " (mgit test, pid 2) at 2026-09-22T07:48:18Z ===\n" +
 		"new cause: this attempt's words\n"
 
-	got := daemonFailureDetail(writeDaemonLog(t, log))
+	got := daemonFailureDetail(writeDaemonLog(t, log), "")
 
 	assert.Contains(t, got, "new cause")
 	assert.NotContains(t, got, "old cause")
@@ -260,7 +272,7 @@ func TestDaemonFailureDetail_EmptyLastAttempt_SaysTheDaemonNeverSpoke(t *testing
 		"old cause: the previous attempt's words\n" +
 		daemonLogMarker + " (mgit test, pid 2) at 2026-09-22T07:48:18Z ===\n"
 
-	got := daemonFailureDetail(writeDaemonLog(t, log))
+	got := daemonFailureDetail(writeDaemonLog(t, log), "")
 
 	assert.Contains(t, got, "before its first log line")
 	assert.NotContains(t, got, "old cause")
