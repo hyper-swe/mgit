@@ -567,9 +567,14 @@ jobs:
           key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}
 
       - name: Build the PINNED libkrunfw + libkrun (NET=1)
-        env:
-          MGIT_LIBKRUN_CACHE: ~/.cache/mgit-libkrun
-        run: bash scripts/sandbox-image/build-libkrun.sh /usr/local
+        # The cache directory is the one actions/cache above restores and
+        # saves. It is expanded HERE, by the shell: a YAML env value is handed
+        # to the step literally, and "~/.cache/…" made build-libkrun.sh store
+        # the tarball under a directory named ~ while the real cache stayed
+        # empty, so it never restored (MGIT-238).
+        run: |
+          export MGIT_LIBKRUN_CACHE="$HOME/.cache/mgit-libkrun"
+          bash scripts/sandbox-image/build-libkrun.sh /usr/local
 
       - name: Build mgit + the libkrun-linked mgit-sandboxd
         env:
