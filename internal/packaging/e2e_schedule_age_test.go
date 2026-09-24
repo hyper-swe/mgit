@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -103,6 +104,46 @@ func TestE2E_AScheduledRunPublishesItsResultWithItsAge(t *testing.T) {
 	// a time they will misread, and this status exists to be read at a glance.
 	assert.Contains(t, job, "%02d", "the cron's fields are zero-padded for the reader")
 	assert.Contains(t, job, "${hh}:${mm}Z", "and the padded pair is what the description prints")
+}
+
+// The publisher holds a token with statuses:write and actions:read, and
+// needs neither to push nor to run long: it reads e2e.yml and posts one
+// commit status. So its checkout leaves no credential behind in the git
+// config (persist-credentials: false), and the job has a bound of its own
+// rather than the runner's six-hour default, so a hung API call cannot hold
+// a runner. Refs: MGIT-244.1
+func TestE2EScheduleAge_TheWriteTokenIsNotPersistedAndTheJobIsBounded(t *testing.T) {
+	job := jobBlock(t, readRepoFile(t, filepath.Join(".github", "workflows", "e2e-schedule-age.yml")), "schedule-age")
+	checkout := stepBlock(t, job, "- uses: actions/checkout@")
+	assert.Regexp(t, `(?m)^\s+persist-credentials: false\s*$`, checkout,
+		"the checkout must not leave the token in the git config: the job never pushes")
+	m := regexp.MustCompile(`(?m)^    timeout-minutes: (\d+)\s*$`).FindStringSubmatch(job)
+	require.NotNil(t, m, "the job states its own bound")
+	minutes, err := strconv.Atoi(m[1])
+	require.NoError(t, err)
+	assert.LessOrEqual(t, minutes, 10, "one file read and one API call; a hung call must not hold a runner for hours")
+	assert.Positive(t, minutes)
+}
+
+// stepBlock returns the step whose first line starts with prefix, through the
+// lines indented deeper than its dash: that step's own keys and nothing after.
+func stepBlock(t *testing.T, job, prefix string) string {
+	t.Helper()
+	lines := strings.Split(job, "\n")
+	for i, l := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(l), prefix) {
+			continue
+		}
+		indent := len(l) - len(strings.TrimLeft(l, " "))
+		end := i + 1
+		for end < len(lines) && (strings.TrimSpace(lines[end]) == "" ||
+			len(lines[end])-len(strings.TrimLeft(lines[end], " ")) > indent) {
+			end++
+		}
+		return strings.Join(lines[i:end], "\n")
+	}
+	t.Fatalf("no step starting %q in the job", prefix)
+	return ""
 }
 
 // "NIGHTLY" WAS A CLAIM ABOUT TIME, AND IT WAS FALSE. The scheduled run is

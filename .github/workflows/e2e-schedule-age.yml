@@ -56,8 +56,19 @@ jobs:
     name: Scheduled-run age
     if: ${{ github.event.workflow_run.event == 'schedule' }}
     runs-on: ubuntu-latest
+    # The old in-workflow job took 5 s and 6 s on its two scheduled runs. By
+    # the MGIT-143 rule, 4x that sits under the 120 s floor. Two observations
+    # are too few to trust the floor, and the script's own retry path adds up
+    # to three API calls and 15 s of backoff, so the bound is the next rung:
+    # 300 s. A hung call fails the job in minutes instead of holding a
+    # runner for the default six hours. Refs: MGIT-244.1, MGIT-143
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # It only reads e2e.yml's cron and never pushes, so the write token
+          # is not left in the checkout's git config. Refs: MGIT-244.1
+          persist-credentials: false
       - name: publish the scheduled run's result together with its timing
         env:
           GH_TOKEN: ${{ github.token }}
