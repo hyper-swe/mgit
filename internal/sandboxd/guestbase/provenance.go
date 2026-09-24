@@ -53,26 +53,45 @@ type Compose struct {
 type SourceChange int
 
 const (
-	// SourceUnchanged: a first compose, another tag, or the same digest.
+	// SourceUnchanged is a first compose, another tag, or the same digest.
 	SourceUnchanged SourceChange = iota
-	// SourceKindChanged: RED.
+	// SourceKindChanged is the same image, recorded as a different KIND of
+	// digest. The superseded compose (by an mgit before 0.6.8) recorded the
+	// platform manifest the index selects for this host, and the index still
+	// selects exactly that manifest; this compose records the index.
 	SourceKindChanged
-	// SourceIndexMoved: RED.
+	// SourceIndexMoved means the tag's image index moved, and the platform
+	// manifest it selects for this host did not: this host composes the same
+	// image, while other architectures may not.
 	SourceIndexMoved
-	// SourceImageMoved: the tag resolves to a different image.
+	// SourceImageMoved means the tag resolves to a different image.
 	SourceImageMoved
 )
 
-// SourceChange classifies this compose against the one it superseded.
-// RED: the raw digest comparison. Refs: MGIT-223
+// SourceChange classifies this compose against the one it superseded, by
+// comparing each digest with one of its own kind.
+//
+// Since 0.6.8 SourceRef names the image INDEX a tag resolves to (MGIT-219),
+// while an older compose recorded the PLATFORM MANIFEST the index selected.
+// Comparing those two raw said a tag had moved on every recompose after an
+// upgrade, although the index selected the very manifest the old record
+// names (MGIT-223). So: the previous digest against the platform manifest
+// selected now; index against index; and, when both composes recorded the
+// platform manifest they selected, those two. Refs: MGIT-223, MGIT-219
 func (c Compose) SourceChange() SourceChange {
 	if c.PrevSourceRef == "" || c.SourceRef == "" || SourceTag(c.PrevSourceRef) != SourceTag(c.SourceRef) {
 		return SourceUnchanged
 	}
-	if SourceDigest(c.PrevSourceRef) != SourceDigest(c.SourceRef) {
-		return SourceImageMoved
+	prev, now := SourceDigest(c.PrevSourceRef), SourceDigest(c.SourceRef)
+	switch {
+	case prev == now:
+		return SourceUnchanged
+	case c.PlatformDigest != "" && prev == c.PlatformDigest:
+		return SourceKindChanged
+	case c.PlatformDigest != "" && c.PrevPlatformDigest == c.PlatformDigest:
+		return SourceIndexMoved
 	}
-	return SourceUnchanged
+	return SourceImageMoved
 }
 
 // SourceTag splits the human half out of a resolved reference:

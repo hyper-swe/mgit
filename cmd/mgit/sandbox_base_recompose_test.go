@@ -29,7 +29,6 @@ func fixtureDigest(c string) string { return "sha256:" + strings.Repeat(c, 64) }
 // them, with the older record shaped as 0.6.7 wrote it. Refs: MGIT-223,
 // MGIT-219, MGIT-147, MGIT-218
 func TestRecompose_ComparesLikeWithLike(t *testing.T) {
-	const repo = "registry-1.docker.io/library/debian"
 	p, q := fixtureDigest("a"), fixtureDigest("b")
 	i1, i2 := fixtureDigest("c"), fixtureDigest("d")
 	ref := func(digest, platform string) guestbase.Ref {
@@ -43,12 +42,12 @@ func TestRecompose_ComparesLikeWithLike(t *testing.T) {
 		moved         bool
 	}{
 		{"an_older_record_of_the_platform_manifest_the_index_still_selects", ref(p, ""), ref(i1, p),
-			[]string{"resolves to the same image", "platform manifest", "image index"}, []string{"different image"}, false},
+			[]string{"resolves to the same image", "platform manifest", "image index"}, []string{"now resolves to a different image"}, false},
 		{"an_older_record_and_a_different_platform_manifest", ref(p, ""), ref(i1, q),
 			[]string{"now resolves to a different image", p, q}, nil, true},
 		{"the_index_moved_and_this_hosts_manifest_did_not", ref(i1, p), ref(i2, p),
-			[]string{"image index moved", "unchanged"}, []string{"different image"}, false},
-		{"nothing_moved", ref(i1, p), ref(i1, p), nil, []string{"NOTE", "different image", "same image"}, false},
+			[]string{"image index moved", "unchanged"}, []string{"now resolves to a different image"}, false},
+		{"nothing_moved", ref(i1, p), ref(i1, p), nil, []string{"NOTE", "now resolves to a different image", "same image"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
