@@ -1,0 +1,14 @@
+{"data":{"repository":{"pullRequest":{
+  "createdAt":"2026-09-24T11:00:00Z",
+  "title":"fix: the path",
+  "body":"a clean description",
+  "lastEditedAt":"2026-09-24T11:10:00Z",
+  "userContentEdits":{"pageInfo":{"hasNextPage":false},"nodes":[
+    {"editedAt":"2026-09-24T11:10:00Z","deletedAt":null,"diff":"a clean description"},
+    {"editedAt":"2026-09-24T11:05:00Z","deletedAt":"2026-09-24T11:20:00Z","diff":null},
+    {"editedAt":"2026-09-24T11:00:00Z","deletedAt":null,"diff":"the first description had Marmalade in it"}
+  ]},
+  "timelineItems":{"pageInfo":{"hasNextPage":false},"nodes":[
+    {"createdAt":"2026-09-24T11:02:00Z","previousTitle":"fix: the quokka-zz-17 path","currentTitle":"fix: the path"}
+  ]}
+}}}}

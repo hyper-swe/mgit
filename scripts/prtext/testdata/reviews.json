@@ -1,0 +1,6 @@
+{"data":{"repository":{"pullRequest":{"reviews":{"pageInfo":{"hasNextPage":false,"endCursor":"r1"},"nodes":[
+  {"databaseId":201,"createdAt":"2026-09-24T11:40:00Z","lastEditedAt":null,"body":"","userContentEdits":{"pageInfo":{"hasNextPage":false},"nodes":[]},
+   "comments":{"pageInfo":{"hasNextPage":false},"nodes":[
+     {"databaseId":301,"createdAt":"2026-09-24T11:40:00Z","lastEditedAt":null,"body":"see the marmalade-jar helper","userContentEdits":{"pageInfo":{"hasNextPage":false},"nodes":[]}}
+   ]}}
+]}}}}}
