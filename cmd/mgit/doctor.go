@@ -181,6 +181,13 @@ func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 			return probeGuestDelivery(ctx, connect, task)
 		}},
 		doctor.DaemonLoadsCheck{Probe: probeDaemonLoads},
+		doctor.ServingDaemonVersionCheck{List: listHostDaemons, CLI: versionString(), RepoRoot: func() (string, error) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			return sandboxRepoRoot(cwd)
+		}},
 		doctor.DaemonVMMCheck{Probe: probeDaemonVMM, GOOS: runtime.GOOS},
 		doctor.HostDaemonsCheck{List: listHostDaemons},
 		doctor.DuplicateDaemonsCheck{List: listHostDaemons},

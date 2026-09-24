@@ -73,6 +73,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names and a tool named as the one who did the work are. `prtext -board
   .mtix/tasks.json` reports the same way over every node of the tracked
   board and never gates.
+- **`mgit doctor` names the build of the daemon that answers this
+  repository (MGIT-221).** An upgrade replaces the binaries and leaves a
+  running daemon running. A 0.6.7 daemon went on answering a 0.6.8 CLI
+  while every daemon row read ok, because `daemon/loads` runs the binary on
+  disk. The new `daemon/serving-version` row compares the version and
+  commit the serving daemon recorded when it started with the CLI's. It
+  states a mismatch as a difference, with both versions, the pid and the
+  scoped stop. docs/INSTALL-SANDBOX.md now says to stop a running daemon
+  before installing a new release.
 - **`mgit-sandboxd --vmm` and doctor's `daemon/vmm` row (MGIT-229).** The
   daemon reports which VMM it links, where each of its libraries resolved and
   what stops it booting a guest, asked the way a VM boot asks (a child with the

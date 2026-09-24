@@ -318,6 +318,27 @@ xattr -d com.apple.quarantine mgit mgit-sandboxd
 After that, both binaries run normally; the binaries themselves are fine,
 this is purely a distribution/signing gap.
 
+**Upgrading: stop the running daemon before the installer runs.** An
+installer replaces the binaries on disk, not a daemon that is running. A
+`mgit-sandboxd` started by the previous release keeps serving its repository
+at that release, and the new CLI talks to it without a word. So the new
+release's daemon-side and guest-side changes are absent until that daemon
+restarts (MGIT-221, measured with a 0.6.7 daemon answering a 0.6.8 CLI).
+With the mgit you have now, before the install:
+
+```bash
+mgit sandbox daemons                          # every daemon on this host: PID, AGE, VERSION, ROOT, FLAGS
+cd <repo> && mgit sandbox list                # nothing running there: `no sandboxes`
+mgit sandbox daemons stop --repo-root <repo>  # drains and stops that repository's daemon
+```
+
+After the install, any sandbox command starts the daemon from the new
+release. `mgit doctor`'s `daemon/serving-version` row compares the daemon
+serving the current repository with the CLI. It states a mismatch with both
+versions, the pid and this remedy. Stop only your own repositories'
+daemons. A daemon serving another repository keeps its version until it is
+stopped or goes idle.
+
 **Upgrading by hand: replace the binaries, never overwrite them.** macOS caches
 a binary's code signature per inode while a process runs from it, so writing
 a new `mgit-sandboxd` over the installed file (`cp new mgit-sandboxd`,
