@@ -1,0 +1,133 @@
+# The e2e workflow's scheduled run publishes its result TOGETHER WITH ITS
+# TIMING, on the commit it tested. This workflow does the publishing, once
+# that run has completed.
+#
+# A LATE PASS LOOKS EXACTLY LIKE A PROMPT ONE. Since 2026-08-27 e2e's
+# scheduled run has been created about five hours after its cron (25 days
+# measured, the cause outside anything we can see), and nobody noticed,
+# precisely because it stays green: the run is green, the list is green, and
+# a reader between the cron and the run is reading YESTERDAY's result
+# believing it is today's. So the result is published WITH its timing, where
+# the green is read.
+#
+# WHY THIS IS ITS OWN WORKFLOW. It was a job at the end of e2e.yml. But
+# release.yml calls e2e.yml as its gate, and GitHub checks EVERY job of a
+# called workflow against the caller's grant when the run starts, whatever
+# the job's `if:` says. This job's statuses:write and actions:read are not in
+# the release's grant, so release.yml could not start at all: a dispatch
+# concluded startup_failure with no job run. The release's token is not
+# widened for a job that never runs there; the job moved out of the called
+# graph. It now reads the verdict from the completed run itself, so it covers
+# every job of that run, including jobs added after it was written.
+#
+# THE JOB'S CONCLUSION IS NOT THE VERDICT; THE STATUS TEXT IS, and the two
+# must not be able to disagree. A reporting job that always exits 0 shows a
+# green conclusion while its own description reads NOT green. That shape cost
+# a sibling lane an hour, reading `completed/success` three times while the
+# text said DRIFT. So this job exits with its own state. It says NOT green
+# only when the scheduled run was already red, so no new red is invented here.
+#
+# HOW TO READ THIS STATUS, in three cases rather than two, because the
+# obvious rule ("a missing status is not a pass") would block every merge
+# here. It is posted ONLY for a scheduled run, so on a push commit it is
+# ABSENT: not a pass, not a red, no information at all. Present and success
+# is the scheduled run's green together with its measured timing. Present and
+# failure means the scheduled run was red. Present and error means the
+# instrument could not do the one thing it exists for.
+# Refs: MGIT-220, MGIT-174, MGIT-244
+name: e2e scheduled-run age
+
+on:
+  workflow_run:
+    workflows: [e2e]
+    types: [completed]
+    # Scheduled runs happen only on the default branch. The filter keeps most
+    # pull requests' e2e runs from starting a run here only to skip it. It is
+    # not the guard: a fork's branch can also be called main. The job's `if:`
+    # is the guard.
+    branches: [main]
+
+permissions:
+  statuses: write # the e2e-schedule-age status on the commit the run tested
+  actions: read # to read that run's run_started_at; statuses:write alone cannot
+
+jobs:
+  schedule-age:
+    name: Scheduled-run age
+    if: ${{ github.event.workflow_run.event == 'schedule' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: publish the scheduled run's result together with its timing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # The run's own fields, passed as data and never spliced into the
+          # script: this workflow holds a write token.
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          set -u
+          # The cron is READ FROM e2e.yml, never restated here: a second
+          # copy of the hour drifts from the schedule it claims to measure,
+          # and that drift would be invisible, the very failure this job ends.
+          cron=$(grep -o 'cron: *"[^"]*"' .github/workflows/e2e.yml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          min=${cron%% *}; rest=${cron#* }; hour=${rest%% *}
+          # "0 3 * * *" is 03:00Z, not 3:0Z. A time a reader has to decode is
+          # a time they will misread. A non-numeric field (a step or a range)
+          # is printed as written rather than forced into two digits.
+          pad() { case "$1" in '' | *[!0-9]*) printf '%s' "$1" ;; *) printf '%02d' "$1" ;; esac; }
+          hh=$(pad "$hour"); mm=$(pad "$min")
+          # THIS RUNS AFTER THE RUN HAS ENDED, so its own clock is later than
+          # the run's end. The lateness being reported is the SCHEDULING
+          # lateness, so it is measured from the run's own start; using `now`
+          # would silently add however long the run took (median 0.20h here,
+          # once 6.00h). Unreadable is said out loud rather than quietly
+          # replaced by a wrong number.
+          # A NON-EMPTY CAPTURE IS NOT A VALUE. On a failed request gh writes
+          # the ERROR BODY to stdout and does not apply --jq. Measured on gh
+          # 2.88.1 against this repo, a 404 prints {"message":"Not Found",…}
+          # and exits 1, so an earlier form stored that JSON as the
+          # timestamp, stopped retrying, failed to parse it, counted the empty
+          # parse as zero and published a nonsense delay as a PASS. The value
+          # is taken only if gh exited 0 AND the result is an instant `date`
+          # accepts. Retried, because a transient read must not red an
+          # otherwise green day; a persistent one must, and does below.
+          started_epoch=""
+          for attempt in 1 2 3; do
+            if raw=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .run_started_at 2>/dev/null) &&
+              [ -n "$raw" ] && started_epoch=$(date -u -d "$raw" +%s 2>/dev/null); then
+              break
+            fi
+            started_epoch=""
+            sleep 5
+          done
+          now=$(date -u +%s)
+          due=$(date -u -d "today ${hh}:${mm}" +%s)
+          [ "$now" -lt "$due" ] && due=$((due - 86400))
+          if [ -n "$started_epoch" ]; then
+            tenths=$(( (started_epoch - due) * 10 / 3600 ))
+            timing="started $(date -u -d "@$started_epoch" +%H:%MZ) (+$((tenths / 10)).$((tenths % 10))h)"
+          else
+            timing="started UNREADABLE (the run's metadata could not be read; actions:read?)"
+          fi
+          # The verdict is the run's own conclusion, so it covers every job
+          # of the run, and a job added to e2e.yml later needs no edit here.
+          # A timing this job could not read is NOT a pass: the instrument
+          # failed at the one thing it exists to do, and `error` says that
+          # without claiming the run was bad. A red run outranks it.
+          state=success; verdict="all jobs passed"
+          [ -z "$started_epoch" ] && state=error
+          if [ "$CONCLUSION" != success ]; then state=failure; verdict="NOT green — the run concluded ${CONCLUSION:-with no conclusion}"; fi
+          # Absolute instants, not an age: an age computed here is wrong for
+          # every reader after this second. They can subtract.
+          desc="$verdict; cron ${hh}:${mm}Z → $timing, published $(date -u -d "@$now" +%H:%MZ)"
+          printf 'e2e-schedule-age: %s\n' "$desc"
+          { echo '## Scheduled-run age'; echo; echo "$desc"; echo; echo "run: $RUN_URL"; } >> "$GITHUB_STEP_SUMMARY"
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$RUN_SHA" \
+            -f state="$state" -f context=e2e-schedule-age \
+            -f description="$(printf '%s' "$desc" | cut -c1-139)" \
+            -f target_url="$RUN_URL" >/dev/null ||
+            { echo "could not publish the status"; exit 1; }
+          [ "$state" = success ] || exit 1
