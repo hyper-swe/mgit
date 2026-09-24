@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -231,7 +232,7 @@ func mountGuestFilesystems(logger *slog.Logger) error {
 	if err := mountPseudoFS("tmpfs", "/tmp", "tmpfs"); err != nil {
 		return err
 	}
-	if err := mountWorktree(); err != nil {
+	if err := mountWorktree(logger); err != nil {
 		return err
 	}
 	// The overlay above is SUPPOSED to have made the whole root writable. On
@@ -409,8 +410,9 @@ func mountPseudoFS(source, target, fstype string) error {
 
 // mountWorktree reads the host-supplied worktree descriptor from the
 // kernel command line and mounts the worktree at its identical absolute
-// path. Refs: FR-17.3, MGIT-11.6.5
-func mountWorktree() error {
+// path. Creating that mount point on a guest root that cannot copy up is
+// makeMountPoint's job. Refs: FR-17.3, MGIT-11.6.5, MGIT-230.7
+func mountWorktree(logger *slog.Logger) error {
 	wt := guestboot.ParseWorktreeMount(bootTokens())
 	if wt.Empty() {
 		return nil // no worktree to deliver
@@ -420,8 +422,13 @@ func mountWorktree() error {
 	}
 	// Create the identical-path mount point (the worktree's absolute host
 	// path) before mounting onto it.
-	if err := os.MkdirAll(wt.Path, 0o755); err != nil { //nolint:gosec // guest mount point, not host-trusted
-		return fmt.Errorf("mgit-guest: create worktree mount point %q: %w", wt.Path, err)
+	if err := makeMountPoint(wt.Path, mountPointOps{
+		mkdirAll:        os.MkdirAll,
+		stat:            os.Stat,
+		isCopyUpRefusal: func(err error) bool { return errors.Is(err, unix.EOPNOTSUPP) },
+		shadow:          func(dir string) error { return ensureWritableDir(dir, logger) },
+	}); err != nil {
+		return err
 	}
 	if err := unix.Mount(wt.Source, wt.Path, wt.FSType, 0, ""); err != nil && err != unix.EBUSY {
 		return fmt.Errorf("mgit-guest: mount worktree %s (%s) at %q: %w", wt.Source, wt.FSType, wt.Path, err)
