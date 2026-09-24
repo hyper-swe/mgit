@@ -558,6 +558,10 @@ func (s *SandboxService) settleBoot(ctx context.Context, reg *sandboxReg, attemp
 	}()
 	if bootErr != nil {
 		attempt.err = bootErr
+		// The registration stays created and retryable, but no longer reads
+		// like one nobody has used: status names the failed boot until one
+		// succeeds (recordBootLocked replaces reg.info). Refs: MGIT-231
+		reg.info.LastBootFailure = &model.BootFailure{At: s.clock().UTC(), Cause: bootErr.Error()}
 		return nil, bootErr
 	}
 	if err := s.recordBootLocked(ctx, reg, launched); err != nil {
@@ -585,7 +589,7 @@ func (s *SandboxService) recordBootLocked(ctx context.Context, reg *sandboxReg, 
 	if stateErr := s.setPersistedState(ctx, launched.ID, model.StateRunning); stateErr != nil {
 		return errors.Join(stateErr, s.rollbackBoot(ctx, launched.ID))
 	}
-	reg.info = *launched
+	reg.info = *launched // replaces, so a LastBootFailure recorded by an earlier attempt is cleared (MGIT-231)
 	// The backend's SandboxInfo does not carry the published-port mappings
 	// (they are a service-level concern); restore them so List/Status keep
 	// reporting them after boot. Likewise the effective resource caps: not

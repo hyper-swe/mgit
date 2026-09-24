@@ -90,6 +90,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   libkrunfw passed `daemon/loads` and failed every launch. `daemon/vmm` names
   it, with the Linux remedy (reinstall the archive) or the macOS one (the
   libkrun formula).
+- **`mgit sandbox status` names a failed boot (MGIT-231).** A sandbox whose
+  boot failed read `created`, byte-identical to one nobody had used, and the
+  only record was the daemon's log. Status now adds `last boot FAILED at
+  <instant>: <cause>` (and `last_boot_failure` in `--json`) until a boot
+  succeeds. This is a control-protocol change (version 5). A daemon left
+  running from an earlier build is refused at the handshake with the
+  restart named, so restart it after upgrading.
 
 ### Fixed
 

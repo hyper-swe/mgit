@@ -69,7 +69,13 @@ const (
 	// 4 adds the sync-verify verb (KindSyncVerify, a SyncVerify field on
 	// request and response) that `mgit doctor` uses to ask a guest whether it
 	// reads what was last delivered to it (MGIT-164).
-	ProtocolVersion = 4
+	//
+	// 5 adds last_boot_failure to SandboxInfo, which rides in the status and
+	// list responses, so `sandbox status` can tell a sandbox whose boot
+	// failed from one nobody has used (MGIT-231). A response field is a
+	// wire change: an older client decodes responses with
+	// DisallowUnknownFields and would fail on it.
+	ProtocolVersion = 5
 
 	// LegacyProtocol names every mgit built before the handshake existed
 	// (0.5.x and earlier). Such a peer never states a version, so this number
