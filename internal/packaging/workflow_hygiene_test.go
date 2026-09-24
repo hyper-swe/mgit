@@ -46,3 +46,28 @@ func TestWorkflows_CarryNoLiteralAddress(t *testing.T) {
 		assert.Empty(t, quad.FindAllString(cfg, -1), "%s carries a literal address", rel)
 	}
 }
+
+// An environment value in a workflow is NOT shell-expanded: `FOO: ~/x` hands
+// the step the literal string "~/x", which a script then treats as a relative
+// directory named "~". The libkrunfw kernel-tarball cache (MGIT-163) did
+// exactly that: build-libkrun.sh stored the tarball under ./~ in the
+// workspace while actions/cache saved the real, empty ~/.cache/mgit-libkrun,
+// so the cache never restored and every run refetched ~141 MB (measured on
+// main's e2e run 35861088899: "Cache not found" … "stored … for later runs"
+// … "Path Validation Error … no cache is being saved"). An action's own
+// input (`path: ~/…`, lower case) is expanded by the action and is fine.
+// Refs: MGIT-238
+func TestWorkflows_EnvValuesNeverStartWithATilde(t *testing.T) {
+	root := repoRoot(t)
+	files, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yml"))
+	require.NoError(t, err)
+	require.NotEmpty(t, files)
+	tildeEnv := regexp.MustCompile(`(?m)^\s+([A-Z][A-Z0-9_]*):\s*["']?~`)
+	for _, f := range files {
+		rel, _ := filepath.Rel(root, f)
+		for _, m := range tildeEnv.FindAllStringSubmatch(readRepoFile(t, rel), -1) {
+			t.Errorf("%s sets %s to a value starting with ~, which the step receives literally; "+
+				"expand it in the run step instead (\"$HOME/…\")", rel, m[1])
+		}
+	}
+}
