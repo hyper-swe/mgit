@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	mcpapp "github.com/hyper-swe/mgit/internal/mcp"
@@ -55,6 +56,10 @@ func resolveSandboxPaths(repoRoot string) (sandboxPaths, error) {
 		workDir: filepath.Join(runtimeDir, "w"),
 	}, nil
 }
+
+// maxSocketPathBytes is the longest path a unix socket can bind on this
+// platform: sun_path less its NUL (103 on macOS, 107 on Linux). Refs: MGIT-240
+var maxSocketPathBytes = len(syscall.RawSockaddrUnix{}.Path) - 1
 
 // runtimeBase is the short base for ephemeral sandbox runtime state:
 // XDG_RUNTIME_DIR when set (per-user, tmpfs), else the system temp dir.
