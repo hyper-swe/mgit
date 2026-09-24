@@ -149,7 +149,7 @@ func (p Plan) BindPrivateStore(privateStoreDir, sharedStoreDir string) (Plan, er
 
 // CheckSharedStore returns an error wrapping ErrSharedStoreReachable when a
 // guest that mounts worktree could reach the host shared store: the store is
-// the worktree or lies beneath it. Registration asks it (through a backend's
+// the worktree or lies beneath it, or the worktree lies inside the store. Registration asks it (through a backend's
 // CheckWorktreeLayout) and the boot asks it (through BindPrivateStore), so the
 // two cannot disagree (MGIT-222).
 //
@@ -165,12 +165,20 @@ func CheckSharedStore(worktree, shared string) error {
 		return fmt.Errorf("%w: shared store %q is inside the mounted worktree %q",
 			model.ErrSharedStoreReachable, shared, worktree)
 	}
+	// The mirror case: a worktree that lies INSIDE the store mounts part of
+	// it (a worktree at <repo>/.mgit/objects mounts the object store). The
+	// first check alone let it through. Refs: MGIT-255
+	if isWithin(worktree, shared) || storeBeneath(shared, worktree) {
+		return fmt.Errorf("%w: the mounted worktree %q is inside the shared store %q",
+			model.ErrSharedStoreReachable, worktree, shared)
+	}
 	return nil
 }
 
 // storeBeneath reports, by file identity, whether worktree is shared or one
-// of its ancestors. An unreadable worktree names no directory, so it holds
-// nothing.
+// of its ancestors (called with the arguments swapped, whether the store is
+// the worktree or one of ITS ancestors). An unreadable first argument names
+// no directory, so it holds nothing.
 func storeBeneath(worktree, shared string) bool {
 	wt, err := os.Stat(worktree)
 	if err != nil {
