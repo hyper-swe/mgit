@@ -36,6 +36,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A listed word in a pull request's text fails the verdict gate
+  (MGIT-242).** This repository is public, and a pull request's title,
+  description, comments and reviews stay readable, along with every earlier
+  revision of each. `scripts/prtext` reads all of that text through the
+  GraphQL API. It compares SHA-256 digests of normalized words against two
+  committed digest lists, `terms.sha256` and `names.sha256`, so no listed
+  word is ever written here in clear. A hit names the field, the revision
+  and its time, never the word. Text written at or after
+  2026-09-24T10:04Z turns `reviewer-verdict-at-head` red whatever the
+  verdict says. Earlier hits are reported and never gate. Text the check
+  cannot read is NOT CHECKED, which is red. The verdict job now also runs
+  on title and description edits, reviews and review comments.
 - **`mgit-sandboxd --vmm` and doctor's `daemon/vmm` row (MGIT-229).** The
   daemon reports which VMM it links, where each of its libraries resolved and
   what stops it booting a guest, asked the way a VM boot asks (a child with the

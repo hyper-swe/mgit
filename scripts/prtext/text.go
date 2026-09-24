@@ -116,7 +116,12 @@ func nameCandidates(text string) map[string]bool {
 
 // anyListed returns the digest of a candidate the set lists, or "".
 func anyListed(candidates, set map[string]bool) string {
-	return "" // RED: no matching yet
+	for c := range candidates {
+		if d := digest(c); set[d] {
+			return d
+		}
+	}
+	return ""
 }
 
 // judge finds the versions that carry a listed word, one hit per version

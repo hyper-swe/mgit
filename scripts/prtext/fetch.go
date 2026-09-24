@@ -13,20 +13,29 @@ import (
 // issue comment, review and review comment with theirs. An edit-history
 // entry's diff is the full text of that revision (measured on this
 // repository: the oldest entry is the text as first written).
-const editsFields = `pageInfo{hasNextPage} nodes{editedAt deletedAt diff}`
+//
+// THE API BUDGET IS SHARED. Every query reads the rate limit it leaves, the
+// pull-request query counts comments and reviews so a query that would
+// return nothing is never sent, and nested pages are small: a query's cost
+// grows with the product of its nested page sizes, and a sweep of every
+// pull request once spent a whole hour's budget. A page that overflows is
+// NOT CHECKED, never skipped.
+const (
+	editsFields = `pageInfo{hasNextPage} nodes{editedAt deletedAt diff}`
+	rateFields  = `rateLimit{remaining resetAt} `
+	queryHead   = `query($owner:String!,$name:String!,$number:Int!,$after:String){` + rateFields + `repository(owner:$owner,name:$name){pullRequest(number:$number){`
+)
 
-var queryPR = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){` +
-	`createdAt title body lastEditedAt userContentEdits(first:100){` + editsFields + `} ` +
-	`timelineItems(first:100,itemTypes:[RENAMED_TITLE_EVENT]){pageInfo{hasNextPage} nodes{... on RenamedTitleEvent{createdAt previousTitle currentTitle}}}}}}`
+var queryPR = queryHead +
+	`createdAt title body lastEditedAt userContentEdits(first:50){` + editsFields + `} comments{totalCount} reviews{totalCount} ` +
+	`timelineItems(first:50,itemTypes:[RENAMED_TITLE_EVENT]){pageInfo{hasNextPage} nodes{... on RenamedTitleEvent{createdAt previousTitle currentTitle}}}}}}`
 
-var queryComments = `query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){` +
-	`comments(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{databaseId createdAt lastEditedAt body userContentEdits(first:100){` + editsFields + `}}}}}}`
+var queryComments = queryHead +
+	`comments(first:50,after:$after){pageInfo{hasNextPage endCursor} nodes{databaseId createdAt lastEditedAt body userContentEdits(first:20){` + editsFields + `}}}}}}`
 
-// Reviews nest two levels, so their pages are smaller to keep each query
-// inside the API's node limit.
-var queryReviews = `query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){` +
-	`reviews(first:30,after:$after){pageInfo{hasNextPage endCursor} nodes{databaseId createdAt lastEditedAt body userContentEdits(first:30){` + editsFields + `} ` +
-	`comments(first:30){pageInfo{hasNextPage} nodes{databaseId createdAt lastEditedAt body userContentEdits(first:30){` + editsFields + `}}}}}}}}`
+var queryReviews = queryHead +
+	`reviews(first:20,after:$after){pageInfo{hasNextPage endCursor} nodes{databaseId createdAt lastEditedAt body userContentEdits(first:10){` + editsFields + `} ` +
+	`comments(first:20){pageInfo{hasNextPage} nodes{databaseId createdAt lastEditedAt body userContentEdits(first:10){` + editsFields + `}}}}}}}}`
 
 // api runs one GraphQL query with its variables and returns the raw JSON.
 type api func(query string, vars map[string]any) ([]byte, error)
@@ -65,12 +74,14 @@ type prNode struct {
 		} `json:"nodes"`
 	} `json:"timelineItems"`
 	Comments struct {
-		PageInfo pageInfo   `json:"pageInfo"`
-		Nodes    []textNode `json:"nodes"`
+		TotalCount int        `json:"totalCount"`
+		PageInfo   pageInfo   `json:"pageInfo"`
+		Nodes      []textNode `json:"nodes"`
 	} `json:"comments"`
 	Reviews struct {
-		PageInfo pageInfo `json:"pageInfo"`
-		Nodes    []struct {
+		TotalCount int      `json:"totalCount"`
+		PageInfo   pageInfo `json:"pageInfo"`
+		Nodes      []struct {
 			textNode
 			Comments struct {
 				PageInfo pageInfo   `json:"pageInfo"`
@@ -80,11 +91,19 @@ type prNode struct {
 	} `json:"reviews"`
 }
 
-// collected is everything read from one pull request.
+// collected is everything read from one pull request, and the API budget
+// the last query left (nil when the answer did not say).
 type collected struct {
 	versions []version
 	deleted  int
 	counts   map[string]int
+	budget   *rateLimit
+}
+
+// rateLimit is what the API says is left of the hour's budget.
+type rateLimit struct {
+	Remaining int    `json:"remaining"`
+	ResetAt   string `json:"resetAt"`
 }
 
 var errMorePages = errors.New("more than one page of edit revisions or review comments; the check reads one, so this is not checked")
@@ -141,14 +160,16 @@ func (c *collected) addTitle(pr *prNode) error {
 }
 
 // query runs one query and decodes its pull request, refusing a GraphQL
-// error or a missing pull request.
-func query(call api, q string, vars map[string]any) (*prNode, error) {
+// error or a missing pull request. The budget the answer reports, if any,
+// is left in *budget.
+func query(call api, q string, vars map[string]any, budget **rateLimit) (*prNode, error) {
 	raw, err := call(q, vars)
 	if err != nil {
 		return nil, fmt.Errorf("the API could not be read: %w", err)
 	}
 	var resp struct {
 		Data struct {
+			RateLimit  *rateLimit `json:"rateLimit"`
 			Repository struct {
 				PullRequest *prNode `json:"pullRequest"`
 			} `json:"repository"`
@@ -159,6 +180,9 @@ func query(call api, q string, vars map[string]any) (*prNode, error) {
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return nil, fmt.Errorf("the API's answer is not JSON: %w", err)
+	}
+	if resp.Data.RateLimit != nil {
+		*budget = resp.Data.RateLimit
 	}
 	if len(resp.Errors) > 0 {
 		return nil, fmt.Errorf("the API answered with an error: %s", resp.Errors[0].Message)

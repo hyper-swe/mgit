@@ -82,29 +82,36 @@ func withAfter(vars map[string]any, after any) map[string]any {
 // fetchPR reads every piece of a pull request's text and its history.
 func fetchPR(call api, owner, name string, number int) (*collected, error) {
 	vars := map[string]any{"owner": owner, "name": name, "number": number}
-	pr, err := query(call, queryPR, vars)
+	c := &collected{counts: map[string]int{}}
+	pr, err := query(call, queryPR, vars, &c.budget)
 	if err != nil {
 		return nil, err
 	}
-	c := &collected{counts: map[string]int{}}
 	if err := c.addTitle(pr); err != nil {
 		return nil, err
 	}
 	if err := c.addText("description", "description", &pr.textNode); err != nil {
 		return nil, err
 	}
-	if err := c.addComments(call, vars); err != nil {
-		return nil, err
+	if pr.Comments.TotalCount > 0 {
+		if err := c.addComments(call, vars); err != nil {
+			return nil, err
+		}
 	}
-	return c, c.addReviews(call, vars)
+	if pr.Reviews.TotalCount > 0 {
+		if err := c.addReviews(call, vars); err != nil {
+			return nil, err
+		}
+	}
+	return c, nil
 }
 
 // pages runs a paginated query until its last page, handing each page to
 // visit, which returns that page's pageInfo.
-func pages(call api, q string, vars map[string]any, visit func(*prNode) (pageInfo, error)) error {
+func (c *collected) pages(call api, q string, vars map[string]any, visit func(*prNode) (pageInfo, error)) error {
 	var after any
 	for i := 0; i < maxPages; i++ {
-		pr, err := query(call, q, withAfter(vars, after))
+		pr, err := query(call, q, withAfter(vars, after), &c.budget)
 		if err != nil {
 			return err
 		}
@@ -121,7 +128,7 @@ func pages(call api, q string, vars map[string]any, visit func(*prNode) (pageInf
 }
 
 func (c *collected) addComments(call api, vars map[string]any) error {
-	return pages(call, queryComments, vars, func(pr *prNode) (pageInfo, error) {
+	return c.pages(call, queryComments, vars, func(pr *prNode) (pageInfo, error) {
 		for i := range pr.Comments.Nodes {
 			n := &pr.Comments.Nodes[i]
 			if err := c.addText("comments", fmt.Sprintf("comment %d", n.DatabaseID), n); err != nil {
@@ -133,7 +140,7 @@ func (c *collected) addComments(call api, vars map[string]any) error {
 }
 
 func (c *collected) addReviews(call api, vars map[string]any) error {
-	return pages(call, queryReviews, vars, func(pr *prNode) (pageInfo, error) {
+	return c.pages(call, queryReviews, vars, func(pr *prNode) (pageInfo, error) {
 		for i := range pr.Reviews.Nodes {
 			r := &pr.Reviews.Nodes[i]
 			if err := c.addText("reviews", fmt.Sprintf("review %d", r.DatabaseID), &r.textNode); err != nil {
@@ -153,12 +160,20 @@ func (c *collected) addReviews(call api, vars map[string]any) error {
 	})
 }
 
-// gh runs gh with a request body on stdin and returns its stdout.
+// gh runs gh with a request body on stdin and returns its stdout. A
+// failure carries gh's own first line of complaint, so a rate limit reads
+// as one.
 func gh(stdin []byte, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(context.Background(), "gh", args...) //nolint:gosec // a fixed binary; the arguments are this program's own queries and repository path
 	cmd.Stdin = bytes.NewReader(stdin)
-	cmd.Stderr = os.Stderr
-	return cmd.Output()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		first, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n")
+		return nil, fmt.Errorf("%w: %s", err, first)
+	}
+	return out, nil
 }
 
 func ghGraphQL(q string, vars map[string]any) ([]byte, error) {
@@ -173,53 +188,75 @@ func ghGraphQL(q string, vars map[string]any) ([]byte, error) {
 type options struct {
 	owner, name string
 	pr          int
-	all         bool
 	l           lists
 	hits        io.Writer
+	floor       int // the sweep stops when the API budget falls below this
 }
 
-// checkOne checks one pull request and returns the exit code.
-func checkOne(call api, o options, w io.Writer) int {
+// checkOne checks one pull request and returns the exit code and the API
+// budget its last query reported (nil when unknown).
+func checkOne(call api, o options, w io.Writer) (int, *rateLimit) {
 	got, err := fetchPR(call, o.owner, o.name, o.pr)
 	if err != nil {
 		fmt.Fprintf(w, "prtext: NOT CHECKED — #%d: %v\n", o.pr, err)
-		return 2
+		return 2, nil
 	}
 	hits := judge(got.versions, o.l, cutoff)
 	if o.hits != nil {
 		writeHits(o.hits, o.pr, hits)
 	}
-	return report(w, o.pr, got, hits, cutoff)
+	return report(w, o.pr, got, hits, cutoff), got.budget
 }
 
-// sweep reports on every pull request and never gates: exit 2 when any
-// could not be read, else 0.
+// tally counts a sweep's outcomes.
+type tally struct{ read, withHits, gating, unread int }
+
+func (t *tally) add(code int, out string) {
+	hit := strings.Contains(out, "prtext: listed ")
+	switch {
+	case code == 2:
+		t.unread++
+	case hit:
+		t.read++
+		t.withHits++
+	default:
+		t.read++
+	}
+	if code == 1 {
+		t.gating++
+	}
+}
+
+// sweep reports on every pull request and never gates. The API budget is
+// shared with everything else on the account, so the sweep stops when the
+// budget falls below the floor, or at a rate-limit refusal, and says where
+// to resume; what it did not read is NOT CHECKED. Exit 2 when any pull
+// request went unread, else 0.
 func sweep(call api, numbers []int, o options, w io.Writer) int {
-	var read, withHits, unread, gating int
-	for _, n := range numbers {
+	var t tally
+	for i, n := range numbers {
 		o.pr = n
 		var buf bytes.Buffer
-		code := checkOne(call, o, &buf)
+		code, budget := checkOne(call, o, &buf)
 		out := buf.String()
-		switch {
-		case code == 2:
-			unread++
-		case strings.Contains(out, "prtext: listed "):
-			read++
-			withHits++
-		default:
-			read++
-		}
-		if code == 1 {
-			gating++
-		}
+		t.add(code, out)
 		if code != 0 || strings.Contains(out, "prtext: listed ") {
 			fmt.Fprint(w, out)
 		}
+		limited := code == 2 && strings.Contains(strings.ToLower(out), "rate limit")
+		if i+1 < len(numbers) && (limited || (budget != nil && budget.Remaining < o.floor)) {
+			left := "unknown"
+			if budget != nil {
+				left = fmt.Sprintf("%d (resets %s)", budget.Remaining, budget.ResetAt)
+			}
+			t.unread += len(numbers) - i - 1
+			fmt.Fprintf(w, "prtext: sweep stopped to spare the shared API budget: %s left, floor %d; resume with -from %d\n", left, o.floor, numbers[i+1])
+			break
+		}
 	}
 	fmt.Fprintf(w, "prtext: sweep (report only) — %d pull requests read, %d with a hit, %d with a hit at or after the cutoff, %d NOT CHECKED\n",
-		read, withHits, gating, unread)
-	if unread > 0 {
+		t.read, t.withHits, t.gating, t.unread)
+	if t.unread > 0 {
 		return 2
 	}
 	return 0
@@ -256,31 +293,41 @@ func loadLists(terms, names string) (lists, error) {
 	return lists{terms: t, names: n}, nil
 }
 
-func main() {
-	repo := flag.String("repo", os.Getenv("GITHUB_REPOSITORY"), "owner/name")
-	pr := flag.Int("pr", 0, "the pull request to check")
-	all := flag.Bool("all", false, "report on every pull request; never gates")
-	terms := flag.String("terms", termsFile, "the terms digest list")
-	names := flag.String("names", namesFile, "the names digest list")
-	hitsOut := flag.String("hits-out", "", "append each hit with its matched digest to this file (triage only)")
-	flag.Parse()
-	os.Exit(run(*repo, *pr, *all, [3]string{*terms, *names, *hitsOut}))
+// config is the command line.
+type config struct {
+	repo, terms, names, hitsOut string
+	pr, from, floor             int
+	all                         bool
 }
 
-func run(repo string, pr int, all bool, files [3]string) int {
-	owner, name, ok := strings.Cut(repo, "/")
-	if !ok || (pr == 0) == !all {
+func main() {
+	var c config
+	flag.StringVar(&c.repo, "repo", os.Getenv("GITHUB_REPOSITORY"), "owner/name")
+	flag.IntVar(&c.pr, "pr", 0, "the pull request to check")
+	flag.BoolVar(&c.all, "all", false, "report on every pull request; never gates")
+	flag.IntVar(&c.from, "from", 0, "with -all: start at this pull request number and go down (resume a stopped sweep)")
+	flag.IntVar(&c.floor, "floor", 2500, "with -all: stop when the shared API budget falls below this")
+	flag.StringVar(&c.terms, "terms", termsFile, "the terms digest list")
+	flag.StringVar(&c.names, "names", namesFile, "the names digest list")
+	flag.StringVar(&c.hitsOut, "hits-out", "", "append each hit with its matched digest to this file (triage only)")
+	flag.Parse()
+	os.Exit(run(c))
+}
+
+func run(c config) int {
+	owner, name, ok := strings.Cut(c.repo, "/")
+	if !ok || (c.pr == 0) == !c.all {
 		fmt.Fprintln(os.Stderr, "prtext: -repo owner/name and exactly one of -pr N or -all are required")
 		return 2
 	}
-	l, err := loadLists(files[0], files[1])
+	l, err := loadLists(c.terms, c.names)
 	if err != nil {
 		fmt.Printf("prtext: NOT CHECKED — %v\n", err)
 		return 2
 	}
-	o := options{owner: owner, name: name, pr: pr, all: all, l: l}
-	if files[2] != "" {
-		f, err := os.OpenFile(files[2], os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	o := options{owner: owner, name: name, pr: c.pr, l: l, floor: c.floor}
+	if c.hitsOut != "" {
+		f, err := os.OpenFile(c.hitsOut, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
 			fmt.Printf("prtext: NOT CHECKED — %v\n", err)
 			return 2
@@ -288,13 +335,28 @@ func run(repo string, pr int, all bool, files [3]string) int {
 		defer f.Close() //nolint:errcheck // triage file; a failed close loses triage lines, never a verdict
 		o.hits = f
 	}
-	if !all {
-		return checkOne(ghGraphQL, o, os.Stdout)
+	if !c.all {
+		code, _ := checkOne(ghGraphQL, o, os.Stdout)
+		return code
 	}
-	numbers, err := listPRs(repo)
+	numbers, err := listPRs(c.repo)
 	if err != nil {
 		fmt.Printf("prtext: NOT CHECKED — could not list the pull requests: %v\n", err)
 		return 2
 	}
-	return sweep(ghGraphQL, numbers, o, os.Stdout)
+	return sweep(ghGraphQL, from(numbers, c.from), o, os.Stdout)
+}
+
+// from keeps the pull requests numbered at most n (all of them when n is 0).
+func from(numbers []int, n int) []int {
+	if n == 0 {
+		return numbers
+	}
+	var out []int
+	for _, x := range numbers {
+		if x <= n {
+			out = append(out, x)
+		}
+	}
+	return out
 }

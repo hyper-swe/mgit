@@ -131,6 +131,13 @@ func TestFetch_WhatItCannotReadIsNotChecked(t *testing.T) {
 		{"no pull request", "no pull request", func(string, map[string]any) ([]byte, error) {
 			return []byte(`{"data":{"repository":{"pullRequest":null}}}`), nil
 		}},
+		{"more review comments than one page", "review 201", answers(
+			`"comments":{"pageInfo":{"hasNextPage":false},"nodes":[]}`,
+			`"reviews":{"pageInfo":{"hasNextPage":false},"nodes":[{"databaseId":201,"createdAt":"2026-09-24T11:00:00Z","body":"",`+
+				`"userContentEdits":{"pageInfo":{"hasNextPage":false},"nodes":[]},"comments":{"pageInfo":{"hasNextPage":true},"nodes":[]}}]}`)},
+		{"another page with no cursor to it", "without a cursor", answers(
+			`"comments":{"pageInfo":{"hasNextPage":true,"endCursor":""},"nodes":[]}`,
+			`"reviews":{"pageInfo":{"hasNextPage":false},"nodes":[]}`)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -226,6 +233,71 @@ func TestHitsFile_RecordsTheMatchedDigestOutsideTheOutput(t *testing.T) {
 	assert.Regexp(t, regexp.MustCompile(`^7\ttitle\tas opened\t2026-09-24T11:00:00Z\tname\tgating\t[0-9a-f]{64}$`), lines[0])
 	_, err = json.Marshal(lines)
 	require.NoError(t, err)
+}
+
+// answers is an API whose pull request is clean and whose comments and
+// reviews pages are the given JSON members.
+func answers(comments, reviews string) api {
+	return func(query string, _ map[string]any) ([]byte, error) {
+		body := comments
+		switch query {
+		case queryPR:
+			body = `"createdAt":"2026-09-24T11:00:00Z","title":"t","body":"b","comments":{"totalCount":1},"reviews":{"totalCount":1},` +
+				`"userContentEdits":{"pageInfo":{"hasNextPage":false},"nodes":[]},"timelineItems":{"pageInfo":{"hasNextPage":false},"nodes":[]}`
+		case queryReviews:
+			body = reviews
+		}
+		return []byte(`{"data":{"repository":{"pullRequest":{` + body + `}}}}`), nil
+	}
+}
+
+// A pull request with no comments and no reviews costs one query: the
+// counts in the first answer spare the two that would return nothing.
+func TestFetch_SendsNoQueryThatWouldReturnNothing(t *testing.T) {
+	var sent []string
+	quiet := func(query string, _ map[string]any) ([]byte, error) {
+		sent = append(sent, query)
+		return []byte(`{"data":{"repository":{"pullRequest":{"createdAt":"2026-09-24T11:00:00Z","title":"t","body":"b",` +
+			`"comments":{"totalCount":0},"reviews":{"totalCount":0},"userContentEdits":{"pageInfo":{"hasNextPage":false},"nodes":[]},` +
+			`"timelineItems":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`), nil
+	}
+	_, err := fetchPR(quiet, "owner", "repo", 7)
+	require.NoError(t, err)
+	assert.Equal(t, []string{queryPR}, sent)
+}
+
+// THE API BUDGET IS SHARED. A sweep stops when the budget an answer reports
+// falls below its floor, or at a rate-limit refusal, names where to resume,
+// and counts what it did not read as NOT CHECKED. Refs: MGIT-242
+func TestSweep_StopsToSpareTheSharedBudget(t *testing.T) {
+	low := func(query string, _ map[string]any) ([]byte, error) {
+		return []byte(`{"data":{"rateLimit":{"remaining":100,"resetAt":"2026-09-24T11:40:00Z"},"repository":{"pullRequest":{` +
+			`"createdAt":"2026-09-24T11:00:00Z","title":"t","body":"b","comments":{"totalCount":0},"reviews":{"totalCount":0},` +
+			`"userContentEdits":{"pageInfo":{"hasNextPage":false},"nodes":[]},"timelineItems":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}}`), nil
+	}
+	calls := 0
+	refused := func(string, map[string]any) ([]byte, error) {
+		calls++
+		return nil, errors.New("exit status 1: gh: API rate limit already exceeded for user ID 1")
+	}
+	tests := []struct {
+		name, want, unread string
+		call               api
+	}{
+		{"below the floor", "100 (resets 2026-09-24T11:40:00Z) left, floor 2500; resume with -from 8", "2 NOT CHECKED", low},
+		{"refused by the rate limit", "unknown left, floor 2500; resume with -from 8", "3 NOT CHECKED", refused},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			code := sweep(tt.call, []int{9, 8, 7}, options{owner: "o", name: "r", l: testLists(), floor: 2500}, &out)
+			assert.Equal(t, 2, code, "what the sweep did not read is not checked")
+			assert.Contains(t, out.String(), tt.want)
+			assert.Contains(t, lastLine(out.String()), tt.unread)
+		})
+	}
+	assert.Equal(t, 1, calls, "after a rate-limit refusal the sweep sends nothing more")
+	assert.Equal(t, []int{8, 7}, from([]int{9, 8, 7}, 8))
 }
 
 func lastLine(s string) string {

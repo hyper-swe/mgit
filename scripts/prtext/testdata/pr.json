@@ -3,6 +3,8 @@
   "title":"fix: the path",
   "body":"a clean description",
   "lastEditedAt":"2026-09-24T11:10:00Z",
+  "comments":{"totalCount":2},
+  "reviews":{"totalCount":1},
   "userContentEdits":{"pageInfo":{"hasNextPage":false},"nodes":[
     {"editedAt":"2026-09-24T11:10:00Z","deletedAt":null,"diff":"a clean description"},
     {"editedAt":"2026-09-24T11:05:00Z","deletedAt":"2026-09-24T11:20:00Z","diff":null},

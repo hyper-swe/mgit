@@ -81,23 +81,23 @@ func composeBlock(t *testing.T) string {
 // read is red too. Each row runs the workflow's own composition lines with
 // the two checks' exit codes and output. Refs: MGIT-242
 func TestVerdictGate_ATextHitFailsTheGate(t *testing.T) {
-	const pass = "verdictgate: PASS at 8a29f48 names the current head — green"
+	const verdictPass = "verdictgate: PASS at 8a29f48 names the current head — green" //nolint:gosec // G101: a verdict line, not a credential
 	tests := []struct {
 		name, tout, out string
 		tcode, code     int
 		state, desc     string
 	}{
-		{"text clean, PASS at head", "prtext: PASS — no listed word", pass, 0, 0, "success", "verdictgate: PASS"},
-		{"a listed word, PASS at head", "prtext: FAIL — 1 text versions carry a listed word", pass, 1, 0, "failure", "prtext: FAIL"},
-		{"text not checked, PASS at head", "prtext: NOT CHECKED — #1: boom", pass, 2, 0, "failure", "prtext: NOT CHECKED"},
-		{"text check silent, PASS at head", "", pass, 2, 0, "failure", "prtext: NOT CHECKED"},
+		{"text clean, PASS at head", "prtext: PASS — no listed word", verdictPass, 0, 0, "success", "verdictgate: PASS"},
+		{"a listed word, PASS at head", "prtext: FAIL — 1 text versions carry a listed word", verdictPass, 1, 0, "failure", "prtext: FAIL"},
+		{"text not checked, PASS at head", "prtext: NOT CHECKED — #1: boom", verdictPass, 2, 0, "failure", "prtext: NOT CHECKED"},
+		{"text check silent, PASS at head", "", verdictPass, 2, 0, "failure", "prtext: NOT CHECKED"},
 		{"text clean, no verdict", "prtext: PASS — no listed word", "verdictgate: NOT CHECKED — no verdict", 0, 1, "failure", "verdictgate: NOT CHECKED"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			script := fmt.Sprintf("tout=%q; tcode=%d; out=%q; code=%d\n%s\nprintf '%%s|%%s' \"$state\" \"$desc\"",
 				tt.tout, tt.tcode, tt.out, tt.code, composeBlock(t))
-			got, err := exec.CommandContext(context.Background(), "bash", "-c", script).CombinedOutput()
+			got, err := exec.CommandContext(context.Background(), "bash", "-c", script).CombinedOutput() //nolint:gosec // G204: the script is the workflow file's own composition block and this table's literals
 			require.NoError(t, err, "%s", got)
 			state, desc, _ := strings.Cut(string(got), "|")
 			assert.Equal(t, tt.state, state)
