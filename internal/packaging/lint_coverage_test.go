@@ -19,7 +19,9 @@ import (
 // the same pinned version as the ubuntu lint. Refs: MGIT-253
 func TestCI_TheMacOSLibkrunJobLintsTheFilesUbuntuCannotSee(t *testing.T) {
 	ci := readRepoFile(t, filepath.Join(".github", "workflows", "ci.yml"))
-	pin := regexp.MustCompile(`golangci/golangci-lint-action@\S+\s+with:\s+version: (\S+)`)
+	// The action may be pinned to a commit with its tag as a trailing comment
+	// (MGIT-246): `@<sha> # v7.0.1`, then `with:`.
+	pin := regexp.MustCompile(`golangci/golangci-lint-action@\S+(?:\s+#[^\n]*)?\s+with:\s+version: (\S+)`)
 	ubuntu := pin.FindStringSubmatch(jobBlock(t, ci, "test"))
 	require.NotNil(t, ubuntu, "the ubuntu test job lints at a pinned version")
 
