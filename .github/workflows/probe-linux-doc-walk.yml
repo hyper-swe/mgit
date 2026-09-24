@@ -1,0 +1,33 @@
+# MEASUREMENT ONLY, on a probe branch that is never merged: walk the
+# documented Linux sandbox path with the published release on a stock
+# ubuntu-latest runner and keep the full transcript as an artifact.
+# Refs: MGIT-229
+name: probe-linux-doc-walk
+on:
+  push:
+    branches: ["probe/linux-doc-walk-*"]
+permissions:
+  contents: read
+jobs:
+  walk:
+    name: Linux doc walk (published release, stock runner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: /dev/kvm accessible (the documented host requirement)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          ls -l /dev/kvm
+      - name: Walk v0.6.8
+        run: |
+          set -o pipefail
+          bash scripts/e2e/linux_doc_walk.sh v0.6.8 2>&1 | tee "$RUNNER_TEMP/walk-v0.6.8.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-doc-walk-v0.6.8
+          path: ${{ runner.temp }}/walk-v0.6.8.log
