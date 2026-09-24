@@ -79,3 +79,31 @@ func pullRequestTypes(cfg string) string {
 	}
 	return ""
 }
+
+// THE BRANCH-SCOPE BACKSTOP JUDGES A HEAD AGAINST ITS OWN BASE (MGIT-257).
+// It ran `branchguard --base origin/main` for every pull request, so a
+// stacked pull request, whose base is another open pull request's branch,
+// carried its base's commits as not its own and was red until the base
+// merged: measured on #199 at 1cbb294, whose guard passed against its
+// declared base. The job passes the pull request's own base, through the
+// environment, never interpolated into the script, and main only when an
+// event carries no base. Refs: MGIT-257, MGIT-200, MGIT-142
+func TestBranchScope_ChecksTheHeadAgainstItsOwnBase(t *testing.T) {
+	cfg := readRepoFile(t, ".github/workflows/ci.yml")
+	start := strings.Index(cfg, "\n  branch-scope:\n")
+	if !assert.GreaterOrEqual(t, start, 0, "ci.yml has the branch-scope job") {
+		return
+	}
+	job := cfg[start+1:]
+	if end := strings.Index(job[1:], "\n  # "); end >= 0 {
+		job = job[:end+1]
+	}
+	assert.Contains(t, job, "BASE_REF: ${{ github.base_ref }}", "the base reaches the step through its environment")
+	assert.Contains(t, job, `--base "origin/${BASE_REF:-main}"`, "the head is judged against its own base")
+	assert.NotContains(t, job, "--base origin/main", "a fixed main base misjudges every stacked pull request")
+	for _, line := range strings.Split(job, "\n") {
+		if strings.Contains(line, "run:") {
+			assert.NotContains(t, line, "${{", "an expression is never interpolated into the script: %s", line)
+		}
+	}
+}
