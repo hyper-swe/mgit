@@ -3,6 +3,7 @@ package git
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -90,7 +91,12 @@ func RecordGeneratedPaths(worktreeRoot string, rels []string) error {
 // a crash mid-write can never leave a truncated list that silently stops
 // excluding scaffolding. Refs: MGIT-80
 func writeGeneratedManifest(worktreeRoot string, paths []string) error {
-	dir := filepath.Join(worktreeRoot, mgitDirName)
+	return writeManifestIn(filepath.Join(worktreeRoot, mgitDirName), paths)
+}
+
+// writeManifestIn writes the manifest into the store directory dir, the
+// directory a worktree sees as its .mgit.
+func writeManifestIn(dir string, paths []string) error {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("generated manifest: mkdir %s: %w", dir, err)
 	}
@@ -101,7 +107,7 @@ func writeGeneratedManifest(worktreeRoot string, paths []string) error {
 		b.WriteString(p)
 		b.WriteString("\n")
 	}
-	final := generatedManifestPath(worktreeRoot)
+	final := filepath.Join(dir, generatedFileName)
 	tmp := final + ".tmp"
 	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
 		return fmt.Errorf("generated manifest: write: %w", err)
@@ -128,8 +134,58 @@ func ReadGeneratedPaths(worktreeRoot string) ([]string, error) {
 		return nil, fmt.Errorf("open generated manifest: %w", err)
 	}
 	defer f.Close() //nolint:errcheck // read-only file, close error is non-actionable
+	return parseGeneratedManifest(f)
+}
+
+// ReadGeneratedPathsNoFollow reads the worktree's generated list for a
+// sandbox launch, which copies it into the guest's private store (MGIT-236).
+// It never follows the list: a list that is a symlink or anything but a
+// regular file is REFUSED, and the file opened must be the one inspected
+// (os.SameFile), since following it would read an arbitrary host file into
+// the guest. A missing list yields no paths and no error, as for
+// ReadGeneratedPaths. Refs: MGIT-236, MGIT-80, SEC-03
+func ReadGeneratedPathsNoFollow(worktreeRoot string) ([]string, error) {
+	path := generatedManifestPath(worktreeRoot)
+	inspected, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("inspect generated list %s: %w", path, err)
+	}
+	if !inspected.Mode().IsRegular() {
+		return nil, fmt.Errorf("the generated list %s is not a regular file (%s); refusing to follow it", path, inspected.Mode().Type())
+	}
+	f, err := os.Open(path) //nolint:gosec // fixed store-local config path, identity-checked below
+	if err != nil {
+		return nil, fmt.Errorf("open generated list %s: %w", path, err)
+	}
+	defer f.Close() //nolint:errcheck // read-only file, close error is non-actionable
+	opened, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("inspect generated list %s: %w", path, err)
+	}
+	if !os.SameFile(inspected, opened) {
+		return nil, fmt.Errorf("the generated list %s was replaced while it was read; refusing it", path)
+	}
+	return parseGeneratedManifest(f)
+}
+
+// WriteGeneratedPathsInStore writes paths as the generated list of the store
+// directory storeDir: the directory a sandbox guest sees as its worktree's
+// .mgit (MGIT-236). An empty list writes nothing. Refs: MGIT-236, MGIT-80
+func WriteGeneratedPathsInStore(storeDir string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	return writeManifestIn(storeDir, paths)
+}
+
+// parseGeneratedManifest reads the manifest format DEFENSIVELY (see
+// ReadGeneratedPaths).
+func parseGeneratedManifest(r io.Reader) ([]string, error) {
 	var paths []string
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {

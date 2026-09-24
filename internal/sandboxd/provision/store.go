@@ -26,6 +26,7 @@ import (
 	"github.com/go-git/go-billy/v5/osfs"
 
 	"github.com/hyper-swe/mgit/internal/model"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // PrivateStore is the result of provisioning: the host directory backing the
@@ -82,7 +83,12 @@ func (p *StoreProvisioner) SharedDir() string {
 // shared store, then points the same branch + HEAD at it so the guest commits
 // on top. Nothing else from the shared store is copied. privateDir must not
 // pre-exist (a stale store would defeat the freshness guarantee).
-// Refs: SEC-03, FR-17.5, MGIT-14
+//
+// The store is provisioned FOR worktreePath, the worktree the guest is
+// given: in the guest that worktree's .mgit is this store, so the list of
+// files mgit generated into it (MGIT-80) is carried here, or the guest's bulk
+// staging would commit mgit's own agent files (MGIT-236).
+// Refs: SEC-03, FR-17.5, MGIT-14, MGIT-236
 func (p *StoreProvisioner) Provision(taskID, worktreePath, privateDir string) (PrivateStore, error) {
 	sharedDir := p.SharedDir()
 	if _, err := os.Stat(sharedDir); err != nil {
@@ -90,6 +96,10 @@ func (p *StoreProvisioner) Provision(taskID, worktreePath, privateDir string) (P
 	}
 	if _, err := os.Stat(privateDir); err == nil {
 		return PrivateStore{}, fmt.Errorf("provision: private store %s already exists", privateDir)
+	}
+	generated, err := generatedList(worktreePath)
+	if err != nil {
+		return PrivateStore{}, err
 	}
 
 	shared := openBareStore(sharedDir)
@@ -124,7 +134,29 @@ func (p *StoreProvisioner) Provision(taskID, worktreePath, privateDir string) (P
 		_ = os.RemoveAll(privateDir)
 		return PrivateStore{}, fmt.Errorf("provision: set private HEAD: %w", err)
 	}
+	if err := gitstore.WriteGeneratedPathsInStore(privateDir, generated); err != nil {
+		_ = os.RemoveAll(privateDir)
+		return PrivateStore{}, fmt.Errorf("provision: carry the worktree's generated list: %w", err)
+	}
 	return PrivateStore{Dir: privateDir, SharedDir: sharedDir}, nil
+}
+
+// generatedList reads the list of files mgit generated into the worktree the
+// guest is given, BEFORE the private store exists, so a refused list leaves
+// nothing behind. Inside the sandbox that worktree's .mgit is the private
+// store, so the list is carried there, or the guest's bulk staging would
+// sweep mgit's own agent files into the task's commits and into the user's
+// patch (MGIT-236). Refs: MGIT-236, MGIT-80, SEC-03
+func generatedList(worktreePath string) ([]string, error) {
+	if worktreePath == "" {
+		return nil, fmt.Errorf("provision: the worktree path must not be empty: " +
+			"the private store carries that worktree's list of mgit-generated files")
+	}
+	generated, err := gitstore.ReadGeneratedPathsNoFollow(worktreePath)
+	if err != nil {
+		return nil, fmt.Errorf("provision: %w", err)
+	}
+	return generated, nil
 }
 
 // resolveBase picks the commit the guest's private store is seeded from.

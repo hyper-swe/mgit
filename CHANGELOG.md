@@ -122,6 +122,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   versions and the exact `mgit sandbox base from <image>` to recompose
   with, and says UNKNOWN when the base does not record its composer. It is
   said once per boot, never refuses, and never changes an exit code.
+- **A commit made inside a sandbox no longer carries mgit's own agent
+  files into your patch** (MGIT-236). `mgit work --sandbox` writes
+  seven agent files into the worktree (AGENTS.md, the CLAUDE.md block,
+  .claude/settings.json, the Codex and Cursor hooks, the Cursor rule and
+  .envrc) and records them so that bulk staging skips them. Inside the
+  sandbox, the worktree's `.mgit` is the sandbox's private store, which
+  never received that record. So `mgit add -A` in the guest staged all
+  seven, and `squash --to-git` and `export --format git` put them into
+  the patch you apply. The private store is now provisioned with the
+  worktree's record, and the guest skips exactly what the host skips.
+  A generated file you stage by name still lands. A record that is a
+  symlink, or anything but a regular file, refuses the launch rather
+  than being followed.
 
 ## [0.6.8] - 2026-09-22
 
