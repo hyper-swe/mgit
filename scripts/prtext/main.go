@@ -19,6 +19,7 @@
 //
 //	prtext -repo owner/name -pr N         check one pull request
 //	prtext -repo owner/name -all          report on every pull request; never gates
+//	prtext -board .mtix/tasks.json        report on every node of the board; never gates
 //	       [-terms F] [-names F] [-hits-out F]
 //
 // -hits-out appends each hit with its matched digest to a file, for the
@@ -295,9 +296,9 @@ func loadLists(terms, names string) (lists, error) {
 
 // config is the command line.
 type config struct {
-	repo, terms, names, hitsOut string
-	pr, from, floor             int
-	all                         bool
+	repo, terms, names, hitsOut, board string
+	pr, from, floor                    int
+	all                                bool
 }
 
 func main() {
@@ -310,20 +311,30 @@ func main() {
 	flag.StringVar(&c.terms, "terms", termsFile, "the terms digest list")
 	flag.StringVar(&c.names, "names", namesFile, "the names digest list")
 	flag.StringVar(&c.hitsOut, "hits-out", "", "append each hit with its matched digest to this file (triage only)")
+	flag.StringVar(&c.board, "board", "", "report on every node of this board file instead of pull requests")
 	flag.Parse()
 	os.Exit(run(c))
 }
 
 func run(c config) int {
 	owner, name, ok := strings.Cut(c.repo, "/")
-	if !ok || (c.pr == 0) == !c.all {
-		fmt.Fprintln(os.Stderr, "prtext: -repo owner/name and exactly one of -pr N or -all are required")
+	modes := 0
+	for _, on := range []bool{c.pr != 0, c.all, c.board != ""} {
+		if on {
+			modes++
+		}
+	}
+	if modes != 1 || !ok && c.board == "" {
+		fmt.Fprintln(os.Stderr, "prtext: exactly one of -pr N, -all or -board F is required; -pr and -all need -repo owner/name")
 		return 2
 	}
 	l, err := loadLists(c.terms, c.names)
 	if err != nil {
 		fmt.Printf("prtext: NOT CHECKED — %v\n", err)
 		return 2
+	}
+	if c.board != "" {
+		return checkBoard(c.board, l, os.Stdout)
 	}
 	o := options{owner: owner, name: name, pr: c.pr, l: l, floor: c.floor}
 	if c.hitsOut != "" {

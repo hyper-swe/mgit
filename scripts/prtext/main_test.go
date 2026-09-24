@@ -193,6 +193,8 @@ func TestCandidates_TermsAndNamesUseTheirOwnForms(t *testing.T) {
 		{"quokka-zz-170", false},
 		{"x-quokka-zz-17", false},
 		{"quokka zz 17", false},
+		{"see quokka/zz-17.", false},
+		{"at quokka.zz-17", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.text, func(t *testing.T) {

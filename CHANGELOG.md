@@ -51,7 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2026-09-24T10:04Z turns `reviewer-verdict-at-head` red whatever the
   verdict says. Earlier hits are reported and never gate. Text the check
   cannot read is NOT CHECKED, which is red. The verdict job now also runs
-  on title and description edits, reviews and review comments.
+  on title and description edits, reviews and review comments. The lists
+  follow one rule: the product names the agent tools it works with, and
+  never names the tools that build it. So the agent tools and instruction
+  files mgit supports are not hits; assignees, trailers, working-session
+  names and a tool named as the one who did the work are. `prtext -board
+  .mtix/tasks.json` reports the same way over every node of the tracked
+  board and never gates.
 - **`mgit-sandboxd --vmm` and doctor's `daemon/vmm` row (MGIT-229).** The
   daemon reports which VMM it links, where each of its libraries resolved and
   what stops it booting a guest, asked the way a VM boot asks (a child with the

@@ -100,9 +100,15 @@ func termCandidates(text string) map[string]bool {
 	return out
 }
 
+// wholeWordRE is a whitespace word, once trimmed of the punctuation around
+// it, that is a single token: runs joined only by hyphens or underscores.
+var wholeWordRE = regexp.MustCompile(`^[a-z0-9]+(?:[-_][a-z0-9]+)*$`)
+
 // nameCandidates matches whole tokens only: each hyphen-joined token with
-// its hyphens removed, and each whitespace word stripped. A name is found
-// in "(name)," or "name's", never inside a longer token or split by spaces.
+// its hyphens removed, and each whitespace word that is one token once the
+// punctuation around it is trimmed. A name is found in "(name),", "name's"
+// or "name_with_underscores", never inside a longer token, split by
+// spaces, or joined across a slash, a dot or a colon (a path is not a name).
 func nameCandidates(text string) map[string]bool {
 	lower := strings.ToLower(text)
 	out := map[string]bool{}
@@ -110,7 +116,10 @@ func nameCandidates(text string) map[string]bool {
 		addCandidate(out, strings.ReplaceAll(t, "-", ""))
 	}
 	for _, w := range strings.Fields(lower) {
-		addCandidate(out, nonAlnum.ReplaceAllString(w, ""))
+		w = strings.TrimFunc(w, func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9') })
+		if wholeWordRE.MatchString(w) {
+			addCandidate(out, nonAlnum.ReplaceAllString(w, ""))
+		}
 	}
 	return out
 }
