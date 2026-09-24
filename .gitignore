@@ -37,6 +37,12 @@ cover.out
 coverage.out
 
 dist/
+# The release's Linux daemons (built in ubuntu:20.04 by release.yml's
+# linux-sandboxd job) and the libkrunfw kernel's corresponding source,
+# downloaded into the checkout before goreleaser runs. Ignored so goreleaser's
+# clean-tree validation does not read them as a dirty tree. Refs: MGIT-229
+/dist-prebuilt/
+/dist-sources/
 
 # Local dev/infra notes — contain internal network details (LAN IPs,
 # hostnames, SSH key names, dev-box paths). MUST NOT be committed/pushed.

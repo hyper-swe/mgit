@@ -10,9 +10,14 @@
 # script is the gate; TestCrossBuild_CoversEveryReleaseTarget pins its list to
 # the assembler's so the two cannot drift.
 #
-# The darwin mgit-sandboxd (CGO, libkrun) is the one release target a Linux
-# runner cannot compile; the macOS libkrun job builds it. Everything else is
-# CGO-free and cross-compiles from anywhere.
+# The two mgit-sandboxd builds the release ships are both CGO (libkrun) and
+# are not here: the darwin one is built by the macOS libkrun job, and the
+# Linux one (amd64 and arm64) by e2e.yml's linux-sandboxd job, through the
+# same assembler the release runs (scripts/release/build-linux-sandboxd.sh).
+# Everything else is CGO-free and cross-compiles from anywhere. The CGO-free
+# Linux daemon (the firecracker build `go install` produces) is no longer a
+# release target; the Linux Test job still compiles it on every run.
+# Refs: MGIT-229
 #
 # Usage: bash scripts/ci/cross-build.sh
 set -euo pipefail
@@ -26,8 +31,6 @@ darwin/amd64  ./cmd/mgit
 darwin/arm64  ./cmd/mgit
 windows/amd64 ./cmd/mgit
 windows/arm64 ./cmd/mgit
-linux/amd64   ./cmd/mgit-sandboxd
-linux/arm64   ./cmd/mgit-sandboxd
 linux/amd64   ./cmd/mgit-guest
 linux/arm64   ./cmd/mgit-guest
 '
