@@ -67,6 +67,17 @@ type workDeps struct {
 	recordGenerated func(worktreeRoot string, rels []string) error
 	connect         connectFunc
 	mgitBinForDocs  string
+	// stderr takes warnings that must stay off stdout, such as a stale
+	// guest base (MGIT-224); nil means the process's own stderr.
+	stderr io.Writer
+}
+
+// warnings is where a warning goes: deps.stderr, else the process stderr.
+func (d workDeps) warnings() io.Writer {
+	if d.stderr != nil {
+		return d.stderr
+	}
+	return os.Stderr
 }
 
 // newWorkCmd builds `mgit work` around an injected runner so the CLI parsing
@@ -272,7 +283,7 @@ func launchWorkSandbox(ctx context.Context, out io.Writer, deps workDeps, opts w
 	recordSandboxOwner(out, cl, info)
 	writeSandboxEnvDoc(out, info, "mgit work")
 	_, _ = fmt.Fprint(out, launchMessage(info))
-	warnStaleBase(out, imageRefDigest(image)) // Refs: MGIT-224
+	warnStaleBase(deps.warnings(), imageRefDigest(image)) // stderr, as every verb's is. Refs: MGIT-224
 }
 
 // upsertWorktreeEnvDoc writes the worktree's CLAUDE.md sandbox-env block for the
