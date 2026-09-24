@@ -44,6 +44,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A listed word in a pull request's text fails the verdict gate
+  (MGIT-242).** This repository is public, and a pull request's title,
+  description, comments and reviews stay readable, along with every earlier
+  revision of each. `scripts/prtext` reads all of that text through the
+  GraphQL API. It compares SHA-256 digests of normalized words against two
+  committed digest lists, `terms.sha256` and `names.sha256`, so no listed
+  word is ever written here in clear. A private-network IPv4 address
+  (10/8, 172.16/12, 192.168/16) is a hit without any list, outside the
+  product's own guest networks (10.0.2.0/24, 172.31.0.0/16); example
+  addresses belong in the RFC 5737 documentation ranges, which never hit.
+  A hit names the field, the revision and its time, never the word or the
+  address. Text written at or after
+  2026-09-24T10:04Z turns `reviewer-verdict-at-head` red whatever the
+  verdict says. Earlier hits are reported and never gate. Text the check
+  cannot read is NOT CHECKED, which is red. The verdict job now also runs
+  on title and description edits, reviews and review comments. The lists
+  follow one rule: the product names the agent tools it works with, and
+  never names the tools that build it. So the agent tools and instruction
+  files mgit supports are not hits; assignees, trailers, working-session
+  names and a tool named as the one who did the work are. `prtext -board
+  .mtix/tasks.json` reports the same way over every node of the tracked
+  board and never gates.
 - **`mgit-sandboxd --vmm` and doctor's `daemon/vmm` row (MGIT-229).** The
   daemon reports which VMM it links, where each of its libraries resolved and
   what stops it booting a guest, asked the way a VM boot asks (a child with the
