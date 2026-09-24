@@ -3,7 +3,7 @@
 # prebuilts: the copy it must make, and every refusal it owes. Each refusal is
 # a case that must FAIL; the copy is the positive control that proves the
 # fixtures are good enough for a refusal to mean something.
-# Refs: MGIT-229
+# Refs: MGIT-229, MGIT-259
 set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -30,9 +30,26 @@ fixture() {
 		printf '%s  ./%s\n' "$(sha256 "$f")" "$f"
 	done >MANIFEST.sha256)
 }
+# darwin_fixture <dir> <version> <commit> <date>: a darwin/arm64 prebuilt.
+darwin_fixture() {
+	local d="$1/darwin_arm64"
+	mkdir -p "$d/lib" "$d/THIRD_PARTY"
+	printf 'daemon\n' >"$d/mgit-sandboxd"
+	printf 'krun\n' >"$d/lib/libkrun.1.dylib"
+	printf 'apache\n' >"$d/THIRD_PARTY/libkrun-LICENSE"
+	printf '{"version":"%s","commit":"%s","date":"%s","goarch":"arm64"}\n' "$2" "$3" "$4" >"$d/buildinfo.json"
+	(cd "$d" && for f in buildinfo.json mgit-sandboxd lib/libkrun.1.dylib THIRD_PARTY/libkrun-LICENSE; do
+		printf '%s  ./%s\n' "$(sha256 "$f")" "$f"
+	done >MANIFEST.sha256)
+}
 # run <prebuilt-root> <goos> <version> <commit> <date> <out>
 run() {
 	env MGIT_LINUX_PREBUILT="$1" GOOS="$2" GOARCH=amd64 bash "$shim" build -trimpath \
+		"-ldflags=-s -w -X $X.version=$3 -X $X.commit=$4 -X $X.date=$5" -o "$6" ./cmd/mgit-sandboxd/ 2>&1
+}
+# run_darwin <prebuilt-root> <goarch> <version> <commit> <date> <out>
+run_darwin() {
+	env -u MGIT_LINUX_PREBUILT MGIT_DARWIN_PREBUILT="$1" GOOS=darwin GOARCH="$2" bash "$shim" build -trimpath \
 		"-ldflags=-s -w -X $X.version=$3 -X $X.commit=$4 -X $X.date=$5" -o "$6" ./cmd/mgit-sandboxd/ 2>&1
 }
 expect() { # <label> <want: ok|fail> <needle> <output> <rc>
@@ -78,8 +95,30 @@ out="$(env -u MGIT_LINUX_PREBUILT GOOS=linux GOARCH=amd64 bash "$shim" build -o 
 expect "MGIT_LINUX_PREBUILT unset: refused with the build instructions" fail "build-linux-sandboxd.sh" "$out" "$rc"
 
 o="$T/o8/x/mgit-sandboxd"; mkdir -p "$(dirname "$o")"
-out="$(run "$good" darwin 0.7.0 abc1234 2026-09-24T00:00:00Z "$o")"; rc=$?
-expect "a non-Linux target is refused" fail "Linux-only" "$out" "$rc"
+out="$(run "$good" windows 0.7.0 abc1234 2026-09-24T00:00:00Z "$o")"; rc=$?
+expect "a target with no prebuilt daemon is refused" fail "Linux and darwin/arm64 only" "$out" "$rc"
+
+mac="$T/mac"; darwin_fixture "$mac" 0.7.0 abc1234 2026-09-24T00:00:00Z
+o="$T/o9/mgit-sandboxd-darwin_darwin_arm64_v8.0/mgit-sandboxd"; mkdir -p "$(dirname "$o")"
+out="$(run_darwin "$mac" arm64 0.7.0 abc1234 2026-09-24T00:00:00Z "$o")"; rc=$?
+expect "darwin/arm64: the daemon, lib/ and THIRD_PARTY/ are placed" ok "manifest verified in and out" "$out" "$rc"
+[ -f "$(dirname "$o")/lib/libkrun.1.dylib" ] && [ -f "$(dirname "$o")/THIRD_PARTY/libkrun-LICENSE" ] ||
+	{ echo "  FAIL  the darwin case did not place lib/ and THIRD_PARTY/"; failures=$((failures + 1)); }
+
+o="$T/o10/x/mgit-sandboxd"; mkdir -p "$(dirname "$o")"
+out="$(run_darwin "$mac" arm64 0.7.0 def5678 2026-09-24T00:00:00Z "$o")"; rc=$?
+expect "darwin: a release whose commit differs from the daemon's is refused" fail "stamped commit=abc1234" "$out" "$rc"
+
+o="$T/o11/x/mgit-sandboxd"; mkdir -p "$(dirname "$o")"
+out="$(run_darwin "$mac" amd64 0.7.0 abc1234 2026-09-24T00:00:00Z "$o")"; rc=$?
+expect "darwin/amd64 has no prebuilt daemon and is refused" fail "Linux and darwin/arm64 only" "$out" "$rc"
+
+out="$(env -u MGIT_DARWIN_PREBUILT GOOS=darwin GOARCH=arm64 bash "$shim" build -o "$T/o12/mgit-sandboxd" . 2>&1)"; rc=$?
+expect "MGIT_DARWIN_PREBUILT unset: refused with the build instructions" fail "build-darwin-sandboxd.sh" "$out" "$rc"
+
+o="$T/o13/x/mgit-sandboxd"; mkdir -p "$(dirname "$o")"
+out="$(run_darwin "$good" arm64 0.7.0 abc1234 2026-09-24T00:00:00Z "$o")"; rc=$?
+expect "darwin: a root holding only Linux prebuilts is refused" fail "no prebuilt daemon at" "$out" "$rc"
 
 out="$(bash "$shim" version 2>&1)"; rc=$?
 expect "any verb but build is refused" fail "only answers 'build'" "$out" "$rc"
