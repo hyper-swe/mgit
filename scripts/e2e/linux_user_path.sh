@@ -44,6 +44,11 @@ fail() {
 	exit 1
 }
 step() { printf '\n== %s ==\n' "$1"; }
+# first reports the head of a verb's output, where its error line is. mgit
+# follows an unplaced failure with a generic footer, so the TAIL of a failed
+# run is the footer and never the cause (a first run of this leg printed only
+# the footer and hid the error).
+first() { printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | head -"${2:-3}"; }
 
 step "1 host"
 uname -sm
@@ -68,26 +73,26 @@ printf 'v1\n' >"$P/f.txt"
 echo "  PASS"
 
 step "4 compose the release's guest base (mgit sandbox base from)"
-out="$(cd "$R" && mgit sandbox base from 2>&1)" || fail "compose" "$(printf '%s' "$out" | tail -3)"
+out="$(cd "$R" && mgit sandbox base from 2>&1)" || fail "compose" "$(first "$out")"
 printf '%s\n' "$out" | grep -E '^(Composing|Registered)' || fail "compose" "no base was registered"
 echo "  PASS"
 
 step "5 launch"
 out="$(cd "$R" && mgit sandbox launch --task-id "$TASK" --worktree "$P" 2>&1)" ||
-	fail "launch" "$(printf '%s' "$out" | tail -3)"
+	fail "launch" "$(first "$out")"
 printf '%s\n' "$out" | head -2
 echo "  PASS"
 
 step "6 exec (the first use boots the guest)"
 out="$(cd "$P" && timeout 300 mgit run -- sh -c 'echo boot-ok; cat f.txt' 2>&1)"
-printf '%s\n' "$out" | tail -4
-printf '%s\n' "$out" | grep -qx 'boot-ok' || fail "exec" "the guest did not run the command"
+first "$out" 6
+printf '%s\n' "$out" | grep -qx 'boot-ok' || fail "exec" "the guest did not run the command: $(first "$out" 1)"
 printf '%s\n' "$out" | grep -qx 'v1' || fail "exec" "the guest does not see the worktree"
 echo "  PASS"
 
 step "7 sync a host edit into the running guest"
 printf 'v2\n' >"$P/f.txt"
-out="$(cd "$R" && mgit sandbox sync --task-id "$TASK" --force 2>&1)" || fail "sync" "$(printf '%s' "$out" | tail -3)"
+out="$(cd "$R" && mgit sandbox sync --task-id "$TASK" --force 2>&1)" || fail "sync" "$(first "$out")"
 printf '%s\n' "$out" | head -2
 got="$(cd "$P" && timeout 120 mgit run -- cat f.txt 2>&1)"
 [ "$got" = v2 ] || fail "sync" "the guest read '$got' after the sync, not v2"
@@ -99,7 +104,7 @@ step "8 export a file the guest made"
 (cd "$P" && timeout 120 mgit run -- sh -c 'mkdir -p out && echo made-in-guest > out/exported.txt') >/dev/null 2>&1 ||
 	fail "export" "the guest could not write out/exported.txt"
 out="$(cd "$R" && mgit sandbox export --task-id "$TASK" out/exported.txt "$W/exported.txt" 2>&1)" ||
-	fail "export" "$(printf '%s' "$out" | tail -3)"
+	fail "export" "$(first "$out")"
 [ "$(cat "$W/exported.txt" 2>/dev/null)" = made-in-guest ] || fail "export" "the exported file is missing or wrong"
 echo "  PASS"
 
