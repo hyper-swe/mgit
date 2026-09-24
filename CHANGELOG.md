@@ -132,9 +132,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seven, and `squash --to-git` and `export --format git` put them into
   the patch you apply. The private store is now provisioned with the
   worktree's record, and the guest skips exactly what the host skips.
-  A generated file you stage by name still lands. A record that is a
-  symlink, or anything but a regular file, refuses the launch rather
-  than being followed.
+  A generated file you stage by name still lands. The record is read
+  without following any link: a worktree `.mgit` that is not a real
+  directory, or a record that is not a regular file, refuses the launch.
 
 ## [0.6.8] - 2026-09-22
 

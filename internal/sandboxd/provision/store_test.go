@@ -329,6 +329,11 @@ func TestProvision_CarriesTheWorktreesGeneratedList(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Join(wt, ".mgit"), 0o750))
 			require.NoError(t, os.Symlink(outside, filepath.Join(wt, ".mgit", "generated")))
 		}, nil, "not a regular file"},
+		{"a_symlinked_mgit_dir_is_refused", func(t *testing.T, wt string) {
+			outside := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(outside, "generated"), []byte("secret-line\n"), 0o600))
+			require.NoError(t, os.Symlink(outside, filepath.Join(wt, ".mgit")))
+		}, nil, "not a directory"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
