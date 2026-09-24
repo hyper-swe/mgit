@@ -112,6 +112,9 @@ jobs:
   # is validated from goreleaser's own snapshot artifacts.
   install-channels:
     name: Install channel (${{ matrix.channel }})
+    # The release archive's Linux daemon is the libkrun build the
+    # linux-sandboxd job assembles; goreleaser takes it from there. Refs: MGIT-229
+    needs: linux-sandboxd
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -132,8 +135,16 @@ jobs:
           test -x "$bin/mgit-sandboxd" || { echo "mgit-sandboxd not installed by go install"; exit 1; }
           echo "BINDIR=$bin" >> "$GITHUB_ENV"
 
+      - uses: actions/download-artifact@v4
+        if: matrix.channel == 'release-archive'
+        with:
+          name: linux-sandboxd-amd64
+          path: ${{ runner.temp }}/prebuilt
+
       - name: Build release archive (Linux) and extract
         if: matrix.channel == 'release-archive'
+        env:
+          MGIT_LINUX_PREBUILT: ${{ runner.temp }}/prebuilt
         run: |
           # -t 900: the MGIT-143 rule (4x the slowest success, up the ladder)
           # applied to this step's own history -- worst success 235s, n=310.
@@ -164,25 +175,142 @@ jobs:
       - name: Core-loop e2e against the installed binaries
         run: bash scripts/e2e/core_loop.sh "$BINDIR"
 
+  # THE LINUX SANDBOX DAEMON, built where it can be built — the ONE place it
+  # is built, for every pull request and for the release alike (release.yml
+  # runs this workflow as its gate and ships the artifacts this job uploads
+  # in that run). The Linux archives
+  # ship mgit-sandboxd linked against libkrun, with libkrun and libkrunfw
+  # beside it in lib/ (no Ubuntu release packages either library, and
+  # firecracker refuses the sync and export the agent loop needs:
+  # hyper-swe/mgit#12). It is cgo, so it cannot come from the macOS runner the
+  # rest of the release is built on; each architecture is built natively here,
+  # inside ubuntu:20.04 so the glibc floor is 2.31, by the same assembler the
+  # e2e gate runs on every pull request. The assembler verifies its own output
+  # (run paths, NET=1, glibc floor, a clean-environment load with the build
+  # prefix hidden, and a negative control) before anything is uploaded.
+  # Refs: MGIT-229, ADR-016
+  linux-sandboxd:
+    name: Linux sandbox daemon (${{ matrix.arch }}, libkrun bundled)
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ubuntu:20.04
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # DECLARED EXCEPTION to the MGIT-143 fetch guard, the same ordering
+      # problem as the other ubuntu:20.04 jobs: checkout needs git, a bare
+      # container has none, and the guard script arrives WITH the checkout.
+      # Clause 2 is served by timeout-minutes; everything after checkout goes
+      # through the guard (scripts/release/linux-build-prereqs.sh).
+      # fetch-guard: runs before actions/checkout, so the guard script is not
+      # on disk yet; clause 2 is served by timeout-minutes, clauses 1 and 3
+      # are not served. Refs: MGIT-143, MGIT-144
+      - name: git, so the checkout carries history
+        timeout-minutes: 5
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git ca-certificates curl
+
+      - uses: actions/checkout@v4
+        with:
+          # goreleaser stamps {{.ShortCommit}} and {{.CommitDate}} from a full
+          # clone; the daemon must be stamped from the same history.
+          fetch-depth: 0
+
+      - name: Build prerequisites (toolchains, guarded)
+        run: |
+          bash scripts/release/linux-build-prereqs.sh
+          echo "/usr/local/go/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cache the pinned libkrunfw kernel tarball
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mgit-libkrun
+          key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}
+
+      - name: Assemble and verify the daemon + its bundle
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Expanded by the shell, never a literal ~ (MGIT-238).
+          export MGIT_LIBKRUN_CACHE="$HOME/.cache/mgit-libkrun"
+          export LIBKRUN_BUILD_DIR="$RUNNER_TEMP/libkrun-src"
+          # A release stamps its tag; anything else stamps a version the
+          # user-path leg tags locally, so goreleaser runs NON-snapshot there
+          # and the stamp check a release relies on runs on every pull
+          # request, not first on a tag that cannot be re-pointed.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0-ci.$GITHUB_RUN_ID"; fi
+          MGIT_BUILD_VERSION="$v" \
+            bash scripts/release/build-linux-sandboxd.sh "$RUNNER_TEMP/prebuilt/linux_${{ matrix.arch }}"
+
+      # libkrunfw compiles a GPL-2.0 kernel into itself, so the release that
+      # ships it publishes that kernel's corresponding source: the pinned
+      # kernel tarball (digest-checked again here), libkrunfw's own tree at its
+      # tag (the patches, configuration and build scripts applied to it), and
+      # libkrun's. Architecture-independent, so taken from one leg.
+      - name: The corresponding source (a release run only)
+        if: matrix.arch == 'amd64' && github.ref_type == 'tag'
+        run: |
+          . scripts/sandbox-image/pins.env
+          src="$RUNNER_TEMP/dist-sources"; mkdir -p "$src"
+          tarball="$HOME/.cache/mgit-libkrun/linux-$LIBKRUNFW_KERNEL_VERSION.tar.xz"
+          echo "$LIBKRUNFW_KERNEL_SHA256  $tarball" | sha256sum -c -
+          cp "$tarball" "$src/libkrunfw-$LIBKRUNFW_VERSION-kernel-linux-$LIBKRUNFW_KERNEL_VERSION.tar.xz"
+          git -C "$RUNNER_TEMP/libkrun-src/libkrunfw" archive --format=tar.gz \
+            --prefix="libkrunfw-$LIBKRUNFW_VERSION/" -o "$src/libkrunfw-$LIBKRUNFW_VERSION-source.tar.gz" HEAD
+          git -C "$RUNNER_TEMP/libkrun-src/libkrun" archive --format=tar.gz \
+            --prefix="libkrun-$LIBKRUN_VERSION/" -o "$src/libkrun-$LIBKRUN_VERSION-source.tar.gz" HEAD
+          ls -l "$src"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-sandboxd-${{ matrix.arch }}
+          path: ${{ runner.temp }}/prebuilt/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.arch == 'amd64' && github.ref_type == 'tag'
+        with:
+          name: linux-sources
+          path: ${{ runner.temp }}/dist-sources/
+          if-no-files-found: error
+
   # THE DOCUMENTED USER PATH ON LINUX, as a release user meets it: the
-  # release-shaped Linux layout (the same goreleaser build ids the archive
-  # ships, guest/ beside the binaries), the documented host requirements
-  # (/dev/kvm, the firecracker VMM, e2fsprogs + iptables), and NOTHING
-  # test-only. No MGIT_GUEST_* hook is set: those are how the firecracker live
-  # gate below boots, and why its green says nothing about this path.
-  # Compose -> launch -> exec -> sync -> export -> remove, each step PASS or
-  # the exact failure. RED until the Linux release carries a backend that
-  # serves the path (MGIT-229, hyper-swe/mgit#12). Refs: MGIT-229
+  # release-shaped Linux layout (the archive's own goreleaser build ids, the
+  # libkrun daemon the linux-sandboxd job built with its lib/ beside it,
+  # guest/ beside the binaries), the one documented host requirement
+  # (/dev/kvm), and NOTHING test-only. No MGIT_GUEST_* hook is set: those are
+  # how the firecracker live gate below boots, and why its green says nothing
+  # about this path. Compose -> launch -> exec -> sync -> export -> remove,
+  # each step PASS or the exact failure. It was RED while the Linux archive
+  # carried the firecracker daemon (hyper-swe/mgit#12).
+  #
+  # goreleaser runs NON-snapshot here, against a local tag on this run's
+  # commit (never pushed) — so the build stand-in's stamp check, the one a
+  # release depends on, runs on every pull request. Refs: MGIT-229
   linux-user-path:
     name: Linux user path (release-shaped, stock runner)
+    needs: linux-sandboxd
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # the same full history the linux-sandboxd job stamped from
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.6"
 
-      - name: Require /dev/kvm (a documented host requirement)
+      - name: Require /dev/kvm (the documented host requirement)
         run: |
           set -euo pipefail
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
@@ -193,32 +321,45 @@ jobs:
           [ -r /dev/kvm ] && [ -w /dev/kvm ] \
             || { echo "FATAL: /dev/kvm not usable — the user path cannot run"; exit 1; }
 
-      - name: The documented Linux host requirements (firecracker VMM, e2fsprogs, iptables)
-        run: |
-          sudo bash scripts/sandbox-image/fetch-firecracker.sh amd64 /usr/local/bin/firecracker
-          apt_restore='sudo rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/partial/*; sudo dpkg --configure -a'
-          bash scripts/ci/guard-fetch.sh -t 900 -l apt-update -c "$apt_restore" -- \
-            sudo apt-get update -qq
-          bash scripts/ci/guard-fetch.sh -t 900 -l apt-install-host-tooling -c "$apt_restore" -- \
-            sudo apt-get install -y -qq e2fsprogs iproute2 iptables
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-sandboxd-amd64
+          path: ${{ runner.temp }}/prebuilt
 
-      - name: Build the release-shaped Linux layout (goreleaser snapshot, the archive's own build ids)
+      - name: Build the release-shaped Linux layout (goreleaser, the archive's own build ids)
+        env:
+          MGIT_LINUX_PREBUILT: ${{ runner.temp }}/prebuilt
         run: |
+          set -euo pipefail
           # The same pin and bound as the release-archive install channel above.
           GORELEASER_VERSION=v2.17.1
           bash scripts/ci/guard-fetch.sh -t 900 -l goreleaser-install \
             -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
             go install github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}
-          goreleaser build --snapshot --clean --skip=before \
+          # A release run is already on its tag; any other run tags this
+          # commit locally with the version linux-sandboxd stamped.
+          if [ "$GITHUB_REF_TYPE" != tag ]; then git tag "v0.0.0-ci.$GITHUB_RUN_ID"; fi
+          goreleaser build --clean --skip=before,validate \
             --id mgit --id mgit-sandboxd-linux --id mgit-guest --single-target
           bin="$RUNNER_TEMP/userbin"; mkdir -p "$bin/guest"
           mgit_bin="$(find dist -type f -path '*mgit_linux*' -name mgit -perm -u+x | head -1)"
+          sbx_dir="$(dirname "$(find dist -type f -path '*mgit-sandboxd-linux_linux*' -name mgit-sandboxd | head -1)")"
           cp "$mgit_bin" "$bin/mgit"
-          cp "$(find dist -type f -name mgit-sandboxd -perm -u+x | head -1)" "$bin/mgit-sandboxd"
+          cp "$sbx_dir/mgit-sandboxd" "$bin/mgit-sandboxd"
+          # lib/ and THIRD_PARTY/ beside the daemon, as the archive lays them out.
+          cp -R "$sbx_dir/lib" "$sbx_dir/THIRD_PARTY" "$bin/"
           # guest/ as the archive lays it out: the guest runs the same CLI the host does.
           cp "$mgit_bin" "$bin/guest/mgit"
           cp "$(find dist -type f -name mgit-guest -perm -u+x | head -1)" "$bin/guest/mgit-guest"
-          ls -l "$bin" "$bin/guest"
+          ls -lR "$bin"
+          # The two binaries of one archive report one build.
+          m="$("$bin/mgit" --version)"; d="$("$bin/mgit-sandboxd" --version)"
+          echo "$m"; echo "$d"
+          [ "${m#mgit version }" = "${d#mgit-sandboxd version }" ] \
+            || { echo "FATAL: mgit and mgit-sandboxd report different builds"; exit 1; }
+
+      - name: The bundle loads on this host (no libkrun installed here)
+        run: bash scripts/release/verify-linux-sandboxd.sh "$RUNNER_TEMP/userbin"
 
       - name: The user path — must PASS
         run: bash scripts/e2e/linux_user_path.sh "$RUNNER_TEMP/userbin"
