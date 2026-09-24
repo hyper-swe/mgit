@@ -15,8 +15,12 @@
 # prefer it over "grab the tarball from the releases page".
 #
 # Environment:
-#   MGIT_VERSION   tag to install (default: the latest release)
-#   MGIT_PREFIX    install prefix (default: /usr/local if writable, else ~/.local)
+#   MGIT_VERSION        tag to install (default: the latest release)
+#   MGIT_PREFIX         install prefix (default: /usr/local if writable, else ~/.local)
+#   MGIT_DOWNLOAD_BASE  where the release's archive and checksums.txt are fetched
+#                       from (default: the GitHub release for MGIT_VERSION) — a
+#                       mirror or an air-gapped copy (file://…). The checksum is
+#                       verified against what was fetched either way.
 #
 # Layout, matching what mgit itself looks for (cmd/mgit/sandbox_base.go):
 #   $PREFIX/bin/mgit                    the CLI
@@ -25,6 +29,11 @@
 #       the LINUX guest pair `mgit sandbox base from <image>` injects. It goes
 #       in libexec, never bin: everything in bin lands on PATH, and mgit-guest
 #       is guest-only — it refuses to run on a host. Refs: MGIT-65
+#   $PREFIX/lib/mgit/{libkrun.so.1,libkrunfw.so.5}
+#       Linux only: the hypervisor libraries the daemon is linked against,
+#       where its run path looks ($ORIGIN/../lib/mgit). Refs: MGIT-230.1
+#   $PREFIX/share/mgit/THIRD_PARTY/
+#       their license texts and the note naming their published source.
 set -eu
 
 REPO="hyper-swe/mgit"
@@ -83,7 +92,7 @@ say "==> mgit $version ($os_name/$arch_name)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 archive="mgit_${bare}_${os_name}_${arch_name}.tar.gz"
-base_url="https://github.com/$REPO/releases/download/$version"
+base_url="${MGIT_DOWNLOAD_BASE:-https://github.com/$REPO/releases/download/$version}"
 
 say "==> downloading $archive"
 fetch "$base_url/$archive" "$tmp/$archive" || die "no archive $archive in release $version"
@@ -134,6 +143,28 @@ if [ -d "$tmp/guest" ]; then
 	done
 	say "    installed $guestdir/ (guest pair for 'mgit sandbox base from')"
 fi
+# The Linux archive bundles the daemon's hypervisor libraries (libkrun and
+# libkrunfw) in lib/. They go where the daemon's run path looks for them from
+# $PREFIX/bin — $PREFIX/lib/mgit — never onto PATH, and their license texts
+# go with them. Refs: MGIT-230.1, MGIT-229
+if [ -d "$tmp/lib" ]; then
+	libdir="$prefix/lib/mgit"
+	mkdir -p "$libdir" || die "cannot create $libdir"
+	for l in "$tmp"/lib/*; do
+		[ -f "$l" ] || continue
+		install -m 0644 "$l" "$libdir/$(basename "$l")"
+	done
+	say "    installed $libdir/ (the sandbox daemon's hypervisor libraries)"
+fi
+if [ -d "$tmp/THIRD_PARTY" ]; then
+	docdir="$prefix/share/mgit/THIRD_PARTY"
+	mkdir -p "$docdir" || die "cannot create $docdir"
+	for d in "$tmp"/THIRD_PARTY/*; do
+		[ -f "$d" ] || continue
+		install -m 0644 "$d" "$docdir/$(basename "$d")"
+	done
+	say "    installed $docdir/ (license texts and source notice)"
+fi
 
 # --- prove it runs ---------------------------------------------------------
 # The installed binary, not the one in the temp dir: this is the thing that
@@ -143,6 +174,18 @@ if ! out="$("$bindir/mgit" --version 2>&1)"; then
 fi
 say ""
 say "$out"
+# On Linux the archive carries everything the daemon links, so a daemon that
+# does not load here is an incomplete install, said now rather than at the
+# first sandbox. (On macOS the daemon links a Homebrew libkrun the user
+# installs separately, so it is not asked here.) Refs: MGIT-230.1
+if [ "$os_name" = linux ] && [ -f "$bindir/mgit-sandboxd" ]; then
+	if ! sout="$("$bindir/mgit-sandboxd" --version 2>&1)"; then
+		die "the installed sandbox daemon does not load: $sout
+  Its libraries belong in $prefix/lib/mgit. Core mgit is installed and works;
+  the sandbox will not until the daemon loads."
+	fi
+	say "$sout"
+fi
 
 case ":$PATH:" in
 *":$bindir:"*) ;;

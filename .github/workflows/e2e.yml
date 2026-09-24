@@ -301,9 +301,18 @@ jobs:
   # commit (never pushed) — so the build stand-in's stamp check, the one a
   # release depends on, runs on every pull request. Refs: MGIT-229
   linux-user-path:
-    name: Linux user path (release-shaped, stock runner)
+    name: Linux user path (release-shaped, stock runner, ${{ matrix.install }})
     needs: linux-sandboxd
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # archive: the extracted archive, lib/ beside the daemon.
+        # install-script: the same archive installed by install.sh from a
+        # local copy of the release, so the daemon runs from <prefix>/bin
+        # with its libraries in <prefix>/lib/mgit — the README's recommended
+        # path. Refs: MGIT-230.1
+        install: [archive, install-script]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -361,11 +370,30 @@ jobs:
           [ "${m#mgit version }" = "${d#mgit-sandboxd version }" ] \
             || { echo "FATAL: mgit and mgit-sandboxd report different builds"; exit 1; }
 
+      - name: Install it the way this matrix leg says
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.install }}" = archive ]; then
+            echo "BIN=$RUNNER_TEMP/userbin" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          # A release-shaped tarball and checksums.txt from the laid-out
+          # archive, installed by the repository's install.sh as a user runs
+          # it, from a local copy of the release instead of GitHub.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then ver="$GITHUB_REF_NAME"; else ver="v0.0.0-ci.$GITHUB_RUN_ID"; fi
+          rel="$RUNNER_TEMP/release"; mkdir -p "$rel"
+          name="mgit_${ver#v}_linux_amd64.tar.gz"
+          tar -czf "$rel/$name" -C "$RUNNER_TEMP/userbin" .
+          (cd "$rel" && sha256sum "$name" > checksums.txt)
+          MGIT_VERSION="$ver" MGIT_DOWNLOAD_BASE="file://$rel" MGIT_PREFIX="$RUNNER_TEMP/prefix" sh install.sh
+          find "$RUNNER_TEMP/prefix" -type f | sort
+          echo "BIN=$RUNNER_TEMP/prefix/bin" >> "$GITHUB_ENV"
+
       - name: The bundle loads on this host (no libkrun installed here)
-        run: bash scripts/release/verify-linux-sandboxd.sh "$RUNNER_TEMP/userbin"
+        run: bash scripts/release/verify-linux-sandboxd.sh "$BIN"
 
       - name: The user path — must PASS
-        run: bash scripts/e2e/linux_user_path.sh "$RUNNER_TEMP/userbin"
+        run: bash scripts/e2e/linux_user_path.sh "$BIN"
 
   # LIVE Linux containment gate: real firecracker microVMs on real KVM.
   #

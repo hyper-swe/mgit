@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lib/` by its own run path. `linux_arm64` is built and load-checked but not
   boot-checked before release, because no hosted CI runner offers KVM on
   arm64. A `go install` of the daemon on Linux is still the firecracker build.
+- **`install.sh` and the Homebrew formula install the Linux bundle
+  (MGIT-230.1).** The libraries go to `<prefix>/lib/mgit` (the Homebrew
+  keg's `lib/mgit`), where the daemon's run path looks from `bin/`, and the
+  license texts to `<prefix>/share/mgit/THIRD_PARTY`. On Linux, `install.sh`
+  proves the installed daemon loads and says so when it does not.
+  `MGIT_DOWNLOAD_BASE` installs from a mirror or an air-gapped copy of a
+  release, still checksum-verified. The formula's Linux caveat no longer asks
+  for a firecracker binary.
 - **Every release that bundles libkrunfw publishes the source of the Linux
   kernel inside it.** libkrunfw carries a GPL-2.0-only Linux kernel that runs
   only inside the guest. The kernel source, libkrunfw's patches and
