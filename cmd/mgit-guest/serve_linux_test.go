@@ -4,6 +4,8 @@ package main
 
 import (
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,14 +32,14 @@ func withCmdline(t *testing.T, contents string) {
 // attempting a mount) — the no-worktree sandbox case.
 func TestMountWorktree_EmptyDescriptor_NoMount(t *testing.T) {
 	withCmdline(t, "console=ttyS0 root=/dev/vda")
-	assert.NoError(t, mountWorktree())
+	assert.NoError(t, mountWorktree(slog.New(slog.NewTextHandler(io.Discard, nil))))
 }
 
 // TestMountWorktree_InvalidDescriptor_FailsClosed verifies a partial
 // descriptor (missing source) is rejected before any mount is attempted.
 func TestMountWorktree_InvalidDescriptor_FailsClosed(t *testing.T) {
 	withCmdline(t, "mgit.worktree=/home/dev/wt mgit.worktree_fs=ext4")
-	err := mountWorktree()
+	err := mountWorktree(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "incomplete worktree mount descriptor")
 }
@@ -54,7 +56,7 @@ func TestMountWorktree_CmdlineUnreadableNoEnvTokens_NoOp(t *testing.T) {
 	procCmdline = filepath.Join(t.TempDir(), "no-such-cmdline")
 	t.Cleanup(func() { procCmdline = orig })
 	t.Setenv(guestboot.EnvBootTokens, "")
-	assert.NoError(t, mountWorktree())
+	assert.NoError(t, mountWorktree(slog.New(slog.NewTextHandler(io.Discard, nil))))
 }
 
 // errStopAfterScratch halts makeRootWritableWith right after the scratch
