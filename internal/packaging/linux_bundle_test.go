@@ -205,4 +205,8 @@ func TestReleaseWorkflow_SmokesThePublishedLinuxArchive(t *testing.T) {
 	} {
 		assert.Contains(t, job, want, "the release-smoke-linux job must carry %q", want)
 	}
+	// Each check reports on its own: the boot runs even when the bundle check
+	// failed, so a red archive shows every way it is red (v0.6.8 fails both).
+	assert.Contains(t, job, "if: ${{ !cancelled() && env.BIN != '' }}\n        run: bash scripts/e2e/linux_user_path.sh",
+		"the user path runs after a failed bundle check, as long as the install produced BIN")
 }

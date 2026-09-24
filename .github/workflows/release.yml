@@ -285,10 +285,17 @@ jobs:
             || { echo "FATAL: the published archive carries two builds"; exit 1; }
           bash scripts/release/verify-linux-sandboxd.sh "$BIN"
 
+      # Each check below reports on its own, whether or not the one before it
+      # passed: an archive that fails its bundle check must still show
+      # whether it boots, and a red names every failing check, not only the
+      # first. The install above is a precondition, so a failed install
+      # still stops the job (BIN is unset without it). Refs: MGIT-230.6
       - name: The documented user path, from the installed release
+        if: ${{ !cancelled() && env.BIN != '' }}
         run: bash scripts/e2e/linux_user_path.sh "$BIN"
 
       - name: The release carries the kernel's corresponding source, under its checksums
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag || github.ref_name }}
