@@ -131,13 +131,17 @@ run "mgit doctor --json" "$R" mgit doctor --json
 daemon_log "final"
 run "mgit sandbox daemons stop" "$R" mgit sandbox daemons stop --repo-root "$R"
 
+if [ -n "${WALK_SKIP_ROOT:-}" ]; then
+	echo "root section skipped (WALK_SKIP_ROOT set: this host's root home is not ours to write)"
+else
 section "the same launch as root, in its own repo (firecracker egress wiring needs host privileges)"
 RR="$W/rootrepo"
 mkdir -p "$RR"
-run "root: git init + mgit init + base from" "$RR" sudo env "PATH=$PATH" sh -c 'git init -q && git -c user.email=w@example.invalid -c user.name=w commit -q --allow-empty -m init && mgit init >/dev/null && mgit sandbox image init >/dev/null && mgit sandbox base from 2>&1 | tail -3'
-run "root: launch allowlist" "$RR" sudo env "PATH=$PATH" mgit sandbox launch --task-id WALK-3 --worktree "$P" --network allowlist --allow registry.npmjs.org:443
-run "root: first exec" "$RR" sudo env "PATH=$PATH" mgit sandbox exec --task-id WALK-3 -- echo root-boot
-run "root: remove + stop" "$RR" sudo env "PATH=$PATH" sh -c "mgit sandbox remove WALK-3 --force; mgit sandbox daemons stop --repo-root '$RR'"
+run "root: git init + mgit init + base from" "$RR" sudo -n env "PATH=$PATH" sh -c 'git init -q && git -c user.email=w@example.invalid -c user.name=w commit -q --allow-empty -m init && mgit init >/dev/null && mgit sandbox image init >/dev/null && mgit sandbox base from 2>&1 | tail -3'
+run "root: launch allowlist" "$RR" sudo -n env "PATH=$PATH" mgit sandbox launch --task-id WALK-3 --worktree "$P" --network allowlist --allow registry.npmjs.org:443
+run "root: first exec" "$RR" sudo -n env "PATH=$PATH" mgit sandbox exec --task-id WALK-3 -- echo root-boot
+run "root: remove + stop" "$RR" sudo -n env "PATH=$PATH" sh -c "mgit sandbox remove WALK-3 --force; mgit sandbox daemons stop --repo-root '$RR'"
+fi
 
 section "SUMMARY (one line per step; exit code is the command's own)"
 printf '%s\n' "${SUMMARY[@]}"
