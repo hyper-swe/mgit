@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Install what scripts/release/build-linux-sandboxd.sh needs, inside a fresh
 # ubuntu:20.04 container, as root: the libkrun/libkrunfw build toolchain
-# (a kernel compile, bindgen's libclang-18 from focal-updates, patchelf), the
+# (a kernel compile, bindgen's libclang-18 from focal-updates, patchelf, and
+# cpio — libkrunfw's aarch64 kernel config sets CONFIG_IKHEADERS=y, whose
+# kheaders archive the kernel build makes with cpio; the x86_64 config does
+# not, so only the arm64 build needs it), the
 # pinned Go toolchain for this architecture, and rustup with the musl target
 # krun-init-blob links against. The same recipe the CI libkrun jobs run, in
 # one place so the release, the e2e leg and a developer's docker run agree.
@@ -29,7 +32,7 @@ apt_restore='rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/partial/*; dpkg
 "$GUARD" -t 300 -l apt-update -c "$apt_restore" -- apt-get update -qq
 DEBIAN_FRONTEND=noninteractive "$GUARD" -t 600 -l apt-install-libkrun-prereqs -c "$apt_restore" -- \
 	apt-get install -y -qq --no-install-recommends \
-	build-essential flex bison libelf-dev python3-pyelftools bc \
+	build-essential flex bison libelf-dev python3-pyelftools bc cpio \
 	pkg-config curl git ca-certificates patchelf binutils \
 	libclang1-18 libclang-18-dev libclang-common-18-dev libllvm18
 

@@ -195,7 +195,10 @@ jobs:
     container:
       image: ubuntu:20.04
     strategy:
-      fail-fast: true
+      # One architecture's failure must not hide the other's result: the
+      # user-path leg needs only amd64, and an arm64-only defect (MGIT-229's
+      # first run: cpio) cancelled a healthy amd64 build under fail-fast.
+      fail-fast: false
       matrix:
         include:
           - arch: amd64

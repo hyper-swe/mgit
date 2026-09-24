@@ -23,7 +23,7 @@
 #           export LIBRARY_PATH=$PREFIX/lib64 LD_LIBRARY_PATH=$PREFIX/lib64
 #
 # Prerequisites (Ubuntu): build-essential flex bison libelf-dev
-# python3-pyelftools bc pkg-config curl git ca-certificates patchelf, LLVM 18
+# python3-pyelftools bc cpio pkg-config curl git ca-certificates patchelf, LLVM 18
 # for bindgen, and a rustup toolchain WITH the musl target
 # (`rustup target add $(uname -m)-unknown-linux-musl` — krun-init-blob's
 # build.rs links krun-init as a static musl binary and panics without it).
