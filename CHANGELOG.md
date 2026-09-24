@@ -167,6 +167,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   this host's manifest did not, and prints the moved-tag NOTE only when
   the image itself changed.
 
+### Fixed
+
+- **A guest base set through a symlink is pinned to the tree behind it
+  (MGIT-227).** `mgit sandbox base set <symlink>` pinned the SHA-256 of
+  empty input: the tree walk did not follow a symlinked root, so nothing
+  was hashed, and the pin then verified whatever the link pointed at.
+  `base set` now resolves the path and records the tree itself, and
+  `TreeDigest` walks a symlinked root as the tree it names. A base pinned
+  before this through a symlink fails verification at its next launch, and
+  the message says that pin covered no bytes and how to re-pin it. The
+  check that refuses a base inside the repository now also compares by
+  file identity.
+
 ## [0.6.8] - 2026-09-22
 
 **The base a release vouches for is a digest now, and `mgit doctor` says when
