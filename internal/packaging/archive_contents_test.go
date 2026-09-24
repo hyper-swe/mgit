@@ -68,11 +68,44 @@ func TestArchives_ShipTheHostBinariesTheyClaimTo(t *testing.T) {
 			if !contains(names, host) {
 				t.Errorf("%s is missing the %s binary", base, host)
 			}
-			// The sandbox backends: linux (firecracker) and darwin/arm64
-			// (libkrun). Nowhere else has one, by design.
+			// The sandbox backends: linux and darwin/arm64, both libkrun
+			// (ADR-010, ADR-016). Nowhere else has one, by design.
 			wantDaemon := strings.Contains(base, "linux") || strings.Contains(base, "darwin_arm64")
 			if got := contains(names, "mgit-sandboxd"); got != wantDaemon {
 				t.Errorf("%s: mgit-sandboxd present = %v, want %v", base, got, wantDaemon)
+			}
+		})
+	}
+}
+
+// linuxBundle is what a Linux archive must carry beside mgit-sandboxd for
+// the daemon to boot a guest on a stock host, and for the release to carry the
+// license texts that shipping libkrun and libkrunfw obliges. goreleaser skips
+// an archive glob that matches nothing WITHOUT failing, so this test on the
+// real tarball is what notices a Linux archive that lost its lib/.
+// Refs: MGIT-229, ADR-016
+var linuxBundle = []string{
+	"lib/libkrun.so.1",
+	"lib/libkrunfw.so.5",
+	"THIRD_PARTY/SOURCES.txt",
+	"THIRD_PARTY/libkrun-LICENSE",
+	"THIRD_PARTY/libkrunfw-LICENSE-GPL-2.0-only",
+	"THIRD_PARTY/libkrunfw-LICENSE-LGPL-2.1-only",
+}
+
+func TestArchives_LinuxCarryTheBundle(t *testing.T) {
+	for _, archive := range builtArchives(t) {
+		base := filepath.Base(archive)
+		t.Run(base, func(t *testing.T) {
+			names, err := archiveEntries(archive)
+			if err != nil {
+				t.Fatalf("read archive: %v", err)
+			}
+			linux := strings.Contains(base, "_linux_")
+			for _, want := range linuxBundle {
+				if got := contains(names, want); got != linux {
+					t.Errorf("%s: %s present = %v, want %v (only Linux archives bundle libkrun)", base, want, got, linux)
+				}
 			}
 		})
 	}

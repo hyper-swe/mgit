@@ -26,7 +26,7 @@ builds:
       - -s -w
       - -X github.com/hyper-swe/mgit/internal/buildinfo.version={{.Version}}
       - -X github.com/hyper-swe/mgit/internal/buildinfo.commit={{.ShortCommit}}
-      - -X github.com/hyper-swe/mgit/internal/buildinfo.date={{.Date}}
+      - -X github.com/hyper-swe/mgit/internal/buildinfo.date={{.CommitDate}}
     goos:
       - linux
       - darwin
@@ -37,25 +37,36 @@ builds:
     goamd64:
       - v1
 
-  # mgit-sandboxd (Linux): the per-task microVM daemon (FR-17.16). On Linux
-  # it is PURE Go — firecracker is launched as a subprocess and the vzf
-  # (macOS) backend compiles to its unavailable stub off darwin — so it
-  # cross-builds CGO-free on the same ubuntu runner as mgit. It is stamped
-  # with the SAME internal/buildinfo -X flags as mgit: the two ship in one
-  # archive and `mgit --version` / `mgit-sandboxd --version` must not be able
-  # to disagree about the build. Refs: MGIT-44, FR-17.16, MGIT-83
+  # mgit-sandboxd (Linux): the per-task microVM daemon (FR-17.16), LINKED
+  # AGAINST libkrun, with libkrun + libkrunfw bundled beside it in lib/.
+  # Linux ships libkrun because it is the only Linux backend that serves the
+  # agent loop: firecracker refuses `sandbox sync` and `sandbox export` by
+  # design, and no Ubuntu release packages libkrun, so the archive carries
+  # both libraries and a stock host needs only /dev/kvm (hyper-swe/mgit#12).
+  #
+  # It is cgo, and this release runs on a macOS runner, where open-source
+  # goreleaser can neither cross-compile a cgo Linux binary nor take a
+  # prebuilt one. So the daemon is built by
+  # scripts/release/build-linux-sandboxd.sh in ubuntu:20.04 (the glibc 2.31
+  # floor) in release.yml's linux-sandboxd job, and handed over here by the
+  # build `tool` stand-in, which copies it, its lib/ and its license texts
+  # instead of compiling, verifies them against the assembler's manifest in
+  # and out, and refuses a daemon stamped with any version, commit or date
+  # other than the ones below. It never falls back to compiling: a CGO-free
+  # build here would silently ship the firecracker daemon. The ldflags stay
+  # because they are what that stamp check compares against.
+  # Refs: MGIT-229, MGIT-44, FR-17.16, MGIT-83, ADR-016
   - id: mgit-sandboxd-linux
     main: ./cmd/mgit-sandboxd/
     binary: mgit-sandboxd
-    env:
-      - CGO_ENABLED=0
+    tool: ./scripts/release/gobinary-prebuilt.sh
     flags:
       - -trimpath
     ldflags:
       - -s -w
       - -X github.com/hyper-swe/mgit/internal/buildinfo.version={{.Version}}
       - -X github.com/hyper-swe/mgit/internal/buildinfo.commit={{.ShortCommit}}
-      - -X github.com/hyper-swe/mgit/internal/buildinfo.date={{.Date}}
+      - -X github.com/hyper-swe/mgit/internal/buildinfo.date={{.CommitDate}}
     goos:
       - linux
     goarch:
@@ -99,7 +110,7 @@ builds:
       - -s -w
       - -X github.com/hyper-swe/mgit/internal/buildinfo.version={{.Version}}
       - -X github.com/hyper-swe/mgit/internal/buildinfo.commit={{.ShortCommit}}
-      - -X github.com/hyper-swe/mgit/internal/buildinfo.date={{.Date}}
+      - -X github.com/hyper-swe/mgit/internal/buildinfo.date={{.CommitDate}}
     goos:
       - darwin
     goarch:
@@ -196,10 +207,30 @@ archives:
       - src: "dist/mgit_linux_{{ .Arch }}*/mgit"
         dst: "guest/"
         strip_parent: true
+      # The Linux daemon's bundle, beside it as the daemon's DT_RPATH
+      # ($ORIGIN/lib) expects: libkrun + libkrunfw, and the license texts and
+      # source notice that shipping them obliges. The glob names the Linux
+      # daemon's own build directory, so only Linux archives match it;
+      # goreleaser skips a glob that matches nothing without failing, which
+      # is why the archive test (TestArchives_LinuxCarryTheBundle) and the
+      # gobinary stand-in both refuse a Linux daemon without its lib/.
+      # Refs: MGIT-229
+      - src: "dist/mgit-sandboxd-linux_{{ .Os }}_{{ .Arch }}*/lib/*"
+        dst: "lib/"
+        strip_parent: true
+      - src: "dist/mgit-sandboxd-linux_{{ .Os }}_{{ .Arch }}*/THIRD_PARTY/*"
+        dst: "THIRD_PARTY/"
+        strip_parent: true
 
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
+  # The corresponding source of the GPL-2.0 kernel libkrunfw compiles in,
+  # published with every release that bundles it — covered by the signed
+  # checksums like any other asset. Prepared by release.yml's linux-sandboxd
+  # job. Refs: MGIT-229
+  extra_files:
+    - glob: ./dist-sources/*
 
 changelog:
   sort: asc
@@ -222,6 +253,9 @@ release:
   github:
     owner: hyper-swe
     name: mgit
+  # The libkrunfw kernel's corresponding source (see checksum: above).
+  extra_files:
+    - glob: ./dist-sources/*
   draft: false
   prerelease: auto
   name_template: "mgit {{.Tag}}"
@@ -230,7 +264,7 @@ release:
 
     mgit gives a coding agent two things together: **containment** — its untrusted code (npm/pip installs, builds, tests) runs in a disposable per-task microVM, not on your machine — and a **checkpointed working substrate** — every step is a task-tagged micro-commit in an isolated `.mgit` store that never touches your real `.git`, so you review and land only the squashed result.
 
-    > **Beta.** The microVM sandbox is the differentiator; it is live-validated on Linux (firecracker/KVM) and macOS (libkrun, Apple Silicon — the macOS default backend since ADR-010; `-tags vzf` selects Virtualization.framework instead). Windows runs core mgit without the sandbox. See **Known limitations** in the [CHANGELOG](https://github.com/hyper-swe/mgit/blob/main/CHANGELOG.md).
+    > **Beta.** The microVM sandbox is the differentiator; it is live-validated on Linux (libkrun/KVM, bundled in the Linux archives — ADR-016) and macOS (libkrun, Apple Silicon — the macOS default backend since ADR-010). Windows runs core mgit without the sandbox. See **Known limitations** in the [CHANGELOG](https://github.com/hyper-swe/mgit/blob/main/CHANGELOG.md).
 
     ### Highlights
 
@@ -239,7 +273,7 @@ release:
     - **Runs over your existing git repo** — a self-contained `.mgit` store; your project's `.git` is provably never mutated, and the base stays in sync with your local working state automatically (no manual sync).
     - **Checkpointed, reviewable history** — task-tagged micro-commits; backtrack / fork / cherry-pick to course-correct; `squash --to-git | git apply` lands a byte-for-byte patch.
     - **Multi-agent worktree isolation**, **REST + MCP** integration surfaces, dual-hash integrity, append-only audit.
-    - **Pure Go, zero CGO** — single static binary (Linux, macOS, Windows; amd64 + arm64).
+    - **Pure Go core** — `mgit` is a single static binary, zero CGO (Linux, macOS, Windows; amd64 + arm64); only the sandbox daemon links a hypervisor library.
 
     ### Quality
 
@@ -289,6 +323,21 @@ release:
 
     The microVM sandbox also needs a guest image; see
     [docs/INSTALL-SANDBOX.md](https://github.com/hyper-swe/mgit/blob/main/docs/INSTALL-SANDBOX.md).
+
+    **Linux: the archive carries its hypervisor.** `mgit-sandboxd` in the
+    Linux archives links libkrun, and `lib/` beside it holds libkrun and
+    libkrunfw, so a Linux host needs only `/dev/kvm` and glibc 2.31 or newer.
+    Extract the whole archive and keep `lib/` next to `mgit-sandboxd`.
+    `linux_arm64` is built and load-checked, but not boot-checked before
+    release: no hosted CI runner offers KVM on arm64.
+
+    **Source for the bundled kernel.** libkrunfw carries a Linux kernel
+    (GPL-2.0-only) that runs only inside the guest microVM. Its corresponding
+    source is attached to this release, under the signed checksums: the kernel
+    tarball (`libkrunfw-*-kernel-linux-*.tar.xz`), libkrunfw's patches,
+    configuration and build scripts (`libkrunfw-*-source.tar.gz`), and libkrun
+    (`libkrun-*-source.tar.gz`). The license texts are in each Linux archive's
+    `THIRD_PARTY/`.
 
     ### Pairs with [mtix](https://github.com/hyper-swe/mtix)
 

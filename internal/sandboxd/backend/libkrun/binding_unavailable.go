@@ -28,3 +28,12 @@ func newPlatformAPI() (krunAPI, error) {
 // There is nothing linked to interrogate, and newPlatformAPI already refuses
 // such a build with its own actionable message. Refs: MGIT-61.14
 func newCapabilityProbe() netCapabilityProbe { return nil }
+
+// probeInProcess reports that this build links no libkrun. It is reachable
+// only if a probe is dispatched to a build without the binding; the daemon's
+// own `--vmm` never asks libkrun in such a build. Refs: MGIT-229
+func probeInProcess() model.VMMReport {
+	return model.VMMReport{VMM: model.BackendLibkrun, Problems: []string{
+		"this mgit-sandboxd was built without libkrun support, so it cannot boot a libkrun guest",
+	}}
+}

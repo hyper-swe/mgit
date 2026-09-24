@@ -191,6 +191,25 @@ report = json.load(sys.stdin)
 rows = report["checks"] if isinstance(report, dict) else report
 print(next((r["status"] for r in rows if r.get("name") == name), "MISSING"))' "$2"
 }
+doctor_summary() { # $1 json, $2 row name -> the row's summary, or MISSING
+	printf '%s' "$1" | python3 -c '
+import json, sys
+name = sys.argv[1]
+report = json.load(sys.stdin)
+rows = report["checks"] if isinstance(report, dict) else report
+print(next((r["summary"] for r in rows if r.get("name") == name), "MISSING"))' "$2"
+}
+# expect_vmm: daemon/vmm must be ok AND name the backend the sandbox reports,
+# so the row cannot read ok about a VMM other than the one that booted the
+# guest. Refs: MGIT-229
+expect_vmm() { # $1 json, $2 backend
+	vmmjson="$1"
+	expect_row "$vmmjson" daemon/vmm ok
+	case "$(doctor_summary "$vmmjson" daemon/vmm)" in
+	*" links $2"*) pass "doctor row daemon/vmm names the booted backend ($2)" ;;
+	*) _e2e_fail "doctor row daemon/vmm does not name the booted backend $2: $(doctor_summary "$vmmjson" daemon/vmm)" ;;
+	esac
+}
 expect_row() { # $1 json, $2 row, $3 expected status
 	got="$(doctor_status "$1" "$2")"
 	[ "$got" = "$3" ] || _e2e_fail "doctor row $2: status $got, expected $3"
@@ -213,12 +232,14 @@ if [ "$backend" = "kvm" ]; then
 	# applet and this line turns red until it is updated), never skipped;
 	# delivery is a launch-time image with nothing to ask, not-checked.
 	expect_row "$docjson" daemon/loads ok
+	expect_vmm "$docjson" "$backend"
 	expect_row "$docjson" guest/localhost ok
 	expect_row "$docjson" guest/sync-verify failed
 	expect_row "$docjson" guest/delivery not-checked
 	[ "$docrc" -ne 0 ] || _e2e_fail "doctor exited 0 with a failed row"
 else
 	expect_row "$docjson" daemon/loads ok
+	expect_vmm "$docjson" "$backend"
 	expect_row "$docjson" guest/localhost ok
 	expect_row "$docjson" guest/sync-verify ok
 	expect_row "$docjson" guest/delivery ok

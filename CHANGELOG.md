@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Linux release ships the libkrun sandbox daemon, with libkrun and
+  libkrunfw bundled beside it (MGIT-229, hyper-swe/mgit#12, ADR-016).** The
+  Linux archives carried the firecracker daemon, which could not serve the
+  documented user path: `mgit sandbox base from` composes a directory base
+  that firecracker cannot boot (every first exec failed on `failed to stat
+  kernel image path`), and firecracker refuses `sandbox sync` and `sandbox
+  export` by design. The Linux archives (amd64 and arm64) now carry
+  `mgit-sandboxd` linked against libkrun, with `lib/libkrun.so.1` and
+  `lib/libkrunfw.so.5` beside it, built in ubuntu:20.04 (glibc 2.31 or newer
+  required). A stock host needs only `/dev/kvm`: no firecracker, no
+  `LD_LIBRARY_PATH`, no package. Extract the whole archive; the daemon finds
+  `lib/` by its own run path. `linux_arm64` is built and load-checked but not
+  boot-checked before release, because no hosted CI runner offers KVM on
+  arm64. A `go install` of the daemon on Linux is still the firecracker build.
+- **Every release that bundles libkrunfw publishes the source of the Linux
+  kernel inside it.** libkrunfw carries a GPL-2.0-only Linux kernel that runs
+  only inside the guest. The kernel source, libkrunfw's patches and
+  configuration, and libkrun's source are release assets, covered by the
+  signed checksums, and each Linux archive's `THIRD_PARTY/` holds the license
+  texts and a `SOURCES.txt` naming them.
+- **Build stamps are the commit date, not the build time.** `mgit --version`
+  and `mgit-sandboxd --version` now report when the commit was made, so a
+  daemon built in a separate job reports the same build as the `mgit` beside
+  it.
+
+### Added
+
+- **`mgit-sandboxd --vmm` and doctor's `daemon/vmm` row (MGIT-229).** The
+  daemon reports which VMM it links, where each of its libraries resolved and
+  what stops it booting a guest, asked the way a VM boot asks (a child with the
+  VM child's own environment). A daemon that loads is not yet one that can
+  boot: libkrun loads libkrunfw, the guest kernel, lazily, so a missing
+  libkrunfw passed `daemon/loads` and failed every launch. `daemon/vmm` names
+  it, with the Linux remedy (reinstall the archive) or the macOS one (the
+  libkrun formula).
+
 ## [0.6.8] - 2026-09-22
 
 **The base a release vouches for is a digest now, and `mgit doctor` says when

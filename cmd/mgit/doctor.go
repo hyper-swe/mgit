@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -180,6 +181,7 @@ func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 			return probeGuestDelivery(ctx, connect, task)
 		}},
 		doctor.DaemonLoadsCheck{Probe: probeDaemonLoads},
+		doctor.DaemonVMMCheck{Probe: probeDaemonVMM, GOOS: runtime.GOOS},
 		doctor.HostDaemonsCheck{List: listHostDaemons},
 		doctor.DuplicateDaemonsCheck{List: listHostDaemons},
 	}

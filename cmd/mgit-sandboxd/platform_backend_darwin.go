@@ -3,6 +3,8 @@
 package main
 
 import (
+	"context"
+
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/vzf"
@@ -54,4 +56,10 @@ func newHypervisorBackend(deps hypervisorDeps) (model.SandboxManager, microvm.Gu
 		return nil, nil, err
 	}
 	return mgr, landDialer, nil
+}
+
+// describeHypervisor answers --vmm for the vzf build (not shipped; kept so the
+// seam stays exercised). Refs: MGIT-229
+func describeHypervisor(_ context.Context) model.VMMReport {
+	return model.VMMReport{VMM: model.BackendVZF}
 }

@@ -120,6 +120,23 @@ jobs:
       - name: Install libkrun (bottled)
         run: bash scripts/ci/install-libkrun-brew.sh
 
+      # The Linux daemons and the kernel's corresponding source, built by the
+      # e2e gate's linux-sandboxd job IN THIS RUN — stamped with this tag, and
+      # the same bytes that gate's Linux user-path leg just booted a guest
+      # with. goreleaser takes the daemons through
+      # scripts/release/gobinary-prebuilt.sh (verified against their manifests
+      # and this release's stamps) and publishes the sources under the signed
+      # checksums. Refs: MGIT-229
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-sandboxd-*
+          path: dist-prebuilt
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-sources
+          path: dist-sources
+
       # goreleaser CGO-builds + entitlement-signs the darwin daemon (post
       # hook in .goreleaser.yaml) and cross-builds the rest.
       - name: Run GoReleaser
@@ -134,6 +151,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MGIT_LINUX_PREBUILT: ${{ github.workspace }}/dist-prebuilt
 
       - name: Sign checksums
         run: cosign sign-blob --yes --bundle checksums.txt.bundle dist/checksums.txt

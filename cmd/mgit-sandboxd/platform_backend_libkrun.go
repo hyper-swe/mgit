@@ -3,6 +3,9 @@
 package main
 
 import (
+	"context"
+	"os"
+
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/libkrun"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
@@ -46,4 +49,17 @@ func newHypervisorBackend(deps hypervisorDeps) (model.SandboxManager, microvm.Gu
 		return nil, nil, err
 	}
 	return mgr, libkrun.NewLandDialer(deps.workDir), nil
+}
+
+// describeHypervisor answers --vmm for the libkrun build: a probe child of
+// this very binary, run with the VM child's environment, makes one context
+// (never started) and reports where libkrun and libkrunfw resolved.
+// Refs: MGIT-229
+func describeHypervisor(ctx context.Context) model.VMMReport {
+	exePath, err := os.Executable()
+	if err != nil {
+		return model.VMMReport{VMM: model.BackendLibkrun, Problems: []string{
+			"could not resolve this daemon's own executable to probe libkrun: " + err.Error()}}
+	}
+	return libkrun.Describe(ctx, exePath)
 }

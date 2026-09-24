@@ -62,6 +62,9 @@ type daemonOpts struct {
 	ackReduced   bool
 	// version prints the build and exits WITHOUT starting a daemon.
 	version bool
+	// vmm prints the linked VMM report (model.VMMReport) as JSON and exits
+	// WITHOUT starting a daemon. Refs: MGIT-229
+	vmm bool
 }
 
 // parseFlags parses argv. It returns nil opts with an exit code when the
@@ -91,6 +94,9 @@ func parseFlags(args []string, logSink io.Writer) (*daemonOpts, int) {
 		"accept the container fallback's shared-kernel risk (recorded in the audit trail)")
 	flags.BoolVar(&o.version, "version", false,
 		"print the build (version, commit, date) and exit without starting the daemon")
+	flags.BoolVar(&o.vmm, "vmm", false,
+		"print, as JSON, the VMM this build links, where its libraries resolved and what stops it "+
+			"booting a guest, and exit without starting the daemon")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil, 0
@@ -111,6 +117,11 @@ func run(args []string, out, logSink io.Writer) int {
 	if len(args) > 0 && args[0] == libkrun.ChildCommand {
 		return libkrun.ChildMain(os.Stdin, logSink)
 	}
+	// The hidden probe subcommand behind --vmm on a libkrun build: make one
+	// context (never started), report what the loader mapped. Refs: MGIT-229
+	if len(args) > 0 && args[0] == libkrun.ProbeCommand {
+		return libkrun.ProbeMain(out)
+	}
 	opts, code := parseFlags(args, logSink)
 	if opts == nil {
 		return code
@@ -129,6 +140,11 @@ func run(args []string, out, logSink io.Writer) int {
 			return 1
 		}
 		return 0
+	}
+	// --vmm, like --version, answers before anything touches the host: it is
+	// asked precisely when a sandbox will not start. Refs: MGIT-229
+	if opts.vmm {
+		return writeVMMReport(out, describeHypervisor(context.Background()))
 	}
 	logger := slog.New(slog.NewJSONHandler(logSink, nil))
 	if opts.socket == "" {

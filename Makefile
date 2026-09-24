@@ -239,11 +239,37 @@ clean:
 # exactly how MGIT-65's second blocker shipped: the guest binaries were absent
 # from every tarball while the build dirs looked correct. These assertions
 # open the tarball. Refs: MGIT-65
+#
+# The Linux archives' mgit-sandboxd is the libkrun daemon built in ubuntu:20.04
+# (scripts/release/build-linux-sandboxd.sh); goreleaser takes it from
+# MGIT_LINUX_PREBUILT and never compiles one itself. `make linux-prebuilt`
+# fetches the ones CI built for this commit. Refs: MGIT-229
+MGIT_LINUX_PREBUILT ?= $(CURDIR)/dist-prebuilt
 .PHONY: verify-archive
 verify-archive:
 	@command -v goreleaser >/dev/null || { echo "goreleaser not on PATH" >&2; exit 1; }
-	goreleaser release --snapshot --skip=publish --skip=validate --clean
+	@for a in amd64 arm64; do [ -f "$(MGIT_LINUX_PREBUILT)/linux_$$a/mgit-sandboxd" ] || { \
+		echo "verify-archive: NOT RUN — no Linux daemon at $(MGIT_LINUX_PREBUILT)/linux_$$a." >&2; \
+		echo "  Run 'make linux-prebuilt' (downloads the ones CI built for this commit), or build" >&2; \
+		echo "  them with scripts/release/build-linux-sandboxd.sh in ubuntu:20.04 on a Linux host." >&2; \
+		exit 1; }; done
+	MGIT_LINUX_PREBUILT="$(MGIT_LINUX_PREBUILT)" goreleaser release --snapshot --skip=publish --skip=validate --clean
 	go test ./internal/packaging/ -run TestArchives -count=1 -v
+
+## linux-prebuilt: Download the Linux sandbox daemons CI built for HEAD (the
+# e2e workflow's linux-sandboxd artifacts) into dist-prebuilt/, so a local
+# `make verify-archive` packs the same bytes CI booted. Needs gh. It builds
+# nothing: the libkrun + kernel build belongs on CI or a Linux host.
+.PHONY: linux-prebuilt
+linux-prebuilt:
+	@command -v gh >/dev/null || { echo "gh not on PATH" >&2; exit 1; }
+	@run="$$(gh run list --workflow e2e.yml --commit "$$(git rev-parse HEAD)" --json databaseId,conclusion \
+		--jq '[.[] | select(.conclusion == "success")][0].databaseId')"; \
+	[ -n "$$run" ] && [ "$$run" != null ] || { echo "no successful e2e run for $$(git rev-parse --short HEAD) yet" >&2; exit 1; }; \
+	rm -rf "$(MGIT_LINUX_PREBUILT)"; \
+	gh run download "$$run" -p 'linux-sandboxd-*' -D "$(MGIT_LINUX_PREBUILT).dl" && \
+	mkdir -p "$(MGIT_LINUX_PREBUILT)" && cp -R "$(MGIT_LINUX_PREBUILT).dl"/*/linux_* "$(MGIT_LINUX_PREBUILT)/" && \
+	rm -rf "$(MGIT_LINUX_PREBUILT).dl" && ls "$(MGIT_LINUX_PREBUILT)"
 
 .PHONY: preflight
 preflight:
