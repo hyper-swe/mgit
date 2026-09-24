@@ -58,6 +58,14 @@ class Mgit < Formula
     # its own binary first and then in ../libexec, so this layout is found.
     # Refs: MGIT-65, MGIT-61.15
     libexec.install "guest" if Dir.exist?("guest")
+    # Linux only: the archive bundles the daemon's hypervisor libraries
+    # (libkrun, libkrunfw) in lib/. The daemon's run path looks for them at
+    # $ORIGIN/../lib/mgit, which from the keg's bin is the keg's lib/mgit;
+    # a subdirectory, so nothing else on the system links against them by
+    # accident. Their license texts and source notice go to pkgshare.
+    # Refs: MGIT-230.1, MGIT-229
+    (lib/"mgit").install Dir["lib/*"] if Dir.exist?("lib")
+    (pkgshare/"THIRD_PARTY").install Dir["THIRD_PARTY/*"] if Dir.exist?("THIRD_PARTY")
   end
 
   # NO `depends_on "libkrun/krun/libkrun"`. DO NOT ADD ONE BACK.
@@ -97,12 +105,12 @@ class Mgit < Formula
   # is covered — this caveat exists for anyone using a hand-built library.
   # Refs: MGIT-61.14, ADR-010
   #
-  # Guest provisioning differs by BACKEND, not just by platform: macOS
-  # (libkrun) composes its guest from an OCI image with no kernel/rootfs of
-  # its own (libkrunfw supplies the kernel); Linux (firecracker) still needs
-  # a real kernel + rootfs pair. Presenting one unified step here would be
-  # firecracker's framing leaking onto a platform that does not use
-  # firecracker at all. Refs: MGIT-61.13, MGIT-61.15, ADR-010
+  # Guest provisioning is the same on both platforms now: the release's
+  # daemon is libkrun on macOS and on Linux (ADR-016), and libkrun composes
+  # its guest from an OCI image with no kernel/rootfs of its own (libkrunfw
+  # supplies the kernel). The kernel+rootfs path belongs to a firecracker
+  # source build, which Homebrew does not install. Refs: MGIT-61.15, ADR-010,
+  # ADR-016, MGIT-230.1
   def caveats
     <<~EOS
       Core mgit (init, commit, worktrees, squash, land) is ready to use.
@@ -110,7 +118,8 @@ class Mgit < Formula
 
       To activate the microVM sandbox (mgit run, mgit work --sandbox):
         1. Prerequisites:
-           - Linux: KVM (/dev/kvm) and the `firecracker` binary on PATH
+           - Linux: KVM (/dev/kvm read-writable by you) and glibc 2.31+;
+             the daemon's hypervisor libraries are installed with mgit
            - macOS: Apple Silicon (arm64), macOS 14 or later, plus the libkrun
              hypervisor, which is NOT installed with mgit -- it lives in a
              third-party tap you have to trust before Homebrew will load it:
@@ -120,17 +129,13 @@ class Mgit < Formula
              (`brew trust` is required, and whole-tap trust specifically:
              libkrun pulls in libkrunfw from the same tap.)
            (Windows and Intel macOS have no sandbox backend yet)
-        2. Provision the guest (the two backends do this differently):
-           - macOS (libkrun): compose one from any Linux image --
+        2. Provision the guest: compose one from any Linux image --
                mgit sandbox base from debian:12
-           - Linux (firecracker): register a kernel + rootfs pair --
-               mgit sandbox image install
-             (or, from artifacts you already have:
-               mgit sandbox image add --kernel <vmlinux> --rootfs <rootfs>)
 
-      libkrun must be built WITH networking support, which the libkrun/krun
-      tap does. If you build libkrun yourself, build it with `make NET=1`.
-      Verify:
+      On macOS, libkrun must be built WITH networking support, which the
+      libkrun/krun tap does (the Linux libraries installed with mgit are
+      checked for it before release). If you build libkrun yourself, build
+      it with `make NET=1`. Verify:
 
         nm -gU "$(brew --prefix libkrun)/lib/libkrun.dylib" | grep krun_add_net_unixgram
 

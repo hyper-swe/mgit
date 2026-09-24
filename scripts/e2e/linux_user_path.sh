@@ -60,8 +60,12 @@ echo "  PASS"
 step "2 the installed layout"
 mgit --version || fail "layout" "mgit does not run"
 mgit-sandboxd --version || fail "layout" "mgit-sandboxd does not run"
+# guest/ beside the binaries (the extracted archive), or ../libexec/guest
+# (install.sh, Homebrew) — the two places mgit itself looks. Refs: MGIT-230.1
+gdir="$BIN/guest"
+[ -d "$gdir" ] || gdir="$BIN/../libexec/guest"
 for g in mgit mgit-guest; do
-	[ -x "$BIN/guest/$g" ] || fail "layout" "guest/$g is missing beside the binaries"
+	[ -x "$gdir/$g" ] || fail "layout" "$g is missing from $BIN/guest and $BIN/../libexec/guest"
 done
 echo "  PASS"
 

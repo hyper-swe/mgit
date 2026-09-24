@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Verify a bundled Linux sandbox daemon: <dir> holds mgit-sandboxd with lib/
-# beside it, exactly as the release archive lays them out.
+# beside it, exactly as the release archive lays them out — or, for an
+# installed layout, with the libraries in <dir>/../lib/mgit.
 #
 # Every check is about the machine the archive LANDS on, not the one that
 # built it: the build prefix is hidden before the daemon runs, the daemon runs
@@ -21,10 +22,15 @@ fail() { echo "verify-linux-sandboxd: FAIL: $*" >&2; exit 1; }
 pass() { echo "  ok    $*"; }
 
 [ -x "$daemon" ] || fail "$daemon is missing or not executable"
-krun="$(ls "$dir"/lib/libkrun.so.* 2>/dev/null | head -1)"
-krunfw="$(ls "$dir"/lib/libkrunfw.so.* 2>/dev/null | head -1)"
-[ -n "$krun" ] || fail "no lib/libkrun.so.* beside the daemon"
-[ -n "$krunfw" ] || fail "no lib/libkrunfw.so.* beside the daemon"
+# The two layouts the daemon's run path serves: the extracted archive (lib/
+# beside the daemon) and an install with binaries in bin/ and the libraries
+# in lib/mgit/ (install.sh, Homebrew). Refs: MGIT-230.1
+libdir="$dir/lib"
+[ -d "$libdir" ] || libdir="$(cd "$dir/.." && pwd)/lib/mgit"
+krun="$(ls "$libdir"/libkrun.so.* 2>/dev/null | head -1)"
+krunfw="$(ls "$libdir"/libkrunfw.so.* 2>/dev/null | head -1)"
+[ -n "$krun" ] || fail "no libkrun.so.* in $dir/lib or $libdir"
+[ -n "$krunfw" ] || fail "no libkrunfw.so.* in $libdir"
 
 dyn() { readelf -d "$1"; }
 dyn "$daemon" | grep -q "(NEEDED).*\[$(basename "$krun")\]" || fail "the daemon does not link $(basename "$krun"):

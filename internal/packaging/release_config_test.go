@@ -596,3 +596,17 @@ func TestReleaseConfig_ChangelogFiltersDropTheRepositoryOwnMergeCommits(t *testi
 		assert.True(t, excluded, "a merge commit must not reach the notes: %q", subject)
 	}
 }
+
+// The Linux archive bundles the daemon's hypervisor libraries in lib/ and
+// their license texts in THIRD_PARTY/. The formula puts them in the keg's
+// lib/mgit, where the daemon's run path looks from the keg's bin
+// ($ORIGIN/../lib/mgit), never onto PATH; the license texts go to pkgshare.
+// Its Linux caveat stops sending users for a firecracker binary the libkrun
+// daemon does not use. Refs: MGIT-230.1, MGIT-229
+func TestBrewFormula_InstallsTheLinuxBundleWhereTheDaemonLooks(t *testing.T) {
+	formula := readRepoFile(t, "brew/mgit.rb")
+	assert.Contains(t, formula, `(lib/"mgit").install Dir["lib/*"] if Dir.exist?("lib")`)
+	assert.Contains(t, formula, `(pkgshare/"THIRD_PARTY").install Dir["THIRD_PARTY/*"] if Dir.exist?("THIRD_PARTY")`)
+	assert.NotContains(t, formula, "the `firecracker` binary on PATH",
+		"the Linux release's daemon is libkrun; firecracker is not its prerequisite")
+}

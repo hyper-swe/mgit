@@ -282,7 +282,10 @@ archive holds:
 
 The daemon finds `lib/` by its own run path (`$ORIGIN/lib`, and
 `$ORIGIN/../lib/mgit` for an install that puts binaries in `bin/` and the
-libraries in `lib/mgit/`). The bundled libkrun finds libkrunfw beside itself
+libraries in `lib/mgit/`). `install.sh` and Homebrew install that way:
+`<prefix>/bin/mgit-sandboxd`, `<prefix>/lib/mgit/`, and the license texts in
+`<prefix>/share/mgit/THIRD_PARTY/`; on Linux `install.sh` refuses to finish
+quietly when the installed daemon does not load. The bundled libkrun finds libkrunfw beside itself
 before any system copy, so the pair that ships is the pair that runs. Built
 in ubuntu:20.04, the bundle needs glibc 2.31 or newer.
 
