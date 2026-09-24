@@ -304,3 +304,18 @@ func lastLine(s string) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	return lines[len(lines)-1]
 }
+
+// GraphQL refuses a query that declares a variable it never uses, and the
+// fixtures above never reach a real validator: the first live run of this
+// check went NOT CHECKED on exactly that. Every declared variable must be
+// used in the query's body. Refs: MGIT-242
+func TestQueries_UseEveryVariableTheyDeclare(t *testing.T) {
+	declared := regexp.MustCompile(`\$(\w+):`)
+	for name, q := range map[string]string{"pr": queryPR, "comments": queryComments, "reviews": queryReviews} {
+		head, body, ok := strings.Cut(q, "){")
+		require.True(t, ok, name)
+		for _, m := range declared.FindAllStringSubmatch(head, -1) {
+			assert.Contains(t, body, "$"+m[1], "the %s query declares $%s and never uses it", name, m[1])
+		}
+	}
+}

@@ -23,17 +23,21 @@ import (
 const (
 	editsFields = `pageInfo{hasNextPage} nodes{editedAt deletedAt diff}`
 	rateFields  = `rateLimit{remaining resetAt} `
-	queryHead   = `query($owner:String!,$name:String!,$number:Int!,$after:String){` + rateFields + `repository(owner:$owner,name:$name){pullRequest(number:$number){`
+	prHead      = rateFields + `repository(owner:$owner,name:$name){pullRequest(number:$number){`
+	// GraphQL refuses a declared variable that goes unused, so only the
+	// paged queries declare $after.
+	queryHead = `query($owner:String!,$name:String!,$number:Int!){` + prHead
+	pagedHead = `query($owner:String!,$name:String!,$number:Int!,$after:String){` + prHead
 )
 
 var queryPR = queryHead +
 	`createdAt title body lastEditedAt userContentEdits(first:50){` + editsFields + `} comments{totalCount} reviews{totalCount} ` +
 	`timelineItems(first:50,itemTypes:[RENAMED_TITLE_EVENT]){pageInfo{hasNextPage} nodes{... on RenamedTitleEvent{createdAt previousTitle currentTitle}}}}}}`
 
-var queryComments = queryHead +
+var queryComments = pagedHead +
 	`comments(first:50,after:$after){pageInfo{hasNextPage endCursor} nodes{databaseId createdAt lastEditedAt body userContentEdits(first:20){` + editsFields + `}}}}}}`
 
-var queryReviews = queryHead +
+var queryReviews = pagedHead +
 	`reviews(first:20,after:$after){pageInfo{hasNextPage endCursor} nodes{databaseId createdAt lastEditedAt body userContentEdits(first:10){` + editsFields + `} ` +
 	`comments(first:20){pageInfo{hasNextPage} nodes{databaseId createdAt lastEditedAt body userContentEdits(first:10){` + editsFields + `}}}}}}}}`
 
