@@ -66,8 +66,8 @@ source build) was live-validated on
 real KVM and is now gated in CI on every push — the boot that had "never
 completed" on Linux does complete, and guest exec over vsock, `sandbox sync` of
 file content, artifact export and the SEC-03 hostile-guest battery all hold
-there exactly as on macOS (MGIT-87). Two residuals do NOT carry over, both
-measured on real hardware and both upstream:
+there exactly as on macOS (MGIT-87). One residual does NOT carry over,
+measured on real hardware and upstream, and one difference mgit closes itself:
 
 **Which user commands run as.** A guest exec — `mgit run`'s and `sandbox
 exec`'s — runs as the daemon's own user inside the guest: the uid/gid the
@@ -105,14 +105,19 @@ base from <image>`), and the container backend does not switch identities
   because mgit-guest probes for the refusal at boot and shadows that one
   directory with a tmpfs seeded from the image — which is what lets a networked
   guest start. Tracked as MGIT-89.
-- **A deleted path can stay visible to the guest for a few seconds** — but
-  never readable. libkrun's Linux virtio-fs caches name lookups for ~5s (the
-  same measurement on macOS returns 0.00s), so a guest process that already
-  resolved a path may keep resolving it briefly after the sync removes it. The
-  sync empties a file before unlinking it, so the lingering name yields an
-  empty file rather than the deleted contents: a build that reads it fails
-  loudly instead of silently succeeding against code you removed. Creations and
-  content edits reach the guest immediately. Refs: MGIT-90
+- **A deleted path is gone from the guest by the time `sandbox sync`
+  returns.** libkrun's Linux virtio-fs caches name lookups for ~5 s (the same
+  measurement on macOS returns 0.00 s), so on its own a guest could keep
+  resolving a deleted name for those seconds. The sync does not report success
+  until the guest itself agrees: it asks the guest to drop its caches, then
+  checks from inside the guest, bounded, that every deleted path is gone
+  (MGIT-192). Measured on a stock ubuntu-latest KVM host with the agent loop's
+  own per-round canary (a host delete, a sync, an immediate `[ -e ]` in the
+  guest): gone at once, and the delete-bearing sync took 42 ms (55 ms from an
+  install.sh layout). As a second line of defense the sync empties a file
+  before unlinking it, so a name that did linger would read as empty, never as
+  the deleted contents. Creations and content edits reach the guest
+  immediately. Refs: MGIT-90, MGIT-192, MGIT-230.2
 
 Use libkrun when the loop needs host edits delivered into a running guest or
 artifacts read back out — it now has working egress and live policy too, so
