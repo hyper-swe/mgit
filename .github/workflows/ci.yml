@@ -185,6 +185,21 @@ jobs:
           export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix libkrunfw)/lib:$(brew --prefix libkrun)/lib"
           make test-libkrun   # includes check-libkrun-net (MGIT-61.14)
 
+      # LINT WHAT UBUNTU CANNOT SEE. golangci-lint sees only files whose build
+      # tags match its host, and the test job lints on ubuntu without the
+      # libkrun tag, so darwin-only files, and (darwin || linux && libkrun)
+      # files such as the libkrun real-VM suite, were linted by no job. An
+      # unused test helper reached main that way (#173). This job already has
+      # libkrun and its cgo binding, so it lints the darwin view at the same
+      # pinned version. Refs: MGIT-253
+      - name: pkg-config path for the cgo binding, for the lint below
+        run: echo "PKG_CONFIG_PATH=$(brew --prefix libkrun)/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      - name: Run linter (darwin view, libkrun linked)
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.11.3
+
   # Proves `brew install` of the formula works for a user who does NOT have
   # libkrun -- the first-hour macOS install (MGIT-75).
   #
