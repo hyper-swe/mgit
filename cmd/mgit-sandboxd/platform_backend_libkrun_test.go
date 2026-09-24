@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // TestNewHypervisorBackend_Libkrun_LogsWhichVMMLinked verifies the libkrun
@@ -33,3 +35,9 @@ func TestNewHypervisorBackend_Libkrun_LogsWhichVMMLinked(t *testing.T) {
 	assert.Contains(t, out, "vmm_linked", "must log which VMM was linked at build time")
 	assert.Contains(t, out, "libkrun", "this build links libkrun")
 }
+
+// wantLinkedVMM is the VMM the libkrun build (macOS default, Linux with
+// -tags libkrun) must report from --vmm, stated here from the build tags
+// above rather than read from the code under test.
+// Refs: MGIT-229
+const wantLinkedVMM = model.BackendLibkrun

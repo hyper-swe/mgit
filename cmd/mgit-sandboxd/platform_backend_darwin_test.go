@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // TestNewHypervisorBackend_Vzf_LogsWhichVMMLinked verifies the vzf wiring
@@ -33,3 +35,9 @@ func TestNewHypervisorBackend_Vzf_LogsWhichVMMLinked(t *testing.T) {
 	assert.Contains(t, out, "vmm_linked", "must log which VMM was linked at build time")
 	assert.Contains(t, out, "vzf", "this build was made with -tags vzf (or CGO disabled)")
 }
+
+// wantLinkedVMM is the VMM the vzf build (-tags vzf, or cgo off) must
+// report from --vmm, stated here from the build tags above rather than read
+// from the code under test.
+// Refs: MGIT-229
+const wantLinkedVMM = model.BackendVZF

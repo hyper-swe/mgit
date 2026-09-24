@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"runtime"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -28,4 +29,15 @@ import (
 // served" (it never half-wires a land path with no transport). Refs: MGIT-13.1.1
 func newHypervisorBackend(_ hypervisorDeps) (model.SandboxManager, microvm.GuestDialer, error) {
 	return sandboxd.NewUnavailableManager(runtime.GOOS), nil, nil
+}
+
+// vmmNone is the --vmm answer on a platform with no sandbox backend.
+const vmmNone = "none"
+
+// describeHypervisor answers --vmm where there is no backend: Windows and the
+// rest run core mgit without containment until the WCOW backend lands.
+// Refs: MGIT-229, ADR-006
+func describeHypervisor(_ context.Context) model.VMMReport {
+	return model.VMMReport{VMM: vmmNone, Problems: []string{
+		"there is no sandbox backend on " + runtime.GOOS + "; core mgit runs without containment"}}
 }

@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // The ADR-010 guardrail — every libkrun VM has an explicit host-backed NIC,
@@ -131,5 +133,40 @@ func TestNetworkSetup_HasExactlyOneCallSiteEach(t *testing.T) {
 					"via TSI (ADR-010).", tt.method, callers)
 			}
 		})
+	}
+}
+
+// cCall matches a direct cgo call C.<name>(…).
+func cCall(name string) func(ast.Node) bool {
+	return func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != name {
+			return false
+		}
+		x, ok := sel.X.(*ast.Ident)
+		return ok && x.Name == "C"
+	}
+}
+
+// The funnel above is over the krunAPI seam; underneath it, cgo can mint a
+// context directly. Exactly two functions may: the seam's own CreateCtx, and
+// loadKernelLibrary, the `--vmm` probe's context, which exists only to make
+// libkrun load libkrunfw. That one is freed in the same function and is never
+// started, so it can never become a guest on TSI. Pinned here so a third
+// direct caller, or a probe that starts its context, fails with the reason.
+// Refs: ADR-010, MGIT-229
+func TestKrunCreateCtx_DirectCallsAreTheSeamAndTheProbeOnly(t *testing.T) {
+	callers := enclosingFuncs(t, cCall("krun_create_ctx"))
+	assert.ElementsMatch(t, []string{"CreateCtx", "loadKernelLibrary"}, callers,
+		"direct C.krun_create_ctx callers; a context minted anywhere else skips the NIC funnel")
+
+	frees := enclosingFuncs(t, cCall("krun_free_ctx"))
+	assert.Contains(t, frees, "loadKernelLibrary", "the probe must free the context it made")
+	for _, starter := range enclosingFuncs(t, cCall("krun_start_enter")) {
+		assert.NotEqual(t, "loadKernelLibrary", starter, "the probe must never start its context")
 	}
 }

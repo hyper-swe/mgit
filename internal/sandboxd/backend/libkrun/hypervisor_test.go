@@ -41,6 +41,9 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == ChildCommand {
 		os.Exit(ChildMain(os.Stdin, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == ProbeCommand {
+		os.Exit(ProbeMain(os.Stdout))
+	}
 	os.Exit(m.Run())
 }
 

@@ -3,7 +3,9 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/exec"
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/firecracker"
@@ -59,4 +61,22 @@ func newHypervisorBackend(deps hypervisorDeps) (model.SandboxManager, microvm.Gu
 	// per-VM vsock socket path from workDir + sandbox ID), so it is built
 	// independently of the manager. Refs: FR-17.5
 	return mgr, firecracker.NewLandDialer(deps.workDir), nil
+}
+
+// describeHypervisor answers --vmm for the firecracker build: where the
+// firecracker binary resolved and whether /dev/kvm can be opened, the two
+// things newPlatformHypervisor also refuses without. Refs: MGIT-229
+func describeHypervisor(_ context.Context) model.VMMReport {
+	r := model.VMMReport{VMM: model.BackendKVM}
+	fc, err := exec.LookPath("firecracker")
+	r.Libraries = []model.VMMLibrary{{Name: "firecracker", Path: fc}}
+	if err != nil {
+		r.Problems = append(r.Problems, "the firecracker binary is not on PATH, so no guest can boot: "+err.Error())
+	}
+	if f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0); err != nil {
+		r.Problems = append(r.Problems, "/dev/kvm cannot be opened read-write by this user, so no guest can boot: "+err.Error())
+	} else {
+		_ = f.Close() // a probe open; nothing was written
+	}
+	return r
 }
