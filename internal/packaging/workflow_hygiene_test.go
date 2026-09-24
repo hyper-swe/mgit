@@ -56,18 +56,34 @@ func TestWorkflows_CarryNoLiteralAddress(t *testing.T) {
 // main's e2e run 35861088899: "Cache not found" … "stored … for later runs"
 // … "Path Validation Error … no cache is being saved"). An action's own
 // input (`path: ~/…`, lower case) is expanded by the action and is fine.
-// Refs: MGIT-238
+// The scan is literalEnvValues, held to fixtures in
+// workflow_env_literal_test.go. Refs: MGIT-238, MGIT-247
 func TestWorkflows_EnvValuesNeverStartWithATilde(t *testing.T) {
 	root := repoRoot(t)
 	files, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yml"))
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
-	tildeEnv := regexp.MustCompile(`(?m)^\s+([A-Z][A-Z0-9_]*):\s*["']?~`)
 	for _, f := range files {
 		rel, _ := filepath.Rel(root, f)
-		for _, m := range tildeEnv.FindAllStringSubmatch(readRepoFile(t, rel), -1) {
+		for _, name := range literalEnvValues(readRepoFile(t, rel)) {
 			t.Errorf("%s sets %s to a value starting with ~, which the step receives literally; "+
-				"expand it in the run step instead (\"$HOME/…\")", rel, m[1])
+				"expand it in the run step instead (\"$HOME/…\")", rel, name)
 		}
 	}
+}
+
+// literalEnvEntry matches an env-style entry whose value starts, after an
+// optional quote, with ~.
+var literalEnvEntry = regexp.MustCompile(`(?m)^\s+([A-Z][A-Z0-9_]*):\s*["']?~`)
+
+// literalEnvValues names every env-style entry in a workflow whose value the
+// step would receive literally: a leading ~. No shell reads an env: value.
+// Refs: MGIT-247, MGIT-238
+func literalEnvValues(workflow string) []string {
+	matches := literalEnvEntry.FindAllStringSubmatch(workflow, -1)
+	names := make([]string, 0, len(matches))
+	for _, m := range matches {
+		names = append(names, m[1])
+	}
+	return names
 }
