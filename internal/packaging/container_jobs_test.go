@@ -40,7 +40,7 @@ func TestContainerJobs_BootstrapBeforeCheckoutAndInstallTheToolchainThroughTheGu
 				}
 			}
 			assert.Contains(t, before, "for attempt in 1 2 3", "%s: the pre-checkout bootstrap must retry", j.id)
-			assert.Contains(t, before, "timeout 180 ", "%s: each bootstrap attempt must be bounded", j.id)
+			assert.Contains(t, before, "timeout 600 ", "%s: each bootstrap attempt must be bounded", j.id)
 			assert.Contains(t, before, "apt bootstrap: attempt $attempt/3 started", "%s: each attempt must say it started", j.id)
 			assert.Contains(t, after, "scripts/release/linux-build-prereqs.sh",
 				"%s must install its toolchain after checkout through the guarded prereqs script", j.id)

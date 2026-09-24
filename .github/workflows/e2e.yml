@@ -210,27 +210,33 @@ jobs:
         shell: bash
     steps:
       # The ONLY apt before checkout, and the smallest: git (so the checkout
-      # carries history), ca-certificates and curl. The fetch guard's script
-      # arrives WITH the checkout, so its three clauses are served inline here:
-      # three attempts, each bounded at 180 s by timeout(1) and each saying
-      # when it started and how it ended, apt's state cleared between them.
+      # carries history), ca-certificates and curl. This was a DECLARED
+      # EXCEPTION serving only clause 2, because the guard script arrives WITH
+      # the checkout: an ordering problem, not a judgement against retrying.
+      # The clauses are now served inline, so the exception is gone rather than
+      # overruled: three attempts (clause 1), apt's state cleared between them
+      # (clause 3), each bounded (clause 2), and each attempt prints when it
+      # started and how it ended, so the log names every attempt made.
+      # The bound is the MGIT-143 rule on this step's own history: this apt
+      # (update + git ca-certificates curl, ubuntu:20.04) succeeded n=42 times
+      # on 2026-09-23..24, worst 91 s; 4x is 364 s, up the ladder to 600 s.
+      # That history is already slower than the 56 s worst the whole toolchain
+      # install had over n=256 before it: the mirror moved, the rule did not.
       # Everything heavier is installed after checkout by
-      # scripts/release/linux-build-prereqs.sh, through the guard. This used to
-      # install the whole toolchain in one unretried run under a flat 5-minute
-      # bound, and a slow archive mirror timed it out on main (d1535db) with
-      # nothing saying what it was doing. Refs: MGIT-143, MGIT-144, MGIT-229
+      # scripts/release/linux-build-prereqs.sh, through the guard.
+      # Refs: MGIT-143, MGIT-144, MGIT-243
       # fetch-guard: runs before actions/checkout, so the guard script is not
       # on disk yet; its clauses are served inline below. Refs: MGIT-143
       - name: Bootstrap git (bounded, retried, before checkout)
-        timeout-minutes: 12
+        timeout-minutes: 32 # 3 attempts x 600 s + 45 s of backoff, rounded up
         run: |
           for attempt in 1 2 3; do
-            echo "apt bootstrap: attempt $attempt/3 started $(date -u +%H:%M:%SZ): apt-get update + install git ca-certificates curl (bound 180s)"
-            if timeout 180 sh -c 'apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends git ca-certificates curl'; then
+            echo "apt bootstrap: attempt $attempt/3 started $(date -u +%H:%M:%SZ): apt-get update + install git ca-certificates curl (bound 600s)"
+            if timeout 600 sh -c 'apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends git ca-certificates curl'; then
               echo "apt bootstrap: ok on attempt $attempt at $(date -u +%H:%M:%SZ)"
               exit 0
             fi
-            echo "apt bootstrap: attempt $attempt failed or hit its 180s bound at $(date -u +%H:%M:%SZ); clearing apt state before the next"
+            echo "apt bootstrap: attempt $attempt failed or hit its 600s bound at $(date -u +%H:%M:%SZ); clearing apt state before the next"
             rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/partial/*
             dpkg --configure -a || true
             sleep $((attempt * 15))
@@ -708,27 +714,33 @@ jobs:
         shell: bash
     steps:
       # The ONLY apt before checkout, and the smallest: git (so the checkout
-      # carries history), ca-certificates and curl. The fetch guard's script
-      # arrives WITH the checkout, so its three clauses are served inline here:
-      # three attempts, each bounded at 180 s by timeout(1) and each saying
-      # when it started and how it ended, apt's state cleared between them.
+      # carries history), ca-certificates and curl. This was a DECLARED
+      # EXCEPTION serving only clause 2, because the guard script arrives WITH
+      # the checkout: an ordering problem, not a judgement against retrying.
+      # The clauses are now served inline, so the exception is gone rather than
+      # overruled: three attempts (clause 1), apt's state cleared between them
+      # (clause 3), each bounded (clause 2), and each attempt prints when it
+      # started and how it ended, so the log names every attempt made.
+      # The bound is the MGIT-143 rule on this step's own history: this apt
+      # (update + git ca-certificates curl, ubuntu:20.04) succeeded n=42 times
+      # on 2026-09-23..24, worst 91 s; 4x is 364 s, up the ladder to 600 s.
+      # That history is already slower than the 56 s worst the whole toolchain
+      # install had over n=256 before it: the mirror moved, the rule did not.
       # Everything heavier is installed after checkout by
-      # scripts/release/linux-build-prereqs.sh, through the guard. This used to
-      # install the whole toolchain in one unretried run under a flat 5-minute
-      # bound, and a slow archive mirror timed it out on main (d1535db) with
-      # nothing saying what it was doing. Refs: MGIT-143, MGIT-144, MGIT-229
+      # scripts/release/linux-build-prereqs.sh, through the guard.
+      # Refs: MGIT-143, MGIT-144, MGIT-243
       # fetch-guard: runs before actions/checkout, so the guard script is not
       # on disk yet; its clauses are served inline below. Refs: MGIT-143
       - name: Bootstrap git (bounded, retried, before checkout)
-        timeout-minutes: 12
+        timeout-minutes: 32 # 3 attempts x 600 s + 45 s of backoff, rounded up
         run: |
           for attempt in 1 2 3; do
-            echo "apt bootstrap: attempt $attempt/3 started $(date -u +%H:%M:%SZ): apt-get update + install git ca-certificates curl (bound 180s)"
-            if timeout 180 sh -c 'apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends git ca-certificates curl'; then
+            echo "apt bootstrap: attempt $attempt/3 started $(date -u +%H:%M:%SZ): apt-get update + install git ca-certificates curl (bound 600s)"
+            if timeout 600 sh -c 'apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends git ca-certificates curl'; then
               echo "apt bootstrap: ok on attempt $attempt at $(date -u +%H:%M:%SZ)"
               exit 0
             fi
-            echo "apt bootstrap: attempt $attempt failed or hit its 180s bound at $(date -u +%H:%M:%SZ); clearing apt state before the next"
+            echo "apt bootstrap: attempt $attempt failed or hit its 600s bound at $(date -u +%H:%M:%SZ); clearing apt state before the next"
             rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/partial/*
             dpkg --configure -a || true
             sleep $((attempt * 15))
