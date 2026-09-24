@@ -36,7 +36,9 @@ func TestE2E_TheLinuxUserPathRunsWithoutTestHooks(t *testing.T) {
 	assert.Contains(t, script, "LINUX USER PATH: PASS", "the verdict line the job and a reader rely on")
 	for _, verb := range []string{"sandbox base from", "sandbox launch", "mgit run --", "sandbox sync", "sandbox export", "sandbox remove",
 		// the loop's per-round deletion canary (MGIT-230.2)
-		"sandbox sync --task-id \"$TASK\" --dry-run", "[ -e canary-a.txt ] && echo present || echo gone"} {
+		"sandbox sync --task-id \"$TASK\" --dry-run", "[ -e canary-a.txt ] && echo present || echo gone",
+		// the loop's exec contract (MGIT-230.3)
+		"nohup sleep 120", "kill -0", "exit 7", "/proc/meminfo", "dmesg"} {
 		assert.Contains(t, script, verb, "the user path includes %q", verb)
 	}
 }

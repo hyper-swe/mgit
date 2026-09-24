@@ -134,6 +134,30 @@ seen="$(cd "$P" && timeout 120 mgit run -- sh -c '[ -e canary-a.txt ] && echo pr
 echo "  the delete-bearing sync took $((t1 - t0)) ms"
 echo "  PASS"
 
+step "7c the loop's exec contract: background survives, /tmp persists, exit codes pass, /proc and dmesg read"
+# hyperswe drives long guest commands by starting them with `nohup … &` in
+# `mgit run -- /bin/sh -c`, keeping pid/log/rc files under guest /tmp, and
+# polling with later execs; it reads /proc/<pid>/stat, /proc/meminfo, nproc
+# and dmesg as the exec identity and needs the exit code unchanged. Each
+# clause is checked here, as that identity. Refs: MGIT-230.3
+gx() { (cd "$P" && timeout 120 mgit run -- /bin/sh -c "$1" 2>&1); }
+out="$(gx 'nohup sleep 120 >/tmp/up-bg.log 2>&1 & echo $! >/tmp/up-bg.pid; echo started')"
+[ "$(printf '%s\n' "$out" | tail -1)" = started ] || fail "exec contract" "could not start a background command: $(first "$out")"
+out="$(gx 'kill -0 "$(cat /tmp/up-bg.pid)" && echo alive || echo dead')"
+[ "$(printf '%s\n' "$out" | tail -1)" = alive ] ||
+	fail "exec contract" "a nohup'd command did not outlive the exec that started it, or /tmp did not persist: $out"
+gx 'kill "$(cat /tmp/up-bg.pid)"' >/dev/null
+(cd "$P" && timeout 120 mgit run -- /bin/sh -c 'exit 7' >/dev/null 2>&1)
+rc=$?
+[ "$rc" -eq 7 ] || fail "exec contract" "a guest exit 7 came back as $rc"
+out="$(gx 'id -un; head -c 1 /proc/self/stat >/dev/null && echo proc-stat-ok; head -1 /proc/meminfo; nproc; dmesg >/dev/null 2>&1 && echo dmesg-ok || echo dmesg-refused')"
+printf '%s\n' "$out" | sed 's/^/  guest: /'
+for want in proc-stat-ok MemTotal dmesg-ok; do
+	printf '%s\n' "$out" | grep -q "$want" || fail "exec contract" "the exec identity could not read what the loop reads ($want missing): $out"
+done
+printf '%s\n' "$out" | grep -Eqx '[0-9]+' || fail "exec contract" "nproc printed no CPU count: $out"
+echo "  PASS"
+
 step "8 export a file the guest made"
 # The guest path is worktree-relative: export reads the guest's own view of
 # the worktree, the airlock through which artifacts leave (besides land).
