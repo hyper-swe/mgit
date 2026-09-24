@@ -45,7 +45,7 @@ func TestServingDaemonVersionCheck_ComparesTheDaemonThatAnswers(t *testing.T) {
 			StatusOK, []string{"pid 41", "0.6.8 (commit: 4548edd"}},
 		{"an_older_release_answers", []daemonrec.Listed{rec(67010, repo, "0.6.7 (commit: 487e143, built: 2026-09-22T12:00:00Z)", alive)},
 			StatusDiffers, []string{"pid 67010", "0.6.7 (commit: 487e143)", "0.6.8 (commit: 4548edd)", "mgit sandbox daemons stop --repo-root " + repo}},
-		{"the_same_version_another_commit_answers", []daemonrec.Listed{rec(7, repo, "dev (commit: 1111111, built: x)", alive)},
+		{"the_same_version_another_commit_answers", []daemonrec.Listed{rec(7, repo, "0.6.8 (commit: 1111111, built: x)", alive)},
 			StatusDiffers, []string{"pid 7", "commit: 1111111"}},
 		{"a_daemon_that_recorded_no_version", []daemonrec.Listed{rec(9, repo, "", alive)},
 			StatusDiffers, []string{"pid 9", "recorded no version"}},
@@ -91,6 +91,7 @@ func TestServingDaemonVersionCheck_AnUnstampedBuildCannotBeToldApart(t *testing.
 	}{
 		{"both_unstamped", "dev (commit: none, built: unknown)", "dev (commit: none, built: unknown)", StatusNotChecked, "no build stamp"},
 		{"the_daemon_unstamped", "dev (commit: 65606a5, built: x)", "dev (commit: none, built: unknown)", StatusNotChecked, "no build stamp"},
+		{"the_cli_unstamped", "dev (commit: none, built: unknown)", "dev (commit: 65606a5, built: x)", StatusNotChecked, "no build stamp"},
 		{"an_unstamped_cli_and_a_release_daemon", "dev (commit: none, built: unknown)", "0.6.7 (commit: 487e143, built: y)", StatusDiffers, "0.6.7 (commit: 487e143)"},
 	}
 	for _, tt := range tests {
