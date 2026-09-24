@@ -9,14 +9,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// WHAT LEAVES FOR THE USER'S GIT NAMES NO TOOL. mgit tags every commit in its
+// WHAT LEAVES FOR THE USER'S GIT CARRIES NO TASK TAG. mgit tags every commit in its
 // own store with `[MGIT:<task>] `. The default squash message summarized each
 // micro-commit by copying its message, tag and all, and both ways out,
 // `squash --to-git` and `export --format git`, carried that summary into the
 // patch, where `git am` records it in the adopter's history (reproduced
 // independently on MGIT-228). The store keeps its tag, which is mgit's own
 // bookkeeping. What leaves keeps what was written and drops the tag; the task
-// stays traceable through mgit's index. Refs: MGIT-228
+// stays traceable through mgit's index. The patch's author line still names
+// mgit (`From: mgit-squash <…@mgit.local>`); that is MGIT-237, not asserted
+// here. Refs: MGIT-228
 func TestSquashAndExport_DefaultMessage_CarryNoTaskTag(t *testing.T) {
 	const taskID = "WI-2"
 	seedTaskForSquash(t, taskID)

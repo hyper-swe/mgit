@@ -16,6 +16,9 @@ func TestWithoutTaskTag_RemovesOnlyTheTagMgitWrote(t *testing.T) {
 		{"a tag with no space after it", "[MGIT:wi-2]docs", "docs"},
 		{"a revert", "[MGIT:wi-2] Revert: wrong turn (2 commits)", "Revert: wrong turn (2 commits)"},
 		{"a cherry-pick of a tagged commit", "[MGIT:wi-3] cherry-pick 1a2b3c4d: [MGIT:wi-2] keep this", "cherry-pick 1a2b3c4d: keep this"},
+		{"a cherry-pick of a cherry-pick", "[MGIT:wi-4] cherry-pick 5e6f7a8b: [MGIT:wi-3] cherry-pick 1a2b3c4d: [MGIT:wi-2] keep this",
+			"cherry-pick 5e6f7a8b: cherry-pick 1a2b3c4d: keep this"},
+		{"dotted task ids", "[MGIT:MGIT-5.1.2] cherry-pick 1a2b3c4d: [MGIT:MGIT-5.1] step", "cherry-pick 1a2b3c4d: step"},
 		{"an author's own mention", "docs: explain the [MGIT:<task>] tag", "docs: explain the [MGIT:<task>] tag"},
 		{"multi-line body kept", "[MGIT:wi-2] subject\n\nbody line", "subject\n\nbody line"},
 	}

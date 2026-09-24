@@ -346,6 +346,8 @@ The full walkthrough, platform prerequisites, the kernel+rootfs path used by the
 mgit squash --task-id PROJ-12 --to-git | git apply   # or: git am
 ```
 
+**What the patch carries into your history.** mgit tags each micro-commit in its own store with `[MGIT:<task>]`, which is how it knows a commit's task; the tag stays in mgit's store. With `git apply`, nothing from the patch's header reaches your history: you write the commit yourself. With `git am`, the patch's message is recorded. Given `-m`/`-F`, that message is exactly your words. Without them, mgit's summary lists the micro-commits by what was written, without the task tag. Two things in the patch still name mgit today, and `git am` records them: the author line (`From: mgit-squash <…@mgit.local>`; tracked as MGIT-237; `git commit --amend --reset-author --no-edit` after `git am` replaces it), and any file mgit injected into the worktree that the task's commits recorded (tracked as MGIT-236).
+
 ## Commands
 
 The everyday surface:
