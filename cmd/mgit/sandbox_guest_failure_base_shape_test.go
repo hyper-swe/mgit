@@ -22,10 +22,10 @@ const relayedBaseShapeRefusal = "sandbox exec: sandbox ensure-running: kvm launc
 // The released v0.6.8 said "mgit could not identify what failed here" under
 // an error whose cause was fully determined: the linked backend cannot boot
 // the registered base's shape. The daemon now refuses that at launch, with the
-// cause and the fix in its words, and the CLI recognises the refusal instead
+// cause and the fix in its words, and the CLI recognizes the refusal instead
 // of disowning it. A v0.6.8 daemon's own words for the same cause (the VMM's
 // `failed to stat kernel image path, ""`: the base names no kernel at all)
-// are recognised too, since that daemon is still installed. Refs: MGIT-233
+// are recognized too, since that daemon is still installed. Refs: MGIT-233
 func TestClassifyGuestFailure_AnUnbootableBaseIsNamed(t *testing.T) {
 	for name, err := range map[string]error{
 		"in_process_sentinel": fmt.Errorf("kvm launch: %w: the kvm (firecracker) backend boots …", model.ErrGuestBaseUnbootable),
