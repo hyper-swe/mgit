@@ -130,10 +130,15 @@ jobs:
       - name: Fetch every branch, so an inherited one can be recognized
         run: git fetch --no-tags --prune origin "+refs/heads/*:refs/remotes/origin/*"
 
+      # Against the pull request's OWN base: a stacked pull request's base is
+      # another open pull request's branch, and judged against main it would
+      # carry that branch's commits as not its own (MGIT-257). The base comes
+      # through the environment; main only if an event carries none.
       - name: Check the head branch's scope
         env:
           HEAD_REF: ${{ github.head_ref }}
-        run: go run ./scripts/branchguard --branch "origin/$HEAD_REF" --base origin/main
+          BASE_REF: ${{ github.base_ref }}
+        run: go run ./scripts/branchguard --branch "origin/$HEAD_REF" --base "origin/${BASE_REF:-main}"
 
   # The libkrun backend is opt-in at build time on Linux (-tags libkrun) and
   # the default on macOS (ADR-010's GA backend split); the pure-Go `test` job
