@@ -84,6 +84,24 @@ expect "a non-Linux target is refused" fail "Linux-only" "$out" "$rc"
 out="$(bash "$shim" version 2>&1)"; rc=$?
 expect "any verb but build is refused" fail "only answers 'build'" "$out" "$rc"
 
+# Verified OUT, not only in: a copy that lands different bytes from the ones
+# it read (a full disk, a flaky mount) must not reach an archive. The wrapper
+# copies, then corrupts the libkrunfw it just wrote. Only the check AFTER the
+# copy can see that, so the needle names the destination's path, not the
+# prebuilt's. Refs: MGIT-230.9
+real_cp="$(command -v cp)"
+wrap="$T/corrupting-cp"; mkdir -p "$wrap"
+cat >"$wrap/cp" <<WRAP
+#!/bin/sh
+"$real_cp" "\$@" || exit \$?
+for last in "\$@"; do :; done
+case "\$last" in */lib/) printf 'x' >>"\${last}libkrunfw.so.5" ;; esac
+WRAP
+chmod +x "$wrap/cp"
+o="$T/o9/x/mgit-sandboxd"; mkdir -p "$(dirname "$o")"
+out="$(PATH="$wrap:$PATH" run "$good" linux 0.7.0 abc1234 2026-09-24T00:00:00Z "$o")"; rc=$?
+expect "a copy corrupted after it was made is refused by the check after the copy" fail "o9/x/lib/libkrunfw.so.5 has digest" "$out" "$rc"
+
 if [ "$failures" -ne 0 ]; then
 	echo "gobinary-prebuilt selftest: $failures case(s) FAILED"
 	exit 1
