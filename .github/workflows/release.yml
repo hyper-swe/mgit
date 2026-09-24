@@ -241,6 +241,72 @@ jobs:
               echo "::error::expected check did not run: $must"; exit 1; }
           done
 
+  # The same promise for the Linux archive: a FRESH ubuntu-latest (never the
+  # machine that built it) installs the PUBLISHED release the way the README
+  # says, and the daemon it gets must load with no libkrun installed, report the
+  # same build as mgit, and boot the documented user path. The release must
+  # also carry the corresponding source of the kernel inside libkrunfw. A SKIP
+  # is not a pass here: every check is a script that fails rather than skips.
+  # Refs: MGIT-230.6, MGIT-229
+  release-smoke-linux:
+    name: Post-publish smoke (published Linux archive)
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.release.result == 'success')
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: /dev/kvm usable (the one documented Linux host requirement)
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          [ -r /dev/kvm ] && [ -w /dev/kvm ] || { echo "FATAL: /dev/kvm not usable"; exit 1; }
+
+      - name: Install the published release with install.sh
+        env:
+          MGIT_VERSION: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # fetch-guard: install.sh IS the subject: it downloads the published
+          # archive and checksums.txt and verifies them itself; retrying it here
+          # would test a retry, not the install a user runs. Refs: MGIT-143
+          MGIT_PREFIX="$RUNNER_TEMP/prefix" sh install.sh
+          echo "BIN=$RUNNER_TEMP/prefix/bin" >> "$GITHUB_ENV"
+
+      - name: The installed daemon loads, reports mgit's build, and resolves its bundle
+        run: |
+          set -euo pipefail
+          m="$("$BIN/mgit" --version)"; d="$("$BIN/mgit-sandboxd" --version)"
+          echo "$m"; echo "$d"
+          [ "${m#mgit version }" = "${d#mgit-sandboxd version }" ] \
+            || { echo "FATAL: the published archive carries two builds"; exit 1; }
+          bash scripts/release/verify-linux-sandboxd.sh "$BIN"
+
+      - name: The documented user path, from the installed release
+        run: bash scripts/e2e/linux_user_path.sh "$BIN"
+
+      - name: The release carries the kernel's corresponding source, under its checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          . scripts/sandbox-image/pins.env
+          # fetch-guard: these two reads ARE the assertion (what the published
+          # release carries); a retry would blur the answer, and a failed read
+          # fails the job loudly rather than passing it. Refs: MGIT-143
+          assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          sums="$(gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern checksums.txt --output - )"
+          for want in "libkrunfw-$LIBKRUNFW_VERSION-kernel-linux-$LIBKRUNFW_KERNEL_VERSION.tar.xz" \
+                      "libkrunfw-$LIBKRUNFW_VERSION-source.tar.gz" "libkrun-$LIBKRUN_VERSION-source.tar.gz"; do
+            printf '%s\n' "$assets" | grep -qx "$want" || { echo "FATAL: release $TAG has no $want"; exit 1; }
+            printf '%s\n' "$sums" | grep -q "  $want\$" || { echo "FATAL: checksums.txt does not cover $want"; exit 1; }
+            echo "ok: $want published and checksummed"
+          done
+
   homebrew:
     name: Update Homebrew Tap
     needs: release

@@ -185,3 +185,24 @@ func TestGobinaryPrebuilt_SelfTest(t *testing.T) {
 	require.NoError(t, err, "%s", out)
 	assert.Contains(t, string(out), "gobinary-prebuilt selftest: PASS")
 }
+
+// A published Linux archive gets the same post-publish scrutiny as macOS'
+// (release_smoke.sh skips every daemon check off macOS): installed from the
+// release by install.sh on a fresh runner, its daemon verified, the user path
+// walked, and the kernel's corresponding source checked on the release.
+// Refs: MGIT-230.6
+func TestReleaseWorkflow_SmokesThePublishedLinuxArchive(t *testing.T) {
+	job := jobBlock(t, readRepoFile(t, ".github/workflows/release.yml"), "release-smoke-linux")
+	for _, want := range []string{
+		"runs-on: ubuntu-latest",
+		"needs: release",
+		"github.event_name == 'workflow_dispatch'",
+		"sh install.sh",
+		"scripts/release/verify-linux-sandboxd.sh",
+		"scripts/e2e/linux_user_path.sh",
+		"kernel-linux-$LIBKRUNFW_KERNEL_VERSION.tar.xz",
+		"checksums.txt does not cover",
+	} {
+		assert.Contains(t, job, want, "the release-smoke-linux job must carry %q", want)
+	}
+}
