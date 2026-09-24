@@ -162,7 +162,9 @@ printf '%s\n' "$out" | grep -Eqx '[0-9]+' || fail "exec contract" "nproc printed
 name="$(gx 'id -un')"
 if [ "$name" != agent ]; then
 	echo "  the guest's view of this identity:"
-	gx 'id; echo "--- /etc/passwd head:"; head -3 /etc/passwd; echo "--- entries for this uid or agent:"; grep -n -e ":$(id -u):" -e "^agent:" /etc/passwd; echo "--- /etc is:"; grep " /etc " /proc/mounts' | sed 's/^/    /'
+	gx 'id; echo "--- /etc/passwd head:"; head -3 /etc/passwd; echo "--- entries for this uid or agent:"; grep -n -e ":$(id -u):" -e "^agent:" /etc/passwd; echo "--- /etc is:"; grep " /etc " /proc/mounts; echo "--- as this identity:"; stat -c "%A %u:%g %n" /etc /etc/passwd /etc/group' | sed 's/^/    /'
+	echo "    --- as root (an audited privileged exec):"
+	(cd "$R" && timeout 120 mgit sandbox exec --task-id "$TASK" --as-root -- /bin/sh -c 'stat -c "%A %u:%g %n" / /etc /etc/passwd /etc/group /etc/nsswitch.conf; grep -n "^agent:" /etc/passwd' 2>&1) | sed 's/^/    /'
 	fail "exec contract" "the exec identity has no name in the guest: id -un said '$name', not agent"
 fi
 echo "  PASS"
