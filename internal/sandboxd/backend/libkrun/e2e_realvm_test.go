@@ -505,7 +505,7 @@ func seedHostRepo(t *testing.T, taskID string) (repoRootDir, privateStoreDir str
 	if err != nil {
 		t.Fatalf("provisioner: %v", err)
 	}
-	store, err := prov.Provision(taskID, filepath.Join(t.TempDir(), "private-store"))
+	store, err := prov.Provision(taskID, repo, filepath.Join(t.TempDir(), "private-store"))
 	if err != nil {
 		t.Fatalf("provision private store: %v", err)
 	}

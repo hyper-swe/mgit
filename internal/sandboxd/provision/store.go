@@ -43,9 +43,10 @@ type PrivateStore struct {
 // seam the microVM manager calls; an implementation lives below over go-git.
 type Provisioner interface {
 	// Provision creates a fresh private store under privateDir seeded with the
-	// task branch's tip commit only, and reports the shared store dir for the
-	// quarantine non-reachability check. privateDir MUST NOT already exist.
-	Provision(taskID, privateDir string) (PrivateStore, error)
+	// task branch's tip commit only, for the guest that is given worktreePath,
+	// and reports the shared store dir for the quarantine non-reachability
+	// check. privateDir MUST NOT already exist.
+	Provision(taskID, worktreePath, privateDir string) (PrivateStore, error)
 	// SharedDir is the shared store the quarantine keeps unreachable, without
 	// provisioning anything: registration asks the layout question with it.
 	// Refs: MGIT-222
@@ -82,7 +83,7 @@ func (p *StoreProvisioner) SharedDir() string {
 // on top. Nothing else from the shared store is copied. privateDir must not
 // pre-exist (a stale store would defeat the freshness guarantee).
 // Refs: SEC-03, FR-17.5, MGIT-14
-func (p *StoreProvisioner) Provision(taskID, privateDir string) (PrivateStore, error) {
+func (p *StoreProvisioner) Provision(taskID, worktreePath, privateDir string) (PrivateStore, error) {
 	sharedDir := p.SharedDir()
 	if _, err := os.Stat(sharedDir); err != nil {
 		return PrivateStore{}, fmt.Errorf("%w: shared store not found at %s", model.ErrStorageError, sharedDir)

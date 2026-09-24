@@ -41,7 +41,7 @@ type dirProvisioner struct{ sharedDir string }
 
 func (p dirProvisioner) SharedDir() string { return p.sharedDir }
 
-func (p dirProvisioner) Provision(_, privateDir string) (provision.PrivateStore, error) {
+func (p dirProvisioner) Provision(_, _, privateDir string) (provision.PrivateStore, error) {
 	if err := os.MkdirAll(privateDir, 0o750); err != nil {
 		return provision.PrivateStore{}, err
 	}

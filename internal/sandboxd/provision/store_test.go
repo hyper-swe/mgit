@@ -72,7 +72,7 @@ func TestProvision_SeedsBaseCommitOnly(t *testing.T) {
 	require.NoError(t, err)
 
 	privDir := filepath.Join(t.TempDir(), "private", ".mgit")
-	ps, err := p.Provision(taskID, privDir)
+	ps, err := p.Provision(taskID, repoRoot, privDir)
 	require.NoError(t, err)
 	assert.Equal(t, privDir, ps.Dir)
 	assert.Equal(t, filepath.Join(repoRoot, ".mgit"), ps.SharedDir)
@@ -131,7 +131,7 @@ func TestProvision_DoesNotCopyOtherBranchObjects(t *testing.T) {
 	p, err := NewStoreProvisioner(repoRoot)
 	require.NoError(t, err)
 	privDir := filepath.Join(t.TempDir(), "private", ".mgit")
-	_, err = p.Provision(taskID, privDir)
+	_, err = p.Provision(taskID, repoRoot, privDir)
 	require.NoError(t, err)
 
 	priv := filesystem.NewStorage(osfs.New(privDir), cache.NewObjectLRUDefault())
@@ -154,7 +154,7 @@ func TestProvision_Rejections(t *testing.T) {
 		repoRoot, _, _, _ := seededRepo(t)
 		p, err := NewStoreProvisioner(repoRoot)
 		require.NoError(t, err)
-		store, err := p.Provision("NO-SUCH-1.1", filepath.Join(t.TempDir(), ".mgit"))
+		store, err := p.Provision("NO-SUCH-1.1", repoRoot, filepath.Join(t.TempDir(), ".mgit"))
 		require.NoError(t, err)
 
 		priv := filesystem.NewStorage(osfs.New(store.Dir), cache.NewObjectLRUDefault())
@@ -167,13 +167,13 @@ func TestProvision_Rejections(t *testing.T) {
 		require.NoError(t, err)
 		priv := filepath.Join(t.TempDir(), ".mgit")
 		require.NoError(t, os.MkdirAll(priv, 0o700))
-		_, err = p.Provision(taskID, priv)
+		_, err = p.Provision(taskID, repoRoot, priv)
 		assert.Error(t, err)
 	})
 	t.Run("no_shared_store", func(t *testing.T) {
 		p, err := NewStoreProvisioner(t.TempDir()) // no .mgit
 		require.NoError(t, err)
-		_, err = p.Provision("MGIT-1.1", filepath.Join(t.TempDir(), ".mgit"))
+		_, err = p.Provision("MGIT-1.1", t.TempDir(), filepath.Join(t.TempDir(), ".mgit"))
 		assert.ErrorIs(t, err, model.ErrStorageError)
 	})
 }
@@ -236,7 +236,7 @@ func TestProvision_NeverSquashedTask_SeedsFromHead(t *testing.T) {
 	require.NoError(t, err)
 
 	privDir := filepath.Join(t.TempDir(), "private-store")
-	store, err := p.Provision("MGIT-62", privDir)
+	store, err := p.Provision("MGIT-62", repoRoot, privDir)
 	require.NoError(t, err,
 		"a task committed but never squashed must still launch a sandbox — this is the first thing a new user does")
 
@@ -278,7 +278,7 @@ func TestProvision_TaskBranchWins_WhenBothExist(t *testing.T) {
 
 	p, err := NewStoreProvisioner(repoRoot)
 	require.NoError(t, err)
-	store, err := p.Provision(taskID, filepath.Join(t.TempDir(), "private-store"))
+	store, err := p.Provision(taskID, repoRoot, filepath.Join(t.TempDir(), "private-store"))
 	require.NoError(t, err)
 
 	priv := filesystem.NewStorage(osfs.New(store.Dir), cache.NewObjectLRUDefault())
@@ -296,7 +296,78 @@ func TestProvision_EmptyRepoNoHead_StillFailsClosed(t *testing.T) {
 
 	p, err := NewStoreProvisioner(repoRoot)
 	require.NoError(t, err)
-	_, err = p.Provision("MGIT-62", filepath.Join(t.TempDir(), "private-store"))
+	_, err = p.Provision("MGIT-62", repoRoot, filepath.Join(t.TempDir(), "private-store"))
 	require.Error(t, err, "no base at all must fail closed")
 	assert.ErrorIs(t, err, model.ErrBranchNotFound)
+}
+
+// THE GUEST EXCLUDES WHAT THE HOST EXCLUDES (MGIT-236). mgit records the
+// agent files it writes into a worktree in <worktree>/.mgit/generated, and
+// bulk staging skips them (MGIT-80). Inside a sandbox the worktree's .mgit
+// IS the private store, so a list left behind on the host is a list the
+// guest never reads: a guest `mgit add -A` staged all seven generated files,
+// and they landed in the user's patch. The provisioner carries the
+// worktree's list into the private store, verbatim in what it names; a
+// worktree with no list carries none; a list that is not a regular file is
+// refused and leaves no private store behind, since following it would read
+// an arbitrary host file into the guest. Refs: MGIT-236, MGIT-80, SEC-03
+func TestProvision_CarriesTheWorktreesGeneratedList(t *testing.T) {
+	generated := []string{".claude/settings.json", "AGENTS.md", "CLAUDE.md"}
+	tests := []struct {
+		name    string
+		prepare func(t *testing.T, worktree string)
+		want    []string
+		wantErr string
+	}{
+		{"a_recorded_list_is_carried", func(t *testing.T, wt string) {
+			require.NoError(t, gitstore.RecordGeneratedPaths(wt, generated))
+		}, generated, ""},
+		{"no_list_carries_none", func(*testing.T, string) {}, nil, ""},
+		{"a_symlinked_list_is_refused", func(t *testing.T, wt string) {
+			outside := filepath.Join(t.TempDir(), "elsewhere")
+			require.NoError(t, os.WriteFile(outside, []byte("secret-line\n"), 0o600))
+			require.NoError(t, os.MkdirAll(filepath.Join(wt, ".mgit"), 0o750))
+			require.NoError(t, os.Symlink(outside, filepath.Join(wt, ".mgit", "generated")))
+		}, nil, "not a regular file"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoRoot, taskID, _, _ := seededRepo(t)
+			worktree := filepath.Join(t.TempDir(), "wt")
+			require.NoError(t, os.MkdirAll(worktree, 0o750))
+			tt.prepare(t, worktree)
+			p, err := NewStoreProvisioner(repoRoot)
+			require.NoError(t, err)
+			privDir := filepath.Join(t.TempDir(), "private-store")
+
+			_, err = p.Provision(taskID, worktree, privDir)
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				_, statErr := os.Stat(privDir)
+				assert.True(t, os.IsNotExist(statErr), "a refused launch leaves no private store behind")
+				return
+			}
+			require.NoError(t, err)
+			// Read the list the way the guest's mgit does: as the .mgit of a
+			// root whose .mgit is the private store.
+			guestRoot := t.TempDir()
+			require.NoError(t, os.Symlink(privDir, filepath.Join(guestRoot, ".mgit")))
+			got, err := gitstore.ReadGeneratedPaths(guestRoot)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// The worktree is a required input: without it the provisioner cannot tell
+// what the guest must exclude, and a silent skip is the defect itself.
+func TestProvision_RequiresTheWorktree(t *testing.T) {
+	repoRoot, taskID, _, _ := seededRepo(t)
+	p, err := NewStoreProvisioner(repoRoot)
+	require.NoError(t, err)
+	_, err = p.Provision(taskID, "", filepath.Join(t.TempDir(), "private-store"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "worktree")
 }
