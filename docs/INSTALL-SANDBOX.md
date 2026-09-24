@@ -305,10 +305,10 @@ kernel source, byte-identical to kernel.org's), `libkrunfw-<v>-source.tar.gz`
 (the patches, configuration and build scripts applied to it) and
 `libkrun-<v>-source.tar.gz`.
 
-`linux_arm64` archives are built and load-checked like `linux_amd64`, but no
-hosted CI runner exposes KVM on arm64, so no guest boots from them before a
-release; `linux_amd64` boots the documented user path on every change
-(MGIT-230.5). Refs: MGIT-229, ADR-016
+`linux_arm64` is build-verified and not boot-verified: its archives are built
+and load-checked like `linux_amd64`, but no hosted CI runner exposes KVM on
+arm64, so no guest boots from them before a release. `linux_amd64` boots the
+documented user path on every change. Refs: MGIT-229, MGIT-230.5, ADR-016
 
 **macOS: a downloaded archive will not run until you clear quarantine.**
 Any transfer that sets the `com.apple.quarantine` extended attribute — a

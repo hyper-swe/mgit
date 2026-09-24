@@ -322,7 +322,7 @@ cannot do here.
 The capability set above is exactly what CI asserts on every push, named test
 by test in `scripts/e2e/libkrun_linux_column.sh`.
 
-The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`.
+The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`, but on Linux that builds the firecracker daemon, which boots only a kernel + rootfs image and refuses `sandbox sync` and `sandbox export`: use the release archive for the agent loop ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md)).
 
 - **macOS** requires Apple Silicon (arm64), macOS 14+, and the **libkrun** hypervisor, which is *not* installed with mgit — it lives in a third-party Homebrew tap, and Homebrew will not load a formula from a tap you have not trusted. All three commands are needed, in this order:
 

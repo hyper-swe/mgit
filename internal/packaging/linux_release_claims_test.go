@@ -18,7 +18,9 @@ import (
 func TestLinuxArm64_EverySurfaceSaysBuildVerifiedNotBootVerified(t *testing.T) {
 	const words = "build-verified and not boot-verified"
 	changelog := readRepoFile(t, "CHANGELOG.md")
-	unreleased := changelog[:strings.Index(changelog, "\n## [0.")]
+	end := strings.Index(changelog, "\n## [0.")
+	require.Positive(t, end, "the CHANGELOG has a released section after [Unreleased]")
+	unreleased := changelog[:end]
 	for name, text := range map[string]string{
 		"docs/INSTALL-SANDBOX.md":         readRepoFile(t, filepath.Join("docs", "INSTALL-SANDBOX.md")),
 		"CHANGELOG.md [Unreleased]":       unreleased,
@@ -47,12 +49,24 @@ func TestGoInstallOfTheDaemon_NamesTheFirecrackerBuildOnLinux(t *testing.T) {
 				continue
 			}
 			offered = true
-			near := strings.Join(lines[max(0, i-4):min(len(lines), i+4)], "\n")
-			assert.Contains(t, near, "firecracker",
+			assert.Contains(t, paragraph(lines, i), "firecracker",
 				"%s offers go install of the daemon at line %d without saying that on Linux it is the firecracker build", name, i+1)
 		}
 		assert.True(t, offered, "%s no longer offers go install of the daemon; update this test's case list", name)
 	}
+}
+
+// paragraph is the run of non-blank lines around lines[i]: the sentence or
+// the commented command block a reader takes in with it.
+func paragraph(lines []string, i int) string {
+	lo, hi := i, i
+	for lo > 0 && strings.TrimSpace(lines[lo-1]) != "" {
+		lo--
+	}
+	for hi < len(lines)-1 && strings.TrimSpace(lines[hi+1]) != "" {
+		hi++
+	}
+	return strings.Join(lines[lo:hi+1], "\n")
 }
 
 // releaseHeader is the release notes' header block from .goreleaser.yaml.

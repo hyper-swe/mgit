@@ -296,9 +296,12 @@ release:
     # Go — core mgit
     go install github.com/hyper-swe/mgit/cmd/mgit@latest
 
-    # Go — the sandbox daemon (Linux works out of the box; on macOS the
-    # go-installed binary is unsigned and needs the virtualization
-    # entitlement — prefer brew or the release archive there)
+    # Go — the sandbox daemon. On Linux this is the firecracker build: it
+    # boots only a kernel + ext4 rootfs image, needs firecracker on PATH and
+    # refuses sandbox sync/export; the release archive's libkrun daemon runs
+    # the documented agent loop. On macOS the go-installed binary is unsigned
+    # and needs the virtualization entitlement. Prefer the release archive,
+    # or brew on macOS.
     go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest
 
     # Binary — download the archive below for your platform (contains both)
@@ -328,8 +331,8 @@ release:
     Linux archives links libkrun, and `lib/` beside it holds libkrun and
     libkrunfw, so a Linux host needs only `/dev/kvm` and glibc 2.31 or newer.
     Extract the whole archive and keep `lib/` next to `mgit-sandboxd`.
-    `linux_arm64` is built and load-checked, but not boot-checked before
-    release: no hosted CI runner offers KVM on arm64.
+    `linux_arm64` is build-verified and not boot-verified: it is built and
+    load-checked, but no hosted CI runner offers KVM on arm64.
 
     **Source for the bundled kernel.** libkrunfw carries a Linux kernel
     (GPL-2.0-only) that runs only inside the guest microVM. Its corresponding
