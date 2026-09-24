@@ -336,7 +336,7 @@ func composeBaseFromImage(cmd *cobra.Command, refArg string, opts composeOptions
 		return composeResult{}, err
 	}
 	published = true
-	return registerComposedBase(env.hostRoot, cached, resolved.String(), opts,
+	return registerComposedBase(env.hostRoot, cached, resolved, opts,
 		signWith(env.priv), func() time.Time { return time.Now().UTC() })
 }
 

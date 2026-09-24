@@ -51,6 +51,11 @@ type Ref struct {
 	Repository string
 	Tag        string // empty when the reference pinned a digest
 	Digest     string // sha256:<hex>, set on input or filled in by the pull
+	// SelectedPlatform is the digest of the platform manifest a pull chose
+	// for this host when Digest names an image index; empty when Digest
+	// names a single-platform manifest itself. It is not part of the
+	// reference: String never prints it. Refs: MGIT-223, MGIT-219
+	SelectedPlatform string
 }
 
 // String renders the fully-resolved reference — registry, repository, and both

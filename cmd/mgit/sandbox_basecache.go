@@ -110,9 +110,10 @@ type composeResult struct {
 // as the human-facing half of the record. A recompose whose input digest
 // differs is a NEW cache entry and a NEW journal line; it never overwrites
 // what came before. Refs: MGIT-147, MGIT-105
-func registerComposedBase(hostRoot string, cached basecache.Entry, sourceRef string,
+func registerComposedBase(hostRoot string, cached basecache.Entry, resolved guestbase.Ref,
 	opts composeOptions, signer signFunc, clock func() time.Time,
 ) (composeResult, error) {
+	sourceRef := resolved.String()
 	rec := guestbase.Compose{
 		Name:       opts.name,
 		SourceTag:  guestbase.SourceTag(sourceRef),

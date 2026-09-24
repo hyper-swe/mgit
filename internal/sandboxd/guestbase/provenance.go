@@ -42,6 +42,37 @@ type Compose struct {
 	// Empty on a first compose.
 	PrevSourceRef  string `json:"prev_source_ref,omitempty"`
 	PrevBaseDigest string `json:"prev_base_digest,omitempty"`
+	// PlatformDigest is the platform manifest the index selected for this
+	// host, when SourceRef names an index; PrevPlatformDigest is the one the
+	// superseded compose recorded, when it recorded one. Refs: MGIT-223
+	PlatformDigest     string `json:"platform_digest,omitempty"`
+	PrevPlatformDigest string `json:"prev_platform_digest,omitempty"`
+}
+
+// SourceChange is what a recompose of the same tag did to its source.
+type SourceChange int
+
+const (
+	// SourceUnchanged: a first compose, another tag, or the same digest.
+	SourceUnchanged SourceChange = iota
+	// SourceKindChanged: RED.
+	SourceKindChanged
+	// SourceIndexMoved: RED.
+	SourceIndexMoved
+	// SourceImageMoved: the tag resolves to a different image.
+	SourceImageMoved
+)
+
+// SourceChange classifies this compose against the one it superseded.
+// RED: the raw digest comparison. Refs: MGIT-223
+func (c Compose) SourceChange() SourceChange {
+	if c.PrevSourceRef == "" || c.SourceRef == "" || SourceTag(c.PrevSourceRef) != SourceTag(c.SourceRef) {
+		return SourceUnchanged
+	}
+	if SourceDigest(c.PrevSourceRef) != SourceDigest(c.SourceRef) {
+		return SourceImageMoved
+	}
+	return SourceUnchanged
 }
 
 // SourceTag splits the human half out of a resolved reference:
@@ -66,13 +97,7 @@ func SourceDigest(sourceRef string) string {
 // composed a different image" (the tags differ — you asked for that) and "you
 // recomposed the same image" (the digests agree — nothing moved). Refs: MGIT-147
 func (c Compose) TagMoved() bool {
-	if c.PrevSourceRef == "" || c.SourceRef == "" {
-		return false
-	}
-	if SourceTag(c.PrevSourceRef) != SourceTag(c.SourceRef) {
-		return false
-	}
-	return SourceDigest(c.PrevSourceRef) != SourceDigest(c.SourceRef)
+	return c.SourceChange() == SourceImageMoved
 }
 
 // RecordCompose appends one composition to the journal under hostRoot.
