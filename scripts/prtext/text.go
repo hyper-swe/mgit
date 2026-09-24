@@ -116,7 +116,7 @@ func nameCandidates(text string) map[string]bool {
 		addCandidate(out, strings.ReplaceAll(t, "-", ""))
 	}
 	for _, w := range strings.Fields(lower) {
-		w = strings.TrimFunc(w, func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9') })
+		w = strings.TrimFunc(w, func(r rune) bool { return (r < 'a' || r > 'z') && (r < '0' || r > '9') })
 		if wholeWordRE.MatchString(w) {
 			addCandidate(out, nonAlnum.ReplaceAllString(w, ""))
 		}
