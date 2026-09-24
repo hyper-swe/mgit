@@ -164,6 +164,65 @@ jobs:
       - name: Core-loop e2e against the installed binaries
         run: bash scripts/e2e/core_loop.sh "$BINDIR"
 
+  # THE DOCUMENTED USER PATH ON LINUX, as a release user meets it: the
+  # release-shaped Linux layout (the same goreleaser build ids the archive
+  # ships, guest/ beside the binaries), the documented host requirements
+  # (/dev/kvm, the firecracker VMM, e2fsprogs + iptables), and NOTHING
+  # test-only. No MGIT_GUEST_* hook is set: those are how the firecracker live
+  # gate below boots, and why its green says nothing about this path.
+  # Compose -> launch -> exec -> sync -> export -> remove, each step PASS or
+  # the exact failure. RED until the Linux release carries a backend that
+  # serves the path (MGIT-229, hyper-swe/mgit#12). Refs: MGIT-229
+  linux-user-path:
+    name: Linux user path (release-shaped, stock runner)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.6"
+
+      - name: Require /dev/kvm (a documented host requirement)
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          ls -l /dev/kvm
+          [ -r /dev/kvm ] && [ -w /dev/kvm ] \
+            || { echo "FATAL: /dev/kvm not usable — the user path cannot run"; exit 1; }
+
+      - name: The documented Linux host requirements (firecracker VMM, e2fsprogs, iptables)
+        run: |
+          sudo bash scripts/sandbox-image/fetch-firecracker.sh amd64 /usr/local/bin/firecracker
+          apt_restore='sudo rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/partial/*; sudo dpkg --configure -a'
+          bash scripts/ci/guard-fetch.sh -t 900 -l apt-update -c "$apt_restore" -- \
+            sudo apt-get update -qq
+          bash scripts/ci/guard-fetch.sh -t 900 -l apt-install-host-tooling -c "$apt_restore" -- \
+            sudo apt-get install -y -qq e2fsprogs iproute2 iptables
+
+      - name: Build the release-shaped Linux layout (goreleaser snapshot, the archive's own build ids)
+        run: |
+          # The same pin and bound as the release-archive install channel above.
+          GORELEASER_VERSION=v2.17.1
+          bash scripts/ci/guard-fetch.sh -t 900 -l goreleaser-install \
+            -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
+            go install github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}
+          goreleaser build --snapshot --clean --skip=before \
+            --id mgit --id mgit-sandboxd-linux --id mgit-guest --single-target
+          bin="$RUNNER_TEMP/userbin"; mkdir -p "$bin/guest"
+          mgit_bin="$(find dist -type f -path '*mgit_linux*' -name mgit -perm -u+x | head -1)"
+          cp "$mgit_bin" "$bin/mgit"
+          cp "$(find dist -type f -name mgit-sandboxd -perm -u+x | head -1)" "$bin/mgit-sandboxd"
+          # guest/ as the archive lays it out: the guest runs the same CLI the host does.
+          cp "$mgit_bin" "$bin/guest/mgit"
+          cp "$(find dist -type f -name mgit-guest -perm -u+x | head -1)" "$bin/guest/mgit-guest"
+          ls -l "$bin" "$bin/guest"
+
+      - name: The user path — must PASS
+        run: bash scripts/e2e/linux_user_path.sh "$RUNNER_TEMP/userbin"
+
   # LIVE Linux containment gate: real firecracker microVMs on real KVM.
   #
   # This job used to be "Sandbox posture (gated; skips without virtualization)"
