@@ -154,6 +154,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without following any link: a worktree `.mgit` that is not a real
   directory, or a record that is not a regular file, refuses the launch.
 
+### Fixed
+
+- **A recompose compares the source digest like with like (MGIT-223).**
+  Since 0.6.8 a base records the image index a tag resolves to, and an
+  older base recorded the platform manifest the index selected. Every
+  recompose after the upgrade printed "NOTE: <tag> now resolves to a
+  different image", even when the index selected the very manifest the
+  old record named. A base now records the platform manifest it selected
+  beside the index. A recompose says "resolves to the same image" when
+  only the kind of the recorded digest changed, says the index moved when
+  this host's manifest did not, and prints the moved-tag NOTE only when
+  the image itself changed.
+
 ## [0.6.8] - 2026-09-22
 
 **The base a release vouches for is a digest now, and `mgit doctor` says when

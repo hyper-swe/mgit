@@ -506,3 +506,32 @@ func TestPinsIndexDigest(t *testing.T) {
 		}
 	}
 }
+
+// The pull keeps the platform manifest it selected from an index beside the
+// index digest, so a later recompose can compare an older record (which
+// named that manifest) with its own kind. A tag naming a single manifest has
+// no selection: the digest IS the manifest. Neither changes the reference's
+// string. Refs: MGIT-223
+func TestResolve_KeepsTheSelectedPlatformBesideTheIndex(t *testing.T) {
+	_, srv, ref, index, hostManifest := indexFixture(t)
+	defer srv.Close()
+	got, err := Resolve(context.Background(), ref, PullOptions{PlainHTTP: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Digest != index || got.SelectedPlatform != hostManifest {
+		t.Fatalf("resolved %+v; want the index %s with the host's manifest %s selected", got, index, hostManifest)
+	}
+	if strings.Contains(got.String(), hostManifest) {
+		t.Errorf("the selection is not part of the reference: %s", got)
+	}
+
+	single := Ref{Registry: ref.Registry, Repository: ref.Repository, Digest: hostManifest}
+	got, err = Resolve(context.Background(), single, PullOptions{PlainHTTP: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SelectedPlatform != "" {
+		t.Errorf("a single manifest selects nothing: %+v", got)
+	}
+}
