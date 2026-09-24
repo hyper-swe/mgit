@@ -72,6 +72,13 @@ mkdir -p "$R" "$P"
 printf 'v1\n' >"$P/f.txt"
 echo "  PASS"
 
+# fetch-guard: `mgit sandbox base from` pulls an OCI image through the
+# product's own registry client (internal/sandboxd/guestbase/pull.go), which
+# already bounds a whole pull at 15 minutes -- clause 2, in Go. Wrapping the
+# CLI here would guard the wrong layer: a retry outside the client cannot
+# clear the half-written blob cache inside it. MGIT-145 carries that work.
+# This leg composes exactly as a user does, so it pulls exactly as a user
+# does. Refs: MGIT-143, MGIT-145
 step "4 compose the release's guest base (mgit sandbox base from)"
 out="$(cd "$R" && mgit sandbox base from 2>&1)" || fail "compose" "$(first "$out")"
 printf '%s\n' "$out" | grep -E '^(Composing|Registered)' || fail "compose" "no base was registered"
