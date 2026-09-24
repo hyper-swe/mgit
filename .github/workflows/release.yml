@@ -271,6 +271,12 @@ jobs:
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm || true
+          # trigger is asynchronous: wait for udev to apply the rule before
+          # testing it. One dispatch read "not usable" with nothing to say
+          # why (run 36005076930); ls makes the next one legible, absent vs
+          # not permitted. Refs: MGIT-230.6
+          sudo udevadm settle || true
+          ls -l /dev/kvm || echo "/dev/kvm is absent on this runner"
           [ -r /dev/kvm ] && [ -w /dev/kvm ] || { echo "FATAL: /dev/kvm not usable"; exit 1; }
 
       - name: Install the published release with install.sh
