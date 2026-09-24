@@ -150,12 +150,21 @@ gx 'kill "$(cat /tmp/up-bg.pid)"' >/dev/null
 (cd "$P" && timeout 120 mgit run -- /bin/sh -c 'exit 7' >/dev/null 2>&1)
 rc=$?
 [ "$rc" -eq 7 ] || fail "exec contract" "a guest exit 7 came back as $rc"
-out="$(gx 'id -un; head -c 1 /proc/self/stat >/dev/null && echo proc-stat-ok; head -1 /proc/meminfo; nproc; dmesg >/dev/null 2>&1 && echo dmesg-ok || echo dmesg-refused')"
+out="$(gx 'head -c 1 /proc/self/stat >/dev/null && echo proc-stat-ok; head -1 /proc/meminfo; nproc; dmesg >/dev/null 2>&1 && echo dmesg-ok || echo dmesg-refused')"
 printf '%s\n' "$out" | sed 's/^/  guest: /'
 for want in proc-stat-ok MemTotal dmesg-ok; do
 	printf '%s\n' "$out" | grep -q "$want" || fail "exec contract" "the exec identity could not read what the loop reads ($want missing): $out"
 done
 printf '%s\n' "$out" | grep -Eqx '[0-9]+' || fail "exec contract" "nproc printed no CPU count: $out"
+# The identity has a NAME in the guest: the guest writes it a passwd entry
+# named agent (MGIT-151), and tools that look the user up (whoami, git's
+# default identity, Node's os.userInfo()) fail without one.
+name="$(gx 'id -un')"
+if [ "$name" != agent ]; then
+	echo "  the guest's view of this identity:"
+	gx 'id; echo "--- /etc/passwd head:"; head -3 /etc/passwd; echo "--- entries for this uid or agent:"; grep -n -e ":$(id -u):" -e "^agent:" /etc/passwd; echo "--- /etc is:"; grep " /etc " /proc/mounts' | sed 's/^/    /'
+	fail "exec contract" "the exec identity has no name in the guest: id -un said '$name', not agent"
+fi
 echo "  PASS"
 
 step "8 export a file the guest made"
