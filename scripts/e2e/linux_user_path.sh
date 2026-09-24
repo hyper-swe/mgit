@@ -109,6 +109,31 @@ got="$(cd "$P" && timeout 120 mgit run -- cat f.txt 2>&1)"
 [ "$got" = v2 ] || fail "sync" "the guest read '$got' after the sync, not v2"
 echo "  PASS"
 
+step "7b the loop's per-round canary: a host delete is gone from the guest right after the sync"
+# hyperswe's loop checks this every round, in exactly this shape: two files
+# written in the same second with different lengths, a classifying dry run,
+# a sync, the guest reads both; then one is deleted on the host, synced, and
+# the guest's [ -e ] must say it is gone AT ONCE. On Linux libkrun the guest
+# caches a looked-up name for ~5 s (MGIT-90), so this is the sync's settle
+# step (MGIT-192) earning its keep, and the delete-bearing sync's time is
+# printed, because a loop pays it every round. Refs: MGIT-230.2
+ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
+printf 'c\n' >"$P/canary-a.txt"
+printf 'canary-b\n' >"$P/canary-b.txt"
+out="$(cd "$R" && mgit sandbox sync --task-id "$TASK" --dry-run 2>&1)" || fail "canary" "dry run: $(first "$out")"
+out="$(cd "$R" && mgit sandbox sync --task-id "$TASK" 2>&1)" || fail "canary" "sync: $(first "$out")"
+got="$(cd "$P" && timeout 120 mgit run -- sh -c 'cat canary-a.txt canary-b.txt' 2>&1)"
+[ "$got" = "$(printf 'c\ncanary-b')" ] || fail "canary" "the guest read '$got', not both canary files"
+rm "$P/canary-a.txt"
+t0="$(ms)"
+out="$(cd "$R" && mgit sandbox sync --task-id "$TASK" 2>&1)" || fail "canary" "sync of the delete: $(first "$out")"
+t1="$(ms)"
+printf '%s\n' "$out" | head -2
+seen="$(cd "$P" && timeout 120 mgit run -- sh -c '[ -e canary-a.txt ] && echo present || echo gone' 2>&1)"
+[ "$seen" = gone ] || fail "canary" "the guest still sees canary-a.txt right after the sync that deleted it ('$seen')"
+echo "  the delete-bearing sync took $((t1 - t0)) ms"
+echo "  PASS"
+
 step "8 export a file the guest made"
 # The guest path is worktree-relative: export reads the guest's own view of
 # the worktree, the airlock through which artifacts leave (besides land).
