@@ -24,7 +24,7 @@ func TestVerdictGate_IsWiredIntoCI(t *testing.T) {
 	}
 	wf := string(raw)
 	for _, want := range []string{
-		"pull_request:", "issue_comment:", "synchronize", "created", "edited", "deleted",
+		"pull_request_target:", "issue_comment:", "synchronize", "created", "edited", "deleted",
 		"./scripts/verdictgate", "statuses: write", "reviewer-verdict-at-head",
 	} {
 		if !strings.Contains(wf, want) {
@@ -122,4 +122,38 @@ func TestVerdictGate_RunsOnEveryTextEvent(t *testing.T) {
 			t.Errorf("verdict.yml lacks %q", want)
 		}
 	}
+}
+
+// THE CHECK IS JUDGED BY THE BASE'S COPY (MGIT-242.2). The text check and
+// the verdict gate are built from the checked-out tree. Checked out at the
+// pull request's head, a pull request that edits the checker or its word
+// lists would be judged by its own edit and could pass itself. So the job
+// runs on pull_request_target (the base's workflow, never the head's code)
+// and checks out the BASE branch on every event, without keeping the token
+// in the checkout; the pull request's text is still read through the API.
+// Refs: MGIT-242.2, MGIT-242
+func TestVerdictGate_JudgesWithTheBasesCopy(t *testing.T) {
+	cfg := readRepoFile(t, ".github/workflows/verdict.yml")
+	onBlock, _, _ := strings.Cut(cfg, "\nconcurrency:")
+	assert.Contains(t, onBlock, "\n  pull_request_target:", "pull request events run the base's workflow")
+	assert.NotContains(t, onBlock, "\n  pull_request:", "a pull_request trigger runs with the head's code checked out")
+	checkout := stepAfter(t, cfg, "uses: actions/checkout@")
+	assert.Contains(t, checkout, "ref: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}",
+		"every event checks out the base branch, or the default branch for a comment event")
+	assert.Contains(t, checkout, "persist-credentials: false")
+	assert.NotContains(t, cfg, "github.event.pull_request.head.ref", "nothing checks out the head")
+	assert.NotContains(t, cfg, "github.event.pull_request.head.sha", "nothing checks out the head")
+}
+
+// stepAfter returns the workflow text from the line holding marker up to the
+// next step, so an assertion reads that step's own settings.
+func stepAfter(t *testing.T, cfg, marker string) string {
+	t.Helper()
+	i := strings.Index(cfg, marker)
+	require.GreaterOrEqual(t, i, 0, "the workflow has a step using %q", marker)
+	rest := cfg[i:]
+	if j := strings.Index(rest, "\n      - "); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
 }
