@@ -82,6 +82,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   states a mismatch as a difference, with both versions, the pid and the
   scoped stop. docs/INSTALL-SANDBOX.md now says to stop a running daemon
   before installing a new release.
+- **The pull request text check is judged by the base branch's copy, and
+  reads private IPv6 addresses too (MGIT-242.2).** The verdict job now
+  runs pull request events on `pull_request_target`, and on every event
+  it checks out the base branch, or the default branch for a comment
+  event, so a pull request that edits the checker or its lists is judged
+  by the copy it would change, never by its own edit. Nothing from the
+  head is checked out or run; the text is still read through the API. A
+  unique-local (fc00::/7) or link-local (fe80::/10) IPv6 literal is now a
+  private address like a private IPv4 one; the ranges' own names are not.
 - **`mgit-sandboxd --vmm` and doctor's `daemon/vmm` row (MGIT-229).** The
   daemon reports which VMM it links, where each of its libraries resolved and
   what stops it booting a guest, asked the way a VM boot asks (a child with the
