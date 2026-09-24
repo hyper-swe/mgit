@@ -212,7 +212,7 @@ func checkOne(call api, o options, w io.Writer) (int, *rateLimit) {
 type tally struct{ read, withHits, gating, unread int }
 
 func (t *tally) add(code int, out string) {
-	hit := strings.Contains(out, "prtext: listed ")
+	hit := carriesHit(out)
 	switch {
 	case code == 2:
 		t.unread++
@@ -240,7 +240,7 @@ func sweep(call api, numbers []int, o options, w io.Writer) int {
 		code, budget := checkOne(call, o, &buf)
 		out := buf.String()
 		t.add(code, out)
-		if code != 0 || strings.Contains(out, "prtext: listed ") {
+		if code != 0 || carriesHit(out) {
 			fmt.Fprint(w, out)
 		}
 		limited := code == 2 && strings.Contains(strings.ToLower(out), "rate limit")

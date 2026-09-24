@@ -86,7 +86,7 @@ func TestCheck_FindsEveryPlaceAListedWordCanHide(t *testing.T) {
 	assert.NotContains(t, out, "comment 102", "near misses are not hits: a longer token, a token inside a longer one, the name split by spaces, a longer run")
 	assert.Equal(t, 4, strings.Count(out, "prtext: listed "), "exactly the four hits:\n%s", out)
 	last := lastLine(out)
-	assert.True(t, strings.HasPrefix(last, "prtext: FAIL — 3 text versions carry a listed word at or after"), last)
+	assert.True(t, strings.HasPrefix(last, "prtext: FAIL — 3 hits (a listed word or a private address) at or after"), last)
 }
 
 // A HIT NAMES THE PLACE, NEVER THE WORD. Neither the listed words nor any
@@ -317,5 +317,44 @@ func TestQueries_UseEveryVariableTheyDeclare(t *testing.T) {
 		for _, m := range declared.FindAllStringSubmatch(head, -1) {
 			assert.Contains(t, body, "$"+m[1], "the %s query declares $%s and never uses it", name, m[1])
 		}
+	}
+}
+
+// A PRIVATE ADDRESS IS A HIT WITHOUT A LIST. A private-network host address
+// (10/8, 172.16/12, 192.168/16) has no business in public text, and listing
+// one by digest would publish it: a digest of a private address is guessed
+// in seconds. So any private IPv4 literal is a hit of its own class, and the
+// hit never names it. The range names themselves ("10.0.0.0/8") identify no
+// host and are not hits; neither is a public or documentation address, nor
+// four numbers inside a longer dotted version. Refs: MGIT-242
+func TestJudge_APrivateAddressIsAHitWithoutNamingIt(t *testing.T) {
+	tests := []struct {
+		text string
+		hit  bool
+	}{
+		{"the box at 10.20.30.40 answered", true},
+		{"(172.20.255.254),", true},
+		{"ssh 192.168.7.9:22", true},
+		{"10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16 are denied", false},
+		{"172.15.0.1 and 172.32.0.1 lie outside 172.16/12", false},
+		{"8.8.8.8 and 192.0.2.10 are not private", false},
+		{"version 10.1.2.3.4 or v10.1.2.3", false},
+		{"999.1.1.1 is no address", false},
+		{"guest ip=10.0.2.15 gateway=10.0.2.2", false},
+		{"inet 172.31.16.162/30 via 172.31.16.161", false},
+		{"10.0.3.1 is outside the guest network", true},
+		{"172.30.0.1 is outside the sandbox net", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.text, func(t *testing.T) {
+			hits := judge([]version{{Field: "description", Rev: "as written", At: cutoff, Text: tt.text}}, testLists(), cutoff)
+			assert.Equal(t, tt.hit, len(hits) == 1 && hits[0].Class == "address", "%v", hits)
+		})
+	}
+	var out bytes.Buffer
+	report(&out, 7, &collected{counts: map[string]int{}}, judge([]version{{Field: "title", Rev: "as opened", At: cutoff, Text: "10.20.30.40"}}, testLists(), cutoff), cutoff)
+	assert.Contains(t, out.String(), "private address in title as opened")
+	for _, part := range []string{"10.20", "20.30", "30.40"} {
+		assert.NotContains(t, out.String(), part, "the report never names the address")
 	}
 }

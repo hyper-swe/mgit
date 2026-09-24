@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/netip"
 	"regexp"
 	"strings"
 	"time"
@@ -47,7 +48,7 @@ type lists struct {
 // digest for the triage file only; the report never prints it.
 type hit struct {
 	version
-	Class  string // "term" or "name"
+	Class  string // "term", "name" or "address"
 	Gating bool
 	digest string
 }
@@ -114,6 +115,73 @@ func nameCandidates(text string) map[string]bool {
 	return out
 }
 
+var ipv4RE = regexp.MustCompile(`\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:/\d{1,2})?`)
+
+// rangeNames are the private ranges' own names. They identify no host, and
+// text about network policy names them.
+var rangeNames = map[string]bool{"10.0.0.0/8": true, "172.16.0.0/12": true, "192.168.0.0/16": true}
+
+// productNets are the guest networks this product itself assigns, so its
+// own diagnostics and documentation name addresses in them. Each is the
+// constant in the source that defines it:
+//   - 10.0.2.0/24: the libkrun user network, guest 10.0.2.15 and gateway
+//     10.0.2.2 (internal/sandboxd/backend/libkrun/netgw.go);
+//   - 172.31.0.0/16: the firecracker sandbox network the per-sandbox /30s
+//     are carved from (sandboxNetBase, internal/sandboxd/backend/firecracker/network.go).
+var productNets = []netip.Prefix{netip.MustParsePrefix("10.0.2.0/24"), netip.MustParsePrefix("172.31.0.0/16")}
+
+// privateAddress reports whether text carries a private IPv4 literal
+// (10/8, 172.16/12, 192.168/16) that is neither a range's own name, nor an
+// address in the product's own guest networks, nor four numbers inside a
+// longer dotted version. It needs no list: listing a private address by
+// digest would publish it, since such a digest is guessed in seconds. An
+// example address belongs in a documentation range (RFC 5737: 192.0.2.0/24,
+// 198.51.100.0/24, 203.0.113.0/24), which is never private and never a hit.
+func privateAddress(text string) bool {
+	for _, loc := range ipv4RE.FindAllStringIndex(text, -1) {
+		lit := text[loc[0]:loc[1]]
+		if rangeNames[lit] || insideLonger(text, loc[0], loc[1]) {
+			continue
+		}
+		addr, _, _ := strings.Cut(lit, "/")
+		if isPrivate(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAlnum(b byte) bool {
+	return b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
+// insideLonger: the literal is glued to a letter, a digit or a dot before
+// it, or continues as another dotted number after it (10.1.2.3.4, v10.1.2.3).
+func insideLonger(text string, start, end int) bool {
+	if start > 0 && (isAlnum(text[start-1]) || text[start-1] == '.') {
+		return true
+	}
+	if end < len(text) && isAlnum(text[end]) {
+		return true
+	}
+	return end+1 < len(text) && text[end] == '.' && text[end+1] >= '0' && text[end+1] <= '9'
+}
+
+// isPrivate: a well-formed IPv4 address in a private range and outside the
+// product's own guest networks.
+func isPrivate(lit string) bool {
+	a, err := netip.ParseAddr(lit)
+	if err != nil || !a.Is4() || !a.IsPrivate() {
+		return false
+	}
+	for _, p := range productNets {
+		if p.Contains(a) {
+			return false
+		}
+	}
+	return true
+}
+
 // anyListed returns the digest of a candidate the set lists, or "".
 func anyListed(candidates, set map[string]bool) string {
 	for c := range candidates {
@@ -137,6 +205,9 @@ func judge(vs []version, l lists, cutoff time.Time) []hit {
 		if d := anyListed(nameCandidates(v.Text), l.names); d != "" {
 			hits = append(hits, hit{version: v, Class: "name", Gating: gating, digest: d})
 		}
+		if privateAddress(v.Text) {
+			hits = append(hits, hit{version: v, Class: "address", Gating: gating, digest: "-"})
+		}
 	}
 	return hits
 }
@@ -158,15 +229,28 @@ func report(w io.Writer, pr int, got *collected, hits []hit, cutoff time.Time) i
 			verdict = "gating (at or after the cutoff)"
 			gating = append(gating, h.place())
 		}
-		fmt.Fprintf(w, "prtext: listed %s in %s — %s\n", h.Class, h.place(), verdict)
+		fmt.Fprintf(w, "prtext: %s in %s — %s\n", h.label(), h.place(), verdict)
 	}
 	stamp := cutoff.UTC().Format(time.RFC3339)
 	if len(gating) > 0 {
-		fmt.Fprintf(w, "prtext: FAIL — %d text versions carry a listed word at or after %s: %s\n", len(gating), stamp, strings.Join(gating, "; "))
+		fmt.Fprintf(w, "prtext: FAIL — %d hits (a listed word or a private address) at or after %s: %s\n", len(gating), stamp, strings.Join(gating, "; "))
 		return 1
 	}
-	fmt.Fprintf(w, "prtext: PASS — no listed word at or after %s; %d earlier hits reported, not gating\n", stamp, len(hits))
+	fmt.Fprintf(w, "prtext: PASS — no listed word or private address at or after %s; %d earlier hits reported, not gating\n", stamp, len(hits))
 	return 0
+}
+
+// label says what kind of hit this is, never what matched.
+func (h hit) label() string {
+	if h.Class == "address" {
+		return "private address"
+	}
+	return "listed " + h.Class
+}
+
+// carriesHit reports whether a report's output names any hit.
+func carriesHit(out string) bool {
+	return strings.Contains(out, "prtext: listed ") || strings.Contains(out, "prtext: private address ")
 }
 
 // writeHits records each hit with its matched digest, tab-separated, for
