@@ -345,6 +345,9 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 	if err != nil {
 		return nil, fmt.Errorf("%s launch: resolve image %q: %w", m.cfg.Backend, opts.ImageRef, err)
 	}
+	if err := checkBootShape(m.cfg.Backend, opts.ImageRef, images); err != nil {
+		return nil, fmt.Errorf("%s launch: %w", m.cfg.Backend, err)
+	}
 
 	// Use the host-assigned lifecycle ID when the caller (the sandbox
 	// service, lazy provisioning) supplied one, so registration and boot
