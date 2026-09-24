@@ -8,6 +8,9 @@ on:
   # the merge rule requires lived in hand-dispatched run ids nobody running
   # `gh pr checks` would see (MGIT-200). Pushes stay filtered to main.
   pull_request:
+    # `edited` too: a retargeted pull request's refreshed test-merge is an
+    # edited event, and must be checked like a push.
+    types: [opened, synchronize, reopened, edited]
   # Lets a feature branch's jobs be verified before they ever reach main or a
   # PR -- added specifically to give the new libkrun-linux job (below) its
   # first real run, since push/pull_request alone never fire on this branch.
