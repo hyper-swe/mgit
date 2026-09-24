@@ -96,6 +96,12 @@ func setRepoGuestBase(cmd *cobra.Command, dir string, opts composeOptions) (ref,
 	if err != nil {
 		return "", "", fmt.Errorf("base set: %w", err)
 	}
+	// The lock records, and every check below judges, the tree itself, not a
+	// symlink to it: a link can be re-pointed after the pin, and one outside
+	// the repository could name a tree inside it. Refs: MGIT-227
+	if baseDir, err = filepath.EvalSymlinks(baseDir); err != nil {
+		return "", "", fmt.Errorf("base set: %w", err)
+	}
 	hostRoot, err := sandboxHostRoot()
 	if err != nil {
 		return "", "", err
@@ -411,6 +417,26 @@ func signWith(priv ed25519.PrivateKey) signFunc {
 	}
 }
 
+// beneathByIdentity reports whether path is dir or lies beneath it, walking
+// up from path and comparing each ancestor with dir by os.SameFile. A dir
+// that cannot be read names nothing to be beneath.
+func beneathByIdentity(path, dir string) bool {
+	want, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	for p := filepath.Clean(path); ; {
+		if fi, err := os.Stat(p); err == nil && os.SameFile(fi, want) {
+			return true
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false
+		}
+		p = parent
+	}
+}
+
 // refuseInRepoBaseTree refuses to pin a base that lives inside the repository.
 //
 // A pinned in-repo tree is the defect MGIT-147 removes, wearing a different
@@ -425,7 +451,10 @@ func refuseInRepoBaseTree(baseDir, hostRoot string) error {
 	// so it is folded into the same answer rather than raised.
 	rel, relErr := filepath.Rel(repoRoot, baseDir)
 	outside := relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
-	if outside {
+	// The strings can disagree about one directory (a resolved /private/var
+	// against /var, a symlinked or case-variant spelling), so "inside" is also
+	// asked by file identity. Refs: MGIT-227, MGIT-226
+	if outside && !beneathByIdentity(baseDir, repoRoot) {
 		return nil
 	}
 	return fmt.Errorf(

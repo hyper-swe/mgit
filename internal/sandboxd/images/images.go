@@ -242,6 +242,10 @@ func contentDigest(path string) (string, error) {
 	return ComputeDigest(path)
 }
 
+// emptyInputDigest is the SHA-256 of nothing, what a tree walk that visits
+// no entry produces. Refs: MGIT-227
+const emptyInputDigest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
 // verifyContentDigest recomputes a file's SHA-256 (streamed, never
 // buffered: images are multi-GB and this runs at every boot) and compares
 // it to the pinned digest. Refs: FR-17.17, NFR-17.1
@@ -249,6 +253,14 @@ func verifyContentDigest(path, pinnedDigest string) error {
 	got, err := contentDigest(path)
 	if err != nil {
 		return fmt.Errorf("%w: %w", model.ErrVerificationFailed, err)
+	}
+	if got != pinnedDigest && pinnedDigest == emptyInputDigest {
+		// A pin recorded before MGIT-227 through a symlink hashed nothing: it
+		// is the SHA-256 of empty input and never covered this tree. Say so,
+		// rather than let it read like a tampered base. Refs: MGIT-227
+		return fmt.Errorf("%w: %s is pinned to the SHA-256 of empty input, a pin that covered no bytes "+
+			"(an mgit before MGIT-227 hashed a base set through a symlink as nothing); it now hashes to %s. "+
+			"Re-pin it: mgit sandbox base set %s", model.ErrVerificationFailed, path, got, path)
 	}
 	if got != pinnedDigest {
 		return fmt.Errorf("%w: %s hashes to %s, pinned %s",

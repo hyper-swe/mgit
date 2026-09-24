@@ -9,9 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// emptyInputDigest is the SHA-256 of nothing: a pin that covers no bytes.
-const emptyInputDigest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-
 // A PIN MUST COVER THE TREE IT NAMES (MGIT-227). TreeDigest stat'ed the root
 // through a symlink (a directory, so accepted) but walked the link itself,
 // which filepath.WalkDir does not follow: nothing was hashed, and the pin
