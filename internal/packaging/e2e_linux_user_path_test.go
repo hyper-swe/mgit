@@ -34,7 +34,9 @@ func TestE2E_TheLinuxUserPathRunsWithoutTestHooks(t *testing.T) {
 	assert.Contains(t, script, "for hook in MGIT_GUEST_KERNEL MGIT_GUEST_ROOTFS MGIT_GUEST_BASE MGIT_GUEST_IMAGE; do",
 		"the script refuses to run with any test hook set")
 	assert.Contains(t, script, "LINUX USER PATH: PASS", "the verdict line the job and a reader rely on")
-	for _, verb := range []string{"sandbox base from", "sandbox launch", "mgit run --", "sandbox sync", "sandbox export", "sandbox remove"} {
+	for _, verb := range []string{"sandbox base from", "sandbox launch", "mgit run --", "sandbox sync", "sandbox export", "sandbox remove",
+		// the loop's per-round deletion canary (MGIT-230.2)
+		"sandbox sync --task-id \"$TASK\" --dry-run", "[ -e canary-a.txt ] && echo present || echo gone"} {
 		assert.Contains(t, script, verb, "the user path includes %q", verb)
 	}
 }
