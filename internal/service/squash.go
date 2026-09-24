@@ -158,7 +158,9 @@ func (s *SquashService) planSquash(ctx context.Context, req SquashRequest) (*squ
 		}
 		plan.hashes[i] = rec.CommitHash
 		allDiffs = append(allDiffs, c.FileDiffs...)
-		summaries = append(summaries, fmt.Sprintf("- %s: %s", c.ShortID(), c.Message))
+		// The summary may leave the store (--to-git, export), so it carries what
+		// was written, not mgit's own task tag. Refs: MGIT-228
+		summaries = append(summaries, fmt.Sprintf("- %s: %s", c.ShortID(), withoutTaskTag(c.Message)))
 	}
 
 	// ADR-008 §4: a task's net change is computed against its PINNED fork-base.
