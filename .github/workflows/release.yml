@@ -253,8 +253,16 @@ jobs:
     if: always() && (github.event_name == 'workflow_dispatch' || needs.release.result == 'success')
     needs: release
     runs-on: ubuntu-latest
+    # Read only. This job runs binaries and scripts it downloaded; it must not
+    # inherit the release's contents:write and id-token:write, whose OIDC
+    # request env would let that code mint the release's signing identity.
+    # contents: read is what `gh release view/download` needs. Refs: MGIT-230.6
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: /dev/kvm usable (the one documented Linux host requirement)
         run: |
