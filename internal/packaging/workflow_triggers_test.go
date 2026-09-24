@@ -41,3 +41,41 @@ func pullRequestFiltersBranches(cfg string) bool {
 	}
 	return false
 }
+
+// A RETARGETED PULL REQUEST GETS FRESH CI. The merger refreshes a retargeted
+// pull request's stale test-merge by moving its base away and back, which is
+// a `pull_request: edited` event. With the default event types (opened,
+// synchronize, reopened) that refreshed the merge ref and fired NO CI, so a
+// current ref sat over an old green. Both workflows now list `edited`, so
+// every event that changes what would be merged is checked.
+func TestWorkflows_PullRequestsRunOnEdited(t *testing.T) {
+	for _, wf := range []string{".github/workflows/ci.yml", ".github/workflows/e2e.yml"} {
+		t.Run(wf, func(t *testing.T) {
+			types := pullRequestTypes(readRepoFile(t, wf))
+			assert.NotEmpty(t, types, "%s: `pull_request:` must list its types explicitly", wf)
+			for _, want := range []string{"opened", "synchronize", "reopened", "edited"} {
+				assert.Contains(t, types, want, "%s: pull_request types lack %q", wf, want)
+			}
+		})
+	}
+}
+
+// pullRequestTypes returns the `types:` line under the top-level
+// `pull_request:` trigger, or "" when the trigger relies on the defaults.
+func pullRequestTypes(cfg string) string {
+	lines := strings.Split(cfg, "\n")
+	for i, line := range lines {
+		if strings.TrimRight(line, " ") != "  pull_request:" {
+			continue
+		}
+		for _, next := range lines[i+1:] {
+			if !strings.HasPrefix(next, "    ") && strings.TrimSpace(next) != "" && !strings.HasPrefix(strings.TrimSpace(next), "#") {
+				return ""
+			}
+			if strings.HasPrefix(next, "    types:") {
+				return next
+			}
+		}
+	}
+	return ""
+}
