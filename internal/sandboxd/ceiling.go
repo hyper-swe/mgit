@@ -60,6 +60,12 @@ func NewCeilingManager(inner model.SandboxManager, maxConcurrent, maxTotalMemory
 	}
 }
 
+// SupportsNetworkMode satisfies model.NetworkModeEnforcer. RED: not forwarded.
+func (c *CeilingManager) SupportsNetworkMode(string) error { return nil }
+
+// CheckWorktreeLayout satisfies model.WorktreeLayoutChecker. RED: not forwarded.
+func (c *CeilingManager) CheckWorktreeLayout(string) error { return nil }
+
 // Launch admits the request against the ceiling, then delegates.
 // Refs: FR-17.26
 func (c *CeilingManager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (*model.SandboxInfo, error) {

@@ -566,6 +566,9 @@ func (m *Manager) SupportsNetworkMode(mode string) error {
 	return m.cfg.NetworkModeCheck(mode)
 }
 
+// CheckWorktreeLayout satisfies model.WorktreeLayoutChecker. RED: no check.
+func (m *Manager) CheckWorktreeLayout(string) error { return nil }
+
 // List returns every supervised sandbox.
 func (m *Manager) List(_ context.Context) ([]model.SandboxInfo, error) {
 	m.mu.Lock()

@@ -108,9 +108,8 @@ func (p Plan) BindPrivateStore(privateStoreDir, sharedStoreDir string) (Plan, er
 	}
 	priv, shared := filepath.Clean(privateStoreDir), filepath.Clean(sharedStoreDir)
 
-	if isWithin(shared, p.WorktreePath) {
-		return Plan{}, fmt.Errorf("%w: shared store %q is inside the mounted worktree %q",
-			model.ErrSharedStoreReachable, shared, p.WorktreePath)
+	if err := CheckSharedStore(p.WorktreePath, shared); err != nil {
+		return Plan{}, err
 	}
 	if isWithin(priv, p.WorktreePath) {
 		return Plan{}, fmt.Errorf("quarantine: private store %q must be outside the worktree %q", priv, p.WorktreePath)
@@ -150,6 +149,17 @@ func (p Plan) BindPrivateStore(privateStoreDir, sharedStoreDir string) (Plan, er
 
 // isWithin reports whether path is dir or nested under dir (both cleaned,
 // absolute). Used to enforce the SEC-03 containment invariants.
+// CheckSharedStore reports whether a guest mounting worktree could reach the
+// host shared store. RED: string comparison only. Refs: MGIT-222, SEC-03
+func CheckSharedStore(worktree, shared string) error {
+	shared, worktree = filepath.Clean(shared), filepath.Clean(worktree)
+	if isWithin(shared, worktree) {
+		return fmt.Errorf("%w: shared store %q is inside the mounted worktree %q",
+			model.ErrSharedStoreReachable, shared, worktree)
+	}
+	return nil
+}
+
 func isWithin(path, dir string) bool {
 	if path == dir {
 		return true

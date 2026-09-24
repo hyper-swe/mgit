@@ -29,6 +29,8 @@ type fakeProvisioner struct {
 	makePrivDir bool // create the private dir on disk (default true)
 }
 
+func (f *fakeProvisioner) SharedDir() string { return f.sharedDir }
+
 func (f *fakeProvisioner) Provision(taskID, privateDir string) (provision.PrivateStore, error) {
 	f.calls++
 	f.gotTask = taskID

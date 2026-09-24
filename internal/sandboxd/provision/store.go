@@ -46,6 +46,10 @@ type Provisioner interface {
 	// task branch's tip commit only, and reports the shared store dir for the
 	// quarantine non-reachability check. privateDir MUST NOT already exist.
 	Provision(taskID, privateDir string) (PrivateStore, error)
+	// SharedDir is the shared store the quarantine keeps unreachable, without
+	// provisioning anything: registration asks the layout question with it.
+	// Refs: MGIT-222
+	SharedDir() string
 }
 
 // StoreProvisioner provisions private stores from a project's shared .mgit

@@ -75,6 +75,8 @@ const (
 	// launch is not too big", is what MGIT-118 was filed for.
 	// Refs: MGIT-118, MGIT-98, FR-17.26
 	phaseAdmissionRefused
+	// phaseLayoutRefused: RED — not yet classified. Refs: MGIT-222
+	phaseLayoutRefused
 )
 
 // vmStartMarkers are console-log markers that appear ONLY when the VMM itself

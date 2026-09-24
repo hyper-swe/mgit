@@ -50,6 +50,8 @@ type SandboxEnv struct {
 	// Refs: R-H212
 	CPUs     int
 	MemoryMB int
+	// WrittenBy is the verb writing this block. RED: not rendered. Refs: MGIT-222
+	WrittenBy string
 }
 
 // ContainmentStatusLine is the single machine-parseable line `mgit work` prints

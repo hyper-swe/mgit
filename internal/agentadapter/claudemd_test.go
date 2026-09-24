@@ -184,3 +184,19 @@ func TestGenDoc_UnknownResourceCaps_OmitsTheSection(t *testing.T) {
 	s := RenderClaudeMdSection(SandboxEnv{WorktreePath: filepath.FromSlash("/repo/wt"), NetworkMode: "none"})
 	assert.NotContains(t, s, "### Resources")
 }
+
+// THE BLOCK NAMES THE VERB THAT WROTE IT (MGIT-222). `sandbox launch` writes
+// this block into a worktree it did not create, and the block said "`mgit
+// work` wrote this worktree's agent scaffolding", which sends a reader after
+// a command nobody ran. Only `mgit work` writes the agent config under
+// .claude/, so only its block says so. Refs: MGIT-222
+func TestGenDoc_NamesTheVerbThatWroteIt(t *testing.T) {
+	launch := RenderClaudeMdSection(SandboxEnv{WorktreePath: "/wt", NetworkMode: "none", WrittenBy: "mgit sandbox launch"})
+	assert.Contains(t, launch, "`mgit sandbox launch` wrote this worktree's agent scaffolding")
+	assert.NotContains(t, launch, "`mgit work` wrote")
+	assert.NotContains(t, launch, "config under `.claude/`", "launch writes no agent config")
+
+	work := RenderClaudeMdSection(SandboxEnv{WorktreePath: "/wt", NetworkMode: "none", WrittenBy: "mgit work"})
+	assert.Contains(t, work, "`mgit work` wrote this worktree's agent scaffolding")
+	assert.Contains(t, work, "config under `.claude/`")
+}
