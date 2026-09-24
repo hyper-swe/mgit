@@ -33,7 +33,8 @@ func TestGoreleaser_DarwinSandboxdIsThePrebuiltBundle(t *testing.T) {
 	for _, not := range []string{"/opt/homebrew", "PKG_CONFIG_PATH", "CGO_ENABLED", "hooks:"} {
 		assert.NotContains(t, block, not, "the darwin build must not carry %q", not)
 	}
-	assert.Regexp(t, `goos:\s*\n\s*- darwin\s*\n\s*goarch:\s*\n\s*- arm64\s*$`, block, "darwin/arm64 only")
+	assert.Regexp(t, `goos:\s*\n\s*- darwin\s*\n\s*goarch:\s*\n\s*- arm64\s*\n`, block, "darwin/arm64 only")
+	assert.NotContains(t, block, "- amd64", "darwin/arm64 only")
 }
 
 func TestGoreleaser_DarwinArchiveCarriesTheBundle(t *testing.T) {
@@ -93,6 +94,7 @@ func TestDarwinAssembler_BuildsThePatchedLibkrunAndVerifiesItsOutput(t *testing.
 		"--entitlements \"$root/build/darwin/vz.entitlements\"",
 		`verify-darwin-sandboxd.sh" "$out"`,
 		"MANIFEST.sha256",
+		"-X github.com/hyper-swe/mgit/internal/sandboxd/backend/libkrun.bundled=1",
 	} {
 		assert.Contains(t, script, want, "build-darwin-sandboxd.sh must carry %q", want)
 	}

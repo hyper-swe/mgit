@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Carry a patched libkrun in the macOS build; fixes MGIT-225 (MGIT-259).
 - **Every third-party action in the workflows is pinned to a full commit
   SHA (MGIT-246).** Whoever controls an action's repository can move a tag
   to other code, and the release workflow runs its actions with the

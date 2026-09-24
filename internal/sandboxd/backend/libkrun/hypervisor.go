@@ -92,6 +92,9 @@ func newHypervisor(logger *slog.Logger, probe netCapabilityProbe, bundle bundleC
 	if err := requireNetworking(probe); err != nil {
 		return nil, err
 	}
+	if err := bundle.err(); err != nil {
+		return nil, err
+	}
 	exePath, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("%w: libkrun re-exec: resolve own executable: %w",

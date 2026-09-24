@@ -41,6 +41,9 @@ func describeLoaded(loaded []string, netErr, bundleErr error) model.VMMReport {
 	if netErr != nil {
 		r.Problems = append(r.Problems, netErr.Error())
 	}
+	if bundleErr != nil {
+		r.Problems = append(r.Problems, bundleErr.Error())
+	}
 	return r
 }
 

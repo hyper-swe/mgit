@@ -106,10 +106,10 @@ jobs:
         with:
           cosign-release: v2.4.1
 
-      # The darwin daemon LINKS libkrun (the macOS default backend, ADR-010),
-      # and goreleaser's before-hook runs `make check-libkrun-net` to refuse a
-      # build against a libkrun without networking support. Both need the
-      # library present on this runner.
+      # goreleaser's before-hook tests link this runner's libkrun and run
+      # `make check-libkrun-net` against it; the darwin daemon that ships
+      # carries its own (e2e.yml's darwin-sandboxd job, MGIT-259). Both
+      # need the library present on this runner.
       #
       # This used to be the same three commands as ci.yml's libkrun job with
       # the retry left off, so the 2026-08-15 bottle-CDN outage that ci.yml
@@ -132,7 +132,17 @@ jobs:
           pattern: linux-sandboxd-*
           path: dist-prebuilt
           merge-multiple: true
+      # The macOS daemon, from the same gate's darwin-sandboxd job. Carry a
+      # patched libkrun in the macOS build; fixes MGIT-225. Refs: MGIT-259
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: darwin-sandboxd-*
+          path: dist-prebuilt
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: linux-sources
+          path: dist-sources
         with:
           name: linux-sources
           path: dist-sources
@@ -152,6 +162,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MGIT_LINUX_PREBUILT: ${{ github.workspace }}/dist-prebuilt
+          MGIT_DARWIN_PREBUILT: ${{ github.workspace }}/dist-prebuilt
 
       - name: Sign checksums
         run: cosign sign-blob --yes --bundle checksums.txt.bundle dist/checksums.txt
@@ -194,11 +205,11 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      # Install libkrun so this gate can actually exercise the DAEMON. Without
-      # it mgit-sandboxd cannot load (it links libkrun by absolute path), so the
-      # daemon liveness check, the mgit/mgit-sandboxd build-agreement check and
-      # the NET=1 capability check all skip -- and a gate that skips its most
-      # important assertions is barely a gate. The third of the three call
+      # Install Homebrew's libkrun and libkrunfw, as a user does: the daemon
+      # must still resolve the archive's own libkrun (MGIT-259), and libkrunfw
+      # must load. Before MGIT-259 a daemon without libkrun could not load at
+      # all, and the liveness, build-agreement and NET=1 checks all skipped --
+      # a gate that skips its most important assertions is barely a gate. The third of the three call
       # sites that used to be three near-identical copies of these commands.
       # Refs: MGIT-143, MGIT-84, MGIT-75, MGIT-61.14
       - name: Install libkrun (so the daemon is testable)
@@ -236,7 +247,7 @@ jobs:
           # libkrun is installed above, so these three MUST have run. Letting
           # them skip silently is how a gate quietly stops checking anything.
           for must in 'mgit-sandboxd ran' 'both binaries report one build' \
-                      'krun_add_net_unixgram'; do
+                      'krun_add_net_unixgram' 'libkrun resolves inside the archive'; do
             grep -q "$must" "$RUNNER_TEMP/smoke.log" || {
               echo "::error::expected check did not run: $must"; exit 1; }
           done

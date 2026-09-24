@@ -71,6 +71,9 @@ func childMain(stdin io.Reader, handshake io.Writer, stderr io.Writer) int {
 // Carry a patched libkrun in the macOS build; fixes MGIT-225. Refs: MGIT-259
 func childMainWith(stdin io.Reader, handshake io.Writer, stderr io.Writer, bundle bundleCheck) int {
 	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+	if err := bundle.err(); err != nil {
+		return childFail(handshake, logger, err)
+	}
 
 	// Spec first: a malformed spec reports the same way whether or not this
 	// build carries the libkrun binding.

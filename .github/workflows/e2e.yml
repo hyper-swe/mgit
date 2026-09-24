@@ -313,6 +313,68 @@ jobs:
           path: ${{ runner.temp }}/dist-sources/
           if-no-files-found: error
 
+  # The macOS sandbox daemon, built and verified for every pull request by
+  # scripts/release/build-darwin-sandboxd.sh; the release ships the artifact
+  # this job uploads in its own run. Carry a patched libkrun in the macOS
+  # build; fixes MGIT-225. Refs: MGIT-259
+  darwin-sandboxd:
+    name: macOS sandbox daemon (arm64, libkrun bundled)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # the same full history goreleaser stamps from
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.26.6"
+
+      - name: Build prerequisites (guarded)
+        run: |
+          # -t 900: the bound install-libkrun-brew.sh uses for the same CDN.
+          bash scripts/ci/guard-fetch.sh -t 900 -l brew-install-lld \
+            -c none:'brew verifies the checksum of everything it reuses and keeps a partial download as .incomplete, which it resumes rather than re-extracting' -- \
+            brew install lld
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          if ! command -v cargo >/dev/null 2>&1; then
+            bash scripts/ci/guard-fetch.sh -t 120 -l rustup-installer -c 'rm -f "$RUNNER_TEMP/rustup.sh"' -- \
+              curl -sSf https://sh.rustup.rs -o "$RUNNER_TEMP/rustup.sh"
+            bash scripts/ci/guard-fetch.sh -t 120 -l rustup-toolchain -c 'rm -rf "$HOME/.rustup" "$HOME/.cargo"' -- \
+              sh "$RUNNER_TEMP/rustup.sh" -y --default-toolchain stable
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Assemble and verify the daemon + its bundle
+        run: |
+          # A release stamps its tag; anything else stamps the version the
+          # Linux user path tags locally, as linux-sandboxd does.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0-ci.$GITHUB_RUN_ID"; fi
+          export LIBKRUN_BUILD_DIR="$RUNNER_TEMP/libkrun-darwin"
+          mkdir -p "$LIBKRUN_BUILD_DIR"
+          MGIT_BUILD_VERSION="$v" \
+            bash scripts/release/build-darwin-sandboxd.sh "$RUNNER_TEMP/prebuilt/darwin_arm64"
+
+      # Homebrew's libkrun and libkrunfw installed AFTER the build, as the
+      # install guide has a user do: the daemon must still resolve its own
+      # libkrun, and libkrunfw must load. Refs: MGIT-119
+      - name: Cache Homebrew downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/Library/Caches/Homebrew/downloads
+          key: brew-downloads-${{ runner.os }}-libkrun-v1-${{ github.run_id }}
+          restore-keys: |
+            brew-downloads-${{ runner.os }}-libkrun-v1-
+      - name: Verify beside Homebrew's libkrun and libkrunfw
+        run: |
+          bash scripts/ci/install-libkrun-brew.sh
+          MGIT_VERIFY_KERNEL=1 bash scripts/release/verify-darwin-sandboxd.sh "$RUNNER_TEMP/prebuilt/darwin_arm64"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: darwin-sandboxd-arm64
+          path: ${{ runner.temp }}/prebuilt/
+          if-no-files-found: error
+
   # THE DOCUMENTED USER PATH ON LINUX, as a release user meets it: the
   # release-shaped Linux layout (the archive's own goreleaser build ids, the
   # libkrun daemon the linux-sandboxd job built with its lib/ beside it,
