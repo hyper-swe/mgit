@@ -139,6 +139,13 @@ var (
 	// explicitly acknowledged). Refs: FR-17.15, FR-17.20
 	ErrSandboxBackendUnavailable = errors.New("no sandbox backend available on this platform")
 
+	// ErrSandboxNotRunning indicates the sandbox exists but its VM is not
+	// running: registered and never booted, suspended, or stopped. It is a
+	// fact about THIS sandbox, never about the platform; it used to travel
+	// under ErrSandboxBackendUnavailable, whose words sent readers to install
+	// a hypervisor that was already linked. Refs: MGIT-232
+	ErrSandboxNotRunning = errors.New("sandbox is not running")
+
 	// ErrSandboxSyncUnsupported indicates this sandbox's backend cannot
 	// propagate host worktree changes into a RUNNING guest. Firecracker
 	// delivers the worktree as an ext4 image built at launch and mounted by
