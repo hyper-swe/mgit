@@ -85,3 +85,12 @@ func TestDaemon_ARealOversizeResponse_IsStillLoggedAsAWriteFailure(t *testing.T)
 	}
 	assert.True(t, warned, "a real over-size response is a WARN write_error:\n%s", logs.String())
 }
+
+// Only an echo that asked for MORE than the cap is the probe. Doctor's
+// full-cap echo must arrive; if that one were refused for size the cap
+// arithmetic would be wrong, and it must still warn. Refs: MGIT-235
+func TestAskedOverTheCap_IsExactlyTheBytesAboveTheLimit(t *testing.T) {
+	assert.False(t, askedOverTheCap(controlproto.MaxResponseBytes), "the full cap must arrive, so it is no probe")
+	assert.True(t, askedOverTheCap(controlproto.MaxResponseBytes+1))
+	assert.False(t, askedOverTheCap(4096))
+}

@@ -39,7 +39,21 @@ func (c *Client) Echo(ctx context.Context, bytes int) (*EchoOutcome, error) {
 // where WriteResponse refuses it and the MGIT-160 path sends the small
 // refusal in its place — the mechanism the check provokes, exercised rather
 // than simulated. Refs: MGIT-175, MGIT-160
+//
+// The echo verb exists only for that check, so a refusal of an echo that
+// ASKED for more than the cap is logged as the probe it is (writeResponseAs),
+// not as a write failure. An echo at or under the cap must arrive; if one
+// is refused for size, the cap arithmetic is wrong, and that still warns.
+// Refs: MGIT-235
 func (d *Daemon) serveEcho(conn net.Conn, args *controlproto.EchoArgs) {
 	resp, err := controlproto.BuildEchoResponse(args.Bytes)
-	d.reply(conn, resp, err)
+	if err != nil {
+		d.reply(conn, resp, err)
+		return
+	}
+	d.writeResponseAs(conn, resp, askedOverTheCap(args.Bytes))
 }
+
+// askedOverTheCap reports whether an echo asked for more than the control
+// response cap: the one case whose refusal is the probe working.
+func askedOverTheCap(bytes int) bool { return bytes > controlproto.MaxResponseBytes }
