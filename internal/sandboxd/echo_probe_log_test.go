@@ -3,6 +3,7 @@ package sandboxd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -52,9 +53,18 @@ func TestDaemon_ResponseCapProbe_IsLoggedAsAProbeNotAsAWriteFailure(t *testing.T
 	cancel()
 	require.NoError(t, <-done)
 
+	// The property is about THE PROBE'S refusal: it must not be logged as a
+	// write failure. Other connections in this harness can log their own
+	// write errors (waitForSocket's readiness dial is closed under the
+	// daemon, and on Linux its reply meets a broken pipe), and those are not
+	// this test's subject, so only a write_error about an over-size response
+	// counts against it.
 	var probe map[string]any
 	for _, rec := range logRecords(t, logs.String()) {
-		assert.NotEqual(t, "write_error", rec["event"], "the probe is not a write failure: %v", rec)
+		if rec["event"] == "write_error" {
+			assert.NotContains(t, fmt.Sprint(rec["error"]), "too large",
+				"the probe's over-size refusal is not a write failure: %v", rec)
+		}
 		if rec["event"] == "response_cap_probe" {
 			probe = rec
 		}
