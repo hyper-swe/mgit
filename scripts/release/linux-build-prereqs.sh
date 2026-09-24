@@ -29,9 +29,18 @@ aarch64) goarch=arm64 ;;
 esac
 
 apt_restore='rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/partial/*; dpkg --configure -a'
-"$GUARD" -t 300 -l apt-update -c "$apt_restore" -- apt-get update -qq
-DEBIAN_FRONTEND=noninteractive "$GUARD" -t 600 -l apt-install-libkrun-prereqs -c "$apt_restore" -- \
-	apt-get install -y -qq --no-install-recommends \
+# -q, not -qq: apt then prints each fetch as it happens, so a slow mirror is
+# visible while it is slow rather than as a silent bound expiring (MGIT-229).
+# The bounds follow the MGIT-143 rule. The two calls' histories cannot yet be
+# told apart: under -qq apt printed nothing while it fetched. The slowest
+# successful run of the step that makes both calls (n=42, 2026-09-23..24)
+# spent about 205 s inside them together, so each is bounded as if it alone
+# had taken that long: 4 x 205 s = 820 s, up the ladder to 900 s. Now that
+# -q prints every fetch, a later run can measure the calls apart and
+# tighten this. Refs: MGIT-143, MGIT-243
+"$GUARD" -t 900 -l apt-update -c "$apt_restore" -- apt-get update -q
+DEBIAN_FRONTEND=noninteractive "$GUARD" -t 900 -l apt-install-libkrun-prereqs -c "$apt_restore" -- \
+	apt-get install -y -q --no-install-recommends \
 	build-essential flex bison libelf-dev python3-pyelftools bc cpio \
 	pkg-config curl git ca-certificates patchelf binutils \
 	libclang1-18 libclang-18-dev libclang-common-18-dev libllvm18
