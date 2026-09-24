@@ -97,6 +97,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   succeeds. This is a control-protocol change (version 5). A daemon left
   running from an earlier build is refused at the handshake with the
   restart named, so restart it after upgrading.
+- **doctor's `base/boots` row, and Linux-correct loader remedies
+  (MGIT-230.4).** Each backend boots one shape of guest base: libkrun a
+  directory, firecracker and vzf a kernel + ext4 rootfs image. `base/boots`
+  fails when the daemon's VMM and the registered base do not match. The
+  released v0.6.8 read clean in doctor on a host where the firecracker daemon
+  could never boot the directory `sandbox base from` had composed. On Linux, a
+  missing bundled libkrun no longer gets the Homebrew remedy: doctor and the
+  activation error name the directories the daemon's loader searched, read
+  from the daemon's own run path, and say to reinstall the archive. A host
+  whose glibc is older than the release's floor (2.31) is told that, not that
+  a library is missing.
 
 ### Fixed
 

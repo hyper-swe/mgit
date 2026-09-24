@@ -85,7 +85,7 @@ func TestDaemonFailureDetail_NamesTheMissingLibraryAndHowToGetIt(t *testing.T) {
 // come first and it has to be in the message. Both facts were established on
 // a Homebrew prefix with libkrun genuinely absent. Refs: MGIT-75, MGIT-61.15
 func TestMissingLibraryRemedy_LibkrunHintTrustsTheTapBeforeInstalling(t *testing.T) {
-	got := missingLibraryRemedy("libkrun.1.dylib")
+	got := missingLibraryRemedy("libkrun.1.dylib", "", "darwin")
 
 	trustAt := strings.Index(got, "brew trust libkrun/krun")
 	require.NotEqual(t, -1, trustAt,
@@ -102,7 +102,7 @@ func TestMissingLibraryRemedy_LibkrunHintTrustsTheTapBeforeInstalling(t *testing
 // that trusts only the single libkrun formula (`brew trust --formula
 // libkrun/krun/libkrun`) still fails. Whole-tap trust is the one that works.
 func TestMissingLibraryRemedy_LibkrunHintTrustsTheWholeTapNotOneFormula(t *testing.T) {
-	got := missingLibraryRemedy("libkrun.so.1")
+	got := missingLibraryRemedy("libkrun.so.1", "", "darwin")
 
 	assert.NotContains(t, got, "brew trust --formula",
 		"per-formula trust does not cover libkrun's own libkrunfw dependency, got %q", got)

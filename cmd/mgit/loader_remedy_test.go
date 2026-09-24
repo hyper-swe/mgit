@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -24,11 +25,11 @@ func runPathDaemon(t *testing.T, root, rel, runPath string) string {
 	require.NoError(t, os.WriteFile(filepath.Join(src, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o600))
 	out := filepath.Join(root, rel)
 	require.NoError(t, os.MkdirAll(filepath.Dir(out), 0o750))
-	//nolint:gosec,noctx // G204: a fixed toolchain command building a test fixture
 	args := []string{"build", "-buildmode=pie", "-o", out}
 	if runPath != "" {
 		args = append(args, "-ldflags=-r "+runPath)
 	}
+	//nolint:gosec,noctx // G204: a fixed toolchain command building a test fixture
 	cmd := exec.Command("go", append(args, ".")...)
 	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=")
@@ -116,7 +117,12 @@ func TestLoaderRemedy_AnOldGlibcIsNamedAsThatNotAsAMissingLibrary(t *testing.T) 
 // The floor the remedy states is the one the release verifier enforces, read
 // from the verifier rather than restated, so the two cannot drift apart.
 func TestLinuxGlibcFloor_IsTheReleaseVerifiersFloor(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "scripts", "release", "verify-linux-sandboxd.sh"))
+	// From this file, not the working directory: other tests in the package
+	// change directory.
+	_, thisFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	//nolint:gosec // G304: a fixed path inside this repository
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "..", "..", "scripts", "release", "verify-linux-sandboxd.sh"))
 	require.NoError(t, err)
 	m := regexp.MustCompile(`floor="\$\{3:-([0-9.]+)\}"`).FindStringSubmatch(string(b))
 	require.NotNil(t, m, "the verifier states its default floor")

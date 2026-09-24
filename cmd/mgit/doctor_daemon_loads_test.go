@@ -53,7 +53,7 @@ func TestProbeDaemonLoadsAt(t *testing.T) {
 		{"dyld_refuses", `echo "dyld[93889]: Library not loaded: /opt/homebrew/opt/virglrenderer/lib/libvirglrenderer.1.dylib" >&2; exit 1`,
 			0, "", "libvirglrenderer.1.dylib", "Library not loaded", "libvirglrenderer.1.dylib is missing"},
 		{"glibc_refuses", `echo "mgit-sandboxd: error while loading shared libraries: libkrun.so.1: cannot open shared object file" >&2; exit 127`,
-			0, "", "libkrun.so.1", "libkrun.so.1", "reinstall from the release archive"},
+			0, "", "libkrun.so.1", "libkrun.so.1", "release archive"},
 		// Older than the bundle's glibc floor: a version refusal, not a
 		// missing library, and named as that. Refs: MGIT-230.4
 		{"glibc_too_old", `printf 'mgit-sandboxd: /lib/x86_64-linux-gnu/libc.so.6: version \140GLIBC_2.30%s not found (required by mgit-sandboxd)\n' "'" >&2; exit 1`,

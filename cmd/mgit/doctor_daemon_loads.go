@@ -67,9 +67,8 @@ func probeDaemonLoadsAt(ctx context.Context, path string) (doctor.DaemonLoad, er
 	case load.Output == "":
 		load.Output = runErr.Error()
 	}
-	if lib := missingLibrary(text); lib != "" {
-		load.MissingLibrary = lib
-		load.Remedy = missingLibraryRemedy(lib)
+	if lib, remedy := loaderRemedy(text, path); remedy != "" {
+		load.MissingLibrary, load.Remedy = lib, remedy
 	}
 	return load, nil
 }
