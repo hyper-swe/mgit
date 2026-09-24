@@ -207,6 +207,7 @@ func TestReleaseWorkflow_SmokesThePublishedLinuxArchive(t *testing.T) {
 	}
 	// Each check reports on its own: the boot runs even when the bundle check
 	// failed, so a red archive shows every way it is red (v0.6.8 fails both).
+	//nolint:misspell // OK: cancelled() is GitHub Actions' own function name, spelled this way
 	assert.Contains(t, job, "if: ${{ !cancelled() && env.BIN != '' }}\n        run: bash scripts/e2e/linux_user_path.sh",
 		"the user path runs after a failed bundle check, as long as the install produced BIN")
 }
