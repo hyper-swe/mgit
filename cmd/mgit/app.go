@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -154,7 +155,13 @@ func OpenApp(path string) (*App, error) {
 		Index: idx,
 		Commit: service.NewCommitService(repo, cs, idx).
 			WithAudit(audit).WithStagedFileLimit(stagedFileLimit),
-		Squash:          service.NewSquashService(repo, cs, idx).WithAudit(audit),
+		Squash: service.NewSquashService(repo, cs, idx).WithAudit(audit).
+			// The exporter authors an exported patch: their git identity, read
+			// from the project that holds this store (its parent directory)
+			// and the global config, never mgit's own. Refs: MGIT-237
+			WithPatchAuthor(func() (gitstore.AuthorIdentity, error) {
+				return gitstore.ResolveAuthorIdentity(filepath.Dir(mgitDir), os.Getenv)
+			}),
 		Rollback:        service.NewRollbackService(repo, cs, idx).WithAudit(audit),
 		Branch:          service.NewBranchService(repo, bs, idx),
 		Verify:          service.NewVerifyService(cs, idx),

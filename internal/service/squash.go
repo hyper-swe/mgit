@@ -26,6 +26,9 @@ type SquashService struct {
 	indexStore  *index.Store
 	repo        *gitstore.Repository
 	audit       *AuditService
+	// patchAuthor names the person an exported patch is authored by; nil
+	// means no identity is known, and exporting a patch is refused.
+	patchAuthor func() (gitstore.AuthorIdentity, error)
 }
 
 // NewSquashService creates a SquashService with injected dependencies.
@@ -35,6 +38,25 @@ func NewSquashService(repo *gitstore.Repository, cs *gitstore.CommitStore, idx *
 		indexStore:  idx,
 		repo:        repo,
 	}
+}
+
+// WithPatchAuthor injects how an exported patch's author is found. The CLI
+// resolves the exporter's git identity; tests inject their own, so no test
+// reads the machine's git config. Refs: MGIT-237
+func (s *SquashService) WithPatchAuthor(fn func() (gitstore.AuthorIdentity, error)) *SquashService {
+	s.patchAuthor = fn
+	return s
+}
+
+// PatchAuthor returns the identity an exported patch is authored by, or
+// model.ErrNoPatchIdentity when none is known. The CLI asks before a squash
+// --to-git, so a refusal comes before the squash commit is made.
+// Refs: MGIT-237
+func (s *SquashService) PatchAuthor() (gitstore.AuthorIdentity, error) {
+	if s.patchAuthor == nil {
+		return gitstore.AuthorIdentity{}, fmt.Errorf("%w: no identity source is wired", model.ErrNoPatchIdentity)
+	}
+	return s.patchAuthor()
 }
 
 // WithAudit attaches an AuditService so successful squashes are recorded in the
@@ -228,8 +250,12 @@ func (s *SquashService) ExportToGitPatch(c *model.Commit) string {
 	if c == nil {
 		return ""
 	}
+	author, err := s.PatchAuthor()
+	if err != nil {
+		return ""
+	}
 	var b strings.Builder
-	b.WriteString(s.mboxHeader(c))
+	b.WriteString(s.mboxHeader(c, author))
 
 	// Per-file diff section. Each file gets a "diff --git" header so the
 	// output is recognizable to git am / git apply.
@@ -265,14 +291,10 @@ func (s *SquashService) ExportToGitPatch(c *model.Commit) string {
 // mboxHeader renders the git format-patch mbox preamble (From/From:/Date/
 // Subject + optional body + the "---" separator) shared by ExportToGitPatch and
 // GitFormatPatch. The subject is prefixed with [squashed] per FR-7. Refs: FR-7
-func (s *SquashService) mboxHeader(c *model.Commit) string {
+func (s *SquashService) mboxHeader(c *model.Commit, author gitstore.AuthorIdentity) string {
 	subject, body := splitMessage(c.Message)
 	if !strings.HasPrefix(subject, "[squashed]") {
 		subject = "[squashed] " + subject
-	}
-	author := c.AgentID
-	if author == "" {
-		author = "mgit-squash"
 	}
 	createdAt := c.CreatedAt
 	if createdAt.IsZero() {
@@ -284,7 +306,10 @@ func (s *SquashService) mboxHeader(c *model.Commit) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "From %s %s\n", hash, createdAt.UTC().Format("Mon Jan 2 15:04:05 2006"))
-	fmt.Fprintf(&b, "From: %s <%s@mgit.local>\n", author, author)
+	// The exporter, never mgit: git am records this line as the commit's
+	// author. The squash commit in mgit's own store keeps its internal
+	// author. Refs: MGIT-237
+	fmt.Fprintf(&b, "From: %s <%s>\n", author.Name, author.Email)
 	fmt.Fprintf(&b, "Date: %s\n", createdAt.UTC().Format(time.RFC1123Z))
 	fmt.Fprintf(&b, "Subject: [PATCH] %s\n\n", subject)
 	if body != "" {
@@ -323,11 +348,15 @@ func (s *SquashService) GitFormatPatch(ctx context.Context, c *model.Commit) (st
 	if c == nil {
 		return "", nil
 	}
+	author, err := s.PatchAuthor()
+	if err != nil {
+		return "", err
+	}
 	body, err := gitstore.NewDiffStore(s.repo).PatchBetween(ctx, c.ParentID, c.CommitID)
 	if err != nil {
 		return "", fmt.Errorf("squash git patch: %w", err)
 	}
-	return s.mboxHeader(c) + body + "-- \nmgit\n", nil
+	return s.mboxHeader(c, author) + body + "-- \nmgit\n", nil
 }
 
 // PatchHasHunks reports whether a git format-patch carries at least one file

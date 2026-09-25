@@ -37,6 +37,16 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "hermetic test setup: %v\n", err)
 		os.Exit(1)
 	}
+	// A fixed git identity for every patch these tests export, so none
+	// depends on the machine's git config: a developer's global user.name
+	// would otherwise pass these tests locally and fail them on a CI runner
+	// that has none. The identity tests unset it for themselves. Refs: MGIT-237
+	for k, v := range map[string]string{"GIT_AUTHOR_NAME": "mgit test", "GIT_AUTHOR_EMAIL": "test@example.invalid"} {
+		if err := os.Setenv(k, v); err != nil {
+			fmt.Fprintf(os.Stderr, "hermetic test setup: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	code := m.Run()
 	_ = os.RemoveAll(scratch)
 	os.Exit(code)

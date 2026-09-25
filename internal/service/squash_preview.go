@@ -68,6 +68,10 @@ func (s *SquashService) PreviewGitPatch(ctx context.Context, req SquashRequest) 
 		return nil, fmt.Errorf("preview git patch for task %s: %w", req.TaskID, err)
 	}
 
+	author, err := s.PatchAuthor()
+	if err != nil {
+		return nil, err
+	}
 	header := &model.Commit{
 		TaskID:     taskID,
 		AgentID:    "mgit-squash",
@@ -77,7 +81,7 @@ func (s *SquashService) PreviewGitPatch(ctx context.Context, req SquashRequest) 
 		ParentID:   tree.BaseCommit,
 		TreeHash:   tree.Tree,
 	}
-	patch := s.mboxHeader(header) + body + "-- \nmgit\n"
+	patch := s.mboxHeader(header, author) + body + "-- \nmgit\n"
 
 	if err := assertPatchCarriesHunks(req.TaskID, patch); err != nil {
 		return nil, err

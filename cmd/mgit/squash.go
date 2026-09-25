@@ -66,6 +66,15 @@ func squashCmd() *cobra.Command {
 				toGit = true
 			}
 
+			// The patch is authored by the exporter; with no identity it is
+			// refused BEFORE the squash commit is made, so a refusal leaves
+			// the store as it was. Refs: MGIT-237
+			if toGit && !dryRun {
+				if _, err := app.Squash.PatchAuthor(); err != nil {
+					return fmt.Errorf("squash --to-git: %w", err)
+				}
+			}
+
 			squashed, err := app.Squash.SquashTask(ctx, service.SquashRequest{
 				TaskID:  taskID,
 				Message: message,

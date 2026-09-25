@@ -153,6 +153,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mgit status` never saw an edit to one. A path git has committed, or mgit
   has, is now kept; untracked ignored files stay out, and `mgit add` still
   skips new ignored files.
+- **An exported patch is authored by you, not by mgit (MGIT-237).** `git
+  am` records a patch's `From:` line as the commit's author, and the
+  patches from `mgit squash --to-git` and `mgit export --format git` named
+  mgit's internal squash identity there. They now carry your git identity:
+  `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL`, else `user.name` and
+  `user.email` from the project's or your global git config. With none
+  configured, mgit refuses to export the patch, before any squash commit
+  is made, instead of inventing an author. mgit's own store keeps its
+  internal author.
 - **`mgit sandbox launch` refuses a worktree that holds the repository's
   store before it registers or writes anything (MGIT-222).** A launch with
   the repository root, or a directory containing it, as its worktree
