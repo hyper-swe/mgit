@@ -348,7 +348,10 @@ repository's own workflows (`./...`) are exempt. Tools installed *by* an
 action are pinned by that action's version input (for example
 `cosign-release`), which `scripts/ci/check-pinned-tools.sh` checks.
 
-To move a pin to a new release:
+Dependabot proposes new releases weekly (`.github/dependabot.yml`), grouped
+into one pull request that moves each SHA and its release comment together.
+Before that pull request is reviewed, verify each bumped SHA against its
+release tag as in step 2 below. The same steps also move a pin by hand:
 
 1. Pick the release in the action's own repository, for example `v4.5.0`.
 2. Resolve its tag to a commit from two sources, and check they agree:
@@ -365,8 +368,10 @@ To move a pin to a new release:
 4. Run `go test ./internal/packaging/ -run TestWorkflow` and
    `make check-pinned-tools`.
 5. Name the old and new version of each action in the pull request. A
-   change to `release.yml` is a reserved path: it waits for the owner's
-   confirmation before it merges.
+   pull request that only moves pinned actions to newer releases, with each
+   SHA verified against its tag and CI green, merges on the reviewer's pass,
+   in `release.yml` too. Any other change to `release.yml` is a reserved
+   path: it waits for the owner's confirmation before it merges.
 
 ## Submitting Changes
 

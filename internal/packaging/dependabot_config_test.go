@@ -24,6 +24,11 @@ func TestDependabot_UpdatesThePinnedActionsWeekly(t *testing.T) {
 	require.NotEmpty(t, block, "dependabot.yml has an update for the github-actions ecosystem")
 	assert.Contains(t, block, `directory: "/"`, "the ecosystem covers the repository's workflows")
 	assert.Contains(t, block, `interval: "weekly"`, "the pins are checked weekly")
+	// One pull request per week for all action bumps: this repository merges
+	// one pull request per CI cycle, so a pull request per action would
+	// queue behind each other.
+	assert.Contains(t, block, "groups:", "the action bumps are grouped into one pull request")
+	assert.Contains(t, block, `- "*"`, "the group covers every action")
 }
 
 // dependabotUpdate returns the text of the updates entry whose
