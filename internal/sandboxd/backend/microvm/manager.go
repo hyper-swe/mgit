@@ -610,8 +610,8 @@ func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*
 		return nil, fmt.Errorf("%w: %q", model.ErrSandboxNotFound, id)
 	}
 	if sb.info.State != model.StateRunning {
-		return nil, fmt.Errorf("%w: sandbox %q is %s, not running",
-			model.ErrSandboxBackendUnavailable, id, sb.info.State)
+		return nil, fmt.Errorf("%w: sandbox %q is %s",
+			model.ErrSandboxNotRunning, id, sb.info.State)
 	}
 	// Carry host worktree changes in BEFORE the command runs, so the agent
 	// loop tests the code the host actually has rather than a launch-time
