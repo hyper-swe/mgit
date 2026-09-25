@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	mcpapp "github.com/hyper-swe/mgit/internal/mcp"
@@ -42,6 +43,9 @@ func resolveSandboxPaths(repoRoot string) (sandboxPaths, error) {
 	sum := sha256.Sum256([]byte(canonicalPath(repoRoot)))
 	key := hex.EncodeToString(sum[:6])
 	runtimeDir := filepath.Join(runtimeBase(), fmt.Sprintf("mgit-%d", os.Getuid()), key)
+	if err := checkSocketPathFits(filepath.Join(runtimeDir, "d.sock")); err != nil {
+		return sandboxPaths{}, err
+	}
 	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
 		return sandboxPaths{}, fmt.Errorf("create sandbox runtime dir: %w", err)
 	}
@@ -54,6 +58,28 @@ func resolveSandboxPaths(repoRoot string) (sandboxPaths, error) {
 		// Refs: MGIT-61.15
 		workDir: filepath.Join(runtimeDir, "w"),
 	}, nil
+}
+
+// maxSocketPathBytes is the longest path a unix socket can bind on this
+// platform: sun_path less its NUL (103 on macOS, 107 on Linux). Refs: MGIT-240
+var maxSocketPathBytes = len(syscall.RawSockaddrUnix{}.Path) - 1
+
+// checkSocketPathFits refuses a daemon socket path the kernel cannot bind,
+// before anything is spawned. A daemon spawned onto it runs its start-up and
+// then dies on `bind: invalid argument`, which reached the reader as a socket
+// "not dialable after spawn". The refusal names the length, the limit, and
+// the variable that chose the directory. Refs: MGIT-240
+func checkSocketPathFits(socket string) error {
+	if len(socket) <= maxSocketPathBytes {
+		return nil
+	}
+	chooser := "TMPDIR"
+	if os.Getenv("XDG_RUNTIME_DIR") != "" {
+		chooser = "XDG_RUNTIME_DIR"
+	}
+	return fmt.Errorf("the sandbox daemon's socket path is %d bytes, over this platform's %d-byte limit "+
+		"for a unix socket: %s. It is built under %s (%s); point %s at a shorter directory, such as /tmp, "+
+		"and run the command again", len(socket), maxSocketPathBytes, socket, chooser, runtimeBase(), chooser)
 }
 
 // runtimeBase is the short base for ephemeral sandbox runtime state:
