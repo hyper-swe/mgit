@@ -113,3 +113,25 @@ func trackedContent(path string) string {
 	}
 	return "content of " + path + "\n"
 }
+
+// mgit's own tracking counts as git's does. In a project with no git, a file
+// staged by name under an ignore rule and committed is tracked by mgit: status
+// must not call it deleted, and must see its edit. Refs: MGIT-269, MGIT-32
+func TestStatus_FileMgitTracksDespiteIgnoreRules(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, runCLI(t, "init"))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("*.log\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "keep.log"), []byte("kept\n"), 0o600))
+	require.NoError(t, runCLI(t, "add", "keep.log"))
+	require.NoError(t, runCLI(t, "commit", "-m", "keep the log", "--task-id", "MGIT-269"))
+
+	clean, _, err := runCLICap(t, "status", "--porcelain")
+	require.NoError(t, err)
+	assert.NotContains(t, clean, "keep.log", "a committed, unchanged file is not reported deleted")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "keep.log"), []byte("edited\n"), 0o600))
+	edited, _, err := runCLICap(t, "status", "--porcelain")
+	require.NoError(t, err)
+	assert.Contains(t, edited, "keep.log", "an edit to a file mgit tracks is seen")
+}
