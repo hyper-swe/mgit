@@ -27,6 +27,10 @@ func inheritedFrom(repo *gogit.Repository, branch string, bases []string,
 	if err != nil {
 		return nil, err
 	}
+	pushed, err := pushedCommits(repo, branch, baseSet)
+	if err != nil {
+		return nil, err
+	}
 	groups := map[string]*Inherited{}
 	order := []string{}
 	for _, ref := range refs {
@@ -34,7 +38,7 @@ func inheritedFrom(repo *gogit.Repository, branch string, bases []string,
 		if err != nil {
 			return nil, err
 		}
-		if !isParent(shared, own) {
+		if !isParent(shared, own) || subsetOf(shared, pushed) {
 			continue
 		}
 		sig := signature(shared)
@@ -64,6 +68,58 @@ func inheritedFrom(repo *gogit.Repository, branch string, bases []string,
 // underneath our own. Refs: MGIT-142
 func isParent(shared, own map[plumbing.Hash]*object.Commit) bool {
 	return len(shared) > 0 && len(shared) < len(own)
+}
+
+// pushedCommits returns the commits the branch already holds on its own
+// remote-tracking refs (origin/<branch> and its peers on other remotes),
+// above the base.
+//
+// Those commits are the branch's own: they were pushed from it. A candidate
+// ref whose shared commits all lie among them names the branch's PAST, not a
+// parent. Review tooling may store pull-request heads as local branches (`git
+// fetch origin pull/N/head:pr-N`); after the author's next commit such a ref
+// shares a strict subset of the branch, the parent shape, and without this the
+// author's every later push was refused for their own commits (MGIT-254).
+//
+// The trust this places in origin/<branch> is bounded: whatever that ref
+// carries was either checked by this guard when it was pushed or waived there,
+// and the server-side Branch-scope job judges the pushed branch again with no
+// such local refs present. Refs: MGIT-254, MGIT-142
+func pushedCommits(repo *gogit.Repository, branch string,
+	baseSet map[plumbing.Hash]*object.Commit) (map[plumbing.Hash]*object.Commit, error) {
+	iter, err := repo.References()
+	if err != nil {
+		return nil, fmt.Errorf("list refs: %w", err)
+	}
+	defer iter.Close()
+	var tips []plumbing.Hash
+	err = iter.ForEach(func(ref *plumbing.Reference) error {
+		name := ref.Name().String()
+		if ref.Type() == plumbing.HashReference && strings.HasPrefix(name, "refs/remotes/") &&
+			shortRefName(name) == branch {
+			tips = append(tips, ref.Hash())
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list refs: %w", err)
+	}
+	pushed, err := reachable(repo, tips, baseSet)
+	if err != nil {
+		return nil, fmt.Errorf("walk the pushed %s: %w", branch, err)
+	}
+	return pushed, nil
+}
+
+// subsetOf reports whether every commit in set is also in of.
+// Refs: MGIT-254
+func subsetOf(set, of map[plumbing.Hash]*object.Commit) bool {
+	for h := range set {
+		if _, ok := of[h]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // sharedCommits returns the commits a ref adds to the base that the branch

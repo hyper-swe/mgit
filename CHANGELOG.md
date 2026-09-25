@@ -154,6 +154,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A generated file you stage by name still lands. The record is read
   without following any link: a worktree `.mgit` that is not a real
   directory, or a record that is not a regular file, refuses the launch.
+- **The pre-push branch-scope guard no longer refuses a branch for its own
+  pushed commits (MGIT-254).** Review tooling may keep pull-request heads as
+  local branches. Such a ref names a commit the branch has already pushed,
+  so after the author's next commit it shared part of the branch, and the
+  guard read that as another branch's commits underneath: "BRANCH SCOPE
+  REFUSED … From: pr-N". Commits already on the branch's own
+  remote-tracking ref now count as the branch's own. A foreign branch's
+  commit that is not on it is still refused.
 
 ### Fixed
 

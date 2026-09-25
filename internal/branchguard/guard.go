@@ -26,7 +26,13 @@
 // a scope declared at `mgit work` time — would need metadata this project's
 // tickets do not carry, and would have caught exactly the same one branch.
 //
-// Refs: MGIT-142, MGIT-131, MGIT-118, R-H285, R-H286
+// "Other unmerged ref" excludes the branch's own past. Review tooling may
+// store pull-request heads as local branches (`git fetch origin
+// pull/N/head:pr-N`), so a local ref can name a commit this branch has already
+// pushed. Commits already on the branch's own remote-tracking ref are its own,
+// and a ref that shares only those is not a parent (MGIT-254).
+//
+// Refs: MGIT-142, MGIT-131, MGIT-118, MGIT-254, R-H285, R-H286
 package branchguard
 
 import (
