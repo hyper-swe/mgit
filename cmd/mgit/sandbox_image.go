@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -78,7 +80,10 @@ type imageInstallArgs struct {
 	asJSON    bool
 }
 
-// installImage fetches, verifies and registers a guest image bundle.
+// installImage fetches, verifies and registers a guest image bundle. A 404
+// for the manifest from the DEFAULT source is the expected state while
+// release bundles are on hold, and is said as that, with the way forward;
+// the same 404 from an explicit --from is only that source's answer.
 // Refs: MGIT-61.1, MGIT-61.2, MGIT-234
 func installImage(ctx context.Context, w io.Writer, a imageInstallArgs) error {
 	hostRoot, err := sandboxHostRoot()
@@ -87,6 +92,13 @@ func installImage(ctx context.Context, w io.Writer, a imageInstallArgs) error {
 	}
 	in := &imageinstall.Installer{HostRoot: hostRoot, Audit: printTrustRootAuditor{w: w}}
 	res, err := in.Install(ctx, a.source, a.name)
+	var status *imageinstall.HTTPStatusError
+	if err != nil && a.defaulted && errors.As(err, &status) && status.Code == http.StatusNotFound {
+		return fmt.Errorf("%w\nmgit releases do not carry a guest image bundle: publishing them is on hold "+
+			"(docs/INSTALL-SANDBOX.md). Install one you built or were given with "+
+			"`mgit sandbox image install --from <dir-or-url>`; with the libkrun daemon (macOS, and the Linux "+
+			"release archive) compose a directory base instead: `mgit sandbox base from`", err)
+	}
 	if err != nil {
 		return err
 	}
