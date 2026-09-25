@@ -29,8 +29,10 @@
 // "Other unmerged ref" excludes the branch's own past. Review tooling may
 // store pull-request heads as local branches (`git fetch origin
 // pull/N/head:pr-N`), so a local ref can name a commit this branch has already
-// pushed. Commits already on the branch's own remote-tracking ref are its own,
-// and a ref that shares only those is not a parent (MGIT-254).
+// pushed. When a local branch is checked, commits already on its own
+// remote-tracking ref are its own, and a ref that shares only those is not a
+// parent. A check of the remote-tracking ref itself (the server-side job's
+// shape) exempts nothing (MGIT-254).
 //
 // Refs: MGIT-142, MGIT-131, MGIT-118, MGIT-254, R-H285, R-H286
 package branchguard
@@ -133,7 +135,8 @@ func Check(repo *gogit.Repository, opts Options) (*Result, error) {
 	if len(own) == 0 {
 		return res, nil
 	}
-	if res.Inherited, err = inheritedFrom(repo, branch, bases, baseSet, own); err != nil {
+	checked := checkedRef{name: branch, local: isLocalBranch(repo, opts.Branch)}
+	if res.Inherited, err = inheritedFrom(repo, checked, bases, baseSet, own); err != nil {
 		return nil, err
 	}
 	res.Files = unionFiles(res.Inherited)
@@ -157,6 +160,30 @@ func resolveBranch(repo *gogit.Repository, name string) (string, plumbing.Hash, 
 		return "", plumbing.ZeroHash, fmt.Errorf("resolve branch %q: %w", name, err)
 	}
 	return shortRefName(name), *h, nil
+}
+
+// checkedRef is the branch under check: its identity, and whether the ref
+// checked is a local branch rather than a remote-tracking ref. Refs: MGIT-254
+type checkedRef struct {
+	name  string
+	local bool
+}
+
+// isLocalBranch reports whether Options.Branch names a local branch (the
+// pre-push hook's and a manual run's case) rather than a remote-tracking ref
+// (the server-side job checks origin/<head>). Empty means HEAD, which is local
+// when HEAD is on a branch. Refs: MGIT-254
+func isLocalBranch(repo *gogit.Repository, name string) bool {
+	if name == "" {
+		head, err := repo.Head()
+		return err == nil && head.Name().IsBranch()
+	}
+	if strings.HasPrefix(name, "refs/remotes/") {
+		return false
+	}
+	short := strings.TrimPrefix(name, "refs/heads/")
+	_, err := repo.Reference(plumbing.NewBranchReferenceName(short), false)
+	return err == nil
 }
 
 // resolveBases resolves the declared bases (all of which must exist — a typo

@@ -20,14 +20,14 @@ type refCandidate struct {
 // inheritedFrom finds every other unmerged ref that shares commits with the
 // branch under check, grouped so that a local branch and its remote-tracking
 // twin are reported once. Refs: MGIT-142
-func inheritedFrom(repo *gogit.Repository, branch string, bases []string,
+func inheritedFrom(repo *gogit.Repository, checked checkedRef, bases []string,
 	baseSet, own map[plumbing.Hash]*object.Commit) ([]Inherited, error) {
-	excluded := identitySet(append([]string{branch}, bases...))
+	excluded := identitySet(append([]string{checked.name}, bases...))
 	refs, err := candidateRefs(repo, excluded)
 	if err != nil {
 		return nil, err
 	}
-	pushed, err := pushedCommits(repo, branch, baseSet)
+	pushed, err := pushedCommits(repo, checked, baseSet)
 	if err != nil {
 		return nil, err
 	}
@@ -81,12 +81,18 @@ func isParent(shared, own map[plumbing.Hash]*object.Commit) bool {
 // shares a strict subset of the branch, the parent shape, and without this the
 // author's every later push was refused for their own commits (MGIT-254).
 //
-// The trust this places in origin/<branch> is bounded: whatever that ref
-// carries was either checked by this guard when it was pushed or waived there,
-// and the server-side Branch-scope job judges the pushed branch again with no
-// such local refs present. Refs: MGIT-254, MGIT-142
-func pushedCommits(repo *gogit.Repository, branch string,
+// Only a LOCAL branch has a pushed past to exempt. The server-side
+// Branch-scope job checks origin/<head> itself: there the remote-tracking ref
+// IS the ref under check, and counting it as the branch's past would make
+// every commit the branch's own and refuse nothing. So a check of a remote
+// ref exempts nothing, and that job judges the pushed branch in full; the
+// local exemption relies on it for anything pushed past the hook.
+// Refs: MGIT-254, MGIT-142
+func pushedCommits(repo *gogit.Repository, checked checkedRef,
 	baseSet map[plumbing.Hash]*object.Commit) (map[plumbing.Hash]*object.Commit, error) {
+	if !checked.local {
+		return nil, nil
+	}
 	iter, err := repo.References()
 	if err != nil {
 		return nil, fmt.Errorf("list refs: %w", err)
@@ -96,7 +102,7 @@ func pushedCommits(repo *gogit.Repository, branch string,
 	err = iter.ForEach(func(ref *plumbing.Reference) error {
 		name := ref.Name().String()
 		if ref.Type() == plumbing.HashReference && strings.HasPrefix(name, "refs/remotes/") &&
-			shortRefName(name) == branch {
+			shortRefName(name) == checked.name {
 			tips = append(tips, ref.Hash())
 		}
 		return nil
@@ -106,7 +112,7 @@ func pushedCommits(repo *gogit.Repository, branch string,
 	}
 	pushed, err := reachable(repo, tips, baseSet)
 	if err != nil {
-		return nil, fmt.Errorf("walk the pushed %s: %w", branch, err)
+		return nil, fmt.Errorf("walk the pushed %s: %w", checked.name, err)
 	}
 	return pushed, nil
 }

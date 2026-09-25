@@ -159,9 +159,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   local branches. Such a ref names a commit the branch has already pushed,
   so after the author's next commit it shared part of the branch, and the
   guard read that as another branch's commits underneath: "BRANCH SCOPE
-  REFUSED … From: pr-N". Commits already on the branch's own
-  remote-tracking ref now count as the branch's own. A foreign branch's
-  commit that is not on it is still refused.
+  REFUSED … From: pr-N". When a local branch is checked, commits already
+  on its own remote-tracking ref now count as its own. A foreign branch's
+  commit that is not on it is still refused, and the server-side check of
+  the pushed branch exempts nothing.
 
 ### Fixed
 
