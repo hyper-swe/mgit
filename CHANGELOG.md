@@ -112,6 +112,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The course-correction fork mgit prescribes inside a task worktree now
+  works (MGIT-82).** The working discipline mgit writes into every task
+  worktree said to fork a new line with `mgit checkout -b`, which a task
+  worktree refuses by design: it is bound to one branch. The refusal said
+  nothing about what to do instead. The guidance now prescribes a new task
+  worktree forked at the good commit, from the project root (`mgit work
+  <new-path> --task-id <new-task-id> --base <good-commit>`), and the
+  branch-switch refusal names that command and the root to run it from.
+  ADR-013 records the decision.
 - **`mgit sandbox launch` refuses a worktree that holds the repository's
   store before it registers or writes anything (MGIT-222).** A launch with
   the repository root, or a directory containing it, as its worktree

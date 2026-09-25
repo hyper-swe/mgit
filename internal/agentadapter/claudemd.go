@@ -226,9 +226,11 @@ func renderWorkingDiscipline(c Containment, writtenBy string) string {
 		"`mgit diff --task-id <ID>` (what changed) keep you grounded between steps.\n" +
 		"- **Course-correct, don't restart.** When a prior decision proves wrong, return to " +
 		"that point instead of rewriting from scratch: `mgit rollback --commit <hash>` " +
-		"(append-only revert) or `mgit checkout -b <branch>` to fork a new line from a good " +
-		"commit, then `mgit cherry-pick <hash>` to salvage the still-good work from the old " +
-		"line. The operator or a review agent may direct these steps.\n"
+		"(append-only revert), or fork a new line from a good commit in a new task worktree, " +
+		"from the project root: `mgit work <new-path> --task-id <new-task-id> --base <good-commit>` " +
+		"(this worktree is bound to its branch, so switching branches here is refused). Then " +
+		"`mgit cherry-pick <hash>` salvages the still-good work from the old line. The " +
+		"operator or a review agent may direct these steps.\n"
 }
 
 // disciplineRoutingSentence is the one posture-specific sentence in the working
