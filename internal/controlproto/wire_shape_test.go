@@ -25,8 +25,8 @@ import (
 // The shape is derived by reflection from Request and Response through every
 // nested struct, pointer, slice and map, so the case list comes from the types
 // themselves and not from a list this test keeps. Each field is recorded as
-// its JSON path, name and Go kind: a rename, an added or removed field, or a
-// changed type moves the digest. Request kinds are byte constants and carry no
+// its JSON path, name, ",string" option and Go kind: a rename, an added or
+// removed field, a changed type or a changed encoding moves the digest. Request kinds are byte constants and carry no
 // shape; a new verb still needs its own bump by the rule in handshake.go.
 //
 // WHEN THIS FAILS: the wire shape changed. Bump ProtocolVersion, record why in
@@ -73,6 +73,25 @@ func TestWireShape_SeesAFieldAddedTwoTypesDown(t *testing.T) {
 
 	assert.NotEqual(t, wireShapeDigest(v1), wireShapeDigest(v2))
 	assert.Contains(t, v2, "0.list[].last_failure string")
+}
+
+// A ",string" option quotes a number on the wire, so adding or removing it is
+// a shape change; omitempty is not.
+func TestWireShape_StringOptionIsShapeOmitemptyIsNot(t *testing.T) {
+	type plain struct {
+		Port int `json:"port"`
+	}
+	type quoted struct {
+		Port int `json:"port,string"`
+	}
+	type omitted struct {
+		Port int `json:"port,omitempty"`
+	}
+
+	p := wireShapeDigest(wireShape(reflect.TypeOf(plain{})))
+
+	assert.NotEqual(t, p, wireShapeDigest(wireShape(reflect.TypeOf(quoted{}))))
+	assert.Equal(t, p, wireShapeDigest(wireShape(reflect.TypeOf(omitted{}))))
 }
 
 // The real shape reaches the MGIT-231 field, so the pin above covers it.
@@ -135,13 +154,20 @@ func walkWireField(f reflect.StructField, path string, onPath map[reflect.Type]b
 	if tag == "-" || (!f.IsExported() && !f.Anonymous) {
 		return
 	}
-	name, _, _ := strings.Cut(tag, ",")
+	name, opts, _ := strings.Cut(tag, ",")
 	if f.Anonymous && name == "" {
 		walkWireType(f.Type, path, onPath, out) // encoding/json inlines an untagged embedded struct
 		return
 	}
 	if name == "" {
 		name = f.Name
+	}
+	// ",string" changes how a number or bool is encoded (quoted), so it is part
+	// of the shape; omitempty only decides whether a zero value is sent.
+	for _, o := range strings.Split(opts, ",") {
+		if o == "string" {
+			name += ",string"
+		}
 	}
 	walkWireType(f.Type, path+"."+name, onPath, out)
 }
