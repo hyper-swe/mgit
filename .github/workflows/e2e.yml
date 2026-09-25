@@ -418,8 +418,16 @@ jobs:
       - name: The bundle loads on this host (no libkrun installed here)
         run: bash scripts/release/verify-linux-sandboxd.sh "$BIN"
 
+      # One leg keeps the scratch root in /tmp. The other puts it under
+      # $RUNNER_TEMP (/home/runner/work/_temp), outside /tmp, where the guest
+      # must make the worktree's mount point by shadowing a directory the
+      # base image ships. The script asserts the guest works at the
+      # worktree's host path in both. Refs: MGIT-230.7, MGIT-230.3
       - name: The user path — must PASS
-        run: bash scripts/e2e/linux_user_path.sh "$BIN"
+        run: |
+          root=""
+          if [ "${{ matrix.install }}" = install-script ]; then root="$RUNNER_TEMP/scratch"; mkdir -p "$root"; fi
+          bash scripts/e2e/linux_user_path.sh "$BIN" ${root:+"$root"}
 
   # LIVE Linux containment gate: real firecracker microVMs on real KVM.
   #
