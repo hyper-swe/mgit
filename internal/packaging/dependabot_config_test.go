@@ -12,10 +12,10 @@ import (
 // the workflows is pinned to a full commit SHA with its release in a
 // trailing comment (MGIT-246). A pin with no update path freezes the action,
 // and its security fixes stop arriving. Dependabot's github-actions
-// ecosystem reads the "# vX.Y.Z" comments and opens a pull request per new
-// upstream release, moving the SHA and the comment together. This pins that
-// the ecosystem is configured for the workflows directory on a weekly
-// schedule. Refs: MGIT-252, MGIT-246
+// ecosystem reads the "# vX.Y.Z" comments and proposes each newer upstream
+// release, moving the SHA and the comment together, with every action's bump
+// grouped into one weekly pull request. This pins that the ecosystem is
+// configured for the repository, weekly, and grouped. Refs: MGIT-252, MGIT-246
 func TestDependabot_UpdatesThePinnedActionsWeekly(t *testing.T) {
 	cfg := readRepoFile(t, ".github/dependabot.yml")
 	assert.Contains(t, cfg, "version: 2", "dependabot.yml uses the version 2 schema")
