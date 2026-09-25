@@ -27,9 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lib/libkrunfw.so.5` beside it, built in ubuntu:20.04 (glibc 2.31 or newer
   required). A stock host needs only `/dev/kvm`: no firecracker, no
   `LD_LIBRARY_PATH`, no package. Extract the whole archive; the daemon finds
-  `lib/` by its own run path. `linux_arm64` is built and load-checked but not
-  boot-checked before release, because no hosted CI runner offers KVM on
-  arm64. A `go install` of the daemon on Linux is still the firecracker build.
+  `lib/` by its own run path.
+  `linux_arm64` is build-verified and not boot-verified: it is built and
+  load-checked, but no hosted CI runner offers KVM on arm64. A `go install`
+  of the daemon on Linux is still the firecracker build.
 - **`install.sh` and the Homebrew formula install the Linux bundle
   (MGIT-230.1).** The libraries go to `<prefix>/lib/mgit` (the Homebrew
   keg's `lib/mgit`), where the daemon's run path looks from `bin/`, and the
