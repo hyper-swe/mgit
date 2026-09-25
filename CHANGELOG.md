@@ -120,6 +120,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worktree forked at the good commit, from the project root (`mgit work
   <new-path> --task-id <new-task-id> --base <good-commit>`), and the
   branch-switch refusal names that command and the root to run it from.
+  A `mgit cherry-pick` in a task worktree is now recorded under that
+  worktree's task, as a commit there is: salvaging from the old line
+  recorded the pick under the old task, so the new task's log did not
+  show it and its squash failed. A contradicting `--task-id` is refused.
   ADR-013 records the decision.
 - **`mgit sandbox launch` refuses a worktree that holds the repository's
   store before it registers or writes anything (MGIT-222).** A launch with
