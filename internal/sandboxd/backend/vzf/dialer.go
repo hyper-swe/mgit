@@ -86,14 +86,14 @@ func newGuestLandDialer(reg *liveVMs) *guestDialer {
 }
 
 // DialGuest connects to the bound guest's channel over the live VM's vsock
-// device. It fails closed (ErrSandboxBackendUnavailable) when no live VM is
+// device. It fails closed (ErrSandboxNotRunning; MGIT-232) when no live VM is
 // registered for the sandbox. The framework dial is synchronous and does
 // not observe ctx; microvm.Manager.Exec applies the request deadline to the
 // returned conn. Refs: FR-17.11, FR-17.16
 func (d *guestDialer) DialGuest(_ context.Context, sandboxID string) (net.Conn, error) {
 	c, ok := d.reg.get(sandboxID)
 	if !ok {
-		return nil, fmt.Errorf("%w: no live vzf VM for sandbox %q", model.ErrSandboxBackendUnavailable, sandboxID)
+		return nil, fmt.Errorf("%w: no live vzf VM for sandbox %q", model.ErrSandboxNotRunning, sandboxID)
 	}
 	return c.connectGuest(d.port)
 }
