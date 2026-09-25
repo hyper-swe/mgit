@@ -228,8 +228,9 @@ func renderWorkingDiscipline(c Containment, writtenBy string) string {
 		"that point instead of rewriting from scratch: `mgit rollback --commit <hash>` " +
 		"(append-only revert), or fork a new line from a good commit in a new task worktree, " +
 		"from the project root: `mgit work <new-path> --task-id <new-task-id> --base <good-commit>` " +
-		"(this worktree is bound to its branch, so switching branches here is refused). Then " +
-		"`mgit cherry-pick <hash>` salvages the still-good work from the old line. The " +
+		"(this worktree is bound to its branch, so switching branches here is refused). Then, " +
+		"in the new worktree, `mgit cherry-pick <hash>` salvages the still-good work from the " +
+		"old line. The " +
 		"operator or a review agent may direct these steps.\n"
 }
 
