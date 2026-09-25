@@ -170,7 +170,8 @@ var guestBaseDirs = []string{"proc", "dev", "tmp", "mnt"}
 // PID-1 supervisor must exist and be executable, and its mount points must be
 // present. It is checked HOST-side, before a VM is spawned, so a malformed
 // base is a launch error naming what is missing rather than a guest that dies
-// mid-boot. Refs: FR-17.3, MGIT-61.15
+// mid-boot. Each refusal is ErrGuestBaseUnbootable: the backend is there and
+// the base is what cannot boot (MGIT-233.1). Refs: FR-17.3, MGIT-61.15, MGIT-233.1
 func validateGuestBase(rootDir, execPath string) error {
 	init := filepath.Join(rootDir, execPath)
 	info, err := os.Stat(init)
@@ -178,12 +179,12 @@ func validateGuestBase(rootDir, execPath string) error {
 		return fmt.Errorf(
 			"%w: guest base %s has no %s: the base tree must contain the mgit-guest "+
 				"supervisor, which runs as PID 1",
-			model.ErrSandboxBackendUnavailable, rootDir, execPath)
+			model.ErrGuestBaseUnbootable, rootDir, execPath)
 	}
 	if info.IsDir() || info.Mode()&0o111 == 0 {
 		return fmt.Errorf(
 			"%w: guest base %s: %s is not an executable file",
-			model.ErrSandboxBackendUnavailable, rootDir, execPath)
+			model.ErrGuestBaseUnbootable, rootDir, execPath)
 	}
 	var missing []string
 	for _, d := range guestBaseDirs {
@@ -196,7 +197,7 @@ func validateGuestBase(rootDir, execPath string) error {
 			"%w: guest base %s is missing the mount points mgit-guest needs at boot: %s. "+
 				"Create them in the base tree (mkdir -p %s); without them the guest fails "+
 				"with a bare \"no such file or directory\" during mount",
-			model.ErrSandboxBackendUnavailable, rootDir,
+			model.ErrGuestBaseUnbootable, rootDir,
 			strings.Join(missing, ", "), strings.Join(missing, " "))
 	}
 	return nil
