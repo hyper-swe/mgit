@@ -41,16 +41,47 @@ func TestDoctor_ExitCode_TheHostsDaemonsDoNotDecideIt(t *testing.T) {
 // directory and writes one live, leaked daemon record into it.
 func plantLeakedHostDaemon(t *testing.T) {
 	t.Helper()
+	base := isolatedDaemonRecords(t)
+	plantHostDaemon(t, base, "leaked", filepath.Join(t.TempDir(), "removed-repository"))
+}
+
+// isolatedDaemonRecords points the daemon records at a fresh runtime
+// directory, never the machine's, and returns the records' base directory.
+func isolatedDaemonRecords(t *testing.T) string {
+	t.Helper()
 	runtimeDir := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
-	dir := filepath.Join(runtimeDir, fmt.Sprintf("mgit-%d", os.Getuid()), "leaked")
+	return filepath.Join(runtimeDir, fmt.Sprintf("mgit-%d", os.Getuid()))
+}
+
+// plantHostDaemon writes one live daemon record (the test's own pid) serving
+// root, under its own directory name.
+func plantHostDaemon(t *testing.T, base, name, root string) {
+	t.Helper()
+	dir := filepath.Join(base, name)
 	require.NoError(t, os.MkdirAll(dir, 0o700))
 	require.NoError(t, daemonrec.Write(daemonrec.Record{
 		PID:       os.Getpid(),
-		RepoRoot:  filepath.Join(t.TempDir(), "removed-repository"),
+		RepoRoot:  root,
 		Socket:    filepath.Join(dir, "d.sock"),
 		StartedAt: time.Now(),
 	}))
+}
+
+// The duplicates row is the other half: two live daemons serving one
+// repository that still exists fail daemons/one-per-repository, and only
+// that row. They must not decide a wiring test either. Refs: MGIT-262, MGIT-197
+func TestDoctor_ExitCode_DuplicateHostDaemonsDoNotDecideIt(t *testing.T) {
+	base := isolatedDaemonRecords(t)
+	shared := t.TempDir()
+	plantHostDaemon(t, base, "first", shared)
+	plantHostDaemon(t, base, "second", shared)
+	doctorRepo(t)
+	cl := &fakeSandboxClient{execStdout: "127.0.0.1\tlocalhost\nsha256sum\ndrop_caches\n"}
+
+	out, err := runDoctor(t, connecting(cl))
+
+	require.NoError(t, err, "another session's duplicate daemons must not fail this repository's doctor wiring test; output:\n%s", out)
 }
 
 // noHostDaemons is the empty daemon listing the doctor wiring tests inject in
