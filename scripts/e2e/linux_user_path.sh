@@ -14,13 +14,14 @@
 # code agrees with it. On failure the daemon's own view (status, doctor) is
 # printed, so a red run says why without a rerun.
 #
-# Usage: linux_user_path.sh <install-dir>
+# Usage: linux_user_path.sh <install-dir> [scratch-root]
 #   install-dir holds mgit, mgit-sandboxd and guest/ exactly as a release
-#   archive lays them out.
+#   archive lays them out. scratch-root holds the repository and the
+#   worktree; it defaults to the temp dir (/tmp on a stock runner).
 # Refs: MGIT-229, hyper-swe/mgit#12
 set -u
 
-BIN="${1:?usage: linux_user_path.sh <install-dir>}"
+BIN="${1:?usage: linux_user_path.sh <install-dir> [scratch-root]}"
 for hook in MGIT_GUEST_KERNEL MGIT_GUEST_ROOTFS MGIT_GUEST_BASE MGIT_GUEST_IMAGE; do
 	if [ -n "${!hook:-}" ]; then
 		echo "REFUSING: $hook is set — this leg proves the user path WITHOUT test hooks"
@@ -28,7 +29,11 @@ for hook in MGIT_GUEST_KERNEL MGIT_GUEST_ROOTFS MGIT_GUEST_BASE MGIT_GUEST_IMAGE
 	fi
 done
 export PATH="$BIN:$PATH"
-W="$(mktemp -d "${TMPDIR:-/tmp}/linux-user-path.XXXXXX")"
+# A scratch root outside /tmp puts the worktree where the guest must make
+# its mount point by shadowing a directory the base image ships
+# (MGIT-230.7); one CI leg passes one. Refs: MGIT-230.7, MGIT-230.3
+ROOT="${2:-${TMPDIR:-/tmp}}"
+W="$(mktemp -d "$ROOT/linux-user-path.XXXXXX")" || { echo "cannot make a scratch dir under $ROOT"; exit 2; }
 R="$W/repo"
 P="$W/work"
 TASK=UP-1
@@ -74,6 +79,13 @@ mkdir -p "$R" "$P"
 (cd "$R" && git init -q && git -c user.email=up@mgit.local -c user.name=up commit -q --allow-empty -m init &&
 	mgit init >/dev/null) || fail "repository" "git init / mgit init failed"
 printf 'v1\n' >"$P/f.txt"
+# The physical path, because the guest works at the canonical one.
+PH="$(cd "$P" && pwd -P)"
+case "$PH/" in
+/tmp/*) where="under /tmp" ;;
+*) where="outside /tmp" ;;
+esac
+echo "  worktree: $PH ($where)"
 echo "  PASS"
 
 # fetch-guard: `mgit sandbox base from` pulls an OCI image through the
@@ -99,6 +111,11 @@ out="$(cd "$P" && timeout 300 mgit run -- sh -c 'echo boot-ok; cat f.txt' 2>&1)"
 first "$out" 6
 printf '%s\n' "$out" | grep -qx 'boot-ok' || fail "exec" "the guest did not run the command: $(first "$out" 1)"
 printf '%s\n' "$out" | grep -qx 'v1' || fail "exec" "the guest does not see the worktree"
+# The worktree is mounted at its IDENTICAL host path, and mgit run works
+# there, under /tmp or outside it. Refs: MGIT-230.3, MGIT-230.7
+gwd="$(cd "$P" && timeout 120 mgit run -- pwd 2>&1)"
+[ "$gwd" = "$PH" ] || fail "exec" "the guest works in '$gwd', not the worktree's host path $PH ($where)"
+echo "  the guest works in the worktree at its host path ($where)"
 echo "  PASS"
 
 step "7 sync a host edit into the running guest"
