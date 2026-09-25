@@ -566,6 +566,10 @@ func (s *SandboxService) settleBoot(ctx context.Context, reg *sandboxReg, attemp
 	}
 	if err := s.recordBootLocked(ctx, reg, launched); err != nil {
 		attempt.err = err
+		// The VM started and was rolled back: from the caller's side the boot
+		// failed exactly as a failed launch does, and status says so.
+		// Refs: MGIT-231.1
+		reg.info.LastBootFailure = &model.BootFailure{At: s.clock().UTC(), Cause: err.Error()}
 		return nil, err
 	}
 	attempt.info = reg.info
