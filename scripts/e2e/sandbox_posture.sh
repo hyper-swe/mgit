@@ -289,6 +289,24 @@ echo "== land round-trip =="
 # The land path verifies dual-hash + task binding + host-anchored attestation.
 assert_ok "sandbox land succeeds" -- mgit sandbox land --task SB-1
 
+# A commit made INSIDE the guest inherits the worktree's task, as the
+# generated guidance tells the agent (MGIT-256). The guest's .mgit is the
+# private store, which carried no binding: `mgit commit` there refused with
+# "--task-id is required". The file is written in the guest, since the guest
+# holds a staged copy of the worktree, and the commit comes back by land.
+# libkrun's: the minimal firecracker rootfs ships no guest mgit CLI.
+if [ "$backend" = "libkrun" ]; then
+	echo "== a guest commit inherits the worktree's task (MGIT-256) =="
+	trail() { mgit log --task-id SB-1 | grep -c 'guest step, no task id' || true; }
+	before="$(trail)"
+	guestout="$(cd wt && mgit run -- sh -c "printf 'from the guest\n' > guest-step.txt && mgit commit -a -m 'guest step, no task id'" 2>&1)" \
+		|| { echo "$guestout"; _e2e_fail "a guest commit without --task-id was refused (MGIT-256; output above)"; }
+	assert_ok "the guest's commit lands" -- mgit sandbox land --task SB-1
+	after="$(trail)"
+	[ "$after" -eq $((before + 1)) ] || _e2e_fail "the guest's commit is not on task SB-1 after land ($before -> $after)"
+	pass "the guest commit is recorded on SB-1 with no --task-id"
+fi
+
 
 # ---------------------------------------------------------------------------
 # A guest that dies is a DEAD sandbox, not a running one (MGIT-99)

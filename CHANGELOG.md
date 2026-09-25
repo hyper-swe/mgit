@@ -163,6 +163,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on its own remote-tracking ref now count as its own. A foreign branch's
   commit that is not on it is still refused, and the server-side check of
   the pushed branch exempts nothing.
+- **A commit made inside a sandbox inherits the worktree's task
+  (MGIT-256).** The CLAUDE.md block mgit writes into a task worktree says
+  no `--task-id` is needed, and on the host that is true. Inside the
+  sandbox, `mgit commit` refused with "--task-id is required": the guest's
+  `.mgit` is the sandbox's private store, which carried no binding, and
+  the host's worktree marker cannot be copied in because it names the
+  host's store. The private store now records the task alone, so a guest
+  commit is tagged with it, a different `--task-id` is refused, and the
+  guest learns nothing of the host's paths. Takes effect for sandboxes
+  launched after the upgrade, with a guest base composed by this release.
 
 ### Fixed
 
