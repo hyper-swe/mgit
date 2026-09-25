@@ -72,3 +72,37 @@ func TestCheck_ForeignParentAfterPush_StillRefused(t *testing.T) {
 	require.Len(t, res.Inherited[0].Commits, 1)
 	require.Equal(t, "feat: someone else's work", res.Inherited[0].Commits[0].Subject)
 }
+
+// CI CHECKS THE REMOTE REF ITSELF. The server-side Branch-scope job fetches
+// every head into refs/remotes/origin/* and checks `--branch origin/<head>`.
+// There the ref under check IS the branch's remote-tracking ref, so it must
+// never count as the branch's pushed past, or every commit would be the
+// branch's own and nothing could be refused. The branch here carries a
+// foreign commit and was pushed past the local hook; CI must still refuse it.
+func TestCheck_RemoteRefUnderCheck_ForeignParentStillRefused(t *testing.T) {
+	f := pushedBranchWithReviewRef(t)
+	f.checkout("main")
+	f.checkoutNew("fix/other")
+	foreign := f.commit("feat: someone else's work", "other.go")
+	f.remoteMirror("fix/other")
+	f.checkout("fix/b")
+	tip, err := f.repo.Reference(plumbing.NewBranchReferenceName("fix/b"), true)
+	require.NoError(t, err)
+	f.at = f.at.Add(1)
+	_, err = f.wt.Commit("merge: fold in the other branch", &gogit.CommitOptions{
+		Author:            &object.Signature{Name: "Test", Email: "test@example.com", When: f.at},
+		Parents:           []plumbing.Hash{tip.Hash(), foreign},
+		AllowEmptyCommits: true,
+	})
+	require.NoError(t, err)
+	f.remoteMirror("fix/b") // pushed with --no-verify
+	for _, local := range []string{"fix/b", "fix/other", "pr-7"} {
+		require.NoError(t, f.repo.Storer.RemoveReference(plumbing.NewBranchReferenceName(local)))
+	}
+
+	res := f.check(t, branchguard.Options{Branch: "origin/fix/b"})
+
+	require.False(t, res.Clean(), "CI's check of origin/fix/b must refuse the foreign commit")
+	require.Len(t, res.Inherited, 1)
+	require.Contains(t, res.Inherited[0].Refs, "origin/fix/other")
+}
