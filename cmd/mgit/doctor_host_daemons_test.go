@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mgit/internal/sandboxd/daemonrec"
@@ -48,4 +51,38 @@ func plantLeakedHostDaemon(t *testing.T) {
 		Socket:    filepath.Join(dir, "d.sock"),
 		StartedAt: time.Now(),
 	}))
+}
+
+// noHostDaemons is the empty daemon listing the doctor wiring tests inject in
+// place of the host's real records.
+func noHostDaemons(context.Context) ([]daemonrec.Listed, error) { return nil, nil }
+
+// THE PRODUCTION DOCTOR STILL READS THE HOST. The seam moved the lister into
+// a dependency; doctorCmd, which main wires, must keep passing the real one,
+// or the host-daemons rows would silently judge nothing for every user. The
+// same planted leaked daemon fails its row here, through doctorCmd.
+// Refs: MGIT-262, MGIT-162
+func TestDoctorCmd_ProductionWiringReadsTheHostsDaemons(t *testing.T) {
+	plantLeakedHostDaemon(t)
+	doctorRepo(t)
+	cl := &fakeSandboxClient{execStdout: "127.0.0.1\tlocalhost\nsha256sum\ndrop_caches\n"}
+	root := rootCmd()
+	for _, c := range root.Commands() {
+		if c.Name() == "doctor" {
+			root.RemoveCommand(c)
+			break
+		}
+	}
+	root.AddCommand(hostOnly(doctorCmd(connecting(cl))))
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"doctor"})
+
+	err := root.ExecuteContext(context.Background())
+
+	var ee *exitError
+	require.ErrorAs(t, err, &ee, "the production doctor must fail on a leaked host daemon; output:\n%s", out.String())
+	assert.Equal(t, 1, ee.code)
+	assert.Regexp(t, `FAIL\s+daemons/host`, out.String())
 }
