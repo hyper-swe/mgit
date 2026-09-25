@@ -42,3 +42,33 @@ func TestE2E_TheLinuxUserPathRunsWithoutTestHooks(t *testing.T) {
 		assert.Contains(t, script, verb, "the user path includes %q", verb)
 	}
 }
+
+// THE WORKTREE IS SEEN AT ITS HOST PATH, UNDER /tmp AND OUTSIDE IT. mgit
+// mounts the worktree in the guest at its identical host path, and `mgit
+// run` runs in the guest at the caller's canonical cwd. The leg's worktree
+// sat under /tmp only because the runner sets no TMPDIR, which nothing
+// printed, and nothing compared the guest's working directory with the host
+// path. A worktree outside /tmp needs its mount point made by shadowing a
+// directory the base image ships (MGIT-230.7), which no user-path run had
+// exercised. So the script names the worktree's physical host path and
+// whether it is under /tmp, and fails unless the guest's pwd is exactly that
+// path. One leg keeps the scratch root in /tmp, and the other passes one
+// outside it. Refs: MGIT-230.3, MGIT-230.7
+func TestE2E_TheLinuxUserPathSeesTheWorktreeAtItsHostPath_UnderAndOutsideTmp(t *testing.T) {
+	script := readRepoFile(t, filepath.Join("scripts", "e2e", "linux_user_path.sh"))
+	for _, want := range []string{
+		`ROOT="${2:-${TMPDIR:-/tmp}}"`,                         // a scratch root the caller may choose
+		`PH="$(cd "$P" && pwd -P)"`,                            // the worktree's physical host path
+		`gwd="$(cd "$P" && timeout 120 mgit run -- pwd 2>&1)"`, // the guest's working directory
+		`[ "$gwd" = "$PH" ] || fail "exec"`,                    // must be exactly that path
+		`/tmp/*) where="under /tmp"`,                           // and the leg says which case it ran
+	} {
+		assert.Contains(t, script, want, "the user path must carry %q", want)
+	}
+
+	wf := readRepoFile(t, filepath.Join(".github", "workflows", "e2e.yml"))
+	step := stepBlock(t, jobBlock(t, wf, "linux-user-path"), "- name: The user path")
+	assert.Contains(t, step, `root="$RUNNER_TEMP/scratch"`, "one leg puts the scratch root outside /tmp")
+	assert.Contains(t, step, `[ "${{ matrix.install }}" = install-script ]`, "only the install-script leg; the archive leg keeps /tmp")
+	assert.Contains(t, step, `bash scripts/e2e/linux_user_path.sh "$BIN" ${root:+"$root"}`, "and the script receives it")
+}
