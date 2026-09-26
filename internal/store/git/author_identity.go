@@ -37,7 +37,8 @@ func ResolveAuthorIdentity(projectRoot string, getenv func(string) string) (Auth
 	}
 	if id.Name == "" || id.Email == "" {
 		return AuthorIdentity{}, fmt.Errorf("%w: git am records a patch's From: line as the commit's author, "+
-			"so set user.name and user.email (git config, in this project or globally) "+
+			"so set one and run the same command again: `git config user.name \"Your Name\"` and "+
+			"`git config user.email you@example.com` (add --global for every project), "+
 			"or GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL", model.ErrNoPatchIdentity)
 	}
 	return id, nil

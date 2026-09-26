@@ -226,6 +226,7 @@ func squashPatchText(ctx context.Context, app *App, opts squashPatchOptions) (st
 	if err != nil {
 		return "", err
 	}
+	warnIfNoPatchIdentity(app, os.Stderr)
 	if preview.Empty {
 		_, _ = fmt.Fprintln(os.Stderr, emptyNetChangeNote(opts.taskID))
 		return "", nil

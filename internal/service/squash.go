@@ -309,7 +309,12 @@ func (s *SquashService) mboxHeader(c *model.Commit, author gitstore.AuthorIdenti
 	// The exporter, never mgit: git am records this line as the commit's
 	// author. The squash commit in mgit's own store keeps its internal
 	// author. Refs: MGIT-237
-	fmt.Fprintf(&b, "From: %s <%s>\n", author.Name, author.Email)
+	if author.Name != "" || author.Email != "" {
+		// A read-only patch with no identity configured names no author: git
+		// apply needs none, and git am asks for one rather than recording an
+		// invented one (MGIT-237, option C).
+		fmt.Fprintf(&b, "From: %s <%s>\n", author.Name, author.Email)
+	}
 	fmt.Fprintf(&b, "Date: %s\n", createdAt.UTC().Format(time.RFC1123Z))
 	fmt.Fprintf(&b, "Subject: [PATCH] %s\n\n", subject)
 	if body != "" {

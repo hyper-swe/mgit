@@ -25,7 +25,12 @@ cd "$work"
 
 echo "== project git + mgit init =="
 git init -q
-git -c user.email=e2e@mgit.local -c user.name=e2e commit -q --allow-empty -m "project init"
+# The project's git identity, set the way the README tells a user to: an
+# exported patch is authored by it, and `squash --to-git` refuses without
+# one (MGIT-237).
+git config user.name e2e
+git config user.email e2e@mgit.local
+git commit -q --allow-empty -m "project init"
 out="$(mgit init)"
 assert_contains "$out" "Initialized mgit repository" "mgit init reports success"
 assert_file ".mgit/index.db" "mgit init created the .mgit store"
@@ -59,6 +64,7 @@ echo "== squash --to-git | git apply round-trip =="
 patch="$work/e2e.patch"
 mgit squash --task-id E2E-1 --to-git > "$patch"
 assert_contains "$(head -1 "$patch")" "From " "squash --to-git emits a git patch"
+assert_contains "$(cat "$patch")" "From: e2e <e2e@mgit.local>" "the patch is authored by the project's git identity (MGIT-237)"
 # Apply the squashed task patch back onto the project's real git tree.
 git apply --check "$patch"
 git apply "$patch"

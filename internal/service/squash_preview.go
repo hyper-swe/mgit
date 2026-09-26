@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -68,7 +69,7 @@ func (s *SquashService) PreviewGitPatch(ctx context.Context, req SquashRequest) 
 		return nil, fmt.Errorf("preview git patch for task %s: %w", req.TaskID, err)
 	}
 
-	author, err := s.PatchAuthor()
+	author, err := s.readOnlyPatchAuthor()
 	if err != nil {
 		return nil, err
 	}
@@ -104,4 +105,17 @@ func assertPatchCarriesHunks(taskID, patch string) error {
 			"hunks were rendered; refusing to emit a patch that would apply cleanly and "+
 			"change nothing",
 		taskID, model.ErrVerificationFailed)
+}
+
+// readOnlyPatchAuthor is the author of a patch nothing is written for: the
+// preview behind `squash --to-git --dry-run` and `export --format git`. With
+// no identity configured it is the zero identity, and the patch names no
+// author at all rather than an invented one; the CLI warns. Only the writing
+// `squash --to-git` refuses (option C, MGIT-237). Refs: MGIT-237
+func (s *SquashService) readOnlyPatchAuthor() (gitstore.AuthorIdentity, error) {
+	author, err := s.PatchAuthor()
+	if errors.Is(err, model.ErrNoPatchIdentity) {
+		return gitstore.AuthorIdentity{}, nil
+	}
+	return author, err
 }

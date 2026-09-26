@@ -49,7 +49,12 @@ short_hash() { printf '%s' "$1" | sed -n 's/^\[\([0-9a-f]*\)\].*/\1/p'; }
 
 echo "== setup: project git + mgit init + 3 micro-commits (one wrong) =="
 git init -q
-git -c user.email=e2e@mgit.local -c user.name=e2e commit -q --allow-empty -m "project init"
+# The project's git identity, set the way the README tells a user to: an
+# exported patch is authored by it, and `squash --to-git` refuses without
+# one (MGIT-237).
+git config user.name e2e
+git config user.email e2e@mgit.local
+git commit -q --allow-empty -m "project init"
 out="$(mgit init)"
 assert_contains "$out" "Initialized mgit repository" "mgit init reports success"
 

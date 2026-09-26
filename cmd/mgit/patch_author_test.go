@@ -149,7 +149,7 @@ func TestSquashToGit_RefusedThenConfigured_CompletesWithAllWork(t *testing.T) {
 	require.Error(t, runCLI(t, args...), "refused while no identity is configured")
 
 	home := os.Getenv("HOME")
-	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"), //nolint:gosec // HOME is the test's own t.TempDir (isolateGitIdentity)
 		[]byte("[user]\n\tname = Grace Hopper\n\temail = grace@example.com\n"), 0o600))
 	require.NoError(t, runCLI(t, args...), "the same command completes once an identity is set")
 

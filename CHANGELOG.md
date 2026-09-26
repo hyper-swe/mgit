@@ -159,8 +159,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mgit's internal squash identity there. They now carry your git identity:
   `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL`, else `user.name` and
   `user.email` from the project's or your global git config. With none
-  configured, mgit refuses to export the patch, before any squash commit
-  is made, instead of inventing an author. mgit's own store keeps its
+  configured, `squash --to-git` refuses before it writes anything and
+  names the two `git config` commands; configure one and run the same
+  command again, and it completes with all of the task's work. The
+  read-only `squash --to-git --dry-run` and `export --format git` still
+  work, warn, and name no author at all. mgit's own store keeps its
   internal author.
 - **`mgit sandbox launch` refuses a worktree that holds the repository's
   store before it registers or writes anything (MGIT-222).** A launch with
