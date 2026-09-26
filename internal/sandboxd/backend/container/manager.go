@@ -343,17 +343,27 @@ func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*
 	for _, env := range req.Env {
 		args = append(args, "--env", env)
 	}
+	// Run as the identity the daemon chose (RunAs; the service decides it —
+	// the unprivileged daemon identity, or root for an audited --as-root).
+	// Without --user, podman runs as the image's default account, so the
+	// command would run as an identity other than the requested one and an
+	// audited root request would change nothing. The microVM backends set
+	// this identity; the container fallback must too. Refs: MGIT-273, MGIT-151
+	ran := req.RunAs
+	if ran != nil {
+		args = append(args, "--user", fmt.Sprintf("%d:%d", ran.UID, ran.GID))
+	}
 	args = append(args, sb.name)
 	args = append(args, req.Command...)
 	out, err := m.cfg.Runner.run(ctx, args...)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return &model.ExecResult{Stdout: out, Stderr: exitErr.Stderr, ExitCode: exitErr.ExitCode()}, nil
+			return &model.ExecResult{Stdout: out, Stderr: exitErr.Stderr, ExitCode: exitErr.ExitCode(), RanAs: ran}, nil
 		}
 		return nil, fmt.Errorf("container exec: %w", err)
 	}
-	return &model.ExecResult{Stdout: out, ExitCode: 0}, nil
+	return &model.ExecResult{Stdout: out, ExitCode: 0, RanAs: ran}, nil
 }
 
 // Stop halts the container (state suspended; resources held until
