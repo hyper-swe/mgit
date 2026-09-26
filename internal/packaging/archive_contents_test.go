@@ -93,7 +93,28 @@ var linuxBundle = []string{
 	"THIRD_PARTY/libkrunfw-LICENSE-LGPL-2.1-only",
 }
 
-func TestArchives_LinuxCarryTheBundle(t *testing.T) {
+// darwinBundle is what the darwin/arm64 archive carries beside mgit-sandboxd.
+// Carry a patched libkrun in the macOS build; fixes MGIT-225. Refs: MGIT-259
+var darwinBundle = []string{
+	"lib/libkrun.1.dylib",
+	"THIRD_PARTY/SOURCES.txt",
+	"THIRD_PARTY/libkrun-LICENSE",
+}
+
+// bundleFor is the bundle an archive must carry: Linux's, darwin/arm64's, or
+// none.
+func bundleFor(base string) []string {
+	switch {
+	case strings.Contains(base, "_linux_"):
+		return linuxBundle
+	case strings.Contains(base, "_darwin_arm64"):
+		return darwinBundle
+	}
+	return nil
+}
+
+func TestArchives_CarryTheirPlatformsBundle(t *testing.T) {
+	every := append(append([]string{}, linuxBundle...), darwinBundle...)
 	for _, archive := range builtArchives(t) {
 		base := filepath.Base(archive)
 		t.Run(base, func(t *testing.T) {
@@ -101,10 +122,10 @@ func TestArchives_LinuxCarryTheBundle(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read archive: %v", err)
 			}
-			linux := strings.Contains(base, "_linux_")
-			for _, want := range linuxBundle {
-				if got := contains(names, want); got != linux {
-					t.Errorf("%s: %s present = %v, want %v (only Linux archives bundle libkrun)", base, want, got, linux)
+			want := bundleFor(base)
+			for _, path := range every {
+				if got := contains(names, path); got != contains(want, path) {
+					t.Errorf("%s: %s present = %v, want %v", base, path, got, contains(want, path))
 				}
 			}
 		})

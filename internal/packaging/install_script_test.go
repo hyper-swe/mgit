@@ -22,8 +22,14 @@ import (
 // ending in ".sh-exec" are written executable under the name without it.
 func fakeRelease(t *testing.T, version string, files map[string]string) string {
 	t.Helper()
+	return fakeReleaseFor(t, version, runtime.GOOS, runtime.GOARCH, files)
+}
+
+// fakeReleaseFor is fakeRelease for a named os/arch.
+func fakeReleaseFor(t *testing.T, version, goos, goarch string, files map[string]string) string {
+	t.Helper()
 	dir := t.TempDir()
-	name := fmt.Sprintf("mgit_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
+	name := fmt.Sprintf("mgit_%s_%s_%s.tar.gz", version, goos, goarch)
 	f, err := os.Create(filepath.Join(dir, name)) //nolint:gosec // a t.TempDir path
 	require.NoError(t, err)
 	gz := gzip.NewWriter(f)
@@ -51,11 +57,11 @@ func fakeRelease(t *testing.T, version string, files map[string]string) string {
 
 // runInstall runs the repository's install.sh against a local release, into
 // prefix, and returns its combined output.
-func runInstall(t *testing.T, release, prefix string) (string, error) {
+func runInstall(t *testing.T, release, prefix string, extraEnv ...string) (string, error) {
 	t.Helper()
 	//nolint:gosec // G204: a fixed script path; the env points at t.TempDir paths
 	cmd := exec.Command("sh", filepath.Join(repoRoot(t), "install.sh"))
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(append(os.Environ(), extraEnv...),
 		"MGIT_VERSION=v9.9.9",
 		"MGIT_DOWNLOAD_BASE=file://"+release,
 		"MGIT_PREFIX="+prefix)

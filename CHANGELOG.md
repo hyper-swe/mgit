@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Carry a patched libkrun in the macOS build; fixes MGIT-225 (MGIT-259).
 - **The daemon's own guest execs run through the audited identity path with
   absolute program paths (MGIT-272, MGIT-270).** A sync's read-back — the
   step that confirms the guest sees what was delivered — now runs as an

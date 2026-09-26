@@ -136,16 +136,18 @@ if ! mgit_out="$("$ext/mgit" --version 2>&1)"; then
 fi
 pass "mgit ran: $mgit_out"
 
-# mgit-sandboxd LINKS libkrun by absolute path on macOS (verified with otool:
-# /opt/homebrew/opt/libkrun/lib/libkrun.1.dylib). On a host without it, dyld
-# aborts before main — "Abort trap: 6" with a Library-not-loaded message. That
-# is MGIT-75's deliberate fail-closed design, not a broken archive: core mgit is
-# CGO-free and links nothing. Distinguish the two by the loader's own words
-# rather than by guessing from the exit status.
+# An archive before MGIT-259 has mgit-sandboxd LINK a Homebrew libkrun by
+# absolute path; on a host without it, dyld aborts before main — "Abort trap:
+# 6" with a Library-not-loaded message. That is MGIT-75's deliberate
+# fail-closed design, not a broken archive: core mgit is CGO-free and links
+# nothing. An archive that carries lib/libkrun.1.dylib must always load.
+# Distinguish them by the loader's own words rather than by the exit status.
 daemon_runs=0
 if sbx_err="$("$ext/mgit-sandboxd" --help 2>&1 >/dev/null)"; then
 	daemon_runs=1
 	pass "mgit-sandboxd ran"
+elif [ -f "$ext/lib/libkrun.1.dylib" ]; then
+	_e2e_fail "mgit-sandboxd does not run beside the archive's own lib/libkrun.1.dylib: $sbx_err"
 elif printf '%s' "$sbx_err" | grep -q 'Library not loaded'; then
 	skip_note "mgit-sandboxd cannot load libkrun on this host, by design (MGIT-75) —"
 	echo "        core mgit is unaffected. Install libkrun to cover the daemon here."
@@ -170,6 +172,25 @@ elif [ "$daemon_runs" = "1" ]; then
 	skip_note "this daemon predates --version (added in MGIT-83) — build agreement not checkable for $TAG"
 else
 	skip_note "build agreement needs a runnable daemon (see above)"
+fi
+
+# ---------------------------------------------------------------------------
+# The archive's own libkrun, resolved from where the archive puts it — with
+# Homebrew's libkrun installed on this host. Carry a patched libkrun in the
+# macOS build; fixes MGIT-225. Refs: MGIT-259
+# ---------------------------------------------------------------------------
+echo "== the archive's libkrun (MGIT-259) =="
+if [ "$(uname -s)" != "Darwin" ]; then
+	skip_note "not macOS — the darwin archive's libkrun cannot be loaded here"
+elif [ ! -f "$ext/lib/libkrun.1.dylib" ]; then
+	_e2e_fail "the archive carries no lib/libkrun.1.dylib"
+else
+	vmm="$("$ext/mgit-sandboxd" --vmm 2>&1)" || _e2e_fail "mgit-sandboxd --vmm failed: $vmm"
+	got="$(printf '%s' "$vmm" | sed -n 's/.*"name":"libkrun","path":"\([^"]*\)".*/\1/p')"
+	[ -n "$got" ] && [ "$got" -ef "$ext/lib/libkrun.1.dylib" ] ||
+		_e2e_fail "libkrun resolved to '${got:-nothing}', not the archive's lib/libkrun.1.dylib: $vmm"
+	case "$vmm" in *'"problems"'*) _e2e_fail "mgit-sandboxd --vmm names a problem: $vmm" ;; esac
+	pass "libkrun resolves inside the archive ($got)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -247,6 +268,10 @@ fi
 echo "== libkrun networking capability (SEC-04) =="
 if [ "$(uname -s)" != "Darwin" ]; then
 	skip_note "not macOS — libkrun is the macOS backend"
+elif [ -f "$ext/lib/libkrun.1.dylib" ]; then
+	nm -gU "$ext/lib/libkrun.1.dylib" 2>/dev/null | grep -q krun_add_net_unixgram ||
+		_e2e_fail "the archive's libkrun does NOT export krun_add_net_unixgram — built without NET=1"
+	pass "the archive's libkrun exports krun_add_net_unixgram (built with NET=1)"
 elif ! command -v brew >/dev/null 2>&1 || ! brew --prefix libkrun >/dev/null 2>&1; then
 	skip_note "libkrun not installed — cannot verify NET=1 (install it to check the macOS sandbox path)"
 elif nm -gU "$(brew --prefix libkrun)/lib/libkrun.dylib" 2>/dev/null | grep -q krun_add_net_unixgram; then

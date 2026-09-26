@@ -205,6 +205,9 @@ type netCapability struct{}
 // newCapabilityProbe returns the real loader-backed probe.
 func newCapabilityProbe() netCapabilityProbe { return netCapability{} }
 
+// loadedLibraries lists the shared objects mapped into this process.
+func loadedLibraries() []string { return loadedImages() }
+
 // ProbeNetworking reports whether krun_add_net_unixgram is resolvable. That
 // is the exact symbol the backend calls to attach every guest's NIC, so its
 // absence means no sandbox can launch. Refs: MGIT-61.14

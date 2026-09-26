@@ -86,7 +86,9 @@ How it is built and shipped:
   to, and a first-hour user would have to compile a kernel. mgit now
   redistributes both libraries on Linux and carries the GPL-2.0 obligation for
   the bundled kernel, discharged by publishing its corresponding source with
-  every such release. macOS is unchanged: libkrun still comes from Homebrew.
+  every such release. On macOS libkrunfw still comes from Homebrew; libkrun
+  ships in the macOS archive too since MGIT-259 ("Carry a patched libkrun in
+  the macOS build; fixes MGIT-225").
   (Engineering-grade compliance reasoning, not legal advice.)
 - **A glibc floor.** The bundle needs glibc 2.31 or newer (Ubuntu 20.04,
   Debian 11 and later). The assembler refuses a build that needs more.

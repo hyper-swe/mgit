@@ -29,6 +29,9 @@ func newPlatformAPI() (krunAPI, error) {
 // such a build with its own actionable message. Refs: MGIT-61.14
 func newCapabilityProbe() netCapabilityProbe { return nil }
 
+// loadedLibraries has nothing to list in a build without the binding.
+func loadedLibraries() []string { return nil }
+
 // probeInProcess reports that this build links no libkrun. It is reachable
 // only if a probe is dispatched to a build without the binding; the daemon's
 // own `--vmm` never asks libkrun in such a build. Refs: MGIT-229

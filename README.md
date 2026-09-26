@@ -230,7 +230,7 @@ What that means in practice:
 So prefer the install script or Homebrew. If you did download through a browser:
 
 ```bash
-xattr -d com.apple.quarantine mgit mgit-sandboxd
+xattr -dr com.apple.quarantine mgit mgit-sandboxd lib   # lib/: the daemon's libkrun
 ```
 
 That fully resolves it — the binaries themselves are fine. Refs: [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#release-archive), MGIT-64.
@@ -324,7 +324,7 @@ by test in `scripts/e2e/libkrun_linux_column.sh`.
 
 The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`, but on Linux that builds the firecracker daemon, which boots only a kernel + rootfs image and refuses `sandbox sync` and `sandbox export`: use the release archive for the agent loop ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md)).
 
-- **macOS** requires Apple Silicon (arm64), macOS 14+, and the **libkrun** hypervisor, which is *not* installed with mgit — it lives in a third-party Homebrew tap, and Homebrew will not load a formula from a tap you have not trusted. All three commands are needed, in this order:
+- **macOS** requires Apple Silicon (arm64), macOS 14+, and **libkrunfw**, the guest kernel library, which is *not* installed with mgit — it comes with the libkrun formula of a third-party Homebrew tap, and Homebrew will not load a formula from a tap you have not trusted. All three commands are needed, in this order:
 
   ```bash
   brew tap libkrun/krun
@@ -332,11 +332,11 @@ The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Li
   brew install libkrun
   ```
 
-  `brew install libkrun` on its own fails, and so does the fully-qualified name — see [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#installing-libkrun-on-macos) for why, and for why mgit no longer tries to install it for you. The release/brew daemon links libkrun and is code-signed with the hypervisor entitlement (a `go install`-ed daemon is unsigned and must be signed locally).
+  `brew install libkrun` on its own fails, and so does the fully-qualified name — see [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#installing-libkrun-on-macos) for why, and for why mgit no longer tries to install it for you. The release/brew daemon carries its own libkrun in `lib/` beside it — keep them together — and is code-signed with the hypervisor entitlement (a `go install`-ed daemon links Homebrew's libkrun, is unsigned and must be signed locally).
 - **Linux** requires `/dev/kvm` (read-writable by your user) and glibc 2.31+, and nothing else: the release archive carries libkrun and libkrunfw in `lib/` beside `mgit-sandboxd`, so extract the whole archive and keep them together. The kernel inside libkrunfw is GPL-2.0; its source is published with every release that bundles it ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#the-linux-archive-and-what-it-carries)).
 - **Windows and Intel macOS** have no sandbox backend yet; core mgit runs without it.
 
-Skipping the hypervisor step degrades nothing silently: the daemon refuses to start, and `mgit` reports the missing library together with the commands that fix it.
+Skipping the libkrunfw step degrades nothing silently: no guest boots, and `mgit doctor` names the missing library together with the commands that fix it.
 
 Then compose the Linux userspace the VM boots — from any public OCI image, pulled straight from its registry with no Docker and no container runtime:
 
