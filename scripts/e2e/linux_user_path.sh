@@ -81,10 +81,11 @@ mkdir -p "$R" "$P"
 printf 'v1\n' >"$P/f.txt"
 # The physical path, because the guest works at the canonical one.
 PH="$(cd "$P" && pwd -P)"
-case "$PH/" in
-/tmp/*) where="under /tmp" ;;
-*) where="outside /tmp" ;;
-esac
+# Under /tmp or outside it, comparing physical paths on both sides:
+# where /tmp is a symlink (macOS: /tmp -> /private/tmp) a literal "/tmp/*"
+# would call a worktree under /tmp "outside". Refs: MGIT-266
+where_is() { local root; root="$(cd "$2" && pwd -P)" || return 1; case "$1/" in "$root"/*) echo "under /tmp" ;; *) echo "outside /tmp" ;; esac; }
+where="$(where_is "$PH" /tmp)"
 echo "  worktree: $PH ($where)"
 echo "  PASS"
 

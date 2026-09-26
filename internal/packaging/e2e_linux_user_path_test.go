@@ -1,10 +1,14 @@
 package packaging
 
 import (
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE LINUX USER PATH IS PROVEN WITHOUT TEST HOOKS. mgit's firecracker live
@@ -61,7 +65,7 @@ func TestE2E_TheLinuxUserPathSeesTheWorktreeAtItsHostPath_UnderAndOutsideTmp(t *
 		`PH="$(cd "$P" && pwd -P)"`,                            // the worktree's physical host path
 		`gwd="$(cd "$P" && timeout 120 mgit run -- pwd 2>&1)"`, // the guest's working directory
 		`[ "$gwd" = "$PH" ] || fail "exec"`,                    // must be exactly that path
-		`/tmp/*) where="under /tmp"`,                           // and the leg says which case it ran
+		`where="$(where_is "$PH" /tmp)"`,                       // and the leg says which case it ran
 	} {
 		assert.Contains(t, script, want, "the user path must carry %q", want)
 	}
@@ -71,4 +75,42 @@ func TestE2E_TheLinuxUserPathSeesTheWorktreeAtItsHostPath_UnderAndOutsideTmp(t *
 	assert.Contains(t, step, `root="$RUNNER_TEMP/scratch"`, "one leg puts the scratch root outside /tmp")
 	assert.Contains(t, step, `[ "${{ matrix.install }}" = install-script ]`, "only the install-script leg; the archive leg keeps /tmp")
 	assert.Contains(t, step, `bash scripts/e2e/linux_user_path.sh "$BIN" ${root:+"$root"}`, "and the script receives it")
+}
+
+// THE /tmp LABEL COMPARES PHYSICAL PATHS. The script prints whether the
+// worktree is under /tmp or outside it, and that line is the only record of
+// which case a leg ran. It matched the worktree's physical path against a
+// literal "/tmp/*", so wherever /tmp is a symlink (macOS: /tmp →
+// /private/tmp) a worktree under /tmp was labeled "outside /tmp". The label
+// now comes from where_is, which resolves the root as it resolves the path.
+// This runs the script's own where_is against a real directory and a
+// symlink to it, independent of the host's /tmp. Refs: MGIT-266
+func TestLinuxUserPath_TheTmpLabelComparesPhysicalPaths(t *testing.T) {
+	script := readRepoFile(t, filepath.Join("scripts", "e2e", "linux_user_path.sh"))
+	var fn string
+	for _, line := range strings.Split(script, "\n") {
+		if strings.HasPrefix(line, "where_is() {") {
+			fn = line
+		}
+	}
+	require.NotEmpty(t, fn, "the script defines where_is PATH ROOT on one line")
+
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	require.NoError(t, os.MkdirAll(filepath.Join(real, "wt"), 0o750))
+	link := filepath.Join(dir, "link")
+	require.NoError(t, os.Symlink(real, link))
+	physical, err := filepath.EvalSymlinks(filepath.Join(real, "wt"))
+	require.NoError(t, err)
+	outside := t.TempDir()
+
+	for _, tt := range []struct{ path, root, want string }{
+		{physical, link, "under /tmp"},  // the root is a symlink to the path's parent
+		{physical, real, "under /tmp"},  // the root is already physical
+		{outside, link, "outside /tmp"}, // elsewhere
+	} {
+		out, err := exec.Command("bash", "-c", fn+"\nwhere_is \"$1\" \"$2\"", "bash", tt.path, tt.root).CombinedOutput() //nolint:gosec // G204: the script's own function, test-only arguments
+		require.NoError(t, err, "%s", out)
+		assert.Equal(t, tt.want, strings.TrimSpace(string(out)), "where_is %s %s", tt.path, tt.root)
+	}
 }
