@@ -65,7 +65,7 @@ func TestE2E_TheLinuxUserPathSeesTheWorktreeAtItsHostPath_UnderAndOutsideTmp(t *
 		`PH="$(cd "$P" && pwd -P)"`,                            // the worktree's physical host path
 		`gwd="$(cd "$P" && timeout 120 mgit run -- pwd 2>&1)"`, // the guest's working directory
 		`[ "$gwd" = "$PH" ] || fail "exec"`,                    // must be exactly that path
-		`/tmp/*) where="under /tmp"`,                           // and the leg says which case it ran
+		`where="$(where_is "$PH" /tmp)"`,                       // and the leg says which case it ran
 	} {
 		assert.Contains(t, script, want, "the user path must carry %q", want)
 	}
@@ -81,7 +81,7 @@ func TestE2E_TheLinuxUserPathSeesTheWorktreeAtItsHostPath_UnderAndOutsideTmp(t *
 // worktree is under /tmp or outside it, and that line is the only record of
 // which case a leg ran. It matched the worktree's physical path against a
 // literal "/tmp/*", so wherever /tmp is a symlink (macOS: /tmp →
-// /private/tmp) a worktree under /tmp was labelled "outside /tmp". The label
+// /private/tmp) a worktree under /tmp was labeled "outside /tmp". The label
 // now comes from where_is, which resolves the root as it resolves the path.
 // This runs the script's own where_is against a real directory and a
 // symlink to it, independent of the host's /tmp. Refs: MGIT-266
