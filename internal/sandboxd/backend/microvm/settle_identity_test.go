@@ -121,6 +121,61 @@ func TestSettleProbe_NamesEveryProgramByAbsolutePath(t *testing.T) {
 	}
 }
 
+// A guest that confirms it ran the settle exec as a DIFFERENT identity than
+// asked is not trusted: the sync fails closed. Refs: MGIT-272, MGIT-151
+func TestSettleProbe_WhenGuestRanAsUnexpectedIdentity_FailsClosed(t *testing.T) {
+	internal := model.RootIdentity()
+	wrong := model.IdentityForProcess(12345, 6789)
+	s, _, req := oneFileSettle(&wrong, &internal, &recordingAuditor{})
+
+	_, err := s.Probe(context.Background(), req)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, model.ErrGuestExecIdentityMismatch)
+}
+
+// A guest that does not report the identity it ran as (a base predating the
+// field) is unverifiable — a soft "cannot tell", never a hard failure.
+// Refs: MGIT-272, MGIT-174
+func TestSettleProbe_WhenGuestDidNotConfirmIdentity_StaysUnverifiedNotFailed(t *testing.T) {
+	internal := model.RootIdentity()
+	s, _, req := oneFileSettle(nil, &internal, &recordingAuditor{}) // nil echo = old base
+
+	view, err := s.Probe(context.Background(), req)
+	require.NoError(t, err, "an unconfirmed identity is soft, not a hard failure")
+	assert.NotEmpty(t, view.unverifiable, "the guest did not confirm the identity it ran as")
+	assert.Empty(t, view.stale)
+}
+
+// The content digest stays a HARD gate even when the identity is unconfirmed:
+// an old base that reads the wrong bytes is still a refusal, never masked by
+// the soft identity note. Refs: MGIT-272
+func TestSettleProbe_WhenIdentityUnconfirmedButContentStale_ContentStillFailsHard(t *testing.T) {
+	internal := model.RootIdentity()
+	s, rec, req := oneFileSettle(nil, &internal, &recordingAuditor{})
+	for k := range rec.hashes { // the guest reads a digest that was never staged
+		rec.hashes[k] = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	}
+
+	view, err := s.Probe(context.Background(), req)
+	require.NoError(t, err)
+	assert.NotEmpty(t, view.stale, "a content mismatch is reported even when the identity is unconfirmed")
+	assert.Empty(t, view.unverifiable, "an unconfirmed identity must not mask a content mismatch")
+}
+
+// A current base confirms the identity it ran as, so the soft cannot-tell
+// path is not reached — and no file content the guest reads can select it,
+// because the confirmation comes from the exec result, not the tree.
+// Refs: MGIT-272
+func TestSettleProbe_WhenGuestConfirmsIdentity_IsNotMarkedUnverified(t *testing.T) {
+	internal := model.RootIdentity()
+	s, _, req := oneFileSettle(&internal, &internal, &recordingAuditor{})
+
+	view, err := s.Probe(context.Background(), req)
+	require.NoError(t, err)
+	assert.Empty(t, view.unverifiable, "a confirmed identity is not the soft cannot-tell path")
+	assert.Empty(t, view.stale)
+}
+
 // Each settle probe is recorded once as a privileged internal exec, with the
 // task and sandbox it ran for. Refs: MGIT-272, FR-17.18
 func TestSettleProbe_WhenWired_IsRecordedOnce(t *testing.T) {
