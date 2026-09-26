@@ -150,14 +150,15 @@ printf '%s\n' "$out" | head -2
 seen="$(cd "$P" && timeout 120 mgit run -- sh -c '[ -e canary-a.txt ] && echo present || echo gone' 2>&1)"
 [ "$seen" = gone ] || fail "canary" "the guest still sees canary-a.txt right after the sync that deleted it ('$seen')"
 echo "  the delete-bearing sync took $((t1 - t0)) ms"
-# Whether the settle's cache drop took effect: the same command the settle
-# step runs (settle.go), as the same default identity, never as root. The
-# settle does not consult its result, and only root may write drop_caches,
-# so without this line "gone at once" cannot say whether the drop worked or
-# the guest held no stale name. Refs: MGIT-230.2
+# Whether a cache drop takes effect as the agent's identity: the drop
+# command the settle step sends, run through `mgit run`, which runs as the
+# daemon's identity. It is NOT a measurement of the settle's own drop: the
+# settle's execs do not use this identity (MGIT-270). The line names the
+# identity it measured so that it cannot be read as the settle's.
+# Refs: MGIT-230.2, MGIT-270
 drop="$(cd "$P" && timeout 120 mgit run -- sh -c 'sync; echo 2 > /proc/sys/vm/drop_caches && echo took-effect || echo did-not-take-effect' 2>/dev/null | tail -1)"
 [ -n "$drop" ] || drop="cannot tell (the exec did not answer)"
-echo "  the settle's cache drop, as the exec identity: $drop"
+echo "  a cache drop as the agent's identity (mgit run; not the settle step's identity): $drop"
 echo "  PASS"
 
 step "7c the loop's exec contract: background survives, /tmp persists, exit codes pass, /proc and dmesg read"
