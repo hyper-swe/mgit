@@ -214,3 +214,35 @@ func TestSettleProbe_WhenTheReadBackCannotStart_IsUnverifiedNotFailed(t *testing
 	assert.NotEmpty(t, view.unverifiable, "the guest could not verify from inside — a loud 'cannot tell'")
 	assert.Empty(t, view.stale, "an exec that could not start reports nothing stale")
 }
+
+// (i) A shell-CAPABLE guest — the read-back runs and confirms its identity —
+// whose content MISMATCHES still hard-fails, and the soft "cannot tell" note
+// is never set. The soft path must not swallow a mismatch a read-back that ran
+// could have caught. Refs: MGIT-272, MGIT-192
+func TestSettleProbe_WhenShellCapableGuestContentMismatches_FailsHard(t *testing.T) {
+	id := model.RootIdentity()
+	s, rec, req := oneFileSettle(&id, &id, &recordingAuditor{}) // identity confirmed = a capable guest
+	for k := range rec.hashes {                                 // it runs the read-back, but reads a digest never staged
+		rec.hashes[k] = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	}
+	view, err := s.Probe(context.Background(), req)
+	require.NoError(t, err)
+	assert.NotEmpty(t, view.stale, "a mismatch a running read-back can catch is reported")
+	assert.Empty(t, view.unverifiable, "the soft cannot-tell path never masks a catchable mismatch")
+}
+
+// (ii) The guest's ANSWER cannot select the soft "cannot tell" path. A guest
+// that answers (the exec starts and returns, err nil) with a wrong or empty
+// result gets a HARD stale verdict, not the soft note — the soft path is
+// reached only through the exec-transport start failure (a base-image
+// property), never through anything the read-back's stdout or exit says.
+// Refs: MGIT-272, MGIT-192
+func TestSettleProbe_AGuestAnswerCannotSelectCannotTell(t *testing.T) {
+	id := model.RootIdentity()
+	s, rec, req := oneFileSettle(&id, &id, &recordingAuditor{})
+	rec.hashes = map[string]string{} // the exec succeeds (err nil, exit 0) but reports no digest
+	view, err := s.Probe(context.Background(), req)
+	require.NoError(t, err)
+	assert.NotEmpty(t, view.stale, "a guest that answers without the staged digest is stale, a hard verdict")
+	assert.Empty(t, view.unverifiable, "an answering guest cannot reach the soft cannot-tell path through its output")
+}
