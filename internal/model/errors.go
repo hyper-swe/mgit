@@ -88,6 +88,11 @@ var (
 	// ErrStorageError indicates a low-level storage operation failed.
 	ErrStorageError = errors.New("storage error")
 
+	// ErrNoPatchIdentity indicates no git identity is configured to author an
+	// exported patch: git am records a patch's From: line as the commit's
+	// author, so mgit will not invent one. Refs: MGIT-237
+	ErrNoPatchIdentity = errors.New("no git identity to author the patch")
+
 	// ErrChainBroken indicates the commit parent-child chain is inconsistent.
 	ErrChainBroken = errors.New("commit chain broken")
 
