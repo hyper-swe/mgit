@@ -74,10 +74,14 @@ func OpenApp(path string) (*App, error) {
 	}
 
 	storeDir := filepath.Join(path, ".mgit")
-	boundTask := ""
+	var boundTask string
 	if isWorktree {
 		storeDir = marker.Store
 		boundTask = marker.Task
+	} else if boundTask, err = gitstore.ReadBoundTaskInStore(storeDir); err != nil {
+		// A sandbox guest's private store carries its worktree's task in
+		// place of the host's marker (MGIT-256).
+		return nil, fmt.Errorf("read task binding: %w", err)
 	}
 
 	// Acquire process-level lock before opening any stores. For a worktree the
