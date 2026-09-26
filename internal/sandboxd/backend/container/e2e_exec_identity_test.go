@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -57,14 +58,20 @@ func TestE2E_Container_ExecIdentity_WritesWorktree(t *testing.T) {
 	require.NoError(t, err)
 	out := string(res.Stdout)
 	t.Logf("as the daemon identity: %q", strings.TrimSpace(out))
+	// id -u's first line is the identity the command actually ran as, IN the
+	// container — the teeth: under the launch mapping a missing --user would
+	// still run as the default and write, so asserting the write alone would
+	// not catch it; asserting the effective id does.
+	assert.Equal(t, strconv.Itoa(os.Getuid()), firstLine(out),
+		"the command ran, in the container, as the requested identity")
 	assert.Contains(t, out, "wrote",
 		"a command run as the daemon identity can write the mounted worktree")
 	require.NotNil(t, res.RanAs)
 	assert.Equal(t, os.Getuid(), res.RanAs.UID, "the result reports the identity it ran as")
 
-	// An audited request for a different (elevated) identity: whether it can
-	// also write the worktree is recorded, not assumed — the mapping makes the
-	// elevated identity distinct from the worktree owner. Refs: MGIT-273
+	// An audited request for a different (elevated) identity also runs as it
+	// and writes the worktree (measured; the launch mapping keeps the elevated
+	// identity able to write). Refs: MGIT-273
 	elevated := model.RootIdentity()
 	rootRes, err := mgr.Exec(context.Background(), info.ID, model.ExecRequest{
 		Command: []string{"/bin/sh", "-c",
@@ -72,5 +79,15 @@ func TestE2E_Container_ExecIdentity_WritesWorktree(t *testing.T) {
 		RunAs: &elevated,
 	})
 	require.NoError(t, err)
-	t.Logf("as an audited elevated identity: %q", strings.TrimSpace(string(rootRes.Stdout)))
+	rootOut := string(rootRes.Stdout)
+	t.Logf("as an audited elevated identity: %q", strings.TrimSpace(rootOut))
+	assert.Equal(t, strconv.Itoa(elevated.UID), firstLine(rootOut),
+		"the command ran, in the container, as the requested elevated identity")
+	assert.Contains(t, rootOut, "wrote",
+		"an audited elevated identity can also write the mounted worktree")
+}
+
+// firstLine returns the first line of s, trimmed.
+func firstLine(s string) string {
+	return strings.TrimSpace(strings.SplitN(strings.TrimSpace(s), "\n", 2)[0])
 }
