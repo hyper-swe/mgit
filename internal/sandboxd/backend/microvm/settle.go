@@ -151,6 +151,7 @@ func (s execSettler) Probe(ctx context.Context, req settleRequest) (settleView, 
 	// or a shell simply keeps its cache, and the hash below still decides.
 	_, _ = s.run(ctx, req.sandboxID, []string{settleShell, "-c", "sync; echo 2 > /proc/sys/vm/drop_caches"})
 	got := map[string]string{}
+	var idUnconfirmed bool
 	for _, chunk := range chunkPaths(regularPaths(req.want), settleArgvChunk) {
 		// The only program the guest exec's is the absolute shell; it finds
 		// sha256sum among absolute candidates and exec's it, and exits 127
@@ -164,41 +165,81 @@ func (s execSettler) Probe(ctx context.Context, req settleRequest) (settleView, 
 		if err != nil {
 			return settleView{}, err
 		}
+		unc, idErr := s.verifyIdentity(res)
+		if idErr != nil {
+			return settleView{}, idErr
+		}
+		idUnconfirmed = idUnconfirmed || unc
 		for path, hash := range parseSha256sum(string(res.Stdout)) {
 			got[relative(req.worktree, path)] = hash
 		}
 	}
-	still, note, err := s.stillPresent(ctx, req)
+	still, note, unc, err := s.stillPresent(ctx, req)
 	if err != nil {
 		return settleView{}, err
 	}
 	if note != "" {
 		return settleView{unverifiable: note}, nil
 	}
-	return classifyGuestView(req.want, got, req.deleted, still), nil
+	idUnconfirmed = idUnconfirmed || unc
+	view := classifyGuestView(req.want, got, req.deleted, still)
+	// A guest that never confirmed the identity it ran as is a soft "cannot
+	// tell" — but only when the content agrees. A content mismatch stays the
+	// hard refusal it already is (view.stale), never masked by this note.
+	// Refs: MGIT-272, MGIT-174
+	if idUnconfirmed && len(view.stale) == 0 {
+		view.unverifiable = "the guest did not confirm the identity it ran the read-back as"
+	}
+	return view, nil
 }
 
-// stillPresent lists the deleted paths the guest can still see.
-func (s execSettler) stillPresent(ctx context.Context, req settleRequest) ([]string, string, error) {
+// stillPresent lists the deleted paths the guest can still see. It also
+// reports whether the guest confirmed the identity it ran as (unconfirmed
+// for an old base), and fails closed on a real identity mismatch.
+func (s execSettler) stillPresent(ctx context.Context, req settleRequest) (still []string, note string, unconfirmed bool, err error) {
 	if len(req.deleted) == 0 {
-		return nil, "", nil
+		return nil, "", false, nil
 	}
 	const script = `for p in "$@"; do [ -e "$p" ] || [ -L "$p" ] && printf '%s\n' "$p"; done; exit 0`
 	argv := append([]string{settleShell, "-c", script, "sh"}, absolute(req.worktree, req.deleted)...)
 	res, err := s.run(ctx, req.sandboxID, argv)
-	if note, missing := toolMissing("sh", res, err); missing {
-		return nil, note, nil
+	if n, missing := toolMissing("sh", res, err); missing {
+		return nil, n, false, nil
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
-	var still []string
+	unconfirmed, err = s.verifyIdentity(res)
+	if err != nil {
+		return nil, "", false, err
+	}
 	for _, line := range strings.Split(strings.TrimSpace(string(res.Stdout)), "\n") {
 		if line != "" {
 			still = append(still, relative(req.worktree, line))
 		}
 	}
-	return still, "", nil
+	return still, "", unconfirmed, nil
+}
+
+// verifyIdentity checks the identity the guest confirmed running a settle exec
+// as against the one asked for. A real uid/gid mismatch is a hard failure —
+// the guest ran the read-back as the wrong identity, so its answer is not
+// trusted. A guest that reported nothing (a base predating the field) is
+// unconfirmed, a soft "cannot tell", never a hard failure. When no internal
+// identity is wired there is nothing to verify. Refs: MGIT-272, MGIT-151, MGIT-174
+func (s execSettler) verifyIdentity(res *model.ExecResult) (unconfirmed bool, err error) {
+	if s.m.internalIdentity == nil || res == nil {
+		return false, nil
+	}
+	v := model.VerdictOnExecIdentity(s.m.internalIdentity, res.RanAs)
+	switch {
+	case v.Verified:
+		return false, nil
+	case res.RanAs == nil:
+		return true, nil
+	default:
+		return false, fmt.Errorf("%w: %s", model.ErrGuestExecIdentityMismatch, v.Reason)
+	}
 }
 
 func (s execSettler) run(ctx context.Context, id string, argv []string) (*model.ExecResult, error) {
