@@ -35,6 +35,13 @@ const (
 	settleShell         = "/bin/sh"              // the settle execs' program, named absolutely (MGIT-272)
 )
 
+// sha256sumScript finds sha256sum among absolute candidates and exec's it with
+// the delivered paths, so the only program the guest exec's is the absolute
+// shell — never a bare "sha256sum" resolved against the guest's search path.
+// It exits 127 when no candidate exists, which the reader treats as "cannot
+// tell" exactly as a missing tool always was. Refs: MGIT-272
+const sha256sumScript = `for c in /usr/bin/sha256sum /bin/sha256sum; do [ -x "$c" ] && exec "$c" -- "$@"; done; exit 127`
+
 // settleRequest names what the guest must confirm it reads: the staged digest
 // of every delivered path, and the absence of every deleted one. Paths are
 // worktree-relative; the guest mounts the worktree at the host's own path.
@@ -142,10 +149,14 @@ func (s execSettler) Probe(ctx context.Context, req settleRequest) (settleView, 
 	}
 	// The drop's result is deliberately not consulted: a guest without /proc
 	// or a shell simply keeps its cache, and the hash below still decides.
-	_, _ = s.run(ctx, req.sandboxID, []string{"sh", "-c", "sync; echo 2 > /proc/sys/vm/drop_caches"})
+	_, _ = s.run(ctx, req.sandboxID, []string{settleShell, "-c", "sync; echo 2 > /proc/sys/vm/drop_caches"})
 	got := map[string]string{}
 	for _, chunk := range chunkPaths(regularPaths(req.want), settleArgvChunk) {
-		argv := append([]string{"sha256sum", "--"}, absolute(req.worktree, chunk)...)
+		// The only program the guest exec's is the absolute shell; it finds
+		// sha256sum among absolute candidates and exec's it, and exits 127
+		// when none exists — the same "cannot tell" the reader below handles.
+		// A bare "sha256sum" would resolve against the guest's search path. Refs: MGIT-272
+		argv := append([]string{settleShell, "-c", sha256sumScript, "sh"}, absolute(req.worktree, chunk)...)
 		res, err := s.run(ctx, req.sandboxID, argv)
 		if note, missing := toolMissing("sha256sum", res, err); missing {
 			return settleView{unverifiable: note}, nil
@@ -173,7 +184,7 @@ func (s execSettler) stillPresent(ctx context.Context, req settleRequest) ([]str
 		return nil, "", nil
 	}
 	const script = `for p in "$@"; do [ -e "$p" ] || [ -L "$p" ] && printf '%s\n' "$p"; done; exit 0`
-	argv := append([]string{"sh", "-c", script, "sh"}, absolute(req.worktree, req.deleted)...)
+	argv := append([]string{settleShell, "-c", script, "sh"}, absolute(req.worktree, req.deleted)...)
 	res, err := s.run(ctx, req.sandboxID, argv)
 	if note, missing := toolMissing("sh", res, err); missing {
 		return nil, note, nil
