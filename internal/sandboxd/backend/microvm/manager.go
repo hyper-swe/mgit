@@ -297,7 +297,7 @@ type Manager struct {
 	// and internalAudit records each as a privileged internal exec. Both are
 	// wired by SetInternalExec from the layer that also owns the audit store;
 	// when unset the settle execs carry no identity and are not recorded — the
-	// behaviour before this identity was made explicit. Refs: MGIT-272, MGIT-151
+	// behavior before this identity was made explicit. Refs: MGIT-272, MGIT-151
 	internalIdentity *model.GuestIdentity
 	internalAudit    model.SandboxEventAppender
 }

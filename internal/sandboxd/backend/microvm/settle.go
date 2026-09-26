@@ -246,7 +246,7 @@ func (s execSettler) run(ctx context.Context, id string, argv []string) (*model.
 	req := model.ExecRequest{Command: argv, Timeout: settleExecTimeout}
 	// Run as the explicit internal identity when wired. Without it (an
 	// unwired manager, as in a unit test that does not exercise this) the
-	// exec carries no identity — the behaviour before the identity was made
+	// exec carries no identity — the behavior before the identity was made
 	// explicit. Refs: MGIT-272, MGIT-151
 	if s.m.internalIdentity != nil {
 		identity := *s.m.internalIdentity
@@ -258,7 +258,7 @@ func (s execSettler) run(ctx context.Context, id string, argv []string) (*model.
 // auditInternalExec records the settle probe as one privileged internal exec
 // BEFORE it runs, so an unrecorded privileged exec never happens — the same
 // rule the operator's --as-root escalation follows. A nil sink (an unwired
-// manager) records nothing, the pre-MGIT-272 behaviour. Refs: MGIT-272, FR-17.18
+// manager) records nothing, the pre-MGIT-272 behavior. Refs: MGIT-272, FR-17.18
 func (s execSettler) auditInternalExec(ctx context.Context, req settleRequest) error {
 	if s.m.internalAudit == nil {
 		return nil

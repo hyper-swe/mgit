@@ -17,7 +17,7 @@ import (
 
 // recordingGuestExec is a settle exec seam that records every request the
 // settler sends and answers with a chosen identity echo. For a request that
-// carries paths it recognises, it emits sha256sum-shaped lines with matching
+// carries paths it recognizes, it emits sha256sum-shaped lines with matching
 // digests, so a well-behaved probe settles clean. Refs: MGIT-272
 type recordingGuestExec struct {
 	mu       sync.Mutex
