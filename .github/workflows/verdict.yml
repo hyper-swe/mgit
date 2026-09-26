@@ -17,8 +17,21 @@ name: verdict
 # fails it too. The text changes without a push, so an edited title or
 # description, a review and a review comment each re-run the job, and runs
 # for one pull request queue in order so the last status read the latest.
+#
+# THE CHECK IS JUDGED BY THE BASE'S COPY (MGIT-242.2). The text check and
+# the verdict gate are built from the checked-out tree, so a pull request
+# that edits the checker or its word lists must not be judged by its own
+# edit. Pull request events therefore run on pull_request_target (the
+# base's workflow, never the head's code), and every event checks out the
+# BASE branch, or the default branch for a comment event, without keeping
+# the token in the checkout. Nothing from the head is checked out or run;
+# the pull request's text is read through the API. One limit is inherent:
+# a review or review-comment event runs the workflow file as the pull
+# request has it, and only a branch in this repository, which a
+# collaborator pushed, can carry an edited one with a token that writes
+# statuses; a fork's review events get a read-only token.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, edited]
   issue_comment:
     types: [created, edited, deleted]
@@ -43,6 +56,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
