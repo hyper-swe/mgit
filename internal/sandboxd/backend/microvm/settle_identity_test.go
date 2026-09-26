@@ -193,3 +193,24 @@ func TestSettleProbe_WhenWired_IsRecordedOnce(t *testing.T) {
 	assert.Equal(t, "MGIT-272", events[0].TaskID)
 	assert.NotEmpty(t, events[0].Detail, "the record names the program it ran")
 }
+
+// A guest whose settle exec cannot even start — no usable shell inside, so the
+// program the probe names cannot be run — is a soft "cannot tell", never a hard
+// failure. On such a guest the read-back was never verifiable from inside (the
+// content digest stays the real verdict on a guest that can run it). Refs: MGIT-272, MGIT-192
+func TestSettleProbe_WhenTheReadBackCannotStart_IsUnverifiedNotFailed(t *testing.T) {
+	id := model.RootIdentity()
+	m := &Manager{internalIdentity: &id, internalAudit: &recordingAuditor{}}
+	cannotStart := func(_ context.Context, _ string, _ model.ExecRequest) (*model.ExecResult, error) {
+		return nil, fmt.Errorf(`libkrun exec: guest exec: start "/bin/sh": fork/exec /bin/sh: no such file or directory`)
+	}
+	s := execSettler{m: m, exec: cannotStart}
+	req := settleRequest{
+		sandboxID: "sb1", taskID: "MGIT-272", network: model.NetworkModeNone, worktree: "/wt",
+		want: worktreesync.Manifest{"app.go": {Hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Mode: 0o644}},
+	}
+	view, err := s.Probe(context.Background(), req)
+	require.NoError(t, err, "a guest whose read-back cannot start is unverifiable, not a hard error")
+	assert.NotEmpty(t, view.unverifiable, "the guest could not verify from inside — a loud 'cannot tell'")
+	assert.Empty(t, view.stale, "an exec that could not start reports nothing stale")
+}
