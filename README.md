@@ -288,8 +288,9 @@ is fine.
 decided by the loop rather than by preference. Linux libkrun boots real microVMs
 and runs the containment, sync and export suites on real KVM — validated and
 CI-gated as of MGIT-87, superseding the older "never validated end to end"
-caveat, and MGIT-89/90/91 closed the gaps that validation found. Two residuals
-do not carry over from macOS, both measured on real hardware and both upstream:
+caveat, and MGIT-89/90/91 closed the gaps that validation found. One residual
+does not carry over from macOS (measured on real hardware, upstream), and one
+difference mgit closes itself:
 
 - **The guest cannot write most of its image root.** `/tmp`, `/etc` and the
   mounted worktree are writable; anything else under `/` fails with `operation
@@ -301,13 +302,16 @@ do not carry over from macOS, both measured on real hardware and both upstream:
   Tracked as MGIT-89; `/etc` is writable because mgit-guest detects the
   refusal and shadows it with a seeded tmpfs, which is what lets a networked
   guest start at all.
-- **A deleted path can stay *visible* to the guest for a few seconds**, though
-  never *readable*: libkrun's Linux virtio-fs caches name lookups for ~5s
-  (macOS measures 0s), so a guest process that already resolved a path may keep
-  resolving it after the sync removes it. mgit empties a file before unlinking
-  it, so what lingers is an empty name, never deleted content — a build reading
-  it fails loudly instead of silently compiling code you deleted. Creations and
-  content edits are visible immediately.
+- **A deleted path is gone from the guest by the time `sandbox sync`
+  returns**, although libkrun's Linux virtio-fs caches name lookups for ~5 s
+  (macOS measures 0 s): the sync asks the guest to drop its caches and checks
+  from inside the guest that every deleted path is gone before it reports
+  success. The agent loop's own per-round canary (host delete, sync, an
+  immediate `[ -e ]` in the guest) measured it on a stock ubuntu-latest KVM
+  host: gone at once, with the delete-bearing sync taking 42–55 ms. mgit also
+  empties a file before unlinking it, so a name that did linger would read as
+  empty, never as deleted content. Creations and content edits are visible
+  immediately.
 
 So on Linux, **libkrun now does the whole loop**: guest egress with live
 policy, host edits re-staged into a long-lived guest, and artifacts read back
@@ -318,7 +322,7 @@ cannot do here.
 The capability set above is exactly what CI asserts on every push, named test
 by test in `scripts/e2e/libkrun_linux_column.sh`.
 
-The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`.
+The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`, but on Linux that builds the firecracker daemon, which boots only a kernel + rootfs image and refuses `sandbox sync` and `sandbox export`: use the release archive for the agent loop ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md)).
 
 - **macOS** requires Apple Silicon (arm64), macOS 14+, and **libkrunfw**, the guest kernel library, which is *not* installed with mgit — it comes with the libkrun formula of a third-party Homebrew tap, and Homebrew will not load a formula from a tap you have not trusted. All three commands are needed, in this order:
 

@@ -82,6 +82,13 @@ const (
 	// then. Its error names the cause exactly, so the unidentified footer,
 	// with its "do not resize" advice, is wrong for it. Refs: MGIT-222, SEC-03
 	phaseLayoutRefused
+	// phaseBaseUnbootable: the linked backend cannot boot the registered
+	// base's shape, so no VM was started. The daemon refuses that at launch
+	// with the cause and the fix in its words (model.ErrGuestBaseUnbootable);
+	// a v0.6.8 daemon surfaced the same cause as the VMM's empty kernel path.
+	// A determined cause, so it must never reach the cannot-identify footer.
+	// Refs: MGIT-233
+	phaseBaseUnbootable
 )
 
 // vmStartMarkers are console-log markers that appear ONLY when the VMM itself
@@ -143,6 +150,8 @@ func classifyGuestFailure(err error, ent entitlementState) guestFailure {
 		return guestFailure{phase: phaseAdmissionRefused}
 	case isLayoutRefused(err):
 		return guestFailure{phase: phaseLayoutRefused}
+	case isBaseUnbootable(err):
+		return guestFailure{phase: phaseBaseUnbootable}
 	}
 	if detail := vmStartFailure(err.Error()); detail != "" {
 		return guestFailure{phase: phaseNeverStarted, startDetail: detail, entitlement: ent}
@@ -154,6 +163,22 @@ func classifyGuestFailure(err error, ent entitlementState) guestFailure {
 		return guestFailure{phase: phaseLostServing}
 	}
 	return guestFailure{phase: phaseUnidentified}
+}
+
+// emptyKernelPathRefusal is how a daemon from before the launch-time check
+// (v0.6.8) reported a base with no kernel: firecracker's own config
+// validation of an empty kernel image path. A NAMED kernel path that fails to
+// stat is a different fault (the file went away) and does not match.
+const emptyKernelPathRefusal = `failed to stat kernel image path, ""`
+
+// isBaseUnbootable reports whether a launch was refused because the linked
+// backend cannot boot the registered base's shape. Matched by text as well as
+// by errors.Is, like every sentinel here: the refusal crosses the daemon's
+// control protocol as a string. Refs: MGIT-233
+func isBaseUnbootable(err error) bool {
+	return err != nil && (errors.Is(err, model.ErrGuestBaseUnbootable) ||
+		strings.Contains(err.Error(), model.ErrGuestBaseUnbootable.Error()) ||
+		strings.Contains(err.Error(), emptyKernelPathRefusal))
 }
 
 // isAdmissionRefused reports whether a launch was refused by the host's
@@ -317,6 +342,8 @@ func writeGuestFailure(w io.Writer, info *model.SandboxInfo, f guestFailure) {
 		writeAdmissionRefused(w, info)
 	case phaseLayoutRefused:
 		writeLayoutRefused(w, info)
+	case phaseBaseUnbootable:
+		writeBaseUnbootable(w, info)
 	case phaseNeverStarted:
 		writeStartFailure(w, info, f)
 	case phaseLostServing:
@@ -361,6 +388,19 @@ func writeLayoutRefused(w io.Writer, info *model.SandboxInfo) {
 	_, _ = fmt.Fprintf(w, "Mount a linked worktree instead (`mgit work <dir> --task-id <id>`, or `mgit worktree "+
 		"add`), or a directory outside this repository: `mgit sandbox remove %s` drops this registration first.\n",
 		taskName(info))
+}
+
+// writeBaseUnbootable reports a sandbox whose backend cannot boot its base.
+// The refusal above already names the backend, the base's shape and the fix;
+// this adds what it cannot say: that no VM ran, so neither the workload nor
+// the sandbox's caps are involved, and where doctor says the same.
+// Refs: MGIT-233
+func writeBaseUnbootable(w io.Writer, info *model.SandboxInfo) {
+	_, _ = fmt.Fprintf(w, "\nmgit: this sandbox's guest base is a shape its backend cannot boot%s, so no VM "+
+		"was started and no command ran. Neither your workload nor this sandbox's caps are involved.\n",
+		taskSuffix(info))
+	_, _ = fmt.Fprint(w, "The refusal above names the backend, the base and the fix. `mgit doctor` reports "+
+		"the same pair in its base/boots row.\n")
 }
 
 // writeUnidentified reports a failure mgit could not place — and reports that

@@ -158,3 +158,34 @@ func TestComposeHistory_SkipsBlankLines(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, history, 1)
 }
+
+// A recompose of the same tag is classified by comparing each digest with
+// one of its own kind: an older record's platform manifest against the
+// platform manifest the index selects now; index against index; and, when
+// both records name the platform manifest they selected, those two.
+// Refs: MGIT-223
+func TestSourceChange_ComparesLikeWithLike(t *testing.T) {
+	const tag = "r/x:1@"
+	p, q, i1, i2 := "sha256:p", "sha256:q", "sha256:i1", "sha256:i2"
+	tests := []struct {
+		name string
+		rec  Compose
+		want SourceChange
+	}{
+		{"first compose", Compose{SourceRef: tag + i1, PlatformDigest: p}, SourceUnchanged},
+		{"another tag", Compose{PrevSourceRef: "r/y:1@" + p, SourceRef: tag + i1, PlatformDigest: p}, SourceUnchanged},
+		{"the same index", Compose{PrevSourceRef: tag + i1, SourceRef: tag + i1, PlatformDigest: p}, SourceUnchanged},
+		{"an older platform record, the same platform", Compose{PrevSourceRef: tag + p, SourceRef: tag + i1, PlatformDigest: p}, SourceKindChanged},
+		{"an older platform record, another platform", Compose{PrevSourceRef: tag + p, SourceRef: tag + i1, PlatformDigest: q}, SourceImageMoved},
+		{"the index moved, the same platform", Compose{PrevSourceRef: tag + i1, PrevPlatformDigest: p, SourceRef: tag + i2, PlatformDigest: p}, SourceIndexMoved},
+		{"the index moved, another platform", Compose{PrevSourceRef: tag + i1, PrevPlatformDigest: p, SourceRef: tag + i2, PlatformDigest: q}, SourceImageMoved},
+		{"the index moved, the old platform unknown", Compose{PrevSourceRef: tag + i1, SourceRef: tag + i2, PlatformDigest: p}, SourceImageMoved},
+		{"a single-manifest tag moved", Compose{PrevSourceRef: tag + p, SourceRef: tag + q}, SourceImageMoved},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.rec.SourceChange())
+			assert.Equal(t, tt.want == SourceImageMoved, tt.rec.TagMoved())
+		})
+	}
+}

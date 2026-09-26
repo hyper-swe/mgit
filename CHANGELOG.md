@@ -28,9 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lib/libkrunfw.so.5` beside it, built in ubuntu:20.04 (glibc 2.31 or newer
   required). A stock host needs only `/dev/kvm`: no firecracker, no
   `LD_LIBRARY_PATH`, no package. Extract the whole archive; the daemon finds
-  `lib/` by its own run path. `linux_arm64` is built and load-checked but not
-  boot-checked before release, because no hosted CI runner offers KVM on
-  arm64. A `go install` of the daemon on Linux is still the firecracker build.
+  `lib/` by its own run path.
+  `linux_arm64` is build-verified and not boot-verified: it is built and
+  load-checked, but no hosted CI runner offers KVM on arm64. A `go install`
+  of the daemon on Linux is still the firecracker build.
 - **`install.sh` and the Homebrew formula install the Linux bundle
   (MGIT-230.1).** The libraries go to `<prefix>/lib/mgit` (the Homebrew
   keg's `lib/mgit`), where the daemon's run path looks from `bin/`, and the
@@ -74,6 +75,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names and a tool named as the one who did the work are. `prtext -board
   .mtix/tasks.json` reports the same way over every node of the tracked
   board and never gates.
+- **`mgit doctor` names the build of the daemon that answers this
+  repository (MGIT-221).** An upgrade replaces the binaries and leaves a
+  running daemon running. A 0.6.7 daemon went on answering a 0.6.8 CLI
+  while every daemon row read ok, because `daemon/loads` runs the binary on
+  disk. The new `daemon/serving-version` row compares the version and
+  commit the serving daemon recorded when it started with the CLI's. It
+  states a mismatch as a difference, with both versions, the pid and the
+  scoped stop. docs/INSTALL-SANDBOX.md now says to stop a running daemon
+  before installing a new release.
 - **`mgit-sandboxd --vmm` and doctor's `daemon/vmm` row (MGIT-229).** The
   daemon reports which VMM it links, where each of its libraries resolved and
   what stops it booting a guest, asked the way a VM boot asks (a child with the
@@ -82,9 +92,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   libkrunfw passed `daemon/loads` and failed every launch. `daemon/vmm` names
   it, with the Linux remedy (reinstall the archive) or the macOS one (the
   libkrun formula).
+- **`mgit sandbox status` names a failed boot (MGIT-231).** A sandbox whose
+  boot failed read `created`, byte-identical to one nobody had used, and the
+  only record was the daemon's log. Status now adds `last boot FAILED at
+  <instant>: <cause>` (and `last_boot_failure` in `--json`) until a boot
+  succeeds. This is a control-protocol change (version 5). A daemon left
+  running from an earlier build is refused at the handshake with the
+  restart named, so restart it after upgrading.
+- **doctor's `base/boots` row, and Linux-correct loader remedies
+  (MGIT-230.4).** Each backend boots one shape of guest base: libkrun a
+  directory, firecracker and vzf a kernel + ext4 rootfs image. `base/boots`
+  fails when the daemon's VMM and the registered base do not match. The
+  released v0.6.8 read clean in doctor on a host where the firecracker daemon
+  could never boot the directory `sandbox base from` had composed. On Linux, a
+  missing bundled libkrun no longer gets the Homebrew remedy: doctor and the
+  activation error name the directories the daemon's loader searched, read
+  from the daemon's own run path, and say to reinstall the archive. A host
+  whose glibc is older than the release's floor (2.31) is told that, not that
+  a library is missing.
 
 ### Fixed
 
+- **The course-correction fork mgit prescribes inside a task worktree now
+  works (MGIT-82).** The working discipline mgit writes into every task
+  worktree said to fork a new line with `mgit checkout -b`, which a task
+  worktree refuses by design: it is bound to one branch. The refusal said
+  nothing about what to do instead. The guidance now prescribes a new task
+  worktree forked at the good commit, from the project root (`mgit work
+  <new-path> --task-id <new-task-id> --base <good-commit>`), and the
+  branch-switch refusal names that command and the root to run it from.
+  A `mgit cherry-pick` in a task worktree is now recorded under that
+  worktree's task, as a commit there is: salvaging from the old line
+  recorded the pick under the old task, so the new task's log did not
+  show it and its squash failed. A contradicting `--task-id` is refused.
+  ADR-013 records the decision.
+- **Files git tracks reach mgit's base and every task worktree, whatever the
+  ignore rules say (MGIT-269).** Git applies ignore rules to untracked files
+  only, so a file force-added under a `*.log` rule, or committed inside a
+  directory a later `build/` rule ignores, stays tracked. mgit applied the
+  rules to every file: its base never held those files, a task worktree
+  lacked them, a loop reading the worktree saw them as deleted, and
+  `mgit status` never saw an edit to one. A path git has committed, or mgit
+  has, is now kept; untracked ignored files stay out, and `mgit add` still
+  skips new ignored files.
 - **`mgit sandbox launch` refuses a worktree that holds the repository's
   store before it registers or writes anything (MGIT-222).** A launch with
   the repository root, or a directory containing it, as its worktree
@@ -104,6 +154,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ran in a real daemon: the first boot refused instead. Every optional
   check the service asks for is now forwarded, and a test enumerates them
   from the service's own source.
+- **A guest base composed by another mgit is warned about where it
+  matters, not only in doctor (MGIT-224, MGIT-174's second half).** A base
+  carries the guest binaries of the mgit that composed it. After an
+  upgrade, a loop round ran every command on the previous release's guest
+  with no word said, and only `mgit doctor` noticed. `mgit sandbox
+  launch`, `mgit work --sandbox`, `mgit sandbox status` and the `mgit run`
+  that boots the VM now print one warning on stderr. It names both
+  versions and the exact `mgit sandbox base from <image>` to recompose
+  with, and says UNKNOWN when the base does not record its composer. It is
+  said once per boot, never refuses, and never changes an exit code.
+- **A commit made inside a sandbox no longer carries mgit's own agent
+  files into your patch** (MGIT-236). `mgit work --sandbox` writes
+  seven agent files into the worktree (AGENTS.md, the CLAUDE.md block,
+  .claude/settings.json, the Codex and Cursor hooks, the Cursor rule and
+  .envrc) and records them so that bulk staging skips them. Inside the
+  sandbox, the worktree's `.mgit` is the sandbox's private store, which
+  never received that record. So `mgit add -A` in the guest staged all
+  seven, and `squash --to-git` and `export --format git` put them into
+  the patch you apply. The private store is now provisioned with the
+  worktree's record, and the guest skips exactly what the host skips.
+  A generated file you stage by name still lands. The record is read
+  without following any link: a worktree `.mgit` that is not a real
+  directory, or a record that is not a regular file, refuses the launch.
+- **The pre-push branch-scope guard no longer refuses a branch for its own
+  pushed commits (MGIT-254).** Review tooling may keep pull-request heads as
+  local branches. Such a ref names a commit the branch has already pushed,
+  so after the author's next commit it shared part of the branch, and the
+  guard read that as another branch's commits underneath: "BRANCH SCOPE
+  REFUSED … From: pr-N". When a local branch is checked, commits already
+  on its own remote-tracking ref now count as its own. A foreign branch's
+  commit that is not on it is still refused, and the server-side check of
+  the pushed branch exempts nothing.
+
+### Fixed
+
+- **A recompose compares the source digest like with like (MGIT-223).**
+  Since 0.6.8 a base records the image index a tag resolves to, and an
+  older base recorded the platform manifest the index selected. Every
+  recompose after the upgrade printed "NOTE: <tag> now resolves to a
+  different image", even when the index selected the very manifest the
+  old record named. A base now records the platform manifest it selected
+  beside the index. A recompose says "resolves to the same image" when
+  only the kind of the recorded digest changed, says the index moved when
+  this host's manifest did not, and prints the moved-tag NOTE only when
+  the image itself changed.
+
+### Fixed
+
+- **A guest base set through a symlink is pinned to the tree behind it
+  (MGIT-227).** `mgit sandbox base set <symlink>` pinned the SHA-256 of
+  empty input: the tree walk did not follow a symlinked root, so nothing
+  was hashed, and the pin then verified whatever the link pointed at.
+  `base set` now resolves the path and records the tree itself, and
+  `TreeDigest` walks a symlinked root as the tree it names. A base pinned
+  before this through a symlink fails verification at its next launch, and
+  the message says that pin covered no bytes and how to re-pin it. The
+  check that refuses a base inside the repository now also compares by
+  file identity.
 
 ## [0.6.8] - 2026-09-22
 

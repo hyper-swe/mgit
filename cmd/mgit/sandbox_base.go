@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -96,6 +97,12 @@ func setRepoGuestBase(cmd *cobra.Command, dir string, opts composeOptions) (ref,
 	if err != nil {
 		return "", "", fmt.Errorf("base set: %w", err)
 	}
+	// The lock records, and every check below judges, the tree itself, not a
+	// symlink to it: a link can be re-pointed after the pin, and one outside
+	// the repository could name a tree inside it. Refs: MGIT-227
+	if baseDir, err = filepath.EvalSymlinks(baseDir); err != nil {
+		return "", "", fmt.Errorf("base set: %w", err)
+	}
 	hostRoot, err := sandboxHostRoot()
 	if err != nil {
 		return "", "", err
@@ -157,10 +164,33 @@ func validateBaseTree(baseDir string) error {
 	if len(missing) > 0 {
 		return fmt.Errorf(
 			"guest base %s is missing the mount points the guest supervisor "+
-				"needs at boot: %v. Create them first:\n  mkdir -p %s%v",
-			baseDir, missing, baseDir, missing)
+				"needs at boot: %s. Create them first:\n  %s",
+			baseDir, strings.Join(missing, ", "), mkdirFix(baseDir, missing))
 	}
 	return nil
+}
+
+// mkdirFix is the command that creates the missing mount points IN the tree:
+// one shell word per directory, each joined onto the tree's path and quoted
+// when the path needs it, so a reader can paste it. Refs: MGIT-249
+func mkdirFix(root string, missing []string) string {
+	words := make([]string, 0, 2+len(missing))
+	words = append(words, "mkdir", "-p")
+	for _, d := range missing {
+		words = append(words, shellWord(filepath.Join(root, d)))
+	}
+	return strings.Join(words, " ")
+}
+
+// plainShellWord matches a word no POSIX shell treats specially.
+var plainShellWord = regexp.MustCompile(`^[A-Za-z0-9_./@%+=:,-]+$`)
+
+// shellWord single-quotes s for a POSIX shell unless it is plain.
+func shellWord(s string) string {
+	if plainShellWord.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // sandboxBaseFromCmd composes this repo's guest base from an OCI image.
@@ -336,7 +366,7 @@ func composeBaseFromImage(cmd *cobra.Command, refArg string, opts composeOptions
 		return composeResult{}, err
 	}
 	published = true
-	return registerComposedBase(env.hostRoot, cached, resolved.String(), opts,
+	return registerComposedBase(env.hostRoot, cached, resolved, opts,
 		signWith(env.priv), func() time.Time { return time.Now().UTC() })
 }
 
@@ -411,6 +441,26 @@ func signWith(priv ed25519.PrivateKey) signFunc {
 	}
 }
 
+// beneathByIdentity reports whether path is dir or lies beneath it, walking
+// up from path and comparing each ancestor with dir by os.SameFile. A dir
+// that cannot be read names nothing to be beneath.
+func beneathByIdentity(path, dir string) bool {
+	want, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	for p := filepath.Clean(path); ; {
+		if fi, err := os.Stat(p); err == nil && os.SameFile(fi, want) {
+			return true
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false
+		}
+		p = parent
+	}
+}
+
 // refuseInRepoBaseTree refuses to pin a base that lives inside the repository.
 //
 // A pinned in-repo tree is the defect MGIT-147 removes, wearing a different
@@ -425,7 +475,10 @@ func refuseInRepoBaseTree(baseDir, hostRoot string) error {
 	// so it is folded into the same answer rather than raised.
 	rel, relErr := filepath.Rel(repoRoot, baseDir)
 	outside := relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
-	if outside {
+	// The strings can disagree about one directory (a resolved /private/var
+	// against /var, a symlinked or case-variant spelling), so "inside" is also
+	// asked by file identity. Refs: MGIT-227, MGIT-226
+	if outside && !beneathByIdentity(baseDir, repoRoot) {
 		return nil
 	}
 	return fmt.Errorf(

@@ -345,6 +345,9 @@ func (m *Manager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (
 	if err != nil {
 		return nil, fmt.Errorf("%s launch: resolve image %q: %w", m.cfg.Backend, opts.ImageRef, err)
 	}
+	if err := checkBootShape(m.cfg.Backend, opts.ImageRef, images); err != nil {
+		return nil, fmt.Errorf("%s launch: %w", m.cfg.Backend, err)
+	}
 
 	// Use the host-assigned lifecycle ID when the caller (the sandbox
 	// service, lazy provisioning) supplied one, so registration and boot
@@ -467,7 +470,7 @@ func (m *Manager) quarantine(taskID, worktreePath, stateDir string) (string, err
 		return "", nil // quarantine not wired (legacy/direct path)
 	}
 	privDir := filepath.Join(stateDir, privateStoreDirName)
-	store, err := m.cfg.StoreProvisioner.Provision(taskID, privDir)
+	store, err := m.cfg.StoreProvisioner.Provision(taskID, worktreePath, privDir)
 	if err != nil {
 		return "", fmt.Errorf("provision private store: %w", err)
 	}
@@ -607,8 +610,8 @@ func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*
 		return nil, fmt.Errorf("%w: %q", model.ErrSandboxNotFound, id)
 	}
 	if sb.info.State != model.StateRunning {
-		return nil, fmt.Errorf("%w: sandbox %q is %s, not running",
-			model.ErrSandboxBackendUnavailable, id, sb.info.State)
+		return nil, fmt.Errorf("%w: sandbox %q is %s",
+			model.ErrSandboxNotRunning, id, sb.info.State)
 	}
 	// Carry host worktree changes in BEFORE the command runs, so the agent
 	// loop tests the code the host actually has rather than a launch-time

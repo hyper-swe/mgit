@@ -44,7 +44,7 @@ var missingLibraryRe = regexp.MustCompile(
 // performs at startup (MGIT-61.14) never executes. The cause exists only in
 // the child's output, which is why it is captured and read back rather than
 // diagnosed in-process. Refs: MGIT-61.14, MGIT-61.15
-func daemonFailureDetail(logPath string) string {
+func daemonFailureDetail(logPath, daemonPath string) string {
 	tail, marked := lastAttempt(readDaemonLogTail(logPath))
 	if tail == "" {
 		if !marked {
@@ -53,8 +53,8 @@ func daemonFailureDetail(logPath string) string {
 		return "\nthe daemon exited before its first log line" + neverSpokeHint(logPath)
 	}
 	detail := "\nthe daemon reported:\n  " + strings.ReplaceAll(humanizeDaemonLog(tail), "\n", "\n  ")
-	if lib := missingLibrary(tail); lib != "" {
-		detail += "\n\n" + missingLibraryRemedy(lib)
+	if _, remedy := loaderRemedy(tail, daemonPath); remedy != "" {
+		detail += "\n\n" + remedy
 	}
 	return detail
 }
@@ -127,8 +127,13 @@ func missingLibrary(log string) string {
 // first. All of this was established on a Homebrew prefix where libkrun was
 // genuinely absent; on a machine that already has it, none of these commands
 // has to load anything and they all appear to work.
-// Refs: MGIT-75, MGIT-61.15
-func missingLibraryRemedy(lib string) string {
+//
+// On Linux none of that applies: the release archive carries libkrun and
+// libkrunfw beside the daemon, so the Linux remedy names where this daemon
+// looked and the archive (linuxLibraryRemedy). goos is the LOADER's platform,
+// which loaderRemedy reads from the loader's own words.
+// Refs: MGIT-75, MGIT-61.15, MGIT-230.4
+func missingLibraryRemedy(lib, daemonPath, goos string) string {
 	if bundled, ok := strings.CutPrefix(lib, "@rpath/"); ok {
 		// Carry a patched libkrun in the macOS build; fixes MGIT-225. Refs: MGIT-259
 		return fmt.Sprintf(
@@ -141,6 +146,9 @@ func missingLibraryRemedy(lib string) string {
 	detail := fmt.Sprintf(
 		"%s is missing. mgit-sandboxd links it, so no sandbox can start; core mgit\n"+
 			"is unaffected.\n", lib)
+	if goos == "linux" {
+		return detail + linuxLibraryRemedy(lib, daemonPath) + "Full prerequisites: docs/INSTALL-SANDBOX.md"
+	}
 	// libkrunfw ships as a dependency of the libkrun formula, so one sequence
 	// covers either name.
 	if strings.HasPrefix(lib, "libkrun") {

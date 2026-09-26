@@ -190,22 +190,31 @@ func TestDoctorChecks_RegistersEveryCheckTheDoctorPackageDefines(t *testing.T) {
 	}
 }
 
-// checkNamesFromSource reads the Name() strings out of internal/doctor's
-// source, so the expectation comes from somewhere the CLI does not control.
+// checkNamesFromSource reads the Name() strings out of EVERY non-test file
+// of internal/doctor, so the expectation comes from somewhere the CLI does
+// not control. It read checks.go alone until MGIT-221, which left every
+// check written in a file of its own (daemon/loads, daemon/vmm, and the row
+// that ticket added) outside the very scan meant to catch an unwired check.
 func checkNamesFromSource(t *testing.T) []string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	require.True(t, ok, "cannot locate this test's own source")
-	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "internal", "doctor", "checks.go")
-	b, err := os.ReadFile(filepath.Clean(path))
-	require.NoError(t, err, "the scan must read the doctor package's source")
+	files, err := filepath.Glob(filepath.Join(filepath.Dir(thisFile), "..", "..", "internal", "doctor", "*.go"))
+	require.NoError(t, err)
 	var out []string
-	for _, line := range strings.Split(string(b), "\n") {
-		if !strings.Contains(line, ") Name() string { return ") {
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
 			continue
 		}
-		if i, j := strings.Index(line, `"`), strings.LastIndex(line, `"`); i >= 0 && j > i {
-			out = append(out, line[i+1:j])
+		b, err := os.ReadFile(filepath.Clean(path))
+		require.NoError(t, err, "the scan must read the doctor package's source")
+		for _, line := range strings.Split(string(b), "\n") {
+			if !strings.Contains(line, ") Name() string { return ") {
+				continue
+			}
+			if i, j := strings.Index(line, `"`), strings.LastIndex(line, `"`); i >= 0 && j > i {
+				out = append(out, line[i+1:j])
+			}
 		}
 	}
 	return out

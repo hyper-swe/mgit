@@ -110,19 +110,24 @@ type composeResult struct {
 // as the human-facing half of the record. A recompose whose input digest
 // differs is a NEW cache entry and a NEW journal line; it never overwrites
 // what came before. Refs: MGIT-147, MGIT-105
-func registerComposedBase(hostRoot string, cached basecache.Entry, sourceRef string,
+func registerComposedBase(hostRoot string, cached basecache.Entry, resolved guestbase.Ref,
 	opts composeOptions, signer signFunc, clock func() time.Time,
 ) (composeResult, error) {
+	sourceRef := resolved.String()
 	rec := guestbase.Compose{
 		Name:       opts.name,
 		SourceTag:  guestbase.SourceTag(sourceRef),
 		SourceRef:  sourceRef,
 		BaseDigest: cached.Digest,
+		// The platform manifest the index selected, kept beside the index so
+		// a later recompose can compare like with like. Refs: MGIT-223
+		PlatformDigest: resolved.SelectedPlatform,
 	}
 	// What this compose is about to supersede, read BEFORE the lock is
 	// rewritten — afterwards it is unrecoverable from the lock alone.
 	if prev, err := images.LookupEntry(hostRoot, opts.name); err == nil {
 		rec.PrevSourceRef, rec.PrevBaseDigest = prev.Source, prev.Digest
+		rec.PrevPlatformDigest = previousPlatform(hostRoot, opts.name, prev.Source)
 	} else if !errors.Is(err, images.ErrNoSuchImage) {
 		return composeResult{}, fmt.Errorf("base %s: %w", opts.name, err)
 	}
@@ -139,6 +144,25 @@ func registerComposedBase(hostRoot string, cached basecache.Entry, sourceRef str
 	return composeResult{Ref: ref, CachePath: cached.Path, Reused: cached.Deduplicated, Record: rec}, nil
 }
 
+// previousPlatform is the platform manifest the superseded compose recorded
+// selecting, read from the journal: the newest entry for this name whose
+// source is the one being replaced. Empty when that compose recorded none (a
+// single-platform tag, or an mgit before the field existed) or the journal
+// cannot say; the comparison then falls back to what it can prove.
+// Refs: MGIT-223
+func previousPlatform(hostRoot, name, prevSource string) string {
+	history, err := guestbase.ComposeHistory(hostRoot)
+	if err != nil {
+		return ""
+	}
+	for i := len(history) - 1; i >= 0; i-- {
+		if h := history[i]; h.Name == name && h.SourceRef == prevSource {
+			return h.PlatformDigest
+		}
+	}
+	return ""
+}
+
 // signFunc registers a signed entry and returns its digest-pinned reference.
 // Injected so the compose flow does not carry the signing key around.
 type signFunc func(hostRoot, name string, entry images.Entry) (string, error)
@@ -150,20 +174,7 @@ type signFunc func(hostRoot, name string, entry images.Entry) (string, error)
 // old base is still cached, is the difference between an audit trail and a
 // surprise. Refs: MGIT-147
 func reportComposition(out io.Writer, res composeResult) {
-	if res.Record.TagMoved() {
-		_, _ = fmt.Fprintf(out,
-			"\n  NOTE: %s now resolves to a different image than the base you had pinned.\n"+
-				"        was  %s  (base %s)\n"+
-				"        now  %s  (base %s)\n"+
-				"        Nothing was replaced: the previous base is still in the cache, and\n"+
-				"        anything already pinned to it keeps resolving. (Since mgit 0.6.8 the\n"+
-				"        pinned digest is the image index, the same on every host; a base\n"+
-				"        composed by an older mgit recorded its platform manifest, whose digest\n"+
-				"        differs even when nothing moved.)\n",
-			res.Record.SourceTag,
-			guestbase.SourceDigest(res.Record.PrevSourceRef), res.Record.PrevBaseDigest,
-			guestbase.SourceDigest(res.Record.SourceRef), res.Record.BaseDigest)
-	}
+	reportSourceChange(out, res.Record)
 	_, _ = fmt.Fprintf(out, "Registered guest base %s\n", res.Ref)
 	if res.Record.SourceRef != "" {
 		_, _ = fmt.Fprintf(out, "  from %s\n", res.Record.SourceRef)
@@ -173,6 +184,38 @@ func reportComposition(out io.Writer, res composeResult) {
 		reused = " (already cached; nothing was re-unpacked)"
 	}
 	_, _ = fmt.Fprintf(out, "  bytes in %s%s\n", res.CachePath, reused)
+}
+
+// reportSourceChange says what a recompose of the same tag did to its
+// source, comparing like with like (MGIT-223): it shouts only when the image
+// itself moved, and names each digest by its kind.
+func reportSourceChange(out io.Writer, rec guestbase.Compose) {
+	prev, now := guestbase.SourceDigest(rec.PrevSourceRef), guestbase.SourceDigest(rec.SourceRef)
+	switch rec.SourceChange() {
+	case guestbase.SourceKindChanged:
+		_, _ = fmt.Fprintf(out, "\n  %s resolves to the same image as the base you had pinned.\n"+
+			"        selects   %s  (the platform manifest that base recorded)\n"+
+			"        recorded  %s  (the image index: since mgit 0.6.8, the same on every host)\n"+
+			"        base      %s -> %s  (it includes mgit's own guest binaries)\n",
+			rec.SourceTag, prev, now, rec.PrevBaseDigest, rec.BaseDigest)
+	case guestbase.SourceIndexMoved:
+		_, _ = fmt.Fprintf(out, "\n  NOTE: %s's image index moved; the image this host composes is unchanged.\n"+
+			"        index     %s -> %s\n"+
+			"        selects   %s  (unchanged: the platform manifest for this host)\n"+
+			"        Other architectures may now compose a different image.\n",
+			rec.SourceTag, prev, now, rec.PlatformDigest)
+	case guestbase.SourceImageMoved:
+		selected := ""
+		if rec.PlatformDigest != "" {
+			selected = fmt.Sprintf(", selecting platform manifest %s for this host", rec.PlatformDigest)
+		}
+		_, _ = fmt.Fprintf(out, "\n  NOTE: %s now resolves to a different image than the base you had pinned.\n"+
+			"        was  %s  (base %s)\n"+
+			"        now  %s%s  (base %s)\n"+
+			"        Nothing was replaced: the previous base is still in the cache, and\n"+
+			"        anything already pinned to it keeps resolving.\n",
+			rec.SourceTag, prev, rec.PrevBaseDigest, now, selected, rec.BaseDigest)
+	}
 }
 
 // composeJSON is the machine-readable form of a composition.

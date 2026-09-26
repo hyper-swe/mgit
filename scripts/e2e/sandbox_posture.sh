@@ -223,6 +223,13 @@ docjson="$(cd wt && mgit doctor --json 2>/dev/null)" && docrc=0 || docrc=$?
 backend="$(mgit sandbox status SB-1 --json | sed -n 's/.*"backend":"\([^"]*\)".*/\1/p')"
 [ -n "$backend" ] || _e2e_fail "sandbox status --json names no backend"
 pass "sandbox backend: $backend"
+# The daemon answering this repository is this CLI's build (MGIT-221). What
+# the row can say depends on what the binaries REPORT, read here rather than
+# guessed from the job: stamped builds compare as ok; a build with no stamp
+# (commit: none, as a -buildvcs=false build is) cannot be told apart from
+# another, and the row says not-checked rather than vouch for it.
+case "$(mgit --version)" in *"commit: none"*) serving=not-checked ;; *) serving=ok ;; esac
+expect_row "$docjson" daemon/serving-version "$serving"
 if [ "$backend" = "kvm" ]; then
 	# firecracker, read live on 2026-09-10 (this gate's first reading of it):
 	# the guest's name table is served; sync-verify reads FAILED, doctor's own
@@ -236,6 +243,9 @@ if [ "$backend" = "kvm" ]; then
 	expect_row "$docjson" guest/localhost ok
 	expect_row "$docjson" guest/sync-verify failed
 	expect_row "$docjson" guest/delivery not-checked
+	# The daemon links firecracker and the base is a kernel + rootfs image:
+	# the one shape it boots. Refs: MGIT-230.4
+	expect_row "$docjson" base/boots ok
 	[ "$docrc" -ne 0 ] || _e2e_fail "doctor exited 0 with a failed row"
 else
 	expect_row "$docjson" daemon/loads ok
@@ -244,6 +254,8 @@ else
 	expect_row "$docjson" guest/sync-verify ok
 	expect_row "$docjson" guest/delivery ok
 	expect_row "$docjson" base/currency ok
+	# libkrun and a composed directory: the one shape it boots. Refs: MGIT-230.4
+	expect_row "$docjson" base/boots ok
 	[ "$docrc" -eq 0 ] || _e2e_fail "doctor exited $docrc with every guest row ok"
 	# The tamper: change one delivered byte in the daemon's staged copy of the
 	# worktree on the host — the tree the guest reads — and doctor must say the

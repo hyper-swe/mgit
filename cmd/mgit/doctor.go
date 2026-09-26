@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -150,6 +149,7 @@ func (b *doctorBinding) resolve(ctx context.Context) (string, error) {
 // doctorChecks assembles the checks with their real probes.
 func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 	binding := &doctorBinding{app: app, connect: connect}
+	vmm := memoVMM(probeDaemonVMM)
 	return []doctor.Check{
 		doctor.NestedGitCheck{Scan: func() ([]string, error) {
 			return gitstore.NewWorktreeStore(app.Repo).RecordedNestedRepos(context.Background())
@@ -181,7 +181,15 @@ func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 			return probeGuestDelivery(ctx, connect, task)
 		}},
 		doctor.DaemonLoadsCheck{Probe: probeDaemonLoads},
-		doctor.DaemonVMMCheck{Probe: probeDaemonVMM, GOOS: runtime.GOOS},
+		doctor.ServingDaemonVersionCheck{List: listHostDaemons, CLI: versionString(), RepoRoot: func() (string, error) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			return sandboxRepoRoot(cwd)
+		}},
+		doctor.DaemonVMMCheck{Probe: vmm, GOOS: runtime.GOOS},
+		doctor.BaseBootsCheck{VMM: vmm, Inspect: inspectBaseShape},
 		doctor.HostDaemonsCheck{List: listHostDaemons},
 		doctor.DuplicateDaemonsCheck{List: listHostDaemons},
 	}
@@ -279,25 +287,9 @@ func probeResponseCap(ctx context.Context, connect connectFunc, bytes int) (doct
 // Refs: MGIT-174
 func inspectBaseCurrency() (doctor.BaseIdentity, error) {
 	none := doctor.BaseIdentity{}
-	hostRoot, err := sandboxHostRoot()
+	hostRoot, resolved, err := resolvePinnedBase()
 	if err != nil {
-		return none, fmt.Errorf("no sandbox host root for this repository: %w", err)
-	}
-	ref, err := images.PinnedRef(hostRoot, defaultGuestBaseName)
-	if err != nil {
-		return none, fmt.Errorf("no guest base registered for this repository: %w", err)
-	}
-	cache, cacheErr := openBaseCache()
-	if cacheErr != nil {
-		return none, fmt.Errorf("could not open the base cache: %w", cacheErr)
-	}
-	store, err := images.NewStoreWithBaseCache(hostRoot, func() time.Time { return time.Now().UTC() }, cache)
-	if err != nil {
-		return none, fmt.Errorf("could not open the image store: %w", err)
-	}
-	resolved, err := store.Resolve(ref)
-	if err != nil {
-		return none, fmt.Errorf("could not resolve the pinned guest base: %w", err)
+		return none, err
 	}
 	// The base's identity comes from the lock, not the tree: the lock is what
 	// boot verifies against, and its Source is the resolved reference — the

@@ -1,6 +1,6 @@
 // boardexport writes the tracked board file (.mtix/tasks.json) with no
-// agent identities: every node's assignee is blank, and the agents and
-// sessions sections are empty. The board is this repository's public ledger
+// agent identities: every node's assignee is blank, no creator names who
+// filed it (MGIT-264), and the agents and sessions sections are empty. The board is this repository's public ledger
 // and is regenerated whole on every export, so anything it carries is
 // republished each time; it had been publishing the working identities of
 // the agents that claimed tickets (MGIT-241).
@@ -170,8 +170,34 @@ func identities(d *exportData) (assignees, agents, sessions int) {
 	return assignees, len(d.Agents), len(d.Sessions)
 }
 
-// redact blanks every assignee, empties the agents and sessions sections,
-// and recomputes the checksum. It returns how many nodes it blanked.
+// creatorNamesSomeone reports whether a node's creator is an identity rather
+// than the interface it was filed through. The tracker writes "cli" or "mcp"
+// by default, but takes --assign or the filer's author identity
+// (MTIX_AUTHOR_ID) when one is given, so any other value names who filed it.
+// Refs: MGIT-264
+func creatorNamesSomeone(creator string) bool {
+	switch creator {
+	case "", "cli", "mcp":
+		return false
+	}
+	return true
+}
+
+// namedCreators counts the nodes whose creator names someone.
+func namedCreators(d *exportData) int {
+	named := 0
+	for _, n := range d.Nodes {
+		if creatorNamesSomeone(n.Creator) {
+			named++
+		}
+	}
+	return named
+}
+
+// redact blanks every assignee and every creator that names someone,
+// empties the agents and sessions sections, and recomputes the checksum. It
+// returns how many assignees it blanked. A node's content_hash does not cover
+// its creator, so blanking one leaves node integrity untouched.
 func redact(d *exportData) int {
 	blanked := 0
 	for i := range d.Nodes {
@@ -179,12 +205,31 @@ func redact(d *exportData) int {
 			d.Nodes[i].Assignee = ""
 			blanked++
 		}
+		if creatorNamesSomeone(d.Nodes[i].Creator) {
+			d.Nodes[i].Creator = ""
+		}
 	}
 	d.Agents, d.Sessions = nil, nil
 	// The inputs are strings and numbers that just decoded, so encoding
 	// them cannot fail; a failure would surface in the load of the output.
 	d.Checksum, _ = checksum(d)
 	return blanked
+}
+
+// rewrite applies redactFn to the board and encodes it, then proves the
+// result loads (reproducible, checksum verifying) before handing the bytes
+// on: a redaction that leaves the board inconsistent is refused with
+// nothing to write, never published as a board the tracker would reject.
+func rewrite(d *exportData, redactFn func(*exportData) int) ([]byte, int, error) {
+	blanked := redactFn(d)
+	body, err := encode(d)
+	if err != nil {
+		return nil, 0, err
+	}
+	if _, err := load(body); err != nil {
+		return nil, 0, fmt.Errorf("the redacted board does not verify, nothing written: %w", err)
+	}
+	return body, blanked, nil
 }
 
 // run redacts the board at in into out, or with check only reports.
@@ -198,9 +243,10 @@ func run(in, out string, check bool) error {
 		return err
 	}
 	a, g, s := identities(d)
+	c := namedCreators(d)
 	if check {
-		if a+g+s > 0 {
-			return fmt.Errorf("the board names identities: %d assigned nodes, %d agent rows, %d session rows", a, g, s)
+		if a+g+s+c > 0 {
+			return fmt.Errorf("the board names identities: %d assigned nodes, %d creators naming someone, %d agent rows, %d session rows", a, c, g, s)
 		}
 		fmt.Println("boardexport: the board names no identities and its checksum verifies")
 		return nil
@@ -209,13 +255,9 @@ func run(in, out string, check bool) error {
 		return fmt.Errorf("REFUSING: %s sits beside a live tracker database (%s): the tracker would auto-import this board in REPLACE mode and lose the database's assignees, agents and annotations. Cut board exports in a fresh worktree",
 			out, filepath.Join(filepath.Dir(out), "data"))
 	}
-	blanked := redact(d)
-	body, err := encode(d)
+	body, blanked, err := rewrite(d, redact)
 	if err != nil {
 		return err
-	}
-	if _, err := load(body); err != nil {
-		return fmt.Errorf("the redacted board does not verify, nothing written: %w", err)
 	}
 	tmp := out + ".tmp"
 	if err := os.WriteFile(tmp, body, 0o644); err != nil { //nolint:gosec // G306: the tracked board is a public, world-readable file
@@ -224,7 +266,7 @@ func run(in, out string, check bool) error {
 	if err := os.Rename(tmp, out); err != nil {
 		return fmt.Errorf("replace the board: %w", err)
 	}
-	fmt.Printf("boardexport: blanked %d assignees, removed %d agent rows and %d session rows; checksum %s\n", blanked, g, s, d.Checksum)
+	fmt.Printf("boardexport: blanked %d assignees and %d creators, removed %d agent rows and %d session rows; checksum %s\n", blanked, c, g, s, d.Checksum)
 	return nil
 }
 

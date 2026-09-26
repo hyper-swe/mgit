@@ -40,7 +40,11 @@ and where its libraries resolved, and `mgit doctor`'s `daemon/vmm` row says the
 same. The Linux release archives carry the libkrun daemon from the first
 release that bundles libkrun (see the CHANGELOG); earlier Linux archives, and
 any `go install` or plain `go build` of the daemon on Linux, carry firecracker.
-Refs: MGIT-229, ADR-016
+Each backend boots one shape of guest base (see "Provisioning the guest base"
+below), and `mgit doctor`'s `base/boots` row sets the daemon's VMM against the
+registered base's shape: firecracker with a composed directory, for example,
+is a FAIL that names both and the command that fixes it.
+Refs: MGIT-229, MGIT-230.4, ADR-016
 
 libkrun and vzf share the worktree as a host **directory** over virtio-fs, so
 the host can re-stage into it and read out of it. firecracker packs it into an
@@ -62,8 +66,8 @@ source build) was live-validated on
 real KVM and is now gated in CI on every push — the boot that had "never
 completed" on Linux does complete, and guest exec over vsock, `sandbox sync` of
 file content, artifact export and the SEC-03 hostile-guest battery all hold
-there exactly as on macOS (MGIT-87). Two residuals do NOT carry over, both
-measured on real hardware and both upstream:
+there exactly as on macOS (MGIT-87). One residual does NOT carry over,
+measured on real hardware and upstream, and one difference mgit closes itself:
 
 **Which user commands run as.** A guest exec — `mgit run`'s and `sandbox
 exec`'s — runs as the daemon's own user inside the guest: the uid/gid the
@@ -101,14 +105,19 @@ base from <image>`), and the container backend does not switch identities
   because mgit-guest probes for the refusal at boot and shadows that one
   directory with a tmpfs seeded from the image — which is what lets a networked
   guest start. Tracked as MGIT-89.
-- **A deleted path can stay visible to the guest for a few seconds** — but
-  never readable. libkrun's Linux virtio-fs caches name lookups for ~5s (the
-  same measurement on macOS returns 0.00s), so a guest process that already
-  resolved a path may keep resolving it briefly after the sync removes it. The
-  sync empties a file before unlinking it, so the lingering name yields an
-  empty file rather than the deleted contents: a build that reads it fails
-  loudly instead of silently succeeding against code you removed. Creations and
-  content edits reach the guest immediately. Refs: MGIT-90
+- **A deleted path is gone from the guest by the time `sandbox sync`
+  returns.** libkrun's Linux virtio-fs caches name lookups for ~5 s (the same
+  measurement on macOS returns 0.00 s), so on its own a guest could keep
+  resolving a deleted name for those seconds. The sync does not report success
+  until the guest itself agrees: it asks the guest to drop its caches, then
+  checks from inside the guest, bounded, that every deleted path is gone
+  (MGIT-192). Measured on a stock ubuntu-latest KVM host with the agent loop's
+  own per-round canary (a host delete, a sync, an immediate `[ -e ]` in the
+  guest): gone at once, and the delete-bearing sync took 42 ms (55 ms from an
+  install.sh layout). As a second line of defense the sync empties a file
+  before unlinking it, so a name that did linger would read as empty, never as
+  the deleted contents. Creations and content edits reach the guest
+  immediately. Refs: MGIT-90, MGIT-192, MGIT-230.2
 
 Use libkrun when the loop needs host edits delivered into a running guest or
 artifacts read back out — it now has working egress and live policy too, so
@@ -302,10 +311,10 @@ kernel source, byte-identical to kernel.org's), `libkrunfw-<v>-source.tar.gz`
 (the patches, configuration and build scripts applied to it) and
 `libkrun-<v>-source.tar.gz`.
 
-`linux_arm64` archives are built and load-checked like `linux_amd64`, but no
-hosted CI runner exposes KVM on arm64, so no guest boots from them before a
-release; `linux_amd64` boots the documented user path on every change
-(MGIT-230.5). Refs: MGIT-229, ADR-016
+`linux_arm64` is build-verified and not boot-verified: its archives are built
+and load-checked like `linux_amd64`, but no hosted CI runner exposes KVM on
+arm64, so no guest boots from them before a release. `linux_amd64` boots the
+documented user path on every change. Refs: MGIT-229, MGIT-230.5, ADR-016
 
 **macOS: a downloaded archive will not run until you clear quarantine.**
 Any transfer that sets the `com.apple.quarantine` extended attribute — a
@@ -323,6 +332,27 @@ xattr -dr com.apple.quarantine mgit mgit-sandboxd lib   # lib/: the daemon's lib
 
 After that, both binaries run normally; the binaries themselves are fine,
 this is purely a distribution/signing gap.
+
+**Upgrading: stop the running daemon before the installer runs.** An
+installer replaces the binaries on disk, not a daemon that is running. A
+`mgit-sandboxd` started by the previous release keeps serving its repository
+at that release, and the new CLI talks to it without a word. So the new
+release's daemon-side and guest-side changes are absent until that daemon
+restarts (MGIT-221, measured with a 0.6.7 daemon answering a 0.6.8 CLI).
+With the mgit you have now, before the install:
+
+```bash
+mgit sandbox daemons                          # every daemon on this host: PID, AGE, VERSION, ROOT, FLAGS
+cd <repo> && mgit sandbox list                # nothing running there: `no sandboxes`
+mgit sandbox daemons stop --repo-root <repo>  # drains and stops that repository's daemon
+```
+
+After the install, any sandbox command starts the daemon from the new
+release. `mgit doctor`'s `daemon/serving-version` row compares the daemon
+serving the current repository with the CLI. It states a mismatch with both
+versions, the pid and this remedy. Stop only your own repositories'
+daemons. A daemon serving another repository keeps its version until it is
+stopped or goes idle.
 
 **Upgrading by hand: replace the binaries, never overwrite them.** macOS caches
 a binary's code signature per inode while a process runs from it, so writing

@@ -24,6 +24,7 @@ type fakeProvisioner struct {
 	sharedDir   string // the SharedDir the BindPrivateStore check sees
 	err         error  // a provisioning failure (fails the launch)
 	gotTask     string
+	gotWorktree string
 	gotPrivDir  string
 	calls       int
 	makePrivDir bool // create the private dir on disk (default true)
@@ -31,9 +32,10 @@ type fakeProvisioner struct {
 
 func (f *fakeProvisioner) SharedDir() string { return f.sharedDir }
 
-func (f *fakeProvisioner) Provision(taskID, privateDir string) (provision.PrivateStore, error) {
+func (f *fakeProvisioner) Provision(taskID, worktreePath, privateDir string) (provision.PrivateStore, error) {
 	f.calls++
 	f.gotTask = taskID
+	f.gotWorktree = worktreePath
 	f.gotPrivDir = privateDir
 	if f.err != nil {
 		return provision.PrivateStore{}, f.err
@@ -85,6 +87,10 @@ func TestManager_Launch_WithProvisioner_BindsPrivateStore(t *testing.T) {
 
 	require.Equal(t, 1, prov.calls, "the launch provisions exactly one private store")
 	assert.Equal(t, "MGIT-11.6.8", prov.gotTask)
+	// The private store is provisioned FOR the worktree the VM is given: the
+	// provisioner carries that worktree's generated list into the store the
+	// guest reads it from (MGIT-236).
+	assert.Equal(t, worktree, prov.gotWorktree, "the provisioner is told which worktree the guest gets")
 	require.Len(t, hv.configs, 1)
 	cfg := hv.configs[0]
 	assert.NotEmpty(t, cfg.PrivateStorePath, "the VM config carries the private store path (SEC-03)")

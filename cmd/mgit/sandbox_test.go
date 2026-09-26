@@ -555,7 +555,12 @@ func TestLocateSandboxd(t *testing.T) {
 // under .mgit, a short owner-only runtime dir for the socket, and a clear
 // error outside a repository.
 func TestResolveSandboxPaths(t *testing.T) {
-	xdg := t.TempDir()
+	// A SHORT base, as a real runtime dir is: macOS's t.TempDir() is long
+	// enough that the socket under it could never be bound, and such a base
+	// is now refused outright (MGIT-240, covered in sandbox_socket_path_test).
+	xdg, err := os.MkdirTemp("/tmp", "rsp")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(xdg) }) // a scratch dir this test made
 	t.Setenv("XDG_RUNTIME_DIR", xdg)
 	repo := t.TempDir()
 	t.Run("not_a_repo", func(t *testing.T) {
@@ -571,7 +576,7 @@ func TestResolveSandboxPaths(t *testing.T) {
 		assert.True(t, strings.HasSuffix(p.socket, "d.sock"))
 		// The suffix mgit derives below the runtime base must stay short, so
 		// the socket fits the unix sun_path limit (~104) on a short base
-		// like /run/user/<uid>. Independent of this test's long XDG base.
+		// like /run/user/<uid>.
 		assert.Less(t, len(p.socket)-len(xdg), 40, "derived runtime suffix must stay short for sun_path")
 	})
 }

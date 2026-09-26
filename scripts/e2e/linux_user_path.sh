@@ -14,13 +14,14 @@
 # code agrees with it. On failure the daemon's own view (status, doctor) is
 # printed, so a red run says why without a rerun.
 #
-# Usage: linux_user_path.sh <install-dir>
+# Usage: linux_user_path.sh <install-dir> [scratch-root]
 #   install-dir holds mgit, mgit-sandboxd and guest/ exactly as a release
-#   archive lays them out.
+#   archive lays them out. scratch-root holds the repository and the
+#   worktree; it defaults to the temp dir (/tmp on a stock runner).
 # Refs: MGIT-229, hyper-swe/mgit#12
 set -u
 
-BIN="${1:?usage: linux_user_path.sh <install-dir>}"
+BIN="${1:?usage: linux_user_path.sh <install-dir> [scratch-root]}"
 for hook in MGIT_GUEST_KERNEL MGIT_GUEST_ROOTFS MGIT_GUEST_BASE MGIT_GUEST_IMAGE; do
 	if [ -n "${!hook:-}" ]; then
 		echo "REFUSING: $hook is set — this leg proves the user path WITHOUT test hooks"
@@ -28,7 +29,11 @@ for hook in MGIT_GUEST_KERNEL MGIT_GUEST_ROOTFS MGIT_GUEST_BASE MGIT_GUEST_IMAGE
 	fi
 done
 export PATH="$BIN:$PATH"
-W="$(mktemp -d "${TMPDIR:-/tmp}/linux-user-path.XXXXXX")"
+# A scratch root outside /tmp puts the worktree where the guest must make
+# its mount point by shadowing a directory the base image ships
+# (MGIT-230.7); one CI leg passes one. Refs: MGIT-230.7, MGIT-230.3
+ROOT="${2:-${TMPDIR:-/tmp}}"
+W="$(mktemp -d "$ROOT/linux-user-path.XXXXXX")" || { echo "cannot make a scratch dir under $ROOT"; exit 2; }
 R="$W/repo"
 P="$W/work"
 TASK=UP-1
@@ -74,6 +79,14 @@ mkdir -p "$R" "$P"
 (cd "$R" && git init -q && git -c user.email=up@mgit.local -c user.name=up commit -q --allow-empty -m init &&
 	mgit init >/dev/null) || fail "repository" "git init / mgit init failed"
 printf 'v1\n' >"$P/f.txt"
+# The physical path, because the guest works at the canonical one.
+PH="$(cd "$P" && pwd -P)"
+# Under /tmp or outside it, comparing physical paths on both sides:
+# where /tmp is a symlink (macOS: /tmp -> /private/tmp) a literal "/tmp/*"
+# would call a worktree under /tmp "outside". Refs: MGIT-266
+where_is() { local root; root="$(cd "$2" && pwd -P)" || return 1; case "$1/" in "$root"/*) echo "under /tmp" ;; *) echo "outside /tmp" ;; esac; }
+where="$(where_is "$PH" /tmp)"
+echo "  worktree: $PH ($where)"
 echo "  PASS"
 
 # fetch-guard: `mgit sandbox base from` pulls an OCI image through the
@@ -99,6 +112,11 @@ out="$(cd "$P" && timeout 300 mgit run -- sh -c 'echo boot-ok; cat f.txt' 2>&1)"
 first "$out" 6
 printf '%s\n' "$out" | grep -qx 'boot-ok' || fail "exec" "the guest did not run the command: $(first "$out" 1)"
 printf '%s\n' "$out" | grep -qx 'v1' || fail "exec" "the guest does not see the worktree"
+# The worktree is mounted at its IDENTICAL host path, and mgit run works
+# there, under /tmp or outside it. Refs: MGIT-230.3, MGIT-230.7
+gwd="$(cd "$P" && timeout 120 mgit run -- pwd 2>&1)"
+[ "$gwd" = "$PH" ] || fail "exec" "the guest works in '$gwd', not the worktree's host path $PH ($where)"
+echo "  the guest works in the worktree at its host path ($where)"
 echo "  PASS"
 
 step "7 sync a host edit into the running guest"
@@ -107,6 +125,74 @@ out="$(cd "$R" && mgit sandbox sync --task-id "$TASK" --force 2>&1)" || fail "sy
 printf '%s\n' "$out" | head -2
 got="$(cd "$P" && timeout 120 mgit run -- cat f.txt 2>&1)"
 [ "$got" = v2 ] || fail "sync" "the guest read '$got' after the sync, not v2"
+echo "  PASS"
+
+step "7b the loop's per-round canary: a host delete is gone from the guest right after the sync"
+# hyperswe's loop checks this every round, in exactly this shape: two files
+# written in the same second with different lengths, a classifying dry run,
+# a sync, the guest reads both; then one is deleted on the host, synced, and
+# the guest's [ -e ] must say it is gone AT ONCE. On Linux libkrun the guest
+# caches a looked-up name for ~5 s (MGIT-90), so this is the sync's settle
+# step (MGIT-192) earning its keep, and the delete-bearing sync's time is
+# printed, because a loop pays it every round. Refs: MGIT-230.2
+ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
+printf 'c\n' >"$P/canary-a.txt"
+printf 'canary-b\n' >"$P/canary-b.txt"
+out="$(cd "$R" && mgit sandbox sync --task-id "$TASK" --dry-run 2>&1)" || fail "canary" "dry run: $(first "$out")"
+out="$(cd "$R" && mgit sandbox sync --task-id "$TASK" 2>&1)" || fail "canary" "sync: $(first "$out")"
+got="$(cd "$P" && timeout 120 mgit run -- sh -c 'cat canary-a.txt canary-b.txt' 2>&1)"
+[ "$got" = "$(printf 'c\ncanary-b')" ] || fail "canary" "the guest read '$got', not both canary files"
+rm "$P/canary-a.txt"
+t0="$(ms)"
+out="$(cd "$R" && mgit sandbox sync --task-id "$TASK" 2>&1)" || fail "canary" "sync of the delete: $(first "$out")"
+t1="$(ms)"
+printf '%s\n' "$out" | head -2
+seen="$(cd "$P" && timeout 120 mgit run -- sh -c '[ -e canary-a.txt ] && echo present || echo gone' 2>&1)"
+[ "$seen" = gone ] || fail "canary" "the guest still sees canary-a.txt right after the sync that deleted it ('$seen')"
+echo "  the delete-bearing sync took $((t1 - t0)) ms"
+# Whether the settle's cache drop took effect: the same command the settle
+# step runs (settle.go), as the same default identity, never as root. The
+# settle does not consult its result, and only root may write drop_caches,
+# so without this line "gone at once" cannot say whether the drop worked or
+# the guest held no stale name. Refs: MGIT-230.2
+drop="$(cd "$P" && timeout 120 mgit run -- sh -c 'sync; echo 2 > /proc/sys/vm/drop_caches && echo took-effect || echo did-not-take-effect' 2>/dev/null | tail -1)"
+[ -n "$drop" ] || drop="cannot tell (the exec did not answer)"
+echo "  the settle's cache drop, as the exec identity: $drop"
+echo "  PASS"
+
+step "7c the loop's exec contract: background survives, /tmp persists, exit codes pass, /proc and dmesg read"
+# hyperswe drives long guest commands by starting them with `nohup … &` in
+# `mgit run -- /bin/sh -c`, keeping pid/log/rc files under guest /tmp, and
+# polling with later execs; it reads /proc/<pid>/stat, /proc/meminfo, nproc
+# and dmesg as the exec identity and needs the exit code unchanged. Each
+# clause is checked here, as that identity. Refs: MGIT-230.3
+gx() { (cd "$P" && timeout 120 mgit run -- /bin/sh -c "$1" 2>&1); }
+out="$(gx 'nohup sleep 120 >/tmp/up-bg.log 2>&1 & echo $! >/tmp/up-bg.pid; echo started')"
+[ "$(printf '%s\n' "$out" | tail -1)" = started ] || fail "exec contract" "could not start a background command: $(first "$out")"
+out="$(gx 'kill -0 "$(cat /tmp/up-bg.pid)" && echo alive || echo dead')"
+[ "$(printf '%s\n' "$out" | tail -1)" = alive ] ||
+	fail "exec contract" "a nohup'd command did not outlive the exec that started it, or /tmp did not persist: $out"
+gx 'kill "$(cat /tmp/up-bg.pid)"' >/dev/null
+(cd "$P" && timeout 120 mgit run -- /bin/sh -c 'exit 7' >/dev/null 2>&1)
+rc=$?
+[ "$rc" -eq 7 ] || fail "exec contract" "a guest exit 7 came back as $rc"
+out="$(gx 'head -c 1 /proc/self/stat >/dev/null && echo proc-stat-ok; head -1 /proc/meminfo; nproc; dmesg >/dev/null 2>&1 && echo dmesg-ok || echo dmesg-refused')"
+printf '%s\n' "$out" | sed 's/^/  guest: /'
+for want in proc-stat-ok MemTotal dmesg-ok; do
+	printf '%s\n' "$out" | grep -q "$want" || fail "exec contract" "the exec identity could not read what the loop reads ($want missing): $out"
+done
+printf '%s\n' "$out" | grep -Eqx '[0-9]+' || fail "exec contract" "nproc printed no CPU count: $out"
+# The identity has a NAME in the guest: the guest writes it a passwd entry
+# named agent (MGIT-151), and tools that look the user up (whoami, git's
+# default identity, Node's os.userInfo()) fail without one.
+name="$(gx 'id -un')"
+if [ "$name" != agent ]; then
+	echo "  the guest's view of this identity:"
+	gx 'id; echo "--- /etc/passwd head:"; head -3 /etc/passwd; echo "--- entries for this uid or agent:"; grep -n -e ":$(id -u):" -e "^agent:" /etc/passwd; echo "--- /etc is:"; grep " /etc " /proc/mounts; echo "--- as this identity:"; stat -c "%A %u:%g %n" /etc /etc/passwd /etc/group' | sed 's/^/    /'
+	echo "    --- as root (an audited privileged exec):"
+	(cd "$R" && timeout 120 mgit sandbox exec --task-id "$TASK" --as-root -- /bin/sh -c 'stat -c "%A %u:%g %n" / /etc /etc/passwd /etc/group /etc/nsswitch.conf; grep -n "^agent:" /etc/passwd' 2>&1) | sed 's/^/    /'
+	fail "exec contract" "the exec identity has no name in the guest: id -un said '$name', not agent"
+fi
 echo "  PASS"
 
 step "8 export a file the guest made"

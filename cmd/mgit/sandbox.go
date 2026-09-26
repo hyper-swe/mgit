@@ -7,6 +7,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -219,7 +220,13 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 			// Regenerate the worktree's CLAUDE.md env section to match this
 			// sandbox's network posture (MGIT-11.11.2).
 			writeSandboxEnvDoc(cmd.ErrOrStderr(), info, "mgit sandbox launch")
-			return writeSandbox(cmd.OutOrStdout(), info, asJSON, launchMessage(info))
+			if err := writeSandbox(cmd.OutOrStdout(), info, asJSON, launchMessage(info)); err != nil {
+				return err
+			}
+			// A base composed by another mgit is said here, where the sandbox
+			// is created, not only in doctor. Refs: MGIT-224
+			warnStaleBase(cmd.ErrOrStderr(), imageRefDigest(image))
+			return nil
 		},
 	}
 	bindTaskIDFlag(cmd, &task, "task ID to bind (required)")
@@ -362,8 +369,13 @@ func sandboxStatusCmd(connect connectFunc) *cobra.Command {
 			// The effective resource caps are part of status on purpose: an
 			// agent must be able to READ its ceiling rather than infer it
 			// from a build that died against it (R-H212).
-			return writeSandbox(cmd.OutOrStdout(), info, asJSON,
-				fmt.Sprintf("%s\t%s\t%s\n%s%s", info.TaskID, info.State, info.ID, capsLine(info), deadLine(info)))
+			if err := writeSandbox(cmd.OutOrStdout(), info, asJSON,
+				fmt.Sprintf("%s\t%s\t%s\n%s%s%s", info.TaskID, info.State, info.ID, capsLine(info), deadLine(info),
+					bootFailureLine(info))); err != nil {
+				return err
+			}
+			warnStaleBase(cmd.ErrOrStderr(), info.ImageDigest) // Refs: MGIT-224
+			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
@@ -459,6 +471,18 @@ func writeSandbox(w io.Writer, info *model.SandboxInfo, asJSON bool, humanLine s
 func printErr(w io.Writer, err error) error {
 	_, _ = fmt.Fprintf(w, "mgit sandbox: %v\n", err)
 	return err
+}
+
+// bootFailureLine names the last failed boot, so a sandbox whose first boot
+// failed does not read "created" like one nobody has used. The cause is the
+// boot's own error; the next exec retries the boot. Refs: MGIT-231
+func bootFailureLine(info *model.SandboxInfo) string {
+	f := info.LastBootFailure
+	if f == nil {
+		return ""
+	}
+	return fmt.Sprintf("last boot FAILED at %s: %s\nthe next command in this sandbox boots it again; "+
+		"`mgit doctor` checks the daemon and its base\n", f.At.UTC().Format(time.RFC3339), f.Cause)
 }
 
 // deadLine explains a dead sandbox on the status line, so a reader who only

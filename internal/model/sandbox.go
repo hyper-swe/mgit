@@ -330,6 +330,19 @@ type SandboxInfo struct {
 	// host 127.0.0.1:<HostPort> forwarding into the guest's <GuestPort>.
 	// Refs: SEC-09, FR-17.8
 	PublishPorts []PortPublish `json:"publish_ports,omitempty"`
+	// LastBootFailure is the most recent boot of this registration that
+	// failed, and is nil once a boot succeeds. Without it a sandbox whose
+	// first boot failed reads "created" exactly like one nobody has used,
+	// and status could not answer the one question it exists for.
+	// Refs: MGIT-231
+	LastBootFailure *BootFailure `json:"last_boot_failure,omitempty"`
+}
+
+// BootFailure records when a sandbox's boot failed and the error it failed
+// with. Refs: MGIT-231
+type BootFailure struct {
+	At    time.Time `json:"at"`    // ISO-8601 UTC, from the service clock
+	Cause string    `json:"cause"` // the boot's error, as the caller received it
 }
 
 // Validate checks that the SandboxInfo has required, well-formed

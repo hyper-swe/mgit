@@ -139,6 +139,13 @@ var (
 	// explicitly acknowledged). Refs: FR-17.15, FR-17.20
 	ErrSandboxBackendUnavailable = errors.New("no sandbox backend available on this platform")
 
+	// ErrSandboxNotRunning indicates the sandbox exists but its VM is not
+	// running: registered and never booted, suspended, or stopped. It is a
+	// fact about THIS sandbox, never about the platform; it used to travel
+	// under ErrSandboxBackendUnavailable, whose words sent readers to install
+	// a hypervisor that was already linked. Refs: MGIT-232
+	ErrSandboxNotRunning = errors.New("sandbox is not running")
+
 	// ErrSandboxSyncUnsupported indicates this sandbox's backend cannot
 	// propagate host worktree changes into a RUNNING guest. Firecracker
 	// delivers the worktree as an ext4 image built at launch and mounted by
@@ -283,6 +290,13 @@ var (
 	// directory to read the artifact out of, and the guest-mediated stream
 	// that would be needed is not shipped in v1. Refs: MGIT-73, ADR-011
 	ErrArtifactExportUnsupported = errors.New("this sandbox backend cannot export guest artifacts to the host")
+
+	// ErrGuestBaseUnbootable indicates the registered guest base is a shape
+	// the linked backend cannot boot: firecracker and vzf boot a kernel plus
+	// an ext4 rootfs image, libkrun a directory. It is refused at launch,
+	// before any VM exists, because the cause is known there; inside the VMM
+	// it surfaced as a config error mgit could not place. Refs: MGIT-233
+	ErrGuestBaseUnbootable = errors.New("guest base is a shape this backend cannot boot")
 )
 
 // ValidationError provides structured context for validation failures.

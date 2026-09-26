@@ -14,9 +14,12 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 )
 
 // `mgit sandbox base set` is the bring-your-own-tree path (MGIT-61.15): point
@@ -559,4 +562,37 @@ func TestSandboxBase_WithAnExistingTrustRoot_DoesNotRotateIt(t *testing.T) {
 	after, err := os.ReadFile(keyPath) //nolint:gosec // test temp path
 	require.NoError(t, err)
 	assert.Equal(t, before, after, "composing a base must not rotate the signing key")
+}
+
+// `base set <symlink>` pinned the SHA-256 of nothing (MGIT-227). It now pins
+// the tree behind the link, records that RESOLVED path in images.lock, and a
+// change to a file behind the link fails verification at the next resolve.
+// Refs: MGIT-227, MGIT-61.15
+func TestSandboxBaseSet_ThroughASymlink_PinsTheTreeBehindIt(t *testing.T) {
+	repo := newRepo(t)
+	tree := userspaceTree(t)
+	link := filepath.Join(t.TempDir(), "base-link")
+	require.NoError(t, os.Symlink(tree, link))
+	_, err := initTrustRoot(t, repo)
+	require.NoError(t, err)
+
+	out, err := runBase(t, repo, "set", link, "--guest-bin-dir", fakeGuestBins(t))
+	require.NoError(t, err, "base set: %s", out)
+	assert.NotContains(t, out, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "never the digest of nothing")
+
+	resolved, err := filepath.EvalSymlinks(tree)
+	require.NoError(t, err)
+	hostRoot := filepath.Join(repo, ".mgit", "sandbox")
+	entry, err := images.LookupEntry(hostRoot, "base")
+	require.NoError(t, err)
+	assert.Equal(t, resolved, entry.RootfsPath, "the lock records the tree, not the link")
+
+	store, err := images.NewStore(hostRoot, time.Now)
+	require.NoError(t, err)
+	ref := "base@" + entry.Digest
+	_, err = store.Resolve(ref)
+	require.NoError(t, err, "the unchanged tree verifies")
+	require.NoError(t, os.WriteFile(filepath.Join(tree, "bin", "sh"), []byte("#!/bin/sh\n# swapped\n"), 0o700)) //nolint:gosec // G306: a shell must be executable
+	_, err = store.Resolve(ref)
+	require.Error(t, err, "a file changed behind the link fails verification")
 }
