@@ -18,6 +18,13 @@ hide="${2:-}"
 floor="${3:-2.31}"
 daemon="$dir/mgit-sandboxd"
 
+# The binutils this reads with, overridable the conventional way (a cross
+# toolchain's aarch64-linux-gnu-readelf, or a test's stand-ins: the negative
+# control below is tested on any host that way). Refs: MGIT-230.9
+READELF="${READELF:-readelf}"
+NM="${NM:-nm}"
+OBJDUMP="${OBJDUMP:-objdump}"
+
 fail() { echo "verify-linux-sandboxd: FAIL: $*" >&2; exit 1; }
 pass() { echo "  ok    $*"; }
 
@@ -32,7 +39,7 @@ krunfw="$(ls "$libdir"/libkrunfw.so.* 2>/dev/null | head -1)"
 [ -n "$krun" ] || fail "no libkrun.so.* in $dir/lib or $libdir"
 [ -n "$krunfw" ] || fail "no libkrunfw.so.* in $libdir"
 
-dyn() { readelf -d "$1"; }
+dyn() { "$READELF" -d "$1"; }
 dyn "$daemon" | grep -q "(NEEDED).*\[$(basename "$krun")\]" || fail "the daemon does not link $(basename "$krun"):
 $(dyn "$daemon" | grep NEEDED)"
 dyn "$daemon" | grep -q '(RUNPATH)' && fail "the daemon carries a DT_RUNPATH; the bundle must win over LD_LIBRARY_PATH, which only DT_RPATH does"
@@ -45,11 +52,11 @@ dyn "$krun" | grep -q '(RUNPATH)' && fail "$(basename "$krun") carries a DT_RUNP
 [ "$(dyn "$krun" | sed -n 's/.*(RPATH).*\[\(.*\)\].*/\1/p')" = '$ORIGIN' ] || fail "$(basename "$krun")'s DT_RPATH is not \$ORIGIN"
 pass "$(basename "$krun") finds libkrunfw beside itself (DT_RPATH \$ORIGIN)"
 
-nm -D --defined-only "$krun" | grep -q ' T krun_add_net_unixgram$' ||
+"$NM" -D --defined-only "$krun" | grep -q ' T krun_add_net_unixgram$' ||
 	fail "$(basename "$krun") was built WITHOUT networking (no krun_add_net_unixgram): every guest would fall back to TSI"
 pass "libkrun exports krun_add_net_unixgram (built with NET=1)"
 
-newest="$(objdump -T "$daemon" "$krun" "$krunfw" 2>/dev/null | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)"
+newest="$("$OBJDUMP" -T "$daemon" "$krun" "$krunfw" 2>/dev/null | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)"
 [ -n "$newest" ] || fail "could not read the glibc symbol versions"
 [ "$(printf '%s\n%s\n' "$newest" "$floor" | sort -V | tail -1)" = "$floor" ] ||
 	fail "the bundle needs glibc $newest, newer than the promised floor $floor"
