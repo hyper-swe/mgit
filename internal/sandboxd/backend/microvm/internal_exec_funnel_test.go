@@ -54,18 +54,20 @@ func TestInternalExec_OnlyKnownFunctionsReachTheGuestExecChain(t *testing.T) {
 		seen[prim] = map[string]bool{}
 	}
 
-	// The whole daemon-side exec tree: guestexec (the encoder's caller), this
-	// package (execOnce/execUntilTheGuestAnswers), and every backend that could
-	// dial and exec. "../../.." is internal/sandboxd from this package.
-	sandboxRoot := filepath.Join("..", "..", "..")
+	// The WHOLE module — every host-side package that could import the exec
+	// packages and call a primitive (a backend, the daemon main under cmd/, a
+	// helper). "../../../.." is the repo root from this package.
+	repoRoot := filepath.Join("..", "..", "..", "..")
 	fset := token.NewFileSet()
 	filesScanned := 0
-	err := filepath.WalkDir(sandboxRoot, func(path string, d fs.DirEntry, err error) error {
+	var dotImports []string
+	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == "testdata" {
+			switch d.Name() {
+			case ".git", "vendor", "testdata", "node_modules":
 				return filepath.SkipDir
 			}
 			return nil
@@ -83,11 +85,19 @@ func TestInternalExec_OnlyKnownFunctionsReachTheGuestExecChain(t *testing.T) {
 		}
 		filesScanned++
 		imports := importPaths(file)
+		// A dot-import of an exec package would make its funcs unqualified
+		// idents (Run, WriteRequest) that no selector-based pin can see. Ban
+		// it outright — nothing legitimately dot-imports these — so every
+		// reference stays qualified and path-resolvable.
+		if dotImportsExecPackage(file) {
+			dotImports = append(dotImports, path)
+		}
 		recordExecReferences(file, imports, topLevel, seen)
 		return nil
 	})
 	require.NoError(t, err)
-	require.Positive(t, filesScanned, "scanned the internal/sandboxd exec tree")
+	require.Positive(t, filesScanned, "scanned the module")
+	assert.Empty(t, dotImports, "no file may dot-import the exec packages (guestexec/execwire) — it hides Run/WriteRequest from the caller pin (MGIT-272)")
 	// Scope guard: the encoder's known caller and the settle funnel must have
 	// been seen, or the scan missed the packages it is meant to cover.
 	require.True(t, seen["execwire.WriteRequest"]["Run"], "scanned guestexec (the encoder's caller)")
@@ -105,6 +115,22 @@ func TestInternalExec_OnlyKnownFunctionsReachTheGuestExecChain(t *testing.T) {
 			assert.Truef(t, callers[caller], "expected %s to reach %s; the funnel moved", caller, prim)
 		}
 	}
+}
+
+// dotImportsExecPackage reports whether the file dot-imports guestexec or
+// execwire (import name "."), which would expose their funcs as unqualified
+// identifiers a selector-based pin cannot see.
+func dotImportsExecPackage(file *ast.File) bool {
+	for _, imp := range file.Imports {
+		if imp.Name == nil || imp.Name.Name != "." {
+			continue
+		}
+		p := strings.Trim(imp.Path.Value, `"`)
+		if strings.HasSuffix(p, "internal/sandboxd/guestexec") || strings.HasSuffix(p, "internal/execwire") {
+			return true
+		}
+	}
+	return false
 }
 
 // importPaths maps each file-local import name (its alias, or the package's
