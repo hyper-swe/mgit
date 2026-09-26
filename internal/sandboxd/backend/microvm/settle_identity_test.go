@@ -231,18 +231,50 @@ func TestSettleProbe_WhenShellCapableGuestContentMismatches_FailsHard(t *testing
 	assert.Empty(t, view.unverifiable, "the soft cannot-tell path never masks a catchable mismatch")
 }
 
-// (ii) The guest's ANSWER cannot select the soft "cannot tell" path. A guest
-// that answers (the exec starts and returns, err nil) with a wrong or empty
-// result gets a HARD stale verdict, not the soft note — the soft path is
-// reached only through the exec-transport start failure (a base-image
-// property), never through anything the read-back's stdout or exit says.
-// Refs: MGIT-272, MGIT-192
-func TestSettleProbe_AGuestAnswerCannotSelectCannotTell(t *testing.T) {
+// (ii) A guest cannot fabricate a VERIFIED verdict. A read-back that runs and
+// returns (err nil, exit 0) but does not produce the staged digest is a HARD
+// stale verdict — the guest cannot make an unverified answer look verified by
+// what its stdout says. The soft "cannot tell" is never "verified"; it is only
+// ever reached by genuine tool-absence signals (the exec could not start, or
+// the read-back's own missing-tool exit — pinned separately below), which
+// yield an honest unverified note, never a clean verdict. Refs: MGIT-272, MGIT-192
+func TestSettleProbe_AnUnverifiedAnswerAtExitZeroIsHardNotSoft(t *testing.T) {
 	id := model.RootIdentity()
 	s, rec, req := oneFileSettle(&id, &id, &recordingAuditor{})
 	rec.hashes = map[string]string{} // the exec succeeds (err nil, exit 0) but reports no digest
 	view, err := s.Probe(context.Background(), req)
 	require.NoError(t, err)
 	assert.NotEmpty(t, view.stale, "a guest that answers without the staged digest is stale, a hard verdict")
-	assert.Empty(t, view.unverifiable, "an answering guest cannot reach the soft cannot-tell path through its output")
+	assert.Empty(t, view.unverifiable, "an exit-0 answer that is not the staged digest cannot look verified or cannot-tell")
+}
+
+// exitingGuestExec is a read-back that starts and returns a chosen exit code
+// with no output — for pinning the missing-tool exit as the soft signal.
+type exitingGuestExec struct {
+	ranAs *model.GuestIdentity
+	code  int
+}
+
+func (e exitingGuestExec) run(_ context.Context, _ string, _ model.ExecRequest) (*model.ExecResult, error) {
+	return &model.ExecResult{ExitCode: e.code, RanAs: e.ranAs}, nil
+}
+
+// (ii, cont.) Exit 127 IS the soft "cannot tell" path, by design: the
+// read-back's absolute sha256sum candidate list exits 127 when no candidate is
+// executable, the guest's own missing-tool signal. It yields an honest
+// unverified note, never a clean or verified verdict, so it cannot pass off
+// unverified content as verified — the only thing a guest gains by emitting it
+// is "I could not verify from inside". Refs: MGIT-272, MGIT-192
+func TestSettleProbe_MissingToolExitIsTheSoftSignal(t *testing.T) {
+	id := model.RootIdentity()
+	m := &Manager{internalIdentity: &id, internalAudit: &recordingAuditor{}}
+	s := execSettler{m: m, exec: exitingGuestExec{ranAs: &id, code: 127}.run}
+	req := settleRequest{
+		sandboxID: "sb1", taskID: "MGIT-272", network: model.NetworkModeNone, worktree: "/wt",
+		want: worktreesync.Manifest{"app.go": {Hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Mode: 0o644}},
+	}
+	view, err := s.Probe(context.Background(), req)
+	require.NoError(t, err)
+	assert.NotEmpty(t, view.unverifiable, "the missing-tool exit is an honest soft cannot-tell")
+	assert.Empty(t, view.stale, "cannot-tell is not a content verdict")
 }
