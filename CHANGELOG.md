@@ -112,6 +112,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The reduced-isolation container backend runs a guest command as the
+  identity the daemon requests (MGIT-273).** The fallback backend ran a
+  command without applying that identity, so the identity model did not hold
+  on it and an audited identity request was recorded without changing what
+  ran. It now applies the requested identity the way the microVM backends do.
+
 - **The course-correction fork mgit prescribes inside a task worktree now
   works (MGIT-82).** The working discipline mgit writes into every task
   worktree said to fork a new line with `mgit checkout -b`, which a task
