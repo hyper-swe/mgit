@@ -34,3 +34,16 @@ var internalExecSites = []internalExecSite{
 	{Name: "settle read-back", Program: settleShell, AuditedIdentity: true},
 	{Name: "readiness probe", Program: guestProbeCommand[0], NoExec: true},
 }
+
+// isAuditedInternalProgram reports whether prog is a registered internal exec
+// site that runs through the audited identity path. execSettler.run refuses
+// any other program, so a new internal exec must be registered here.
+// Refs: MGIT-272
+func isAuditedInternalProgram(prog string) bool {
+	for _, s := range internalExecSites {
+		if s.AuditedIdentity && s.Program == prog {
+			return true
+		}
+	}
+	return false
+}
