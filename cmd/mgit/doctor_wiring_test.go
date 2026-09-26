@@ -33,7 +33,7 @@ func runDoctor(t *testing.T, connect connectFunc, args ...string) (string, error
 			break
 		}
 	}
-	root.AddCommand(hostOnly(doctorCmd(connect)))
+	root.AddCommand(hostOnly(doctorCmdWith(connect, noHostDaemons)))
 
 	var out bytes.Buffer
 	root.SetOut(&out)
@@ -179,7 +179,7 @@ func TestDoctorChecks_RegistersEveryCheckTheDoctorPackageDefines(t *testing.T) {
 	defer app.Close()
 
 	wired := make(map[string]bool)
-	for _, c := range doctorChecks(app, connecting(&fakeSandboxClient{})) {
+	for _, c := range doctorChecks(app, connecting(&fakeSandboxClient{}), noHostDaemons) {
 		wired[c.Name()] = true
 	}
 
