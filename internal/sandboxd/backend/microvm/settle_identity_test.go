@@ -101,6 +101,26 @@ func TestSettleProbe_WhenWired_RunsAsTheInternalIdentity(t *testing.T) {
 	}
 }
 
+// Every program the settler asks the guest to run is named by an absolute
+// path, so it cannot be resolved to something placed on the guest's search
+// path. Refs: MGIT-272
+func TestSettleProbe_NamesEveryProgramByAbsolutePath(t *testing.T) {
+	id := model.RootIdentity()
+	s, rec, req := oneFileSettle(&id, &id, &recordingAuditor{})
+	req.deleted = []string{"gone.go"} // exercise the presence-check exec too
+
+	_, err := s.Probe(context.Background(), req)
+	require.NoError(t, err)
+
+	sent := rec.sent()
+	require.NotEmpty(t, sent)
+	for _, rq := range sent {
+		require.NotEmpty(t, rq.Command)
+		assert.Truef(t, path.IsAbs(rq.Command[0]),
+			"every settle exec names its program by an absolute path: %q", rq.Command[0])
+	}
+}
+
 // Each settle probe is recorded once as a privileged internal exec, with the
 // task and sandbox it ran for. Refs: MGIT-272, FR-17.18
 func TestSettleProbe_WhenWired_IsRecordedOnce(t *testing.T) {
