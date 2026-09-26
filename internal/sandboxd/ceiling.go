@@ -241,6 +241,22 @@ func (c *CeilingManager) SyncWorktree(ctx context.Context, id string, opts model
 	return syncer.SyncWorktree(ctx, id, opts)
 }
 
+// internalExecWirer is a backend whose own privileged internal execs can be
+// given an explicit identity and an audit sink. Refs: MGIT-272
+type internalExecWirer interface {
+	SetInternalExec(auditor model.SandboxEventAppender, identity model.GuestIdentity)
+}
+
+// SetInternalExec forwards the internal-exec identity and audit sink to the
+// inner backend when it has such execs (the microVM backends). The ceiling
+// wraps every manager, so without this passthrough the wiring would never
+// reach the backend. Refs: MGIT-272
+func (c *CeilingManager) SetInternalExec(auditor model.SandboxEventAppender, identity model.GuestIdentity) {
+	if w, ok := c.inner.(internalExecWirer); ok {
+		w.SetInternalExec(auditor, identity)
+	}
+}
+
 // VerifyGuestView forwards to the inner backend when it can ask a guest what
 // it reads. Refs: MGIT-164
 func (c *CeilingManager) VerifyGuestView(ctx context.Context, id string) (*model.GuestViewReport, error) {

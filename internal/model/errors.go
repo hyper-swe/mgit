@@ -204,6 +204,14 @@ var (
 	// the sandbox was torn down rather than reported as running. Refs: MGIT-92
 	ErrGuestNotServing = errors.New("guest never answered on its control channel")
 
+	// ErrGuestExecIdentityMismatch reports that a daemon-internal guest exec
+	// ran as an identity other than the one asked for — the guest confirmed a
+	// different uid/gid. A sync refuses rather than trust a guest that ran the
+	// read-back as the wrong identity. A guest that did not report an identity
+	// at all (a base that predates the field) is unverifiable, not a mismatch,
+	// and is handled softly. Refs: MGIT-272, MGIT-151
+	ErrGuestExecIdentityMismatch = errors.New("guest ran an internal exec as an unexpected identity")
+
 	// ErrSandboxDaemonUnresponsive reports that mgit-sandboxd stopped emitting
 	// liveness beats on an exec stream that was still open: the DAEMON
 	// stalled. Neither the command nor the guest is implicated — a beating

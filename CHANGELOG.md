@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Carry a patched libkrun in the macOS build; fixes MGIT-225 (MGIT-259).
+- **The daemon's own guest execs run through the audited identity path with
+  absolute program paths (MGIT-272, MGIT-270).** A sync's read-back — the
+  step that confirms the guest sees what was delivered — now runs as an
+  explicit identity, is recorded in the same audit log an operator's audited
+  privileged exec uses, names its program by an absolute path, and refuses
+  the sync
+  if the guest confirms it ran as a different identity (a guest that reports
+  none, on a base predating the field, stays a soft "cannot tell" while the
+  content digest remains a hard check). The step that keeps the guest's view
+  current across a sync is retained, now as a recorded privileged step rather
+  than a silent one. The readiness probe names an absolute program, so only
+  the guest's control plane, never a file, answers it.
+
 - **Every third-party action in the workflows is pinned to a full commit
   SHA (MGIT-246).** Whoever controls an action's repository can move a tag
   to other code, and the release workflow runs its actions with the
@@ -112,6 +125,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a library is missing.
 
 ### Fixed
+
+- **The reduced-isolation container backend runs a guest command as the
+  identity the daemon requests (MGIT-273).** The fallback backend ran a
+  command without applying that identity, so the identity model did not hold
+  on it and an audited identity request was recorded without changing what
+  ran. It now applies the requested identity the way the microVM backends do.
 
 - **The course-correction fork mgit prescribes inside a task worktree now
   works (MGIT-82).** The working discipline mgit writes into every task

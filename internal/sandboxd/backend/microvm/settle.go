@@ -2,6 +2,7 @@ package microvm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -31,13 +32,23 @@ const (
 	settlePollDefault   = 100 * time.Millisecond // one probe costs one exec round trip
 	settleExecTimeout   = 20 * time.Second       // a probe that hangs must not hold the sync lock forever
 	settleArgvChunk     = 2000                   // sha256sum argv per exec, under the guest's argv cap
+	settleShell         = "/bin/sh"              // the settle execs' program, named absolutely (MGIT-272)
 )
+
+// sha256sumScript finds sha256sum among absolute candidates and exec's it with
+// the delivered paths, so the only program the guest exec's is the absolute
+// shell — never a bare "sha256sum" resolved against the guest's search path.
+// It exits 127 when no candidate exists, which the reader treats as "cannot
+// tell" exactly as a missing tool always was. Refs: MGIT-272
+const sha256sumScript = `for c in /usr/bin/sha256sum /bin/sha256sum; do [ -x "$c" ] && exec "$c" -- "$@"; done; exit 127`
 
 // settleRequest names what the guest must confirm it reads: the staged digest
 // of every delivered path, and the absence of every deleted one. Paths are
 // worktree-relative; the guest mounts the worktree at the host's own path.
 type settleRequest struct {
 	sandboxID string
+	taskID    string // for the privileged-internal-exec audit record (MGIT-272)
+	network   string // the sandbox's network mode, for the audit record
 	worktree  string
 	want      worktreesync.Manifest
 	deleted   []string
@@ -62,7 +73,7 @@ func defaultSettler(m *Manager) guestSettler {
 	if m.cfg.GuestDialer == nil {
 		return noExecSettler{}
 	}
-	return execSettler{m: m}
+	return execSettler{m: m, exec: m.execUntilTheGuestAnswers}
 }
 
 // settleGuest waits, within the budget, for the guest to read what was just
@@ -73,8 +84,8 @@ func (m *Manager) settleGuest(ctx context.Context, sb *sandbox, res worktreesync
 	if res.DryRun || res.Skipped || len(res.Updated)+len(res.Deleted) == 0 {
 		return "", nil
 	}
-	req := settleRequest{sandboxID: sb.info.ID, worktree: sb.info.WorktreePath,
-		want: res.Entries, deleted: res.Deleted}
+	req := settleRequest{sandboxID: sb.info.ID, taskID: sb.info.TaskID, network: sb.info.NetworkMode,
+		worktree: sb.info.WorktreePath, want: res.Entries, deleted: res.Deleted}
 	// The bound is counted in probes, not read from a clock, so a frozen test
 	// clock cannot turn a finite wait into an infinite one.
 	probes := int(m.settleBudget/m.settlePoll) + 1
@@ -116,19 +127,37 @@ func (noExecSettler) Probe(context.Context, settleRequest) (settleView, error) {
 // Linux guest already has — a shell, /proc, and sha256sum — because the guest
 // binaries are frozen at compose time and a base composed before this fix
 // must still be verifiable. Refs: MGIT-192, MGIT-174
-type execSettler struct{ m *Manager }
+type execSettler struct {
+	m *Manager
+	// exec runs one command in the guest and waits for it to answer. It is a
+	// field so a test can drive the settler with a guest whose identity echo
+	// and output it controls; production passes m.execUntilTheGuestAnswers.
+	// Refs: MGIT-272
+	exec func(ctx context.Context, id string, req model.ExecRequest) (*model.ExecResult, error)
+}
 
 // Probe invalidates the guest's cached view and then hashes the delivered
 // paths from inside the guest. The invalidation is best effort and measured
 // effective at once on libkrun (MGIT-192, rounds 5 and 6); the verdict is
 // the read that follows it, never the invalidation's exit code.
 func (s execSettler) Probe(ctx context.Context, req settleRequest) (settleView, error) {
+	// Record the privileged internal exec before it runs, and refuse to run
+	// if it cannot be recorded — an unrecorded privileged exec is the thing
+	// the record exists to prevent. Refs: MGIT-272, FR-17.18
+	if err := s.auditInternalExec(ctx, req); err != nil {
+		return settleView{}, fmt.Errorf("recording the settle probe: %w", err)
+	}
 	// The drop's result is deliberately not consulted: a guest without /proc
 	// or a shell simply keeps its cache, and the hash below still decides.
-	_, _ = s.run(ctx, req.sandboxID, []string{"sh", "-c", "sync; echo 2 > /proc/sys/vm/drop_caches"})
+	_, _ = s.run(ctx, req.sandboxID, []string{settleShell, "-c", "sync; echo 2 > /proc/sys/vm/drop_caches"})
 	got := map[string]string{}
+	var idUnconfirmed bool
 	for _, chunk := range chunkPaths(regularPaths(req.want), settleArgvChunk) {
-		argv := append([]string{"sha256sum", "--"}, absolute(req.worktree, chunk)...)
+		// The only program the guest exec's is the absolute shell; it finds
+		// sha256sum among absolute candidates and exec's it, and exits 127
+		// when none exists — the same "cannot tell" the reader below handles.
+		// A bare "sha256sum" would resolve against the guest's search path. Refs: MGIT-272
+		argv := append([]string{settleShell, "-c", sha256sumScript, "sh"}, absolute(req.worktree, chunk)...)
 		res, err := s.run(ctx, req.sandboxID, argv)
 		if note, missing := toolMissing("sha256sum", res, err); missing {
 			return settleView{unverifiable: note}, nil
@@ -136,45 +165,112 @@ func (s execSettler) Probe(ctx context.Context, req settleRequest) (settleView, 
 		if err != nil {
 			return settleView{}, err
 		}
+		unc, idErr := s.verifyIdentity(res)
+		if idErr != nil {
+			return settleView{}, idErr
+		}
+		idUnconfirmed = idUnconfirmed || unc
 		for path, hash := range parseSha256sum(string(res.Stdout)) {
 			got[relative(req.worktree, path)] = hash
 		}
 	}
-	still, note, err := s.stillPresent(ctx, req)
+	still, note, unc, err := s.stillPresent(ctx, req)
 	if err != nil {
 		return settleView{}, err
 	}
 	if note != "" {
 		return settleView{unverifiable: note}, nil
 	}
-	return classifyGuestView(req.want, got, req.deleted, still), nil
+	idUnconfirmed = idUnconfirmed || unc
+	view := classifyGuestView(req.want, got, req.deleted, still)
+	// A guest that never confirmed the identity it ran as is a soft "cannot
+	// tell" — but only when the content agrees. A content mismatch stays the
+	// hard refusal it already is (view.stale), never masked by this note.
+	// Refs: MGIT-272, MGIT-174
+	if idUnconfirmed && len(view.stale) == 0 {
+		view.unverifiable = "the guest did not confirm the identity it ran the read-back as"
+	}
+	return view, nil
 }
 
-// stillPresent lists the deleted paths the guest can still see.
-func (s execSettler) stillPresent(ctx context.Context, req settleRequest) ([]string, string, error) {
+// stillPresent lists the deleted paths the guest can still see. It also
+// reports whether the guest confirmed the identity it ran as (unconfirmed
+// for an old base), and fails closed on a real identity mismatch.
+func (s execSettler) stillPresent(ctx context.Context, req settleRequest) (still []string, note string, unconfirmed bool, err error) {
 	if len(req.deleted) == 0 {
-		return nil, "", nil
+		return nil, "", false, nil
 	}
 	const script = `for p in "$@"; do [ -e "$p" ] || [ -L "$p" ] && printf '%s\n' "$p"; done; exit 0`
-	argv := append([]string{"sh", "-c", script, "sh"}, absolute(req.worktree, req.deleted)...)
+	argv := append([]string{settleShell, "-c", script, "sh"}, absolute(req.worktree, req.deleted)...)
 	res, err := s.run(ctx, req.sandboxID, argv)
-	if note, missing := toolMissing("sh", res, err); missing {
-		return nil, note, nil
+	if n, missing := toolMissing("sh", res, err); missing {
+		return nil, n, false, nil
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
-	var still []string
+	unconfirmed, err = s.verifyIdentity(res)
+	if err != nil {
+		return nil, "", false, err
+	}
 	for _, line := range strings.Split(strings.TrimSpace(string(res.Stdout)), "\n") {
 		if line != "" {
 			still = append(still, relative(req.worktree, line))
 		}
 	}
-	return still, "", nil
+	return still, "", unconfirmed, nil
+}
+
+// verifyIdentity checks the identity the guest confirmed running a settle exec
+// as against the one asked for. A real uid/gid mismatch is a hard failure —
+// the guest ran the read-back as the wrong identity, so its answer is not
+// trusted. A guest that reported nothing (a base predating the field) is
+// unconfirmed, a soft "cannot tell", never a hard failure. When no internal
+// identity is wired there is nothing to verify. Refs: MGIT-272, MGIT-151, MGIT-174
+func (s execSettler) verifyIdentity(res *model.ExecResult) (unconfirmed bool, err error) {
+	if s.m.internalIdentity == nil || res == nil {
+		return false, nil
+	}
+	v := model.VerdictOnExecIdentity(s.m.internalIdentity, res.RanAs)
+	switch {
+	case v.Verified:
+		return false, nil
+	case res.RanAs == nil:
+		return true, nil
+	default:
+		return false, fmt.Errorf("%w: %s", model.ErrGuestExecIdentityMismatch, v.Reason)
+	}
 }
 
 func (s execSettler) run(ctx context.Context, id string, argv []string) (*model.ExecResult, error) {
-	return s.m.execUntilTheGuestAnswers(ctx, id, model.ExecRequest{Command: argv, Timeout: settleExecTimeout})
+	req := model.ExecRequest{Command: argv, Timeout: settleExecTimeout}
+	// Run as the explicit internal identity when wired. Without it (an
+	// unwired manager, as in a unit test that does not exercise this) the
+	// exec carries no identity — the behavior before the identity was made
+	// explicit. Refs: MGIT-272, MGIT-151
+	if s.m.internalIdentity != nil {
+		identity := *s.m.internalIdentity
+		req.RunAs = &identity
+	}
+	return s.exec(ctx, id, req)
+}
+
+// auditInternalExec records the settle probe as one privileged internal exec
+// BEFORE it runs, so an unrecorded privileged exec never happens — the same
+// rule the operator's --as-root escalation follows. A nil sink (an unwired
+// manager) records nothing, the pre-MGIT-272 behavior. Refs: MGIT-272, FR-17.18
+func (s execSettler) auditInternalExec(ctx context.Context, req settleRequest) error {
+	if s.m.internalAudit == nil {
+		return nil
+	}
+	detail, err := json.Marshal(model.ExecEscalationDetail{Program: settleShell, Args: len(regularPaths(req.want))})
+	if err != nil {
+		return fmt.Errorf("encode settle audit: %w", err)
+	}
+	return s.m.internalAudit.AppendSandboxEvent(ctx, &model.SandboxEvent{
+		SandboxID: req.sandboxID, TaskID: req.taskID, EventType: model.EventExecPrivileged,
+		NetworkMode: req.network, Detail: string(detail),
+	})
 }
 
 // toolMissing recognizes a guest that lacks the tool a probe needs, which is
@@ -182,6 +278,14 @@ func (s execSettler) run(ctx context.Context, id string, argv []string) (*model.
 func toolMissing(tool string, res *model.ExecResult, err error) (string, bool) {
 	note := "the guest has no " + tool + ", so what it reads cannot be verified from inside it"
 	if err != nil && strings.Contains(err.Error(), "not found") {
+		return note, true
+	}
+	// The program resolved but could not be started: a guest with no usable
+	// shell or tool inside (a symlink to a runtime that is not present).
+	// "cannot tell" from inside, exactly like a missing tool — never a hard
+	// sync failure, and it cannot mask a content mismatch, which needs a
+	// running read-back. Refs: MGIT-272, MGIT-192
+	if err != nil && strings.Contains(err.Error(), "no such file or directory") {
 		return note, true
 	}
 	if res != nil && res.ExitCode == 127 {
@@ -299,7 +403,8 @@ func (m *Manager) VerifyGuestView(ctx context.Context, id string) (*model.GuestV
 	if len(delivered) == 0 {
 		return &model.GuestViewReport{Unverifiable: "nothing has been delivered to this sandbox yet"}, nil
 	}
-	view, err := m.settler.Probe(ctx, settleRequest{sandboxID: sb.info.ID, worktree: sb.info.WorktreePath, want: delivered})
+	view, err := m.settler.Probe(ctx, settleRequest{sandboxID: sb.info.ID, taskID: sb.info.TaskID,
+		network: sb.info.NetworkMode, worktree: sb.info.WorktreePath, want: delivered})
 	if err != nil {
 		return nil, fmt.Errorf("asking the guest what it reads: %w", err)
 	}

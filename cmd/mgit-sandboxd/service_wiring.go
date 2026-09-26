@@ -64,6 +64,16 @@ func buildSandboxService(manager model.SandboxManager, hostRoot string, policySt
 	// command can read the base and write the worktree as. A daemon run as
 	// root delivers root-owned trees and its execs stay root. Refs: MGIT-151
 	svc.SetExecIdentity(model.IdentityForProcess(os.Getuid(), os.Getgid()))
+	// The daemon's own settle execs (a sync's read-back) run as an explicit
+	// privileged identity and are recorded to the same audit trail as the
+	// operator's --as-root, so a privileged internal exec is never silent.
+	// Only a microVM backend has such execs; the ceiling forwards it or drops
+	// it. Refs: MGIT-272, MGIT-151
+	if w, ok := manager.(interface {
+		SetInternalExec(model.SandboxEventAppender, model.GuestIdentity)
+	}); ok {
+		w.SetInternalExec(events, model.RootIdentity())
+	}
 	return svc, events, events.Close, nil
 }
 

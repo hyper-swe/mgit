@@ -1018,3 +1018,30 @@ jobs:
             "$RUNNER_TEMP/libkrun-validated.log" "$RUNNER_TEMP/libkrun-gap.log"
           echo "== Linux/libkrun live evidence =="
           grep -E 'REAL VM PASS' "$RUNNER_TEMP/libkrun-validated.log" || true
+
+  # The reduced-isolation container backend applies the requested exec
+  # identity (MGIT-273). Applying it is only correct if that identity can
+  # still WRITE the mounted worktree, which the launch identity-mapping
+  # exists for — a property no unit test with a faked runtime can show. This
+  # job runs the env-gated container e2e against a real rootless runtime
+  # (present on the hosted runner; the backend needs no VM, so no /dev/kvm),
+  # and records what an audited elevated identity can do. Refs: MGIT-273
+  container-backend-e2e:
+    name: Container backend (identity + worktree write)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.26.6"
+      - name: The rootless runtime is usable
+        run: |
+          podman version
+          podman info >/dev/null
+      - name: Container backend e2e — identity, worktree write, and store isolation
+        env:
+          # The image this release vouches for (release-base.json); it carries
+          # /bin/sh and coreutils, which the e2e needs. Refs: MGIT-273, MGIT-219
+          MGIT_E2E_CONTAINER_IMAGE: debian:12@sha256:f37a335e82bca302e955fa39f9dfe28f1be618f016f8a2b56318e5a5111afc26
+        run: |
+          go test -run 'TestE2E_Container' ./internal/sandboxd/backend/container/ -count=1 -v

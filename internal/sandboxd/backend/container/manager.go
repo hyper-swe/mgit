@@ -271,10 +271,19 @@ func (m *Manager) quarantine(id string, opts model.SandboxLaunchOptions) (stateD
 // live), so a quarantined container can never reach the live worktree's own
 // store. Refs: FR-17.3, FR-17.14, SEC-03
 func (m *Manager) runArgs(name, network, srcDir string, opts model.SandboxLaunchOptions) []string {
-	args := make([]string, 0, 16+2*len(m.cfg.SensitivePaths))
+	args := make([]string, 0, 18+2*len(m.cfg.SensitivePaths))
 	args = append(args,
 		"run", "--detach", "--name", name,
 		"--network", network,
+		// Map the daemon's host identity to the same identity inside the
+		// container. The runtime is rootless, so without this the daemon maps
+		// to a different identity inside and the worktree it mounts (owned by
+		// the daemon on the host) is not writable as the identity the daemon
+		// runs execs as. keep-id preserves the numeric identity, so the
+		// worktree is owned by, and writable as, the exec identity — matching
+		// the microVM backends, where the delivering identity owns the tree.
+		// Refs: MGIT-273, MGIT-151, SEC-03
+		"--userns", "keep-id",
 		"--memory", strconv.Itoa(effectiveMemoryMB(opts.MemoryMB))+"m",
 		"--cpus", strconv.Itoa(effectiveCPUs(opts.CPUs)),
 		"--volume", srcDir+":"+opts.WorktreePath,
@@ -343,17 +352,27 @@ func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*
 	for _, env := range req.Env {
 		args = append(args, "--env", env)
 	}
+	// Run as the identity the daemon chose (RunAs; the service decides it —
+	// the unprivileged daemon identity, or root for an audited --as-root).
+	// Without --user, podman runs as the image's default account, so the
+	// command would run as an identity other than the requested one and an
+	// audited root request would change nothing. The microVM backends set
+	// this identity; the container fallback must too. Refs: MGIT-273, MGIT-151
+	ran := req.RunAs
+	if ran != nil {
+		args = append(args, "--user", fmt.Sprintf("%d:%d", ran.UID, ran.GID))
+	}
 	args = append(args, sb.name)
 	args = append(args, req.Command...)
 	out, err := m.cfg.Runner.run(ctx, args...)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			return &model.ExecResult{Stdout: out, Stderr: exitErr.Stderr, ExitCode: exitErr.ExitCode()}, nil
+			return &model.ExecResult{Stdout: out, Stderr: exitErr.Stderr, ExitCode: exitErr.ExitCode(), RanAs: ran}, nil
 		}
 		return nil, fmt.Errorf("container exec: %w", err)
 	}
-	return &model.ExecResult{Stdout: out, ExitCode: 0}, nil
+	return &model.ExecResult{Stdout: out, ExitCode: 0, RanAs: ran}, nil
 }
 
 // Stop halts the container (state suspended; resources held until
