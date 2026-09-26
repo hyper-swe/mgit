@@ -53,12 +53,16 @@ func (f *ignoreFilter) load() error {
 		return nil
 	}
 	f.files, f.dirs = map[string]bool{}, map[string]bool{}
-	head, err := f.repo.headFiles()
-	if err != nil {
-		return fmt.Errorf("read the paths mgit tracks: %w", err)
-	}
-	for p := range head {
-		f.add(p)
+	// A Repository with a root and no store behind it tracks nothing in mgit
+	// (MGIT-274): only a test walks one, but it must not dereference nil.
+	if f.repo.repo != nil {
+		head, err := f.repo.headFiles()
+		if err != nil {
+			return fmt.Errorf("read the paths mgit tracks: %w", err)
+		}
+		for p := range head {
+			f.add(p)
+		}
 	}
 	committed, err := gitref.CommittedBlobs(f.repo.root)
 	switch {
