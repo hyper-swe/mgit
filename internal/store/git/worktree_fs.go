@@ -108,12 +108,14 @@ func (r *Repository) workingFileContent(rel string) ([]byte, filemode.FileMode, 
 // project-relative file paths, excluding .mgit/ and .git/. Directories are not
 // included. Symlinks are NOT followed by filepath.WalkDir, so a symlink entry
 // is reported as a non-directory file path and tracked as a symlink (its link
-// text), never traversed into. Refs: MGIT-14.7 (#2)
+// text), never traversed into. Ignore rules hide untracked paths only
+// (ignoreFilter). Refs: MGIT-14.7 (#2), MGIT-32, MGIT-269
 func (r *Repository) listWorkingFiles() ([]string, error) {
 	matcher, err := r.ignoreMatcher()
 	if err != nil {
 		return nil, err
 	}
+	ignored := &ignoreFilter{repo: r, matcher: matcher}
 	var paths []string
 	err = filepath.WalkDir(r.root, func(abs string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -146,13 +148,17 @@ func (r *Repository) listWorkingFiles() ([]string, error) {
 		if d.IsDir() && isNestedMgitRoot(abs) {
 			return filepath.SkipDir
 		}
-		// Honor .gitignore (MGIT-32): an ignored directory is not descended and
-		// an ignored file is not listed, so `mgit status`/`add .` see only
-		// trackable working files. .git/.mgit are excluded above UNCONDITIONALLY
-		// (sacrosanct, never subject to ignore rules). A file already tracked in
-		// HEAD that a later .gitignore rule covers is the rare git edge gitignore
-		// itself does not retract — out of scope here; stage it explicitly.
-		if matcher.Match(strings.Split(rel, "/"), d.IsDir()) {
+		// Honor .gitignore (MGIT-32) for UNTRACKED paths, as git does: an
+		// ignored directory with nothing tracked under it is not descended, and
+		// an ignored untracked file is not listed, so `mgit status`/`add .` see
+		// only trackable working files. A path git or mgit tracks is listed
+		// whatever the rules say (MGIT-269). .git/.mgit are excluded above
+		// UNCONDITIONALLY (sacrosanct, never subject to ignore rules).
+		hide, err := ignored.hides(rel, d.IsDir())
+		if err != nil {
+			return err
+		}
+		if hide {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}

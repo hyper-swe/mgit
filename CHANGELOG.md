@@ -125,6 +125,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorded the pick under the old task, so the new task's log did not
   show it and its squash failed. A contradicting `--task-id` is refused.
   ADR-013 records the decision.
+- **Files git tracks reach mgit's base and every task worktree, whatever the
+  ignore rules say (MGIT-269).** Git applies ignore rules to untracked files
+  only, so a file force-added under a `*.log` rule, or committed inside a
+  directory a later `build/` rule ignores, stays tracked. mgit applied the
+  rules to every file: its base never held those files, a task worktree
+  lacked them, a loop reading the worktree saw them as deleted, and
+  `mgit status` never saw an edit to one. A path git has committed, or mgit
+  has, is now kept; untracked ignored files stay out, and `mgit add` still
+  skips new ignored files.
 - **`mgit sandbox launch` refuses a worktree that holds the repository's
   store before it registers or writes anything (MGIT-222).** A launch with
   the repository root, or a directory containing it, as its worktree
