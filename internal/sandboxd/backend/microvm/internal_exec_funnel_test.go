@@ -150,20 +150,27 @@ func importPaths(file *ast.File) map[string]string {
 }
 
 // recordExecReferences records, per enclosing declaration, which guest-exec
-// primitives it references. Package-qualified primitives are matched by import
-// path; the two Manager methods by selector name (which also catches a method
-// value like (*Manager).execOnce).
+// primitives it references. A cross-package call is a SelectorExpr, matched by
+// import path (or by selector name for the Manager methods and a method value).
+// A call WITHIN the primitive's own package is a bare Ident (e.g. a new
+// guestexec.RunUngoverned calling Run directly), matched only in that package.
+// The declaration's own name is excluded (function bodies and top-level
+// declarations are scanned, never a FuncDecl's name identifier).
 func recordExecReferences(file *ast.File, imports map[string]string, topLevel string, seen map[string]map[string]bool) {
+	pkg := file.Name.Name
+	mark := func(enclosing, prim string) {
+		if _, tracked := seen[prim]; prim != "" && tracked {
+			seen[prim][enclosing] = true
+		}
+	}
 	visit := func(enclosing string, node ast.Node) {
 		ast.Inspect(node, func(n ast.Node) bool {
-			sel, ok := n.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			if prim := execPrimitive(sel, imports); prim != "" {
-				if _, tracked := seen[prim]; tracked {
-					seen[prim][enclosing] = true
-				}
+			switch e := n.(type) {
+			case *ast.SelectorExpr:
+				mark(enclosing, execPrimitive(e, imports))
+				return false // handled; its Sel is not a bare intra-package ident
+			case *ast.Ident:
+				mark(enclosing, intraPackagePrimitive(pkg, e.Name))
 			}
 			return true
 		})
@@ -171,11 +178,27 @@ func recordExecReferences(file *ast.File, imports map[string]string, topLevel st
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
-			visit(d.Name.Name, d)
+			if d.Body != nil {
+				visit(d.Name.Name, d.Body) // Body only, so the decl's own name is not a reference
+			}
 		case *ast.GenDecl:
 			visit(topLevel, d)
 		}
 	}
+}
+
+// intraPackagePrimitive matches an unqualified reference to a primitive from
+// WITHIN its own defining package, where it is called by bare name. No such
+// caller is allowed (the primitives are entered only from outside), so any
+// intra-package caller — an exported wrapper is the danger — is reported.
+func intraPackagePrimitive(pkg, name string) string {
+	switch {
+	case pkg == "guestexec" && name == "Run":
+		return "guestexec.Run"
+	case pkg == "execwire" && name == "WriteRequest":
+		return "execwire.WriteRequest"
+	}
+	return ""
 }
 
 func execPrimitive(sel *ast.SelectorExpr, imports map[string]string) string {
