@@ -14,14 +14,37 @@ import (
 	"github.com/hyper-swe/mgit/internal/model"
 )
 
-// userArg returns the value of the podman "--user" flag in args, or "".
-func userArg(args []string) string {
+// flagValue returns the value following flag in args, or "".
+func flagValue(args []string, flag string) string {
 	for i, a := range args {
-		if a == "--user" && i+1 < len(args) {
+		if a == flag && i+1 < len(args) {
 			return args[i+1]
 		}
 	}
 	return ""
+}
+
+// userArg returns the value of the podman "--user" flag in args, or "".
+func userArg(args []string) string { return flagValue(args, "--user") }
+
+// TestContainer_Launch_MapsTheDaemonIdentityIntoTheContainer verifies that a
+// launched container maps the daemon's host identity to the same identity
+// inside, so a command run as that identity owns and can write the worktree.
+// Without it, the rootless runtime maps the daemon to a different identity
+// inside and the worktree it mounts is not writable as the requested one —
+// applying the requested identity would then cost write access. Refs: MGIT-273
+func TestContainer_Launch_MapsTheDaemonIdentityIntoTheContainer(t *testing.T) {
+	runner := &fakeRunner{}
+	mgr := testManager(t, runner)
+	ctx := context.Background()
+
+	_, err := mgr.Launch(ctx, containerOpts(t, model.NetworkModeNone))
+	require.NoError(t, err)
+
+	runs := runner.callsFor("run")
+	require.Len(t, runs, 1)
+	assert.Equal(t, "keep-id", flagValue(runs[0], "--userns"),
+		"the daemon's identity maps to the same identity inside, so it can write the worktree")
 }
 
 // TestContainer_Exec_AppliesRequestedIdentity verifies that a command run on
