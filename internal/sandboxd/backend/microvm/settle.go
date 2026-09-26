@@ -38,6 +38,8 @@ const (
 // worktree-relative; the guest mounts the worktree at the host's own path.
 type settleRequest struct {
 	sandboxID string
+	taskID    string // for the privileged-internal-exec audit record (MGIT-272)
+	network   string // the sandbox's network mode, for the audit record
 	worktree  string
 	want      worktreesync.Manifest
 	deleted   []string
@@ -62,7 +64,7 @@ func defaultSettler(m *Manager) guestSettler {
 	if m.cfg.GuestDialer == nil {
 		return noExecSettler{}
 	}
-	return execSettler{m: m}
+	return execSettler{m: m, exec: m.execUntilTheGuestAnswers}
 }
 
 // settleGuest waits, within the budget, for the guest to read what was just
@@ -73,8 +75,8 @@ func (m *Manager) settleGuest(ctx context.Context, sb *sandbox, res worktreesync
 	if res.DryRun || res.Skipped || len(res.Updated)+len(res.Deleted) == 0 {
 		return "", nil
 	}
-	req := settleRequest{sandboxID: sb.info.ID, worktree: sb.info.WorktreePath,
-		want: res.Entries, deleted: res.Deleted}
+	req := settleRequest{sandboxID: sb.info.ID, taskID: sb.info.TaskID, network: sb.info.NetworkMode,
+		worktree: sb.info.WorktreePath, want: res.Entries, deleted: res.Deleted}
 	// The bound is counted in probes, not read from a clock, so a frozen test
 	// clock cannot turn a finite wait into an infinite one.
 	probes := int(m.settleBudget/m.settlePoll) + 1
@@ -116,7 +118,14 @@ func (noExecSettler) Probe(context.Context, settleRequest) (settleView, error) {
 // Linux guest already has — a shell, /proc, and sha256sum — because the guest
 // binaries are frozen at compose time and a base composed before this fix
 // must still be verifiable. Refs: MGIT-192, MGIT-174
-type execSettler struct{ m *Manager }
+type execSettler struct {
+	m *Manager
+	// exec runs one command in the guest and waits for it to answer. It is a
+	// field so a test can drive the settler with a guest whose identity echo
+	// and output it controls; production passes m.execUntilTheGuestAnswers.
+	// Refs: MGIT-272
+	exec func(ctx context.Context, id string, req model.ExecRequest) (*model.ExecResult, error)
+}
 
 // Probe invalidates the guest's cached view and then hashes the delivered
 // paths from inside the guest. The invalidation is best effort and measured
@@ -174,7 +183,7 @@ func (s execSettler) stillPresent(ctx context.Context, req settleRequest) ([]str
 }
 
 func (s execSettler) run(ctx context.Context, id string, argv []string) (*model.ExecResult, error) {
-	return s.m.execUntilTheGuestAnswers(ctx, id, model.ExecRequest{Command: argv, Timeout: settleExecTimeout})
+	return s.exec(ctx, id, model.ExecRequest{Command: argv, Timeout: settleExecTimeout})
 }
 
 // toolMissing recognizes a guest that lacks the tool a probe needs, which is
@@ -299,7 +308,8 @@ func (m *Manager) VerifyGuestView(ctx context.Context, id string) (*model.GuestV
 	if len(delivered) == 0 {
 		return &model.GuestViewReport{Unverifiable: "nothing has been delivered to this sandbox yet"}, nil
 	}
-	view, err := m.settler.Probe(ctx, settleRequest{sandboxID: sb.info.ID, worktree: sb.info.WorktreePath, want: delivered})
+	view, err := m.settler.Probe(ctx, settleRequest{sandboxID: sb.info.ID, taskID: sb.info.TaskID,
+		network: sb.info.NetworkMode, worktree: sb.info.WorktreePath, want: delivered})
 	if err != nil {
 		return nil, fmt.Errorf("asking the guest what it reads: %w", err)
 	}
