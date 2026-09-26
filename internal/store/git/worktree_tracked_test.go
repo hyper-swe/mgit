@@ -47,3 +47,21 @@ func TestListWorkingFiles_RuleMatchesAndGitUnreadable_FailsLoud(t *testing.T) {
 
 	require.ErrorIs(t, err, gitref.ErrUnsupportedGitState)
 }
+
+// A Repository with a root and no store behind it tracks nothing in mgit.
+// Walking one over an ignored path must hide that path, not dereference the
+// missing store: TestAssertNotOversized_ThisRepositoryRealContent_DoesNotFire
+// walks the repository's own tree that way and panicked wherever the walk met
+// an ignored path. Refs: MGIT-274, MGIT-269
+func TestListWorkingFiles_StorelessRepository_IgnoredPathHidden(t *testing.T) {
+	root := t.TempDir()
+	writeFileMk(t, root, ".gitignore", "*.log\n")
+	writeFileMk(t, root, "a.go", "package a\n")
+	writeFileMk(t, root, "app.log", "log\n")
+	r := &Repository{root: root}
+
+	paths, err := r.listWorkingFiles()
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{".gitignore", "a.go"}, paths)
+}
