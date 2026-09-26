@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The daemon's own guest execs run through the audited identity path with
+  absolute program paths (MGIT-272, MGIT-270).** A sync's read-back — the
+  step that confirms the guest sees what was delivered — now runs as an
+  explicit identity, is recorded in the same audit log an operator's audited
+  privileged exec uses, names its program by an absolute path, and refuses
+  the sync
+  if the guest confirms it ran as a different identity (a guest that reports
+  none, on a base predating the field, stays a soft "cannot tell" while the
+  content digest remains a hard check). The step that keeps the guest's view
+  current across a sync is retained, now as a recorded privileged step rather
+  than a silent one. The readiness probe names an absolute program, so only
+  the guest's control plane, never a file, answers it.
+
 - **Every third-party action in the workflows is pinned to a full commit
   SHA (MGIT-246).** Whoever controls an action's repository can move a tag
   to other code, and the release workflow runs its actions with the
