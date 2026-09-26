@@ -299,22 +299,14 @@ type Manager struct {
 	// when unset the settle execs carry no identity and are not recorded — the
 	// behaviour before this identity was made explicit. Refs: MGIT-272, MGIT-151
 	internalIdentity *model.GuestIdentity
-	internalAudit    InternalExecAuditor
-}
-
-// InternalExecAuditor records a daemon-internal guest exec in the append-only
-// audit log. It is the narrow slice of the index store the backend needs, so
-// the backend depends on model only and never on the service. *index.Store
-// satisfies it. Refs: MGIT-272, FR-17.18
-type InternalExecAuditor interface {
-	AppendSandboxEvent(ctx context.Context, ev *model.SandboxEvent) error
+	internalAudit    model.SandboxEventAppender
 }
 
 // SetInternalExec wires the identity the daemon's own settle execs run as and
 // the audit sink each is recorded to. It is called once, from the layer that
 // owns both the backend and the audit store, after construction (the store is
 // built after the manager). Refs: MGIT-272, MGIT-151
-func (m *Manager) SetInternalExec(auditor InternalExecAuditor, identity model.GuestIdentity) {
+func (m *Manager) SetInternalExec(auditor model.SandboxEventAppender, identity model.GuestIdentity) {
 	m.internalAudit = auditor
 	m.internalIdentity = &identity
 }

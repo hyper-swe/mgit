@@ -2,6 +2,7 @@ package microvm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -31,6 +32,7 @@ const (
 	settlePollDefault   = 100 * time.Millisecond // one probe costs one exec round trip
 	settleExecTimeout   = 20 * time.Second       // a probe that hangs must not hold the sync lock forever
 	settleArgvChunk     = 2000                   // sha256sum argv per exec, under the guest's argv cap
+	settleShell         = "/bin/sh"              // the settle execs' program, named absolutely (MGIT-272)
 )
 
 // settleRequest names what the guest must confirm it reads: the staged digest
@@ -132,6 +134,12 @@ type execSettler struct {
 // effective at once on libkrun (MGIT-192, rounds 5 and 6); the verdict is
 // the read that follows it, never the invalidation's exit code.
 func (s execSettler) Probe(ctx context.Context, req settleRequest) (settleView, error) {
+	// Record the privileged internal exec before it runs, and refuse to run
+	// if it cannot be recorded — an unrecorded privileged exec is the thing
+	// the record exists to prevent. Refs: MGIT-272, FR-17.18
+	if err := s.auditInternalExec(ctx, req); err != nil {
+		return settleView{}, fmt.Errorf("recording the settle probe: %w", err)
+	}
 	// The drop's result is deliberately not consulted: a guest without /proc
 	// or a shell simply keeps its cache, and the hash below still decides.
 	_, _ = s.run(ctx, req.sandboxID, []string{"sh", "-c", "sync; echo 2 > /proc/sys/vm/drop_caches"})
@@ -183,7 +191,34 @@ func (s execSettler) stillPresent(ctx context.Context, req settleRequest) ([]str
 }
 
 func (s execSettler) run(ctx context.Context, id string, argv []string) (*model.ExecResult, error) {
-	return s.exec(ctx, id, model.ExecRequest{Command: argv, Timeout: settleExecTimeout})
+	req := model.ExecRequest{Command: argv, Timeout: settleExecTimeout}
+	// Run as the explicit internal identity when wired. Without it (an
+	// unwired manager, as in a unit test that does not exercise this) the
+	// exec carries no identity — the behaviour before the identity was made
+	// explicit. Refs: MGIT-272, MGIT-151
+	if s.m.internalIdentity != nil {
+		identity := *s.m.internalIdentity
+		req.RunAs = &identity
+	}
+	return s.exec(ctx, id, req)
+}
+
+// auditInternalExec records the settle probe as one privileged internal exec
+// BEFORE it runs, so an unrecorded privileged exec never happens — the same
+// rule the operator's --as-root escalation follows. A nil sink (an unwired
+// manager) records nothing, the pre-MGIT-272 behaviour. Refs: MGIT-272, FR-17.18
+func (s execSettler) auditInternalExec(ctx context.Context, req settleRequest) error {
+	if s.m.internalAudit == nil {
+		return nil
+	}
+	detail, err := json.Marshal(model.ExecEscalationDetail{Program: settleShell, Args: len(regularPaths(req.want))})
+	if err != nil {
+		return fmt.Errorf("encode settle audit: %w", err)
+	}
+	return s.m.internalAudit.AppendSandboxEvent(ctx, &model.SandboxEvent{
+		SandboxID: req.sandboxID, TaskID: req.taskID, EventType: model.EventExecPrivileged,
+		NetworkMode: req.network, Detail: string(detail),
+	})
 }
 
 // toolMissing recognizes a guest that lacks the tool a probe needs, which is

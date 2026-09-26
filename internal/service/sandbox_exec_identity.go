@@ -57,19 +57,12 @@ func (s *SandboxService) decideExecIdentity(
 	return req, nil
 }
 
-// escalationDetail is what the audit records about a root exec: the
-// program and how many arguments it got — never the arguments, which may
-// carry secrets. Refs: MGIT-151, FR-17.18
-type escalationDetail struct {
-	Program string `json:"program"`
-	Args    int    `json:"args"`
-}
-
 // auditEscalation writes the exec_privileged event; a failed write refuses
 // the exec, since an unrecorded escalation is the thing the event exists
-// to prevent. Refs: MGIT-151, FR-17.18
+// to prevent. The detail shape (model.ExecEscalationDetail) is shared with
+// the daemon's own privileged internal execs (MGIT-272). Refs: MGIT-151, FR-17.18
 func (s *SandboxService) auditEscalation(ctx context.Context, info *model.SandboxInfo, req model.ExecRequest) error {
-	detail, err := json.Marshal(escalationDetail{Program: req.Command[0], Args: len(req.Command) - 1})
+	detail, err := json.Marshal(model.ExecEscalationDetail{Program: req.Command[0], Args: len(req.Command) - 1})
 	if err != nil {
 		return fmt.Errorf("sandbox exec: encode escalation audit: %w", err)
 	}

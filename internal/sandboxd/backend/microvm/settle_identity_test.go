@@ -67,7 +67,7 @@ func (r *recordingAuditor) recorded() []*model.SandboxEvent {
 
 // oneFileSettle wires an execSettler over a recording exec for a single-file
 // manifest whose digest the exec echoes back, with the given identity echo.
-func oneFileSettle(ranAs *model.GuestIdentity, internal *model.GuestIdentity, aud InternalExecAuditor,
+func oneFileSettle(ranAs *model.GuestIdentity, internal *model.GuestIdentity, aud model.SandboxEventAppender,
 ) (execSettler, *recordingGuestExec, settleRequest) {
 	const wt = "/wt"
 	const digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
