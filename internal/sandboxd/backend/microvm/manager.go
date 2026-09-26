@@ -292,6 +292,23 @@ type Manager struct {
 	settler      guestSettler
 	settleBudget time.Duration
 	settlePoll   time.Duration
+
+	// internalIdentity is the identity the daemon's own settle execs run as,
+	// and internalAudit records each as a privileged internal exec. Both are
+	// wired by SetInternalExec from the layer that also owns the audit store;
+	// when unset the settle execs carry no identity and are not recorded — the
+	// behavior before this identity was made explicit. Refs: MGIT-272, MGIT-151
+	internalIdentity *model.GuestIdentity
+	internalAudit    model.SandboxEventAppender
+}
+
+// SetInternalExec wires the identity the daemon's own settle execs run as and
+// the audit sink each is recorded to. It is called once, from the layer that
+// owns both the backend and the audit store, after construction (the store is
+// built after the manager). Refs: MGIT-272, MGIT-151
+func (m *Manager) SetInternalExec(auditor model.SandboxEventAppender, identity model.GuestIdentity) {
+	m.internalAudit = auditor
+	m.internalIdentity = &identity
 }
 
 // NewManager validates the configuration and returns a Manager.
@@ -739,15 +756,17 @@ func (m *Manager) markGuestAnswered(id string) {
 	}
 }
 
-// guestProbeCommand is the readiness probe's argv. It names a program that
-// deliberately DOES NOT EXIST in any guest, because the probe's purpose is to
-// get an ANSWER, not to run anything: the guest resolves it, fails the lookup,
-// and replies on the wire. That reply is the proof we want — the control plane
-// is bound and serving — and it costs the guest no process and no side effect,
-// on any image, including one that ships its own guest binary. A reader who
-// finds it in a console log can tell what it is from its name.
-// Refs: MGIT-92, FR-17.11
-var guestProbeCommand = []string{"mgit-guest-readiness-probe"}
+// guestProbeCommand is the readiness probe's argv. It names an ABSOLUTE
+// program that deliberately DOES NOT EXIST in any guest, because the probe's
+// purpose is to get an ANSWER, not to run anything: the guest tries to run it,
+// fails, and replies on the wire. That reply is the proof we want — the
+// control plane is bound and serving — and it costs the guest no process and
+// no side effect, on any image, including one that ships its own guest binary.
+// The path is absolute so that nothing placed on the guest's search path can
+// answer the probe: only the guest's control plane, never a file, produces the
+// reply (MGIT-272). A reader who finds it in a console log can tell what it is
+// from its name. Refs: MGIT-92, MGIT-272, FR-17.11
+var guestProbeCommand = []string{"/nonexistent/mgit-guest-readiness-probe"}
 
 // consoleTailBytes bounds how much guest console a failed launch quotes. Large
 // enough for a Go panic with a few frames, small enough that an agent's error
