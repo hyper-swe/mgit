@@ -280,6 +280,14 @@ func toolMissing(tool string, res *model.ExecResult, err error) (string, bool) {
 	if err != nil && strings.Contains(err.Error(), "not found") {
 		return note, true
 	}
+	// The program resolved but could not be started: a guest with no usable
+	// shell or tool inside (a symlink to a runtime that is not present).
+	// "cannot tell" from inside, exactly like a missing tool — never a hard
+	// sync failure, and it cannot mask a content mismatch, which needs a
+	// running read-back. Refs: MGIT-272, MGIT-192
+	if err != nil && strings.Contains(err.Error(), "no such file or directory") {
+		return note, true
+	}
 	if res != nil && res.ExitCode == 127 {
 		return note, true
 	}
