@@ -37,3 +37,23 @@ const (
 	statusPathRemedy = "Run `mgit status` without a path; it reports the whole working tree."
 	diffPathRemedy   = "Run `mgit diff` without a path, with --task-id <id> or --from/--to."
 )
+
+// refuseArgs is the positional-argument check for a verb that takes none.
+//
+// After MGIT-282 eleven more verbs declared no rule, so each accepted a stray
+// argument and dropped it: `mgit squash --to-git <path>` exported the whole
+// task, `mgit worktree prune <path>` pruned every stale worktree. An argument
+// a verb cannot honor is refused before the verb does anything, naming what
+// was given and what to do instead. TestEveryCommand_DocumentsItsArgumentsOr
+// RefusesThem walks the command tree so a verb added without a rule fails.
+// Refs: MGIT-284
+func refuseArgs(verb, remedy string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return nil
+		}
+		cmd.SilenceUsage = true
+		return fmt.Errorf("mgit %s takes no argument (given: %s); it would run without it, "+
+			"so the argument is refused rather than ignored. %s", verb, strings.Join(args, " "), remedy)
+	}
+}

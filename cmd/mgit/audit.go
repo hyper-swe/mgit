@@ -17,6 +17,7 @@ func auditCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "audit",
+		Args:  refuseArgs("audit", "Filter with --agent-id, --type, --since or --until; see `mgit audit --help`."),
 		Short: "View audit trail",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			app, err := openAppFromCwd()

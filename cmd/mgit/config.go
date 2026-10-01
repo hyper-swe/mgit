@@ -58,6 +58,7 @@ func configCmd() *cobra.Command {
 		},
 		&cobra.Command{
 			Use:   "list",
+			Args:  refuseArgs("config list", "`mgit config get <key>` reads one value."),
 			Short: "List all config values",
 			RunE: func(_ *cobra.Command, _ []string) error {
 				app, err := openAppFromCwd()

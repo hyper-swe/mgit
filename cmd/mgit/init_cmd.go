@@ -20,6 +20,7 @@ func initCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "init",
+		Args:  refuseArgs("init", "Run `mgit init` inside the directory to initialize."),
 		Short: "Initialize a new mgit repository",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if path == "" {

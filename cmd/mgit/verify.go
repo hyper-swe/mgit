@@ -16,6 +16,7 @@ func verifyCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "verify",
+		Args:  refuseArgs("verify", "It verifies the whole store; see `mgit verify --help`."),
 		Short: "Verify commit chain and index integrity",
 		// Issues are reported as a clean summary; the non-zero exit is
 		// carried by an exitError, so cobra must not also print "Error:".
