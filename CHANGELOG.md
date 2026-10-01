@@ -7,7 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`mgit add <directory>` stages the files under it; a directory left in
+  staging no longer blocks commits; `mgit restore --staged` unstages
+  (MGIT-276).** `mgit add <dir>` used to store the directory itself as one
+  staged path. Every later commit then failed "read working file …: is a
+  directory", and nothing could unstage it. Now `add <dir>` stages the
+  changed, new and deleted files under the directory with the same rules as
+  `add -A` (ignored and mgit-generated paths skipped, the size limit
+  applied), and an unchanged directory is a no-op. A staging file written by
+  an earlier mgit that still names a directory makes commit refuse with the
+  entry's name and the way out. `mgit restore --staged <path|dir>...` removes
+  exactly the named entries, or everything under a directory, and leaves the
+  rest staged. A tracked file replaced by a directory of the same name (or
+  the reverse) now commits as the replacement; it used to write a tree
+  holding both, after which the task's diff and squash failed.
+
+## [0.7.0] - 2026-10-01
+
 ### Changed
+
+- Carry a patched libkrun in the macOS build; fixes MGIT-225 (MGIT-259).
+- **The daemon's own guest execs run through the audited identity path with
+  absolute program paths (MGIT-272, MGIT-270).** A sync's read-back — the
+  step that confirms the guest sees what was delivered — now runs as an
+  explicit identity, is recorded in the same audit log an operator's audited
+  privileged exec uses, names its program by an absolute path, and refuses
+  the sync
+  if the guest confirms it ran as a different identity (a guest that reports
+  none, on a base predating the field, stays a soft "cannot tell" while the
+  content digest remains a hard check). The step that keeps the guest's view
+  current across a sync is retained, now as a recorded privileged step rather
+  than a silent one. The readiness probe names an absolute program, so only
+  the guest's control plane, never a file, answers it.
 
 - **Every third-party action in the workflows is pinned to a full commit
   SHA (MGIT-246).** Whoever controls an action's repository can move a tag
@@ -51,6 +84,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it.
 
 ### Added
+
+- **`mgit sandbox base prune` removes the guest bases nothing pins any more
+  (MGIT-239).** The machine-wide guest-base cache never removed a published
+  entry, and could not say which ones were still pinned. Each repository
+  that pins a cached base is now recorded beside the cache when it composes,
+  migrates or launches; a compose that cannot record its pin pins nothing.
+  `prune --dry-run` lists every entry with its size,
+  the mgit version that composed it, its recorded repositories and what each
+  one's images.lock says now. `prune` removes an entry only when every
+  recorded repository has stopped pinning it and no sandbox runs on it, and
+  prints the bytes freed. A recorded repository with nothing at its path
+  (deleted, or renamed, moved or unmounted) keeps its entries until named
+  with `--release-gone`. It asks every live sandbox
+  daemon, and removes nothing if one cannot be asked. Only an entry whose
+  publisher recorded every pinner from the start is judged on its records:
+  entries composed before this release, and any entry with a pin whose
+  record could not be written, say "pinner unknown" and are kept unless
+  named with `--remove-unknown`.
 
 - **A listed word in a pull request's text fails the verdict gate
   (MGIT-242).** This repository is public, and a pull request's title,
@@ -112,6 +163,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Re-adding a worktree for a task that already has commits keeps the
+  task's fork-base (MGIT-275).** When a task's worktree was removed or lost
+  and `mgit work` (or `worktree add`) ran again for the same task, the new
+  worktree pinned the task branch's TIP as its fork-base. Once the task had
+  commits, that was one of its own commits, so every later `mgit diff
+  --task-id`, export and listing failed with "pinned fork-base … != computed
+  base …", and a consumer's recreate path could drop the earlier commits. A
+  re-add now pins the base the task's first commit was made on. `--base` on a
+  re-add is accepted when it names that commit and refused otherwise, naming
+  the fork-base the branch has.
+
+- **The reduced-isolation container backend runs a guest command as the
+  identity the daemon requests (MGIT-273).** The fallback backend ran a
+  command without applying that identity, so the identity model did not hold
+  on it and an audited identity request was recorded without changing what
+  ran. It now applies the requested identity the way the microVM backends do.
+
 - **The course-correction fork mgit prescribes inside a task worktree now
   works (MGIT-82).** The working discipline mgit writes into every task
   worktree said to fork a new line with `mgit checkout -b`, which a task
@@ -134,6 +202,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mgit status` never saw an edit to one. A path git has committed, or mgit
   has, is now kept; untracked ignored files stay out, and `mgit add` still
   skips new ignored files.
+- **An exported patch is authored by you, not by mgit (MGIT-237).** `git
+  am` records a patch's `From:` line as the commit's author, and the
+  patches from `mgit squash --to-git` and `mgit export --format git` named
+  mgit's internal squash identity there. They now carry your git identity:
+  `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL`, else `user.name` and
+  `user.email` from the project's or your global git config. With none
+  configured, `squash --to-git` refuses before it writes anything and
+  names the two `git config` commands; configure one and run the same
+  command again, and it completes with all of the task's work. The
+  read-only `squash --to-git --dry-run` and `export --format git` still
+  work, warn, and name no author at all. mgit's own store keeps its
+  internal author.
 - **`mgit sandbox launch` refuses a worktree that holds the repository's
   store before it registers or writes anything (MGIT-222).** A launch with
   the repository root, or a directory containing it, as its worktree
@@ -186,8 +266,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commit that is not on it is still refused, and the server-side check of
   the pushed branch exempts nothing.
 
-### Fixed
-
 - **A recompose compares the source digest like with like (MGIT-223).**
   Since 0.6.8 a base records the image index a tag resolves to, and an
   older base recorded the platform manifest the index selected. Every
@@ -198,8 +276,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only the kind of the recorded digest changed, says the index moved when
   this host's manifest did not, and prints the moved-tag NOTE only when
   the image itself changed.
-
-### Fixed
 
 - **A guest base set through a symlink is pinned to the tree behind it
   (MGIT-227).** `mgit sandbox base set <symlink>` pinned the SHA-256 of

@@ -43,6 +43,16 @@ func TestDaemonFailureDetail_NamesTheMissingLibraryAndHowToGetIt(t *testing.T) {
 			want: []string{"libkrun", "brew install", "brew trust libkrun/krun", "INSTALL-SANDBOX"},
 		},
 		{
+			// Carry a patched libkrun in the macOS build; fixes MGIT-225.
+			name: "macos_dyld_bundled_libkrun",
+			log: "dyld[1]: Library not loaded: @rpath/libkrun.1.dylib\n" +
+				"  Referenced from: <1D9BC4F8> /usr/local/bin/mgit-sandboxd\n" +
+				"  Reason: tried: '/usr/local/bin/lib/libkrun.1.dylib' (no such file), " +
+				"'/usr/local/lib/mgit/libkrun.1.dylib' (no such file)\n",
+			want:    []string{"libkrun.1.dylib", "lib/", "lib/mgit", "release archive", "INSTALL-SANDBOX"},
+			notWant: []string{"brew"},
+		},
+		{
 			name: "linux_ld_so",
 			log: "mgit-sandboxd: error while loading shared libraries: libkrun.so.1: " +
 				"cannot open shared object file: No such file or directory\n",
