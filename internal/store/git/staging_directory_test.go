@@ -218,3 +218,12 @@ func TestCommit_DirectoryReplacedByFile_ReplacesItsEntries(t *testing.T) {
 	assert.False(t, keys["x/b/c"])
 	assertNoFileDirClash(t, keys)
 }
+
+// The backstop under replaceInTree, held to fixtures directly: a commit path
+// can no longer reach it once replacement works.
+func TestFileDirClash_NamesAFileThatIsAlsoADirectory(t *testing.T) {
+	e := blobEntry{}
+	assert.Equal(t, "x", fileDirClash(map[string]blobEntry{"x": e, "x/z": e}))
+	assert.Equal(t, "a/b", fileDirClash(map[string]blobEntry{"a/b": e, "a/b/c/d": e}))
+	assert.Empty(t, fileDirClash(map[string]blobEntry{"x/z": e, "xy": e, "x.go": e}))
+}
