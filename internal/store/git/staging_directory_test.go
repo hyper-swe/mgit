@@ -141,3 +141,80 @@ func TestUnstage_EscapingPath_Refused(t *testing.T) {
 	_, err := repo.Unstage([]string{"../outside"})
 	require.Error(t, err)
 }
+
+// treeKeys is the set of paths in HEAD's tree after a commit.
+func treeKeys(t *testing.T, repo *Repository) map[string]bool {
+	t.Helper()
+	head, err := repo.headFiles()
+	require.NoError(t, err)
+	keys := map[string]bool{}
+	for k := range head {
+		keys[k] = true
+	}
+	return keys
+}
+
+// assertNoFileDirClash fails when a tree holds a file and a directory under
+// one name, the "duplicateEntries" git fsck reports.
+func assertNoFileDirClash(t *testing.T, keys map[string]bool) {
+	t.Helper()
+	for k := range keys {
+		for dir := filepath.Dir(k); dir != "." && dir != "/"; dir = filepath.Dir(dir) {
+			assert.False(t, keys[filepath.ToSlash(dir)], "%s is both a file and a directory of %s", dir, k)
+		}
+	}
+}
+
+// THE REVIEW'S CASE. A tracked file replaced by a directory of the same name:
+// `add x` stages the file's deletion as well as the files under the new
+// directory, so the commit records the directory and no stale file.
+func TestAdd_FileReplacedByDirectory_StagesTheFilesDeletionToo(t *testing.T) {
+	repo := initTestRepo(t)
+	writeAndCommit(t, repo, "MGIT-1", map[string]string{"x": "file\n"})
+	require.NoError(t, os.Remove(filepath.Join(repo.Root(), "x")))
+	writeFiles(t, repo, map[string]string{"x/z": "z\n"})
+
+	require.NoError(t, NewWorktreeStore(repo).Add(context.Background(), "x"))
+	assert.Equal(t, []string{"x", "x/z"}, stagedNow(t, repo))
+	_, err := NewCommitStore(repo).CreateCommit(context.Background(), makeTestModelCommit(t, "MGIT-1"))
+	require.NoError(t, err)
+	keys := treeKeys(t, repo)
+	assert.True(t, keys["x/z"])
+	assert.False(t, keys["x"])
+	assertNoFileDirClash(t, keys)
+}
+
+// The older root of the same defect: staging only the new file under the
+// directory replaces the stale file, as `git add x/z` does.
+func TestCommit_StagedPathUnderAReplacedFile_ReplacesTheFile(t *testing.T) {
+	repo := initTestRepo(t)
+	writeAndCommit(t, repo, "MGIT-1", map[string]string{"x": "file\n", "keep.go": "k\n"})
+	require.NoError(t, os.Remove(filepath.Join(repo.Root(), "x")))
+	writeFiles(t, repo, map[string]string{"x/z": "z\n"})
+	require.NoError(t, NewWorktreeStore(repo).Add(context.Background(), "x/z"))
+
+	_, err := NewCommitStore(repo).CreateCommit(context.Background(), makeTestModelCommit(t, "MGIT-1"))
+	require.NoError(t, err)
+	keys := treeKeys(t, repo)
+	assert.True(t, keys["x/z"])
+	assert.True(t, keys["keep.go"])
+	assertNoFileDirClash(t, keys)
+}
+
+// The other direction: a tracked directory replaced by a file of the same
+// name. Staging the file replaces the directory's entries.
+func TestCommit_DirectoryReplacedByFile_ReplacesItsEntries(t *testing.T) {
+	repo := initTestRepo(t)
+	writeAndCommit(t, repo, "MGIT-1", map[string]string{"x/a": "a\n", "x/b/c": "c\n"})
+	require.NoError(t, os.RemoveAll(filepath.Join(repo.Root(), "x")))
+	writeFiles(t, repo, map[string]string{"x": "now a file\n"})
+	require.NoError(t, NewWorktreeStore(repo).Add(context.Background(), "x"))
+
+	_, err := NewCommitStore(repo).CreateCommit(context.Background(), makeTestModelCommit(t, "MGIT-1"))
+	require.NoError(t, err)
+	keys := treeKeys(t, repo)
+	assert.True(t, keys["x"])
+	assert.False(t, keys["x/a"])
+	assert.False(t, keys["x/b/c"])
+	assertNoFileDirClash(t, keys)
+}

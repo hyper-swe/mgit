@@ -93,3 +93,21 @@ func TestE2E_RestoreStaged_UnstagesExactlyTheNamedPath(t *testing.T) {
 	assert.Contains(t, show, "internal/transport/t.go")
 	assert.NotContains(t, show, "other.go")
 }
+
+// THE REVIEW'S CASE on the real binary: a tracked file replaced by a
+// directory, `add x`, commit; the task's diff and patch still work.
+func TestE2E_FileReplacedByDirectory_CommitsAndTheTaskStillDiffs(t *testing.T) {
+	bin, wt := stagingWorktree(t)
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "x"), []byte("file\n"), 0o600))
+	mustMgit(t, bin, wt, "add", "x")
+	mustMgit(t, bin, wt, "commit", "-m", "x as a file")
+	require.NoError(t, os.Remove(filepath.Join(wt, "x")))
+	require.NoError(t, os.MkdirAll(filepath.Join(wt, "x"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "x", "z"), []byte("z\n"), 0o600))
+
+	mustMgit(t, bin, wt, "add", "x")
+	mustMgit(t, bin, wt, "commit", "-m", "x as a directory")
+	mustMgit(t, bin, wt, "diff", "--task-id", "MGIT-276.E2E")
+	patch := mustMgit(t, bin, wt, "squash", "--task-id", "MGIT-276.E2E", "--to-git")
+	assert.Contains(t, patch, "x/z")
+}
