@@ -21,6 +21,7 @@ func logCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "log",
+		Args:  refuseArgs("log", "Narrow it with --limit, --since, --until or --author; see `mgit log --help`."),
 		Short: "Show commit history",
 		Long:  "Show commit history." + cadenceTokenDoc,
 		RunE: func(_ *cobra.Command, _ []string) error {

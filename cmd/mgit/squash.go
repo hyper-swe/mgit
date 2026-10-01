@@ -19,6 +19,7 @@ func squashCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "squash",
+		Args:  refuseArgs("squash", "Name the task with --task-id <id>; a squash covers the whole task, never a path."),
 		Short: "Squash micro-commits for a task",
 		Long: "Consolidate a task's micro-commits into one commit on its own " +
 			"task/<ID> branch.\n\n" +
