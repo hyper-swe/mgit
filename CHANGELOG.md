@@ -20,7 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an earlier mgit that still names a directory makes commit refuse with the
   entry's name and the way out. `mgit restore --staged <path|dir>...` removes
   exactly the named entries, or everything under a directory, and leaves the
-  rest staged.
+  rest staged. A tracked file replaced by a directory of the same name (or
+  the reverse) now commits as the replacement; it used to write a tree
+  holding both, after which the task's diff and squash failed.
 
 ## [0.7.0] - 2026-10-01
 
