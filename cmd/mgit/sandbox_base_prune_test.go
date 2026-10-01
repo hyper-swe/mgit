@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,4 +261,77 @@ func TestLiveSandboxDigests_ADaemonsLongRefusal_IsCarriedAsItsFirstLine(t *testi
 	err := daemonSilence(daemonrec.Record{PID: 7, RepoRoot: "/r"},
 		errors.New("mgit CLI and daemon differ — upgrade both.\n  mgit CLI: protocol 5\n  daemon: protocol 4"))
 	assert.Equal(t, "the daemon for /r (pid 7) did not answer: mgit CLI and daemon differ — upgrade both.", err.Error())
+}
+
+// A compose that cannot record its pin pins nothing: the record comes before
+// the lock is signed, so no repository can pin an entry unrecorded.
+func TestSandboxBaseFrom_RecordFails_PinsNothing(t *testing.T) {
+	srv, ref := fakeImageServer(t, map[string]string{"bin/sh": "#!/bin/sh", "etc/os-release": "ID=debian"})
+	defer srv.Close()
+	repo := newRepo(t)
+	_, err := initTrustRoot(t, repo)
+	require.NoError(t, err)
+	root := testBaseCache(t).Root()
+	require.NoError(t, os.MkdirAll(root, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "pinners"), nil, 0o600), "block every record")
+
+	out, err := runBase(t, repo, "from", ref, "--guest-bin-dir", fakeGuestBins(t), "--plain-http")
+	require.Error(t, err, out)
+	_, lookErr := images.LookupEntry(filepath.Join(repo, ".mgit", "sandbox"), defaultGuestBaseName)
+	assert.ErrorIs(t, lookErr, images.ErrNoSuchImage, "the lock must not pin what was not recorded")
+}
+
+func TestSandboxBaseFrom_PublisherMarksTheEntryFullyRecorded(t *testing.T) {
+	srv, ref := fakeImageServer(t, map[string]string{"bin/sh": "#!/bin/sh", "etc/os-release": "ID=debian"})
+	defer srv.Close()
+	repo := newRepo(t)
+	_, err := initTrustRoot(t, repo)
+	require.NoError(t, err)
+
+	digest := composeInto(t, repo, ref)["base_digest"].(string)
+
+	assert.True(t, testBaseCache(t).FullyRecorded(digest))
+}
+
+// Composing bytes that are already cached publishes nothing, so it can never
+// assert that the entry's EARLIER pinners recorded themselves.
+func TestSandboxBaseFrom_SameBytesAgain_DoesNotMarkAnUnmarkedEntry(t *testing.T) {
+	srv, ref := fakeImageServer(t, map[string]string{"bin/sh": "#!/bin/sh", "etc/os-release": "ID=debian"})
+	defer srv.Close()
+	a, b := newRepo(t), newRepo(t)
+	for _, r := range []string{a, b} {
+		_, err := initTrustRoot(t, r)
+		require.NoError(t, err)
+	}
+	digest := composeInto(t, a, ref)["base_digest"].(string)
+	cache := testBaseCache(t)
+	require.NoError(t, cache.ForgetFullyRecorded(digest), "stand in for an entry composed before records")
+
+	require.Equal(t, digest, composeInto(t, b, ref)["base_digest"].(string))
+
+	assert.False(t, cache.FullyRecorded(digest))
+}
+
+// A launch whose backfill cannot be written leaves a pin the records do not
+// name, so it withdraws the entry's fully-recorded mark, and still launches.
+func TestSandboxLaunch_RecordFails_WithdrawsTheMark(t *testing.T) {
+	srv, ref := fakeImageServer(t, map[string]string{"bin/sh": "#!/bin/sh", "etc/os-release": "ID=debian"})
+	defer srv.Close()
+	repo := newRepo(t)
+	_, err := initTrustRoot(t, repo)
+	require.NoError(t, err)
+	digest := composeInto(t, repo, ref)["base_digest"].(string)
+	cache := testBaseCache(t)
+	require.True(t, cache.FullyRecorded(digest))
+	dir := filepath.Join(cache.Root(), "pinners", strings.TrimPrefix(digest, "sha256:"))
+	require.NoError(t, os.RemoveAll(dir), "this repository's record is lost")
+	require.NoError(t, os.MkdirAll(dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o750) }) //nolint:gosec // restore for TempDir cleanup
+
+	t.Chdir(repo)
+	out, err := runSandbox(okConnect(&fakeSandboxClient{}), "launch",
+		"--task", "MGIT-239.3", "--worktree", filepath.Join(t.TempDir(), "wt"))
+	require.NoError(t, err, "a failed record must not stop a launch: %s", out)
+
+	assert.False(t, cache.FullyRecorded(digest))
 }
