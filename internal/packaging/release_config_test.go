@@ -80,25 +80,24 @@ func TestGoreleaser_BuildsBothHostBinaries(t *testing.T) {
 	}
 }
 
-// TestGoreleaser_DarwinSandboxdIsCGOAndSigned proves the darwin daemon is
-// built with CGO (Virtualization.framework) and entitlement-signed inline via
-// a post-build codesign hook — the OSS-goreleaser way to ship a signed CGO
-// binary in the same run. Without the entitlement the daemon cannot start a
-// VM, so the macOS sandbox would be dead on arrival. Refs: MGIT-44, FR-17.15
-func TestGoreleaser_DarwinSandboxdIsCGOAndSigned(t *testing.T) {
-	cfg := readRepoFile(t, ".goreleaser.yaml")
+// TestDarwinAssembler_DaemonIsCGOAndSigned proves the darwin daemon is built
+// with CGO and entitlement-signed, now by scripts/release/build-darwin-sandboxd.sh
+// (MGIT-259). Without the entitlement the daemon cannot start a VM, so the
+// macOS sandbox would be dead on arrival. Refs: MGIT-44, FR-17.15, MGIT-259
+func TestDarwinAssembler_DaemonIsCGOAndSigned(t *testing.T) {
+	cfg := readRepoFile(t, "scripts/release/build-darwin-sandboxd.sh")
 	tests := []struct {
 		name  string
 		token string
 	}{
 		{"darwin daemon built with CGO", "CGO_ENABLED=1"},
-		{"post-build codesign hook", "codesign"},
+		{"codesigns the daemon", "codesign --force --sign - --entitlements"},
 		{"signs with the virtualization entitlement", "build/darwin/vz.entitlements"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if !strings.Contains(cfg, tt.token) {
-				t.Errorf("`.goreleaser.yaml` missing %q — %s", tt.token, tt.name)
+				t.Errorf("build-darwin-sandboxd.sh missing %q — %s", tt.token, tt.name)
 			}
 		})
 	}

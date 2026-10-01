@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -74,10 +75,14 @@ func OpenApp(path string) (*App, error) {
 	}
 
 	storeDir := filepath.Join(path, ".mgit")
-	boundTask := ""
+	var boundTask string
 	if isWorktree {
 		storeDir = marker.Store
 		boundTask = marker.Task
+	} else if boundTask, err = gitstore.ReadBoundTaskInStore(storeDir); err != nil {
+		// A sandbox guest's private store carries its worktree's task in
+		// place of the host's marker (MGIT-256).
+		return nil, fmt.Errorf("read task binding: %w", err)
 	}
 
 	// Acquire process-level lock before opening any stores. For a worktree the
@@ -154,7 +159,13 @@ func OpenApp(path string) (*App, error) {
 		Index: idx,
 		Commit: service.NewCommitService(repo, cs, idx).
 			WithAudit(audit).WithStagedFileLimit(stagedFileLimit),
-		Squash:          service.NewSquashService(repo, cs, idx).WithAudit(audit),
+		Squash: service.NewSquashService(repo, cs, idx).WithAudit(audit).
+			// The exporter authors an exported patch: their git identity, read
+			// from the project that holds this store (its parent directory)
+			// and the global config, never mgit's own. Refs: MGIT-237
+			WithPatchAuthor(func() (gitstore.AuthorIdentity, error) {
+				return gitstore.ResolveAuthorIdentity(filepath.Dir(mgitDir), os.Getenv)
+			}),
 		Rollback:        service.NewRollbackService(repo, cs, idx).WithAudit(audit),
 		Branch:          service.NewBranchService(repo, bs, idx),
 		Verify:          service.NewVerifyService(cs, idx),

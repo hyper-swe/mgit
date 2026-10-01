@@ -58,21 +58,22 @@ class Mgit < Formula
     # its own binary first and then in ../libexec, so this layout is found.
     # Refs: MGIT-65, MGIT-61.15
     libexec.install "guest" if Dir.exist?("guest")
-    # Linux only: the archive bundles the daemon's hypervisor libraries
-    # (libkrun, libkrunfw) in lib/. The daemon's run path looks for them at
-    # $ORIGIN/../lib/mgit, which from the keg's bin is the keg's lib/mgit;
-    # a subdirectory, so nothing else on the system links against them by
-    # accident. Their license texts and source notice go to pkgshare.
-    # Refs: MGIT-230.1, MGIT-229
+    # The Linux and macOS archives bundle the daemon's hypervisor libraries in
+    # lib/ (Linux: libkrun, libkrunfw; macOS: libkrun). The daemon's run path
+    # looks for them at $ORIGIN/../lib/mgit (@executable_path/../lib/mgit),
+    # which from the keg's bin is the keg's lib/mgit; a subdirectory, so
+    # nothing else on the system links against them by accident. Their license
+    # texts and source notice go to pkgshare. Refs: MGIT-230.1, MGIT-229, MGIT-259
     (lib/"mgit").install Dir["lib/*"] if Dir.exist?("lib")
     (pkgshare/"THIRD_PARTY").install Dir["THIRD_PARTY/*"] if Dir.exist?("THIRD_PARTY")
   end
 
   # NO `depends_on "libkrun/krun/libkrun"`. DO NOT ADD ONE BACK.
   #
-  # The macOS daemon does link libkrun (the GA default backend, ADR-010), but
-  # declaring that here broke `brew install hyper-swe/tap/mgit` outright for
-  # every user who did not already have libkrun (MGIT-75). Homebrew refuses to
+  # The macOS daemon loads libkrunfw from the libkrun/krun tap (its libkrun
+  # ships in the archive, MGIT-259), but declaring a dependency on that tap
+  # here broke `brew install hyper-swe/tap/mgit` outright for every user who
+  # did not already have libkrun (MGIT-75). Homebrew refuses to
   # LOAD a formula from an untrusted third-party tap, and dependency
   # resolution happens before anything is fetched, so the install aborted with
   # exit 1 having installed NOTHING — not even core mgit, which never links
@@ -92,18 +93,14 @@ class Mgit < Formula
   # unblocks it, and a trust decision about a third-party VMM belongs to the
   # user who wants a sandbox, not to everyone who wants a commit substrate.
   #
-  # So the sandbox is a documented second step (see caveats). The daemon
-  # itself fails closed with an actionable message when libkrun is missing:
-  # mgit captures the dynamic loader's error and names the remedy
-  # (cmd/mgit/sandbox_activation.go). Refs: MGIT-75, MGIT-61.15
+  # So the sandbox is a documented second step (see caveats); `mgit doctor`
+  # names a missing libkrunfw with the remedy. Refs: MGIT-75, MGIT-61.15
 
   # The sandbox's libkrun backend needs a libkrun BUILT WITH NETWORKING.
   # mgit attaches an explicit network device to every sandbox in every mode;
   # without one libkrun falls back to TSI and the guest gets full host egress,
   # so there is no NIC-less mode to fall back to and the daemon refuses to
-  # start. The libkrun/krun tap builds with NET=1, so `brew install libkrun`
-  # is covered — this caveat exists for anyone using a hand-built library.
-  # Refs: MGIT-61.14, ADR-010
+  # start. Refs: MGIT-61.14, ADR-010
   #
   # Guest provisioning is the same on both platforms now: the release's
   # daemon is libkrun on macOS and on Linux (ADR-016), and libkrun composes
@@ -120,8 +117,9 @@ class Mgit < Formula
         1. Prerequisites:
            - Linux: KVM (/dev/kvm read-writable by you) and glibc 2.31+;
              the daemon's hypervisor libraries are installed with mgit
-           - macOS: Apple Silicon (arm64), macOS 14 or later, plus the libkrun
-             hypervisor, which is NOT installed with mgit -- it lives in a
+           - macOS: Apple Silicon (arm64), macOS 14 or later, plus libkrunfw,
+             the guest kernel library, which is NOT installed with mgit (the
+             daemon's libkrun is) -- it comes with the libkrun formula of a
              third-party tap you have to trust before Homebrew will load it:
                brew tap libkrun/krun
                brew trust libkrun/krun
@@ -132,18 +130,17 @@ class Mgit < Formula
         2. Provision the guest: compose one from any Linux image --
                mgit sandbox base from debian:12
 
-      On macOS, libkrun must be built WITH networking support, which the
-      libkrun/krun tap does (the Linux libraries installed with mgit are
-      checked for it before release). If you build libkrun yourself, build
-      it with `make NET=1`. Verify:
+      libkrun must be built WITH networking support. The libkrun installed
+      with mgit is checked for it before release; a daemon you build from
+      source links Homebrew's libkrun, which the libkrun/krun tap builds with
+      NET=1. If you build libkrun yourself, build it with `make NET=1`. Verify:
 
         nm -gU "$(brew --prefix libkrun)/lib/libkrun.dylib" | grep krun_add_net_unixgram
 
       A libkrun without that symbol cannot host a sandbox: mgit requires an
       explicit network device in every mode, and without one the guest would
-      get unrestricted host egress. mgit-sandboxd fails closed in that case,
-      as it does when libkrun is absent entirely -- core mgit is unaffected
-      either way.
+      get unrestricted host egress. mgit-sandboxd fails closed in that case
+      -- core mgit is unaffected either way.
 
       Guide: https://github.com/hyper-swe/mgit/blob/main/docs/INSTALL-SANDBOX.md
     EOS
