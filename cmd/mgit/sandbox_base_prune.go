@@ -63,7 +63,7 @@ func liveSandboxDigests(ctx context.Context, list func(context.Context) ([]daemo
 		boxes, err := sandboxd.NewClient(d.Record.Socket, time.Now).List(askCtx)
 		cancel()
 		if err != nil {
-			return nil, fmt.Errorf("the daemon for %s (pid %d) did not answer: %w", d.Record.RepoRoot, d.Record.PID, err)
+			return nil, daemonSilence(d.Record, err)
 		}
 		for _, sb := range boxes {
 			if occupiesBase(sb.State) {
@@ -183,4 +183,9 @@ func pruneBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %siB", float64(n)/float64(div), strings.Split("K M G T P", " ")[exp])
+}
+
+// daemonSilence is the error for a daemon prune could not ask.
+func daemonSilence(rec daemonrec.Record, err error) error {
+	return fmt.Errorf("the daemon for %s (pid %d) did not answer: %w", rec.RepoRoot, rec.PID, err)
 }

@@ -252,3 +252,12 @@ func TestHostPruneDeps_OpeningTheCache_RemovesNoStagingDebris(t *testing.T) {
 	assert.Equal(t, root, d.Cache.Root())
 	assert.DirExists(t, debris, "opening the cache for prune must remove nothing")
 }
+
+// A daemon's refusal can run to a page (a wire-version mismatch prints the
+// whole upgrade procedure). The verdict repeats the reason on every entry, so
+// only its first line is carried: the table stays one line per reason.
+func TestLiveSandboxDigests_ADaemonsLongRefusal_IsCarriedAsItsFirstLine(t *testing.T) {
+	err := daemonSilence(daemonrec.Record{PID: 7, RepoRoot: "/r"},
+		errors.New("mgit CLI and daemon differ — upgrade both.\n  mgit CLI: protocol 5\n  daemon: protocol 4"))
+	assert.Equal(t, "the daemon for /r (pid 7) did not answer: mgit CLI and daemon differ — upgrade both.", err.Error())
+}
