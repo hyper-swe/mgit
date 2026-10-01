@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-01
+
 ### Changed
 
 - Carry a patched libkrun in the macOS build; fixes MGIT-225 (MGIT-259).
@@ -247,8 +249,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commit that is not on it is still refused, and the server-side check of
   the pushed branch exempts nothing.
 
-### Fixed
-
 - **A recompose compares the source digest like with like (MGIT-223).**
   Since 0.6.8 a base records the image index a tag resolves to, and an
   older base recorded the platform manifest the index selected. Every
@@ -259,8 +259,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only the kind of the recorded digest changed, says the index moved when
   this host's manifest did not, and prints the moved-tag NOTE only when
   the image itself changed.
-
-### Fixed
 
 - **A guest base set through a symlink is pinned to the tree behind it
   (MGIT-227).** `mgit sandbox base set <symlink>` pinned the SHA-256 of
