@@ -82,6 +82,8 @@ type Deps struct {
 	// from, and which repositories they serve. An error means at least one
 	// daemon could not be asked.
 	InUse func(ctx context.Context) (Live, error)
+	// ReleasedRoots are recorded roots the operator says were deleted.
+	ReleasedRoots []string
 }
 
 // Live is what the live daemons report.

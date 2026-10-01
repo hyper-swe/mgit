@@ -166,7 +166,10 @@ func TestPlan_DryRun_ChangesNothingAndNamesEachVerdict(t *testing.T) {
 	}
 }
 
-func TestPlan_PinnerRootDeleted_EntryIsPrunable(t *testing.T) {
+// A recorded repository that no longer exists at its recorded path may have
+// been deleted, renamed, moved or unmounted; the path cannot say which. Its
+// pin is released only on the operator's word, naming that root.
+func TestPlan_PinnerRootDeleted_CannotTellUntilReleased(t *testing.T) {
 	f := newFixture(t)
 	a := f.repo()
 	f.compose(a, "x")
@@ -175,8 +178,74 @@ func TestPlan_PinnerRootDeleted_EntryIsPrunable(t *testing.T) {
 	items, err := baseprune.Plan(t.Context(), f.deps())
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	assert.Equal(t, baseprune.Prunable, items[0].Verdict)
+	assert.Equal(t, baseprune.CannotTell, items[0].Verdict)
 	assert.Equal(t, baseprune.PinnerGone, items[0].Pinners[0].State)
+
+	deps := f.deps()
+	deps.ReleasedRoots = []string{a.root}
+	items, err = baseprune.Plan(t.Context(), deps)
+	require.NoError(t, err)
+	assert.Equal(t, baseprune.Prunable, items[0].Verdict)
+}
+
+// THE REVIEW'S SECOND CASE. A repository renamed in place keeps its parent
+// directory and its lock; only its recorded path is gone.
+func TestApply_PinnerRenamedInPlace_KeepsTheEntry(t *testing.T) {
+	f := newFixture(t)
+	a := f.repo()
+	x, _ := f.compose(a, "x")
+	repoDir := filepath.Dir(filepath.Dir(a.root))
+	renamed := repoDir + "-renamed"
+	require.NoError(t, os.Rename(repoDir, renamed))
+
+	res, err := baseprune.Apply(t.Context(), f.deps(), nil)
+	require.NoError(t, err)
+	assert.Empty(t, res.Removed)
+	assert.True(t, f.cache.Has(x.Digest))
+	pins, err := images.CachedPins(filepath.Join(renamed, ".mgit", "sandbox"))
+	require.NoError(t, err)
+	assert.True(t, pins[x.Digest], "the renamed repository still pins it")
+}
+
+// Releasing a root that exists changes nothing: its lock is still read.
+func TestPlan_ReleasedRootThatExists_IsStillRead(t *testing.T) {
+	f := newFixture(t)
+	a := f.repo()
+	x, _ := f.compose(a, "x")
+	deps := f.deps()
+	deps.ReleasedRoots = []string{a.root}
+
+	items, err := baseprune.Plan(t.Context(), deps)
+	require.NoError(t, err)
+	assert.Equal(t, baseprune.Pinned, verdicts(items)[x.Digest])
+}
+
+// A compose that finds an entry already cached records and signs its pin
+// while holding the cache shared; prune takes it exclusively to re-judge and
+// remove. So a compose landing between prune's plan and its removal keeps
+// the entry instead of signing a lock for a removed one.
+func TestApply_ComposeHoldingTheCache_KeepsWhatItPins(t *testing.T) {
+	f := newFixture(t)
+	b := f.repo()
+	y, _ := f.compose(b, "y")
+	f.compose(b, "z") // y is prunable
+	c := f.repo()
+	release, err := f.cache.HoldShared()
+	require.NoError(t, err)
+
+	done := make(chan baseprune.Result, 1)
+	go func() {
+		res, err := baseprune.Apply(context.Background(), f.deps(), nil)
+		assert.NoError(t, err)
+		done <- res
+	}()
+	time.Sleep(200 * time.Millisecond) // prune has planned, and waits for the cache
+	f.pin(c, y)                        // the compose records and signs, then lets go
+	release()
+
+	res := <-done
+	assert.Empty(t, res.Removed)
+	assert.True(t, f.cache.Has(y.Digest))
 }
 
 func TestPlan_AnyLivePinner_KeepsTheEntry(t *testing.T) {
@@ -365,7 +434,7 @@ func TestPlan_PinnerRootAndItsParentMissing_CannotTell(t *testing.T) {
 	items, err := baseprune.Plan(t.Context(), f.deps())
 	require.NoError(t, err)
 	assert.Equal(t, baseprune.CannotTell, verdicts(items)[x.Digest])
-	assert.Equal(t, baseprune.PinnerMissing, items[0].Pinners[0].State)
+	assert.Equal(t, baseprune.PinnerGone, items[0].Pinners[0].State)
 }
 
 func TestApply_EntryWithAnUnrecordedPinnerNamed_IsRemoved(t *testing.T) {

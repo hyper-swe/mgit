@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -192,4 +193,32 @@ func TestPinners_IgnoresTheFullyRecordedMark(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, recorded)
 	assert.Empty(t, roots)
+}
+
+func TestHoldExclusive_WaitsForEverySharedHolder(t *testing.T) {
+	cache := newCache(t)
+	r1, err := cache.HoldShared()
+	require.NoError(t, err)
+	r2, err := cache.HoldShared()
+	require.NoError(t, err, "two composes hold the cache together")
+
+	got := make(chan struct{})
+	go func() {
+		release, err := cache.HoldExclusive()
+		assert.NoError(t, err)
+		close(got)
+		release()
+	}()
+	r1()
+	select {
+	case <-got:
+		t.Fatal("prune took the cache while a compose still held it")
+	case <-time.After(150 * time.Millisecond):
+	}
+	r2()
+	select {
+	case <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("prune never took the cache after every compose let go")
+	}
 }

@@ -344,3 +344,27 @@ func TestDaemonHostRoot_NamesTheSandboxConfigRoot(t *testing.T) {
 	assert.Equal(t, "/h", daemonHostRoot(daemonrec.Record{RepoRoot: "/r", HostRoot: "/h"}))
 	assert.Equal(t, filepath.FromSlash("/r/.mgit/sandbox"), daemonHostRoot(daemonrec.Record{RepoRoot: "/r"}))
 }
+
+// A deleted repository's pin is released only when the operator names it.
+func TestSandboxBasePrune_DeletedRepository_ReleasedOnlyWhenNamed(t *testing.T) {
+	srv, ref := fakeImageServer(t, map[string]string{"bin/sh": "#!/bin/sh", "etc/os-release": "ID=y"})
+	defer srv.Close()
+	repo := newRepo(t)
+	_, err := initTrustRoot(t, repo)
+	require.NoError(t, err)
+	hostRoot := hostRootOf(t, repo)
+	digest := composeInto(t, repo, ref)["base_digest"].(string)
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.RemoveAll(repo))
+	open := testPruneOpen(t, map[string]bool{}, nil)
+
+	out, err := runPrune(t, open)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "removed 0", out)
+	assert.True(t, testBaseCache(t).Has(digest))
+
+	out, err = runPrune(t, open, "--release-gone", hostRoot)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "removed 1", out)
+	assert.False(t, testBaseCache(t).Has(digest))
+}
