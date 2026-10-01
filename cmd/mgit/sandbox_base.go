@@ -53,7 +53,8 @@ func sandboxBaseCmd() *cobra.Command {
 			"recomposing publishes a NEW entry rather than rewriting the one somebody\n" +
 			"else pinned.",
 	}
-	cmd.AddCommand(sandboxBaseSetCmd(), sandboxBaseFromCmd(), newSandboxBaseResolveCmd())
+	cmd.AddCommand(sandboxBaseSetCmd(), sandboxBaseFromCmd(), newSandboxBaseResolveCmd(),
+		newSandboxBasePruneCmd(hostPruneDeps))
 	return cmd
 }
 
