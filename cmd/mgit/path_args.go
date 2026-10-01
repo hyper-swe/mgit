@@ -13,7 +13,7 @@ import (
 // Each of them declared no arguments, so the parser accepted a path and the
 // verb dropped it. `mgit commit -m x pkg`, the git habit, recorded everything
 // staged rather than pkg, and nothing said so (MGIT-282). A verb that cannot
-// honour a path must not pretend to: the path is refused before anything is
+// honor a path must not pretend to: the path is refused before anything is
 // recorded or printed, naming what was given and the way to do what was meant.
 // The usage table is not printed, so the remedy is the last thing read.
 // Path scoping itself is a separate decision (MGIT-278). Refs: MGIT-282
