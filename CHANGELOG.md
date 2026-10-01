@@ -322,18 +322,12 @@ was to ship, and what was fixed after it.
   the reverse) now commits as the replacement; it used to write a tree
   holding both, after which the task's diff and squash failed.
 
-- **A repository with no mgit store tracks nothing instead of failing
-  (MGIT-274).** A walk over the working tree of a repository that holds no
-  mgit store dereferenced a missing repository and panicked; it now treats
-  every file as untracked. The v0.7.0 release job met this in its own
-  checkout, and CI now runs the whole suite in a workspace shaped like the
-  release job's (MGIT-281).
-
-### Known issues
-
-- **A tracked file that an ignore rule also matches is not copied into a
-  task worktree (MGIT-277).** Workaround: do not keep a tracked file that
-  an ignore rule also matches, or un-ignore it.
+- **The release job's test run no longer panics (MGIT-274, MGIT-281).** A
+  test that walks this repository's working tree panicked in the release
+  job's checkout, which also holds the downloaded daemons and the build
+  output, and that failed the v0.7.0 release before anything was published.
+  The walk now handles a repository that holds no mgit store, and CI runs
+  the whole suite in a workspace shaped like the release job's.
 
 ## [0.6.8] - 2026-09-22
 
