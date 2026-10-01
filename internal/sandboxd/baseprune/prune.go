@@ -9,7 +9,8 @@
 // repository's CURRENT lock whether the pin still holds.
 //
 // THE RULE. An entry is removed only when every recorded pinner has stopped
-// pinning it or no longer exists, and no sandbox runs on it. Anything prune
+// pinning it, or is gone and named by the operator as deleted, and no
+// sandbox runs on it. Anything prune
 // cannot establish — a lock it cannot read, a daemon it cannot ask — keeps
 // the entry and says why: "cannot tell" is a verdict of its own, never a
 // quiet yes. An entry with no back-reference at all predates the records; its
@@ -47,8 +48,8 @@ const (
 const (
 	PinnerPins     = "pins"       // the lock still pins this digest
 	PinnerRepinned = "re-pinned"  // the repository exists and pins something else
-	PinnerGone     = "gone"       // the repository was removed from a directory that still exists
-	PinnerMissing  = "missing"    // gone along with its parent: moved, or on a volume not mounted now
+	PinnerGone     = "gone"       // nothing at the recorded path: deleted, renamed, moved or unmounted
+	PinnerReleased = "released"   // gone, and the operator says it was deleted
 	PinnerUnread   = "unreadable" // its lock could not be read
 )
 
@@ -82,7 +83,11 @@ type Deps struct {
 	// from, and which repositories they serve. An error means at least one
 	// daemon could not be asked.
 	InUse func(ctx context.Context) (Live, error)
-	// ReleasedRoots are recorded roots the operator says were deleted.
+	// ReleasedRoots are recorded roots the operator says were DELETED. A
+	// recorded root that is gone holds its entry's verdict at cannot-tell
+	// until it is named here: the missing path cannot say whether the
+	// repository was deleted, or renamed, moved or unmounted with its lock
+	// still pinning. A named root that exists is read like any other.
 	ReleasedRoots []string
 }
 
@@ -176,12 +181,15 @@ func judge(d Deps, l basecache.Listed, v view) (Item, error) {
 	if err != nil {
 		return Item{}, err
 	}
-	live, unsure := it.readPinners(d, roots, v.known)
+	r := it.readPinners(d, roots, v.known)
 	switch {
-	case len(live) > 0:
-		it.Verdict, it.Reason = Pinned, "pinned by "+strings.Join(live, ", ")
-	case len(unsure) > 0:
-		it.Verdict, it.Reason = CannotTell, "cannot read whether these still pin it: "+strings.Join(unsure, ", ")
+	case len(r.live) > 0:
+		it.Verdict, it.Reason = Pinned, "pinned by "+strings.Join(r.live, ", ")
+	case len(r.unread) > 0:
+		it.Verdict, it.Reason = CannotTell, "cannot read whether these still pin it: "+strings.Join(r.unread, ", ")
+	case len(r.gone) > 0:
+		it.Verdict, it.Reason = CannotTell, "no repository at "+strings.Join(r.gone, ", ")+
+			" (deleted, or renamed, moved or unmounted with its pin); name each with --release-gone if it was deleted"
 	case v.liveErr != nil:
 		it.Verdict, it.Reason = CannotTell, "cannot tell whether a sandbox runs on it: "+v.liveErr.Error()
 	case v.live.Digests[l.Digest]:
@@ -196,20 +204,36 @@ func judge(d Deps, l basecache.Listed, v view) (Item, error) {
 	return it, nil
 }
 
+// pinnerReading is what the locks said about one entry.
+type pinnerReading struct {
+	live   []string // roots whose lock pins it
+	unread []string // roots whose lock could not be read
+	gone   []string // recorded roots with nothing at their path, not released
+}
+
 // readPinners reads each recorded pinner's lock into it.Pinners, and each
-// other known repository's lock too. It returns the roots that pin the entry
-// and the roots whose answer could not be read.
-func (it *Item) readPinners(d Deps, recorded, known []string) (live, unsure []string) {
+// other known repository's lock too.
+func (it *Item) readPinners(d Deps, recorded, known []string) pinnerReading {
+	var r pinnerReading
+	released := map[string]bool{}
+	for _, root := range d.ReleasedRoots {
+		released[resolveMissing(root)] = true
+	}
 	isRecorded := map[string]bool{}
 	for _, root := range recorded {
 		isRecorded[root] = true
 		state := pinnerState(d, root, it.Digest)
+		if state == PinnerGone && released[root] {
+			state = PinnerReleased
+		}
 		it.Pinners = append(it.Pinners, PinnerState{Root: root, State: state})
 		switch state {
 		case PinnerPins:
-			live = append(live, root)
-		case PinnerUnread, PinnerMissing:
-			unsure = append(unsure, root)
+			r.live = append(r.live, root)
+		case PinnerUnread:
+			r.unread = append(r.unread, root)
+		case PinnerGone:
+			r.gone = append(r.gone, root)
 		}
 	}
 	for _, root := range known {
@@ -218,25 +242,42 @@ func (it *Item) readPinners(d Deps, recorded, known []string) (live, unsure []st
 		}
 		switch pinnerState(d, root, it.Digest) {
 		case PinnerPins:
-			live = append(live, root+" (not recorded against this entry)")
+			r.live = append(r.live, root+" (not recorded against this entry)")
 		case PinnerUnread:
-			unsure = append(unsure, root)
+			r.unread = append(r.unread, root)
 		}
 	}
-	return live, unsure
+	return r
 }
 
-// pinnerState asks one root's current lock about digest. A root that no
-// longer exists is GONE only when the directory that held its repository
-// still exists; when that is missing too, the repository may have moved or
-// sit on a volume that is not mounted, and its pin cannot be read as released.
+// resolveMissing spells a path the way a record does (absolute, symlinks
+// resolved) although it no longer exists: its deepest existing ancestor is
+// resolved and the rest appended. A record was resolved when it was written,
+// so a released root must be resolved the same way to name it — on macOS a
+// temporary repository under /var is recorded under /private/var.
+func resolveMissing(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+	p = abs
+	rest := ""
+	for dir := p; ; dir = filepath.Dir(dir) {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		if filepath.Dir(dir) == dir {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+	}
+}
+
+// pinnerState asks one root's current lock about digest. Nothing at the root
+// is GONE, which says nothing about where the repository went.
 func pinnerState(d Deps, root, digest string) string {
 	if _, err := os.Stat(root); errors.Is(err, fs.ErrNotExist) {
-		repoParent := filepath.Dir(filepath.Dir(filepath.Dir(root))) // root is <repo>/.mgit/sandbox
-		if _, perr := os.Stat(repoParent); perr == nil {
-			return PinnerGone
-		}
-		return PinnerMissing
+		return PinnerGone
 	}
 	pins, err := d.LockPins(root)
 	if err != nil {
@@ -271,20 +312,37 @@ func Apply(ctx context.Context, d Deps, unknown []string) (Result, error) {
 		if !removable(it.Verdict, named[it.Digest]) {
 			continue
 		}
-		again, err := rejudge(ctx, d, it)
+		removed, err := removeIfStill(ctx, d, it, named[it.Digest])
 		if err != nil {
 			return res, err
 		}
-		if !removable(again.Verdict, named[it.Digest]) {
+		if !removed {
 			continue
-		}
-		if err := d.Cache.Remove(it.Digest); err != nil {
-			return res, err
 		}
 		res.Removed = append(res.Removed, it)
 		res.Freed += it.Bytes
 	}
 	return res, nil
+}
+
+// removeIfStill takes the entry's verdict for the last time and removes it if
+// it still may go, holding the cache exclusively throughout: a compose that
+// relies on the entry holds it shared until its pin is signed, so the verdict
+// cannot go stale between this judgement and the removal. Refs: MGIT-239
+func removeIfStill(ctx context.Context, d Deps, it Item, named bool) (bool, error) {
+	release, err := d.Cache.HoldExclusive()
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	again, err := rejudge(ctx, d, it)
+	if err != nil {
+		return false, err
+	}
+	if !removable(again.Verdict, named) {
+		return false, nil
+	}
+	return true, d.Cache.Remove(it.Digest)
 }
 
 // removable is the whole removal rule in one place.

@@ -283,9 +283,3 @@ func (c *Cache) fullyRecordedPath(digest string) (string, error) {
 	}
 	return filepath.Join(c.root, pinnersDir, hexPart+fullyRecordedSuffix), nil
 }
-
-// HoldShared holds the cache shared.
-func (c *Cache) HoldShared() (func(), error) { return func() {}, nil }
-
-// HoldExclusive holds the cache exclusively.
-func (c *Cache) HoldExclusive() (func(), error) { return func() {}, nil }
