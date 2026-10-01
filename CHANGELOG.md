@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A path given to `mgit commit`, `mgit status` or `mgit diff` is refused
+  instead of silently ignored (MGIT-282).** None of the three scopes to a
+  path, yet each accepted one and dropped it: `mgit commit -m x pkg`
+  recorded everything staged, not just `pkg`, and `mgit status pkg` printed
+  the whole tree. A path is now refused before anything is recorded or
+  printed. The refusal names what was given and the way to do it: for a
+  commit, stage only what you want (`mgit restore --staged <path>`, `mgit add
+  <path>`), then commit.
+
 - **`mgit add <directory>` stages the files under it; a directory left in
   staging no longer blocks commits; `mgit restore --staged` unstages
   (MGIT-276).** `mgit add <dir>` used to store the directory itself as one
