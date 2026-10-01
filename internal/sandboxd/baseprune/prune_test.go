@@ -279,10 +279,15 @@ func TestApply_PinnedAgainAfterThePlan_IsKept(t *testing.T) {
 	f.pin(b, y)
 	f.pin(b, f.publish("z"))
 	deps := f.deps()
-	calls := 0
+	// The daemons are asked once for the plan and again just before each
+	// removal; from that second question on, b pins y again.
+	asked := 0
+	deps.InUse = func(context.Context) (map[string]bool, error) {
+		asked++
+		return nil, nil
+	}
 	deps.LockPins = func(root string) (map[string]bool, error) {
-		calls++
-		if calls > 1 { // the plan has been taken; b re-pins y
+		if asked > 1 {
 			return map[string]bool{y.Digest: true}, nil
 		}
 		return images.CachedPins(root)

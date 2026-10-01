@@ -101,7 +101,7 @@ func TestEntries_ListsPublishedEntriesOnly(t *testing.T) {
 
 	listed, err := cache.Entries()
 	require.NoError(t, err)
-	var digests []string
+	digests := make([]string, 0, len(listed))
 	for _, e := range listed {
 		digests = append(digests, e.Digest)
 		assert.Equal(t, filepath.Join(cache.Root(), "sha256", strings.TrimPrefix(e.Digest, "sha256:")), e.Path)
