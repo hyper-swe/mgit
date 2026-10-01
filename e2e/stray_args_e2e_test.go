@@ -59,10 +59,30 @@ func documentsNoPositional(help string, path []string) bool {
 		if !strings.HasPrefix(l, want) {
 			continue
 		}
-		rest := strings.TrimSpace(strings.TrimPrefix(l, want))
-		return rest == "" || rest == "[flags]"
+		return onlyFlags(strings.Fields(strings.TrimPrefix(l, want)))
 	}
 	return false // no runnable usage line: a parent command
+}
+
+// onlyFlags reports whether usage words name only flags and their values:
+// "[flags]", "--task <id>", "[--allow ...]". A placeholder right after a flag
+// is that flag's value, not a positional argument.
+func onlyFlags(words []string) bool {
+	for i := 0; i < len(words); i++ {
+		w := words[i]
+		switch {
+		case w == "[flags]" || w == "...]" || w == "[...]":
+		case w == "--":
+			return false
+		case strings.HasPrefix(w, "--") || strings.HasPrefix(w, "[--"):
+			if i+1 < len(words) && strings.HasPrefix(words[i+1], "<") {
+				i++
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func TestE2E_EveryCommandRefusesAStrayArgumentOutLoud(t *testing.T) {

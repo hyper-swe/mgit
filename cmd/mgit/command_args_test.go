@@ -10,14 +10,24 @@ import (
 
 // takesPositionals reports whether a command's Use line documents positional
 // arguments: anything after the command's own name other than flags, such as
-// "add [paths...]", "branch [name]" or "run -- <command>".
+// "add [paths...]", "branch [name]" or "run -- <command>". A placeholder that
+// directly follows a flag ("--task <id>") is that flag's value, not a
+// positional argument.
 func takesPositionals(cmd *cobra.Command) bool {
 	fields := strings.Fields(cmd.Use)
-	for _, f := range fields[1:] {
-		if strings.HasPrefix(f, "--") && !strings.HasPrefix(f, "--]") && f != "--" {
-			continue // a flag shown in the usage line
+	for i := 1; i < len(fields); i++ {
+		f := fields[i]
+		if f == "--" {
+			return true // everything after "--" is passed through
 		}
-		if strings.ContainsAny(f, "[<") || f == "--" {
+		if strings.HasPrefix(f, "--") || strings.HasPrefix(f, "[--") {
+			if !strings.Contains(f, "=") && !strings.HasSuffix(f, "]") && i+1 < len(fields) &&
+				strings.HasPrefix(fields[i+1], "<") {
+				i++ // the flag's value
+			}
+			continue
+		}
+		if strings.ContainsAny(f, "[<") {
 			return true
 		}
 	}
@@ -63,6 +73,9 @@ func TestTakesPositionals_ReadsUsageLines(t *testing.T) {
 		"sandbox base from <ref>": true,
 		"run [--env KEY=VALUE]... -- <command> [args...]":      true,
 		"restore [file] [commit] | restore --staged <path>...": true,
+		"set --task <id> --allow <host:port> [--allow ...]":    false,
+		"revoke --task <id>": false,
+		"show --task <id>":   false,
 	} {
 		assert.Equal(t, want, takesPositionals(&cobra.Command{Use: use}), use)
 	}
