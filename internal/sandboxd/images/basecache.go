@@ -172,3 +172,8 @@ func LegacyInTreeBase(hostRoot string) string {
 	}
 	return ""
 }
+
+// CachedPins returns the digests this host root's lock pins from the cache.
+func CachedPins(hostRoot string) (map[string]bool, error) {
+	return nil, errors.New("images: cached pins are not built yet")
+}
