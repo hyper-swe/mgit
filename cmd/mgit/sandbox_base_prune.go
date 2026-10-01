@@ -149,26 +149,34 @@ func runBasePrune(ctx context.Context, out io.Writer, d baseprune.Deps, dryRun b
 	return err
 }
 
-// renderPrunePlan prints one row per entry and, under it, its pinners or the
-// reason it is kept.
+// renderPrunePlan prints one aligned row per entry, then, entry by entry, its
+// recorded pinners and the reason it is kept. The details sit below the table
+// rather than inside it: a reason is a sentence, and as a table cell it would
+// widen every column.
 func renderPrunePlan(out io.Writer, root string, items []baseprune.Item) {
 	if len(items) == 0 {
 		_, _ = fmt.Fprintf(out, "the guest-base cache at %s holds no entries\n", root)
 		return
 	}
-	_, _ = fmt.Fprintf(out, "guest-base cache %s\n", root)
+	_, _ = fmt.Fprintf(out, "guest-base cache %s\n\n", root)
 	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "DIGEST\tSIZE\tCOMPOSED BY\tVERDICT")
 	for _, it := range items {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", it.Digest, pruneBytes(it.Bytes), it.ComposedBy, it.Verdict)
-		for _, p := range it.Pinners {
-			_, _ = fmt.Fprintf(tw, "  pinner %s: %s\t\t\t\n", p.Root, p.State)
-		}
-		if it.Reason != "" {
-			_, _ = fmt.Fprintf(tw, "  %s\t\t\t\n", it.Reason)
-		}
 	}
 	_ = tw.Flush() // a failed write to the terminal has nowhere better to be reported
+	for _, it := range items {
+		if len(it.Pinners) == 0 && it.Reason == "" {
+			continue
+		}
+		_, _ = fmt.Fprintf(out, "\n%s\n", it.Digest)
+		for _, p := range it.Pinners {
+			_, _ = fmt.Fprintf(out, "  pinner %s: %s\n", p.Root, p.State)
+		}
+		if it.Reason != "" {
+			_, _ = fmt.Fprintf(out, "  %s\n", it.Reason)
+		}
+	}
 }
 
 // pruneBytes renders a byte count in binary units, the way df reports them.
