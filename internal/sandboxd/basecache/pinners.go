@@ -220,15 +220,66 @@ func rootKey(root string) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-// FullyRecorded reports whether every pinner of digest is recorded.
-func (c *Cache) FullyRecorded(digest string) bool { return false }
+// fullyRecordedSuffix names the mark beside pinners/<hex>/: its presence says
+// the entry's publisher recorded every pinner from the start.
+const fullyRecordedSuffix = ".fully-recorded"
 
-// MarkFullyRecorded marks digest as fully recorded.
-func (c *Cache) MarkFullyRecorded(digest string) error {
-	return errors.New("base cache: not built yet")
+// FullyRecorded reports whether every repository that pins digest is known
+// to have recorded itself.
+//
+// A back-reference proves that ITS repository pinned the entry; it can never
+// prove that no other repository did. An entry composed before records
+// existed, or pinned by a build that writes none, may have pinners nobody
+// recorded, and a later backfill of one of them changes nothing about the
+// rest. So completeness is a separate fact, and only the process that
+// PUBLISHED the entry, having recorded its own pin first, may assert it
+// (MarkFullyRecorded). Any pin whose record then fails withdraws it
+// (ForgetFullyRecorded). An entry without the mark keeps its pinners
+// unknown, whatever records it carries. Refs: MGIT-239
+func (c *Cache) FullyRecorded(digest string) bool {
+	path, err := c.fullyRecordedPath(digest)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
 }
 
-// ForgetFullyRecorded clears the mark.
+// MarkFullyRecorded asserts that every pinner of digest records itself. Only
+// the publisher of an entry calls it, after recording its own pin.
+func (c *Cache) MarkFullyRecorded(digest string) error {
+	path, err := c.fullyRecordedPath(digest)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return fmt.Errorf("base cache: mark %s fully recorded: %w", digest, err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		return fmt.Errorf("base cache: mark %s fully recorded: %w", digest, err)
+	}
+	return nil
+}
+
+// ForgetFullyRecorded withdraws the mark: a pin exists whose record could not
+// be written. It lives beside the entry's record directory, so it can be
+// removed even when that directory cannot be written. Removing a mark that is
+// not there succeeds.
 func (c *Cache) ForgetFullyRecorded(digest string) error {
-	return errors.New("base cache: not built yet")
+	path, err := c.fullyRecordedPath(digest)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("base cache: withdraw the fully-recorded mark of %s: %w", digest, err)
+	}
+	return nil
+}
+
+func (c *Cache) fullyRecordedPath(digest string) (string, error) {
+	hexPart, err := parseDigest(digest)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(c.root, pinnersDir, hexPart+fullyRecordedSuffix), nil
 }
