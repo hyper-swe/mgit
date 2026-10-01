@@ -367,8 +367,15 @@ func composeBaseFromImage(cmd *cobra.Command, refArg string, opts composeOptions
 		return composeResult{}, err
 	}
 	published = true
-	return registerComposedBase(env.hostRoot, cached, resolved, opts,
+	res, err := registerComposedBase(env.hostRoot, cached, resolved, opts,
 		signWith(env.priv), func() time.Time { return time.Now().UTC() })
+	if err != nil {
+		return composeResult{}, err
+	}
+	if err := recordCachedPin(env.cache, env.hostRoot, opts.name); err != nil {
+		warnUnrecordedPin(cmd.ErrOrStderr(), err)
+	}
+	return res, nil
 }
 
 // composeEnv is everything a composition needs before it touches a registry:
@@ -594,7 +601,8 @@ func repoGuestBaseRef(out io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if cache, cacheErr := openBaseCache(); cacheErr == nil {
+	cache, cacheErr := openBaseCache()
+	if cacheErr == nil {
 		// Best-effort: a repo that cannot be migrated must still be able to
 		// boot the base it has, which is still resolvable by its pinned path.
 		if migErr := migrateInTreeBase(hostRoot, cache, out); migErr != nil {
@@ -602,6 +610,11 @@ func repoGuestBaseRef(out io.Writer) (string, error) {
 		}
 	}
 	ref, err := images.PinnedRef(hostRoot, defaultGuestBaseName)
+	if err == nil && cacheErr == nil {
+		if recErr := recordCachedPin(cache, hostRoot, defaultGuestBaseName); recErr != nil {
+			warnUnrecordedPin(out, recErr)
+		}
+	}
 	if errors.Is(err, images.ErrNoSuchImage) {
 		return "", fmt.Errorf(
 			"this repo has no guest base, so there is nothing to boot.\n\n" +

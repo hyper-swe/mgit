@@ -70,6 +70,11 @@ func migrateInTreeBase(hostRoot string, cache *basecache.Cache, out io.Writer) e
 	if err != nil {
 		return fmt.Errorf("migrate in-tree guest base: %w", err)
 	}
+	for _, name := range repointed {
+		if err := recordCachedPin(cache, hostRoot, name); err != nil {
+			return fmt.Errorf("migrate in-tree guest base: %w", err)
+		}
+	}
 	switch {
 	case len(repointed) > 0:
 		_, _ = fmt.Fprintf(out, "  moved %s; %v now resolve from the cache\n", entry.Digest, repointed)
@@ -81,6 +86,34 @@ func migrateInTreeBase(hostRoot string, cache *basecache.Cache, out io.Writer) e
 				"  it is cached under its own digest rather than discarded.\n", entry.Digest)
 	}
 	return nil
+}
+
+// recordCachedPin records hostRoot as a pinner of the base registered under
+// name, when that base lives in the cache — a base pinned by path is the
+// operator's tree and no cache entry's business.
+//
+// Every place a repository comes to pin, or resolves, a cached entry calls
+// this: compose, the in-tree migration, and launch. Launch is what gives an
+// entry composed before back-references existed its pinners, the first time
+// each repository boots it. Refs: MGIT-239
+func recordCachedPin(cache *basecache.Cache, hostRoot, name string) error {
+	entry, err := images.LookupEntry(hostRoot, name)
+	if err != nil {
+		return err
+	}
+	if entry.RootfsPath != "" {
+		return nil
+	}
+	return cache.RecordPinner(entry.Digest, hostRoot)
+}
+
+// warnUnrecordedPin says, on stderr, that a pin holds but its back-reference
+// could not be written. It is a warning and not a failure because the pin
+// itself is sound; it is loud because without the record `base prune` cannot
+// see this repository, until a later launch records it. Refs: MGIT-239
+func warnUnrecordedPin(w io.Writer, err error) {
+	_, _ = fmt.Fprintf(w, "warning: could not record this repository as a pinner of its guest base: %v\n"+
+		"  `mgit sandbox base prune` will not count this repository until a launch records it.\n", err)
 }
 
 // composeOptions are the knobs `sandbox base from` and `sandbox base set`

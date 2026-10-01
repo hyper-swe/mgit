@@ -65,6 +65,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`mgit sandbox base prune` removes the guest bases nothing pins any more
+  (MGIT-239).** The machine-wide guest-base cache never removed a published
+  entry, and could not say which ones were still pinned. Each repository
+  that pins a cached base is now recorded beside the cache when it composes,
+  migrates or launches. `prune --dry-run` lists every entry with its size,
+  the mgit version that composed it, its recorded repositories and what each
+  one's images.lock says now. `prune` removes an entry only when every
+  recorded repository has stopped pinning it or no longer exists and no
+  sandbox runs on it, and prints the bytes freed. It asks every live sandbox
+  daemon, and removes nothing if one cannot be asked. Entries composed
+  before this release say "pinner unknown" and are kept until a launch
+  records their repository, or until named with `--remove-unknown`.
+
 - **A listed word in a pull request's text fails the verdict gate
   (MGIT-242).** This repository is public, and a pull request's title,
   description, comments and reviews stay readable, along with every earlier
