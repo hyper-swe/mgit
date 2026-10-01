@@ -205,9 +205,10 @@ func TestLiveSandboxDigests_AsksLiveDaemonsOnly(t *testing.T) {
 			Status: daemonrec.Status{Alive: false},
 		}}, nil
 	}
-	inUse, err := liveSandboxDigests(t.Context(), list)
+	live, err := liveSandboxes(t.Context(), list)
 	require.NoError(t, err, "a dead daemon runs nothing and is not asked")
-	assert.Empty(t, inUse)
+	assert.Empty(t, live.Digests)
+	assert.Empty(t, live.HostRoots)
 }
 
 func TestLiveSandboxDigests_LiveDaemonThatCannotBeAsked_IsAnError(t *testing.T) {
@@ -217,14 +218,14 @@ func TestLiveSandboxDigests_LiveDaemonThatCannotBeAsked_IsAnError(t *testing.T) 
 			Status: daemonrec.Status{Alive: true},
 		}}, nil
 	}
-	_, err := liveSandboxDigests(t.Context(), list)
+	_, err := liveSandboxes(t.Context(), list)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "/r")
 }
 
 func TestLiveSandboxDigests_ListFails_IsAnError(t *testing.T) {
 	list := func(context.Context) ([]daemonrec.Listed, error) { return nil, errors.New("unreadable record") }
-	_, err := liveSandboxDigests(t.Context(), list)
+	_, err := liveSandboxes(t.Context(), list)
 	require.Error(t, err)
 }
 
@@ -334,4 +335,12 @@ func TestSandboxLaunch_RecordFails_WithdrawsTheMark(t *testing.T) {
 	require.NoError(t, err, "a failed record must not stop a launch: %s", out)
 
 	assert.False(t, cache.FullyRecorded(digest))
+}
+
+// A live daemon's repository is read by prune whether or not it was ever
+// recorded, so the daemon record must name that repository's sandbox config
+// root: the one the record states, or the repository's own .mgit/sandbox.
+func TestDaemonHostRoot_NamesTheSandboxConfigRoot(t *testing.T) {
+	assert.Equal(t, "/h", daemonHostRoot(daemonrec.Record{RepoRoot: "/r", HostRoot: "/h"}))
+	assert.Equal(t, filepath.Join("/r", ".mgit", "sandbox"), daemonHostRoot(daemonrec.Record{RepoRoot: "/r"}))
 }

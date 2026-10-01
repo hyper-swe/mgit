@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -36,15 +37,12 @@ func hostPruneDeps() (baseprune.Deps, error) {
 	return baseprune.Deps{
 		Cache:    cache,
 		LockPins: images.CachedPins,
-		InUse: func(ctx context.Context) (baseprune.Live, error) {
-			digests, err := liveSandboxDigests(ctx, listHostDaemons)
-			return baseprune.Live{Digests: digests}, err
-		},
+		InUse:    func(ctx context.Context) (baseprune.Live, error) { return liveSandboxes(ctx, listHostDaemons) },
 	}, nil
 }
 
-// liveSandboxDigests asks every live daemon on this host which bases its
-// sandboxes boot from.
+// liveSandboxes asks every live daemon on this host which bases its
+// sandboxes boot from, and names the repository each one serves.
 //
 // WHICH LAYER OWNS THIS FACT. A running VM is the daemon's, not the
 // repository's: a repository's index can say "running" for a sandbox whose
@@ -52,12 +50,12 @@ func hostPruneDeps() (baseprune.Deps, error) {
 // daemon running a sandbox on an entry. So the daemons are asked, all of
 // them, and one that cannot be asked fails the whole answer — prune then
 // keeps everything and says which daemon was silent. Refs: MGIT-239
-func liveSandboxDigests(ctx context.Context, list func(context.Context) ([]daemonrec.Listed, error)) (map[string]bool, error) {
+func liveSandboxes(ctx context.Context, list func(context.Context) ([]daemonrec.Listed, error)) (baseprune.Live, error) {
 	listed, err := list(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list sandbox daemons: %w", err)
+		return baseprune.Live{}, fmt.Errorf("list sandbox daemons: %w", err)
 	}
-	inUse := map[string]bool{}
+	live := baseprune.Live{Digests: map[string]bool{}}
 	for _, d := range listed {
 		if !d.Status.Alive {
 			continue // a dead daemon runs nothing; its record is merely stale
@@ -66,15 +64,16 @@ func liveSandboxDigests(ctx context.Context, list func(context.Context) ([]daemo
 		boxes, err := sandboxd.NewClient(d.Record.Socket, time.Now).List(askCtx)
 		cancel()
 		if err != nil {
-			return nil, daemonSilence(d.Record, err)
+			return baseprune.Live{}, daemonSilence(d.Record, err)
 		}
+		live.HostRoots = append(live.HostRoots, daemonHostRoot(d.Record))
 		for _, sb := range boxes {
 			if occupiesBase(sb.State) {
-				inUse[sb.ImageDigest] = true
+				live.Digests[sb.ImageDigest] = true
 			}
 		}
 	}
-	return inUse, nil
+	return live, nil
 }
 
 // occupiesBase reports whether a sandbox in this state boots, or will boot,
@@ -203,4 +202,14 @@ func pruneBytes(n int64) string {
 func daemonSilence(rec daemonrec.Record, err error) error {
 	first, _, _ := strings.Cut(err.Error(), "\n")
 	return fmt.Errorf("the daemon for %s (pid %d) did not answer: %s", rec.RepoRoot, rec.PID, strings.TrimSpace(first))
+}
+
+// daemonHostRoot is the sandbox config root of the repository a daemon
+// serves: the one its record states, or else that repository's .mgit/sandbox,
+// which is where every --host-root a CLI hands a daemon points.
+func daemonHostRoot(rec daemonrec.Record) string {
+	if rec.HostRoot != "" {
+		return rec.HostRoot
+	}
+	return filepath.Join(rec.RepoRoot, ".mgit", "sandbox")
 }

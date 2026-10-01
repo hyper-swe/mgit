@@ -367,15 +367,11 @@ func composeBaseFromImage(cmd *cobra.Command, refArg string, opts composeOptions
 		return composeResult{}, err
 	}
 	published = true
-	res, err := registerComposedBase(env.hostRoot, cached, resolved, opts,
-		signWith(env.priv), func() time.Time { return time.Now().UTC() })
-	if err != nil {
+	if err := recordComposedPin(env.cache, env.hostRoot, cached, cmd.ErrOrStderr()); err != nil {
 		return composeResult{}, err
 	}
-	if err := recordCachedPin(env.cache, env.hostRoot, opts.name); err != nil {
-		warnUnrecordedPin(cmd.ErrOrStderr(), err)
-	}
-	return res, nil
+	return registerComposedBase(env.hostRoot, cached, resolved, opts,
+		signWith(env.priv), func() time.Time { return time.Now().UTC() })
 }
 
 // composeEnv is everything a composition needs before it touches a registry:

@@ -75,6 +75,10 @@ func migrateInTreeBase(hostRoot string, cache *basecache.Cache, out io.Writer) e
 			return fmt.Errorf("migrate in-tree guest base: %w", err)
 		}
 	}
+	if !entry.Deduplicated {
+		// This migration published the entry and recorded its one pinner.
+		markFullyRecorded(cache, entry.Digest, out)
+	}
 	switch {
 	case len(repointed) > 0:
 		_, _ = fmt.Fprintf(out, "  moved %s; %v now resolve from the cache\n", entry.Digest, repointed)
@@ -92,10 +96,12 @@ func migrateInTreeBase(hostRoot string, cache *basecache.Cache, out io.Writer) e
 // name, when that base lives in the cache — a base pinned by path is the
 // operator's tree and no cache entry's business.
 //
-// Every place a repository comes to pin, or resolves, a cached entry calls
-// this: compose, the in-tree migration, and launch. Launch is what gives an
-// entry composed before back-references existed its pinners, the first time
-// each repository boots it. Refs: MGIT-239
+// It runs where a pin already exists: the in-tree migration and launch.
+// Launch is what gives an entry composed before back-references existed its
+// pinners, the first time each repository boots it. A record that cannot be
+// written leaves a pin the records do not name, so it also withdraws the
+// entry's fully-recorded mark: prune then keeps the entry's pinners unknown
+// rather than judge it on an incomplete list. Refs: MGIT-239
 func recordCachedPin(cache *basecache.Cache, hostRoot, name string) error {
 	entry, err := images.LookupEntry(hostRoot, name)
 	if err != nil {
@@ -104,16 +110,45 @@ func recordCachedPin(cache *basecache.Cache, hostRoot, name string) error {
 	if entry.RootfsPath != "" {
 		return nil
 	}
-	return cache.RecordPinner(entry.Digest, hostRoot)
+	if err := cache.RecordPinner(entry.Digest, hostRoot); err != nil {
+		return errors.Join(err, cache.ForgetFullyRecorded(entry.Digest))
+	}
+	return nil
 }
 
-// warnUnrecordedPin says, on stderr, that a pin holds but its back-reference
-// could not be written. It is a warning and not a failure because the pin
-// itself is sound; it is loud because without the record `base prune` cannot
-// see this repository, until a later launch records it. Refs: MGIT-239
+// recordComposedPin records a compose's pin BEFORE the lock is signed, and
+// refuses the compose when it cannot: a repository must never come to pin an
+// entry unrecorded. When this compose published the entry (rather than
+// finding the same bytes cached), it is the entry's first and only pinner,
+// so it marks the entry fully recorded. Bytes already cached keep whatever
+// their publisher asserted. Refs: MGIT-239
+func recordComposedPin(cache *basecache.Cache, hostRoot string, cached basecache.Entry, errOut io.Writer) error {
+	if err := cache.RecordPinner(cached.Digest, hostRoot); err != nil {
+		return fmt.Errorf("base from: record this repository as a pinner of %s; nothing was pinned: %w",
+			cached.Digest, err)
+	}
+	if !cached.Deduplicated {
+		markFullyRecorded(cache, cached.Digest, errOut)
+	}
+	return nil
+}
+
+// markFullyRecorded asserts completeness for an entry this process published.
+// Failing to is a warning: the entry then keeps its pinners unknown, which is
+// the safe direction.
+func markFullyRecorded(cache *basecache.Cache, digest string, w io.Writer) {
+	if err := cache.MarkFullyRecorded(digest); err != nil {
+		_, _ = fmt.Fprintf(w, "warning: %v\n  `mgit sandbox base prune` will keep this entry unless it is named.\n", err)
+	}
+}
+
+// warnUnrecordedPin says that a pin holds but its back-reference could not be
+// written. It is a warning and not a failure because the pin itself is sound.
+// Prune then treats the entry's pinners as unknown, until a later launch
+// records this repository. Refs: MGIT-239
 func warnUnrecordedPin(w io.Writer, err error) {
 	_, _ = fmt.Fprintf(w, "warning: could not record this repository as a pinner of its guest base: %v\n"+
-		"  `mgit sandbox base prune` will not count this repository until a launch records it.\n", err)
+		"  `mgit sandbox base prune` keeps that base's pinners unknown until a launch records it.\n", err)
 }
 
 // composeOptions are the knobs `sandbox base from` and `sandbox base set`
