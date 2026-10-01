@@ -143,9 +143,6 @@ jobs:
         with:
           name: linux-sources
           path: dist-sources
-        with:
-          name: linux-sources
-          path: dist-sources
 
       # goreleaser CGO-builds + entitlement-signs the darwin daemon (post
       # hook in .goreleaser.yaml) and cross-builds the rest.
