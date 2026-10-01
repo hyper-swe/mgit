@@ -376,3 +376,21 @@ func TestProvision_RequiresTheWorktree(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "worktree")
 }
+
+// THE PRIVATE STORE CARRIES THE WORKTREE'S TASK (MGIT-256). The guest's .mgit
+// is this store, and the host's worktree marker cannot follow it in (it names
+// the shared store), so the task is recorded here, or a guest commit would
+// need --task-id while the generated guidance says it is inherited.
+// Refs: MGIT-256, SEC-03
+func TestProvision_CarriesTheTaskBinding(t *testing.T) {
+	repoRoot, _, _ := repoWithHeadOnly(t)
+	p, err := NewStoreProvisioner(repoRoot)
+	require.NoError(t, err)
+
+	store, err := p.Provision("MGIT-256", repoRoot, filepath.Join(t.TempDir(), "private-store"))
+	require.NoError(t, err)
+
+	bound, err := gitstore.ReadBoundTaskInStore(store.Dir)
+	require.NoError(t, err)
+	assert.Equal(t, "MGIT-256", bound)
+}
