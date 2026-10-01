@@ -185,7 +185,11 @@ func pruneBytes(n int64) string {
 	return fmt.Sprintf("%.1f %siB", float64(n)/float64(div), strings.Split("K M G T P", " ")[exp])
 }
 
-// daemonSilence is the error for a daemon prune could not ask.
+// daemonSilence is the error for a daemon prune could not ask. Only the
+// first line of the daemon's own error is kept: every entry's verdict repeats
+// it, and a wire-version refusal runs to a page of upgrade steps that the
+// table cannot carry. Refs: MGIT-239
 func daemonSilence(rec daemonrec.Record, err error) error {
-	return fmt.Errorf("the daemon for %s (pid %d) did not answer: %w", rec.RepoRoot, rec.PID, err)
+	first, _, _ := strings.Cut(err.Error(), "\n")
+	return fmt.Errorf("the daemon for %s (pid %d) did not answer: %s", rec.RepoRoot, rec.PID, strings.TrimSpace(first))
 }
