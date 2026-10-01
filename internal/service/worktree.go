@@ -232,7 +232,7 @@ func (s *WorktreeService) existingForkBase(ctx context.Context, opts model.Workt
 		if opts.Base != "" {
 			return "", fmt.Errorf("--base requires sync wiring")
 		}
-		return tip, nil // no commit store to read history from: the pre-MGIT-35 behaviour
+		return tip, nil // no commit store to read history from: the pre-MGIT-35 behavior
 	}
 	base := tip
 	records, err := s.indexStore.GetTaskCommits(ctx, opts.TaskID)
