@@ -12,6 +12,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
+	"github.com/hyper-swe/mgit/internal/sandboxd/basecache"
 	"github.com/hyper-swe/mgit/internal/sandboxd/baseprune"
 	"github.com/hyper-swe/mgit/internal/sandboxd/daemonrec"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
@@ -23,8 +24,12 @@ const daemonAskTimeout = 10 * time.Second
 
 // hostPruneDeps wires prune to this machine: its base cache, each pinner's
 // images.lock, and every live daemon's list of sandboxes.
+//
+// The cache is opened plainly, NOT through openBaseCache: that helper sweeps
+// old staging trees, which is right before a compose and wrong here, where
+// `--dry-run` promises to change nothing. Refs: MGIT-239
 func hostPruneDeps() (baseprune.Deps, error) {
-	cache, err := openBaseCache()
+	cache, err := basecache.Open()
 	if err != nil {
 		return baseprune.Deps{}, err
 	}
