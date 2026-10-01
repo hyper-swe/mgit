@@ -18,6 +18,7 @@ func importCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "import",
+		Args:  refuseArgs("import", "Name the bundle with --file <path>."),
 		Short: "Import an mgit bundle archive (verifies SHA-256 manifest)",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if file == "" {

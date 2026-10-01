@@ -73,6 +73,7 @@ func worktreeCmd() *cobra.Command {
 	var porcelainList, listJSON bool
 	listCmd := &cobra.Command{
 		Use:   "list",
+		Args:  refuseArgs("worktree list", "It lists every linked worktree."),
 		Short: "List linked worktrees (a row whose directory is gone is marked prunable)",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			app, err := openAppFromCwd()
@@ -123,6 +124,7 @@ func worktreeCmd() *cobra.Command {
 	var wtDryRun bool
 	pruneCmd := &cobra.Command{
 		Use:   "prune",
+		Args:  refuseArgs("worktree prune", "It prunes every stale worktree; `mgit worktree remove <path>` removes one."),
 		Short: "Remove stale worktree metadata",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			app, err := openAppFromCwd()
