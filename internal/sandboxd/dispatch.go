@@ -481,13 +481,27 @@ func (d *Daemon) armWriteDeadline(conn net.Conn) {
 
 // writeResponse sends one control response under a write deadline.
 func (d *Daemon) writeResponse(conn net.Conn, resp *controlproto.Response) {
+	d.writeResponseAs(conn, resp, false)
+}
+
+// writeResponseAs sends one control response. probe marks a response built
+// to be refused: doctor's response-cap check asks for one byte over the cap
+// on purpose, and that refusal is logged as the probe it is rather than as a
+// write failure a reader would chase. Every other over-size response still
+// warns. Refs: MGIT-235, MGIT-160
+func (d *Daemon) writeResponseAs(conn net.Conn, resp *controlproto.Response, probe bool) {
 	d.armWriteDeadline(conn)
 	err := controlproto.WriteResponse(conn, resp)
 	if err == nil {
 		return
 	}
-	d.cfg.Logger.Warn("sandboxd write response failed",
-		"event", "write_error", "error", err.Error())
+	if probe && errors.Is(err, controlproto.ErrResponseTooLarge) {
+		d.cfg.Logger.Info("sandboxd refused an over-size echo on purpose: mgit doctor's daemon/response-cap "+
+			"probe checking that such a refusal arrives as a response", "event", "response_cap_probe")
+	} else {
+		d.cfg.Logger.Warn("sandboxd write response failed",
+			"event", "write_error", "error", err.Error())
+	}
 
 	// A response that cannot be SENT must still be a response.
 	//

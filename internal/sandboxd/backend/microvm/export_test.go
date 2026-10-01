@@ -107,7 +107,7 @@ func TestManager_ExportArtifact_SuspendedSandbox_IsRefused(t *testing.T) {
 	_, err := mgr.ExportArtifact(context.Background(), id,
 		model.ArtifactExportRequest{GuestPath: "out", HostPath: filepath.Join(t.TempDir(), "artifact")})
 
-	require.ErrorIs(t, err, model.ErrSandboxBackendUnavailable)
+	require.ErrorIs(t, err, model.ErrSandboxNotRunning)
 }
 
 func TestManager_ExportArtifact_InvalidRequest_IsRejectedAtTheBoundary(t *testing.T) {

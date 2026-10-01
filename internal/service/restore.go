@@ -114,6 +114,21 @@ func (s *RestoreService) stageRestored(apply []model.FileDiff) error {
 	return nil
 }
 
+// Unstage removes paths from the staging area — `mgit restore --staged` —
+// and returns the entries it removed. Nothing on disk changes, and every
+// entry not named stays staged. It is how a staged directory entry left by an
+// older mgit, which commit refuses, is cleared. Refs: MGIT-276
+func (s *RestoreService) Unstage(_ context.Context, paths []string) ([]string, error) {
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("restore --staged: name the paths to unstage")
+	}
+	removed, err := s.repo.Unstage(paths)
+	if err != nil {
+		return nil, fmt.Errorf("restore --staged: %w", err)
+	}
+	return removed, nil
+}
+
 // RestoreResult holds the outcome of a restore operation, suitable for
 // JSON serialization to CLI consumers.
 // Refs: FR-6.7, MGIT-4.2.8

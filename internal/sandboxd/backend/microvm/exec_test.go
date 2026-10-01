@@ -111,7 +111,8 @@ func TestExec_UnknownSandbox(t *testing.T) {
 	assert.ErrorIs(t, err, model.ErrSandboxNotFound)
 }
 
-// TestExec_NotRunning_Unavailable verifies a suspended sandbox cannot exec.
+// TestExec_NotRunning_Unavailable verifies a suspended sandbox cannot exec, and
+// is refused as not running (MGIT-232), not as a missing backend.
 func TestExec_NotRunning_Unavailable(t *testing.T) {
 	mgr := execManager(t, &pipeDialer{})
 	ctx := context.Background()
@@ -119,7 +120,7 @@ func TestExec_NotRunning_Unavailable(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, mgr.Stop(ctx, info.ID, false))
 	_, err = mgr.Exec(ctx, info.ID, model.ExecRequest{Command: []string{"/bin/true"}})
-	assert.ErrorIs(t, err, model.ErrSandboxBackendUnavailable)
+	assert.ErrorIs(t, err, model.ErrSandboxNotRunning)
 }
 
 // TestExec_InvalidRequest verifies an invalid request is rejected before

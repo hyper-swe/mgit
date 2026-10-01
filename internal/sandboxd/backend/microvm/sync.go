@@ -71,8 +71,8 @@ func (m *Manager) SyncWorktree(ctx context.Context, id string, opts model.Worktr
 		return nil, fmt.Errorf("%w: %q", model.ErrSandboxNotFound, id)
 	}
 	if sb.info.State != model.StateRunning {
-		return nil, fmt.Errorf("%w: sandbox %q is %s, not running",
-			model.ErrSandboxBackendUnavailable, id, sb.info.State)
+		return nil, fmt.Errorf("%w: sandbox %q is %s",
+			model.ErrSandboxNotRunning, id, sb.info.State)
 	}
 	return m.syncLocked(ctx, sb, opts)
 }
