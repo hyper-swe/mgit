@@ -342,5 +342,5 @@ func TestSandboxLaunch_RecordFails_WithdrawsTheMark(t *testing.T) {
 // root: the one the record states, or the repository's own .mgit/sandbox.
 func TestDaemonHostRoot_NamesTheSandboxConfigRoot(t *testing.T) {
 	assert.Equal(t, "/h", daemonHostRoot(daemonrec.Record{RepoRoot: "/r", HostRoot: "/h"}))
-	assert.Equal(t, filepath.Join("/r", ".mgit", "sandbox"), daemonHostRoot(daemonrec.Record{RepoRoot: "/r"}))
+	assert.Equal(t, filepath.FromSlash("/r/.mgit/sandbox"), daemonHostRoot(daemonrec.Record{RepoRoot: "/r"}))
 }
