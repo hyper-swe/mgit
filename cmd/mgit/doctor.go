@@ -17,6 +17,7 @@ import (
 	"github.com/hyper-swe/mgit/internal/guestnet"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
+	"github.com/hyper-swe/mgit/internal/sandboxd/daemonrec"
 	"github.com/hyper-swe/mgit/internal/sandboxd/guestbase"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
@@ -30,6 +31,17 @@ import (
 // itself. The output names the incident behind each check, so the reason it
 // exists outlives the people who remember it. Refs: MGIT-162, R-H300
 func doctorCmd(connect connectFunc) *cobra.Command {
+	return doctorCmdWith(connect, listHostDaemons)
+}
+
+// hostDaemonLister lists and judges every sandbox daemon record on the host.
+type hostDaemonLister func(context.Context) ([]daemonrec.Listed, error)
+
+// doctorCmdWith builds doctor over an injected daemon lister: production
+// reads the host's real records (doctorCmd), and the doctor wiring tests
+// inject their own, so another session's daemon cannot decide their verdict.
+// Refs: MGIT-262, MGIT-162
+func doctorCmdWith(connect connectFunc, listDaemons hostDaemonLister) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "doctor",
@@ -53,7 +65,7 @@ func doctorCmd(connect connectFunc) *cobra.Command {
 			}
 			defer app.Close()
 
-			results := doctor.Run(cmd.Context(), doctorChecks(app, connect))
+			results := doctor.Run(cmd.Context(), doctorChecks(app, connect, listDaemons))
 			if asJSON {
 				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(
 					map[string]any{"checks": results}); err != nil {
@@ -147,7 +159,7 @@ func (b *doctorBinding) resolve(ctx context.Context) (string, error) {
 }
 
 // doctorChecks assembles the checks with their real probes.
-func doctorChecks(app *App, connect connectFunc) []doctor.Check {
+func doctorChecks(app *App, connect connectFunc, listDaemons hostDaemonLister) []doctor.Check {
 	binding := &doctorBinding{app: app, connect: connect}
 	vmm := memoVMM(probeDaemonVMM)
 	return []doctor.Check{
@@ -181,7 +193,7 @@ func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 			return probeGuestDelivery(ctx, connect, task)
 		}},
 		doctor.DaemonLoadsCheck{Probe: probeDaemonLoads},
-		doctor.ServingDaemonVersionCheck{List: listHostDaemons, CLI: versionString(), RepoRoot: func() (string, error) {
+		doctor.ServingDaemonVersionCheck{List: listDaemons, CLI: versionString(), RepoRoot: func() (string, error) {
 			cwd, err := os.Getwd()
 			if err != nil {
 				return "", err
@@ -190,8 +202,8 @@ func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 		}},
 		doctor.DaemonVMMCheck{Probe: vmm, GOOS: runtime.GOOS},
 		doctor.BaseBootsCheck{VMM: vmm, Inspect: inspectBaseShape},
-		doctor.HostDaemonsCheck{List: listHostDaemons},
-		doctor.DuplicateDaemonsCheck{List: listHostDaemons},
+		doctor.HostDaemonsCheck{List: listDaemons},
+		doctor.DuplicateDaemonsCheck{List: listDaemons},
 	}
 }
 
