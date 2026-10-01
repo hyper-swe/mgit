@@ -66,7 +66,10 @@ type SyncService struct {
 	commitStore   *gitstore.CommitStore
 	readLocal     localStateReader
 	readCommitted committedReader
-	clock         func() time.Time
+	// readCommittedFiles reads git's committed tree WITH content: a new task's
+	// fork-base is built from it (MGIT-283).
+	readCommittedFiles committedFilesReader
+	clock              func() time.Time
 	// boundTask is non-empty when the App is a linked worktree; a worktree has a
 	// pinned fork-base and must NEVER resync (ADR-008 §3). Refs: MGIT-35
 	boundTask string
@@ -77,13 +80,14 @@ type SyncService struct {
 func NewSyncService(repo *gitstore.Repository, ws *gitstore.WorktreeStore, cs *gitstore.CommitStore,
 	boundTask string, clock func() time.Time) *SyncService {
 	return &SyncService{
-		repo:          repo,
-		worktree:      ws,
-		commitStore:   cs,
-		readLocal:     gitref.ReadLocalState,
-		readCommitted: gitref.CommittedBlobs,
-		clock:         clock,
-		boundTask:     boundTask,
+		repo:               repo,
+		worktree:           ws,
+		commitStore:        cs,
+		readLocal:          gitref.ReadLocalState,
+		readCommitted:      gitref.CommittedBlobs,
+		readCommittedFiles: gitref.CommittedFiles,
+		clock:              clock,
+		boundTask:          boundTask,
 	}
 }
 
@@ -110,9 +114,9 @@ func (s *SyncService) withCommittedReader(r committedReader) *SyncService {
 // made it so) and the edit becomes uncommittable to any task — silently landing
 // a user's change in an untagged `[mgit-sync]` commit instead of a task-tagged
 // micro-commit. A command that REPORTS state must not change the state it
-// reports. Capturing uncommitted local foundation is still ADR-008 §2 behavior,
-// but it belongs to the explicit new-worktree boundary
-// (EnsureSyncedForNewWorktree), not to a read.
+// reports. Capturing uncommitted local foundation is an explicit opt-in at the
+// new-worktree boundary (EnsureSyncedForNewWorktree, `--include-uncommitted`,
+// MGIT-283), never a read.
 //
 // The gate therefore fires only when git's committed HEAD has moved (the actual
 // staleness ADR-008 §3 exists to prevent, per the MGIT-26 drift that motivated
@@ -139,8 +143,8 @@ func (s *SyncService) EnsureSynced(ctx context.Context) error {
 }
 
 // EnsureSyncedForNewWorktree is the FOUNDATION-capturing gate, used only when a
-// new task worktree is being created (`mgit work` / `worktree add` /
-// materialize). Unlike the read-safe gate it captures the full current LOCAL
+// new task worktree is created WITH --include-uncommitted (MGIT-283: without
+// it the task forks from git's committed tree, CommittedForkBase). Unlike the read-safe gate it captures the full current LOCAL
 // working state — including files never committed to git — so the new worktree
 // carries the developer's in-progress foundation and builds (ADR-008 §2, the
 // deliberate advantage over a git worktree).
