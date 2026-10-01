@@ -168,6 +168,10 @@ var (
 	// each overwritten path is destroyed and recorded. Refs: MGIT-71, ADR-011
 	ErrWorktreeSyncConflict = errors.New("worktree sync blocked by guest-side changes")
 
+	// ErrInvalidStagedEntry means the staging area names something commit
+	// cannot record as one path. Refs: MGIT-276
+	ErrInvalidStagedEntry = errors.New("invalid staged entry")
+
 	// ErrLandVerificationFailed indicates dual-hash or task-binding
 	// verification failed during sandbox land; nothing was imported.
 	// Refs: FR-17.5, FR-17.20, FR-17.24

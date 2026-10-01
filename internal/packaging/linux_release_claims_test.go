@@ -14,38 +14,83 @@ import (
 // arm64, so its daemon is built and verified but never boots a guest before
 // a release. Every surface a user reads says so in the same words, so the
 // claim cannot drift into "verified" by paraphrase: the install doc, the
-// CHANGELOG's current section (Unreleased, or the newest release while
-// Unreleased is empty, as it is right after a cut), and the release notes. Refs: MGIT-230.5
+// newest release's CHANGELOG section, and the release notes. [Unreleased] is
+// held to the same words only where it mentions linux_arm64: an entry about
+// something else must not have to restate the claim, or the first entry
+// after every cut would turn this red. Refs: MGIT-230.5, MGIT-276
 func TestLinuxArm64_EverySurfaceSaysBuildVerifiedNotBootVerified(t *testing.T) {
-	const words = "build-verified and not boot-verified"
-	current := currentChangelogSection(t, readRepoFile(t, "CHANGELOG.md"))
+	changelog := readRepoFile(t, "CHANGELOG.md")
+	assert.Empty(t, arm64ChangelogProblems(changelog), "CHANGELOG.md")
 	for name, text := range map[string]string{
 		"docs/INSTALL-SANDBOX.md":         readRepoFile(t, filepath.Join("docs", "INSTALL-SANDBOX.md")),
-		"CHANGELOG.md current section":    current,
 		".goreleaser.yaml release header": releaseHeader(t),
 	} {
-		assert.Regexp(t, "`?linux_arm64`? is "+regexp.QuoteMeta(words), text,
-			"%s must state linux_arm64 as %s, in those words", name, words)
+		assert.Regexp(t, arm64Claim, text, "%s must state linux_arm64 as %s, in those words", name, arm64Words)
 	}
 }
 
-// currentChangelogSection is the text of the section a reader meets first:
-// [Unreleased] when it holds anything, else the newest released section.
-func currentChangelogSection(t *testing.T, changelog string) string {
-	t.Helper()
+const arm64Words = "build-verified and not boot-verified"
+
+// arm64Claim is the sentence every surface must carry.
+var arm64Claim = regexp.MustCompile("`?linux_arm64`? is " + regexp.QuoteMeta(arm64Words))
+
+// arm64ChangelogProblems names what is wrong with a CHANGELOG's linux_arm64
+// claim: the newest released section must state it in the words, and
+// [Unreleased] must too wherever it mentions linux_arm64 at all.
+func arm64ChangelogProblems(changelog string) []string {
+	unreleased, released, ok := changelogSections(changelog)
+	if !ok {
+		return []string{"the CHANGELOG needs an [Unreleased] section followed by a released one"}
+	}
+	var problems []string
+	if !arm64Claim.MatchString(released) {
+		problems = append(problems, "the newest release must state linux_arm64 as "+arm64Words)
+	}
+	if strings.Contains(unreleased, "linux_arm64") && !arm64Claim.MatchString(unreleased) {
+		problems = append(problems, "[Unreleased] mentions linux_arm64 without stating it as "+arm64Words)
+	}
+	return problems
+}
+
+// changelogSections splits out [Unreleased] and the newest released section.
+func changelogSections(changelog string) (unreleased, released string, ok bool) {
 	start := strings.Index(changelog, "\n## [Unreleased]")
-	require.GreaterOrEqual(t, start, 0, "the CHANGELOG has an [Unreleased] section")
+	if start < 0 {
+		return "", "", false
+	}
 	rest := changelog[start+1:]
 	end := strings.Index(rest[1:], "\n## [")
-	require.Positive(t, end, "the CHANGELOG has a released section after [Unreleased]")
-	unreleased := rest[:end+1]
-	if strings.Contains(unreleased, "\n- ") {
-		return unreleased
+	if end < 0 {
+		return "", "", false
 	}
-	next := rest[end+2:]
-	after := strings.Index(next[1:], "\n## [")
-	require.Positive(t, after, "the CHANGELOG has a second released section")
-	return next[:after+1]
+	unreleased, next := rest[:end+1], rest[end+2:]
+	if after := strings.Index(next[1:], "\n## ["); after >= 0 {
+		next = next[:after+1]
+	}
+	return unreleased, next, true
+}
+
+// The check is held to fixtures, so its silence on the real CHANGELOG means
+// something: it must accept an unrelated [Unreleased] entry over a release
+// that states the claim, and refuse every way the claim can be missing.
+func TestArm64ChangelogProblems_Fixtures(t *testing.T) {
+	claim := "- `linux_arm64` is " + arm64Words + ".\n"
+	tests := []struct {
+		name, changelog string
+		want            int
+	}{
+		{"empty_unreleased_release_states_it", "x\n## [Unreleased]\n\n## [1.0] - d\n" + claim + "\n## [0.9]\nold\n", 0},
+		{"unrelated_unreleased_entry", "x\n## [Unreleased]\n- fixed a thing\n\n## [1.0] - d\n" + claim, 0},
+		{"release_missing_the_claim", "x\n## [Unreleased]\n\n## [1.0] - d\n- nothing\n", 1},
+		{"unreleased_paraphrases_it", "x\n## [Unreleased]\n- linux_arm64 is verified\n\n## [1.0] - d\n" + claim, 1},
+		{"unreleased_states_it", "x\n## [Unreleased]\n" + claim + "\n## [1.0] - d\n" + claim, 0},
+		{"no_released_section", "x\n## [Unreleased]\n- a\n", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Len(t, arm64ChangelogProblems(tt.changelog), tt.want)
+		})
+	}
 }
 
 // A go-installed mgit-sandboxd on Linux is the CGO-free firecracker build: it

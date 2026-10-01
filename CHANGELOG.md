@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`mgit add <directory>` stages the files under it; a directory left in
+  staging no longer blocks commits; `mgit restore --staged` unstages
+  (MGIT-276).** `mgit add <dir>` used to store the directory itself as one
+  staged path. Every later commit then failed "read working file …: is a
+  directory", and nothing could unstage it. Now `add <dir>` stages the
+  changed, new and deleted files under the directory with the same rules as
+  `add -A` (ignored and mgit-generated paths skipped, the size limit
+  applied), and an unchanged directory is a no-op. A staging file written by
+  an earlier mgit that still names a directory makes commit refuse with the
+  entry's name and the way out. `mgit restore --staged <path|dir>...` removes
+  exactly the named entries, or everything under a directory, and leaves the
+  rest staged. A tracked file replaced by a directory of the same name (or
+  the reverse) now commits as the replacement; it used to write a tree
+  holding both, after which the task's diff and squash failed.
+
 ## [0.7.0] - 2026-10-01
 
 ### Changed
