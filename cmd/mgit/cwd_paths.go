@@ -17,14 +17,15 @@ import (
 // "pkg", which `add` expands like git's `add .`, and `..` steps out of the
 // subdirectory but never out of the project. Both sides are compared with
 // symlinks resolved, because the working directory and the root can be the
-// same directory under two spellings (macOS's /var is /private/var).
+// same directory under two spellings (macOS's /var is /private/var); a symlink
+// named as the last component inside the project is kept as the link.
 // Refs: MGIT-278.1
 func projectPath(root, cwd, arg string) (string, error) {
 	abs := arg
 	if !filepath.IsAbs(abs) {
 		abs = filepath.Join(cwd, arg)
 	}
-	rel, err := filepath.Rel(resolvedExisting(root), resolvedExisting(abs))
+	rel, err := filepath.Rel(resolvedExisting(root), resolvedArg(root, abs))
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", arg, err)
 	}
@@ -51,6 +52,26 @@ func projectPaths(root string, args []string) ([]string, error) {
 		out = append(out, rel)
 	}
 	return out, nil
+}
+
+// resolvedArg resolves symlinks in an argument's directories, and keeps a
+// symlink named as its last component as the link, as git stages it: `add
+// lnk` names lnk, never the file or directory it points to, and a link whose
+// target is outside the project is still inside it. Only a link whose
+// directory is outside the project is followed, so `.` in a working directory
+// that is itself a symlink to the root is the root. Refs: MGIT-278.1
+func resolvedArg(root, abs string) string {
+	abs = filepath.Clean(abs)
+	fi, err := os.Lstat(abs)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return resolvedExisting(abs)
+	}
+	dir := resolvedExisting(filepath.Dir(abs))
+	rel, err := filepath.Rel(resolvedExisting(root), dir)
+	if err != nil || rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../") {
+		return resolvedExisting(abs)
+	}
+	return filepath.Join(dir, filepath.Base(abs))
 }
 
 // resolvedExisting resolves symlinks in the deepest existing ancestor of p and
