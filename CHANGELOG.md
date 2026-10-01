@@ -73,8 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `prune --dry-run` lists every entry with its size,
   the mgit version that composed it, its recorded repositories and what each
   one's images.lock says now. `prune` removes an entry only when every
-  recorded repository has stopped pinning it or no longer exists and no
-  sandbox runs on it, and prints the bytes freed. It asks every live sandbox
+  recorded repository has stopped pinning it and no sandbox runs on it, and
+  prints the bytes freed. A recorded repository with nothing at its path
+  (deleted, or renamed, moved or unmounted) keeps its entries until named
+  with `--release-gone`. It asks every live sandbox
   daemon, and removes nothing if one cannot be asked. Only an entry whose
   publisher recorded every pinner from the start is judged on its records:
   entries composed before this release, and any entry with a pin whose
