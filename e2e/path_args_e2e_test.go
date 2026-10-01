@@ -62,3 +62,15 @@ func TestE2E_CommitStatusDiffWithoutAPath_StillWork(t *testing.T) {
 	mustMgit(t, bin, repo, "commit", "--task-id", "MGIT-282", "-m", "both")
 	mustMgit(t, bin, repo, "diff", "--task-id", "MGIT-282")
 }
+
+// MGIT-284: squash took no positional argument either, so `squash --to-git
+// <path>` exported the whole task. It is refused and exports nothing.
+func TestE2E_SquashToGitWithAPath_IsRefusedAndExportsNothing(t *testing.T) {
+	bin, repo := pathArgsRepo(t)
+	mustMgit(t, bin, repo, "commit", "--task-id", "MGIT-282", "-m", "both")
+
+	out, err := runMgit(t, bin, repo, "squash", "--task-id", "MGIT-282", "--to-git", "pkg")
+	require.Error(t, err, "a path to squash must be refused, not dropped: %s", out)
+	assert.Contains(t, out, "pkg")
+	assert.NotContains(t, out, "diff --git", "no patch is exported")
+}

@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every mgit command refuses an argument it does not take (MGIT-284).**
+  Eleven more commands accepted a stray argument and silently dropped it;
+  `mgit squash --to-git <path>` exported the whole task, and `mgit worktree
+  prune <path>` pruned every stale worktree. audit, config list, docs
+  generate, gc, import, init, log, squash, verify, worktree list and
+  worktree prune now refuse one, naming what was given and what to do
+  instead. Commands that print their own errors (doctor, verify and several
+  sandbox commands) used to refuse an argument silently, exiting 1 with
+  nothing on stderr; every refusal is now printed. A test walks the whole
+  command tree, and another runs every command on the binary with a stray
+  argument, so a command added later without an argument rule, or with a
+  silent one, fails them.
+
 - **A path given to `mgit commit`, `mgit status` or `mgit diff` is refused
   instead of silently ignored (MGIT-282).** None of the three scopes to a
   path, yet each accepted one and dropped it: `mgit commit -m x pkg`
