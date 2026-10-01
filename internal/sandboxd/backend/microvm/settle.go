@@ -243,6 +243,17 @@ func (s execSettler) verifyIdentity(res *model.ExecResult) (unconfirmed bool, er
 }
 
 func (s execSettler) run(ctx context.Context, id string, argv []string) (*model.ExecResult, error) {
+	// Only a registered audited internal-exec program may run here, so a
+	// settle exec added later without registering its program is refused
+	// rather than running ungoverned (MGIT-272). The registry is the single
+	// source of truth: internalExecSites.
+	if len(argv) == 0 || !isAuditedInternalProgram(argv[0]) {
+		var prog string
+		if len(argv) > 0 {
+			prog = argv[0]
+		}
+		return nil, fmt.Errorf("settle: %q is not a registered audited internal exec program", prog)
+	}
 	req := model.ExecRequest{Command: argv, Timeout: settleExecTimeout}
 	// Run as the explicit internal identity when wired. Without it (an
 	// unwired manager, as in a unit test that does not exercise this) the
