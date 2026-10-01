@@ -15,8 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prune <path>` pruned every stale worktree. audit, config list, docs
   generate, gc, import, init, log, squash, verify, worktree list and
   worktree prune now refuse one, naming what was given and what to do
-  instead. A test walks the whole command tree, so a command added later
-  without an argument rule fails it.
+  instead. Commands that print their own errors (doctor, verify and several
+  sandbox commands) used to refuse an argument silently, exiting 1 with
+  nothing on stderr; every refusal is now printed. A test walks the whole
+  command tree, and another runs every command on the binary with a stray
+  argument, so a command added later without an argument rule, or with a
+  silent one, fails them.
 
 - **A path given to `mgit commit`, `mgit status` or `mgit diff` is refused
   instead of silently ignored (MGIT-282).** None of the three scopes to a

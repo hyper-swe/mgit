@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -79,4 +80,27 @@ func TestTakesPositionals_ReadsUsageLines(t *testing.T) {
 	} {
 		assert.Equal(t, want, takesPositionals(&cobra.Command{Use: use}), use)
 	}
+}
+
+// A command that silences cobra's error printing still tells the user why
+// its arguments were refused, once; one that does not is left to cobra, so
+// nothing is printed twice. Refs: MGIT-284
+func TestAnnounceArgErrors_PrintsARefusalOnlyWhereCobraWouldNot(t *testing.T) {
+	var silentErr, loudErr bytes.Buffer
+	silent := &cobra.Command{Use: "silent", Args: cobra.NoArgs, SilenceErrors: true, Run: func(*cobra.Command, []string) {}}
+	loud := &cobra.Command{Use: "loud", Args: cobra.NoArgs, Run: func(*cobra.Command, []string) {}}
+	silent.SetErr(&silentErr)
+	loud.SetErr(&loudErr)
+	root := &cobra.Command{Use: "root"}
+	root.AddCommand(silent, loud)
+	announceArgErrors(root)
+
+	assert.Error(t, silent.Args(silent, []string{"zzstray"}))
+	assert.Contains(t, silentErr.String(), "Error:")
+	assert.Contains(t, silentErr.String(), "zzstray")
+	assert.Error(t, loud.Args(loud, []string{"zzstray"}))
+	assert.Empty(t, loudErr.String(), "cobra prints a non-silenced command's error itself")
+	before := silentErr.Len()
+	assert.NoError(t, silent.Args(silent, nil))
+	assert.Equal(t, before, silentErr.Len(), "an accepted call prints nothing")
 }
