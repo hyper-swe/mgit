@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mgit/internal/sandboxd/basecache"
 	"github.com/hyper-swe/mgit/internal/sandboxd/baseprune"
 	"github.com/hyper-swe/mgit/internal/sandboxd/daemonrec"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
@@ -233,4 +234,21 @@ func TestOccupiesBase_OnlyFinishedSandboxesReleaseIt(t *testing.T) {
 	} {
 		assert.Equal(t, want, occupiesBase(state), state)
 	}
+}
+
+// A dry run promises to change nothing, so opening prune's view of the cache
+// must not sweep it: staging debris, however old, is still there afterwards.
+func TestHostPruneDeps_OpeningTheCache_RemovesNoStagingDebris(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv(basecache.EnvRoot, root)
+	debris := filepath.Join(root, "staging", "compose-old")
+	require.NoError(t, os.MkdirAll(debris, 0o750))
+	old := time.Now().Add(-48 * time.Hour)
+	require.NoError(t, os.Chtimes(debris, old, old))
+
+	d, err := hostPruneDeps()
+	require.NoError(t, err)
+
+	assert.Equal(t, root, d.Cache.Root())
+	assert.DirExists(t, debris, "opening the cache for prune must remove nothing")
 }
