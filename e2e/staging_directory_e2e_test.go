@@ -5,6 +5,7 @@
 package e2e
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -30,6 +31,17 @@ func stagingWorktree(t *testing.T) (bin, wt string) {
 	return bin, wt
 }
 
+// headStat is `mgit show --stat` of the newest commit on the worktree's branch.
+func headStat(t *testing.T, bin, wt string) string {
+	t.Helper()
+	var commits []struct {
+		CommitID string `json:"commit_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(mustMgit(t, bin, wt, "log", "--json")), &commits))
+	require.NotEmpty(t, commits)
+	return mustMgit(t, bin, wt, "show", commits[0].CommitID, "--stat")
+}
+
 func TestE2E_AddADirectory_CommitsTheFilesUnderIt(t *testing.T) {
 	bin, wt := stagingWorktree(t)
 
@@ -40,7 +52,7 @@ func TestE2E_AddADirectory_CommitsTheFilesUnderIt(t *testing.T) {
 	assert.NotContains(t, string(staging), `"internal/transport"`, "staging must never hold a directory")
 
 	mustMgit(t, bin, wt, "commit", "-m", "work")
-	show := mustMgit(t, bin, wt, "show", "HEAD", "--stat")
+	show := headStat(t, bin, wt)
 	for _, f := range []string{"internal/transport/t.go", "internal/transport/sub/u.go", "other.go"} {
 		assert.Contains(t, show, f)
 	}
@@ -57,14 +69,15 @@ func TestE2E_StagedDirectoryFromAnOlderMgit_IsRefusedAndRecoverable(t *testing.T
 	out, err := runMgit(t, bin, wt, "commit", "-m", "work")
 	require.Error(t, err, out)
 	assert.Contains(t, out, "mgit restore --staged internal/transport")
-	assert.NotContains(t, out, "is a directory")
+	assert.NotContains(t, out, "read working file", "the old opaque read error is gone")
 
 	mustMgit(t, bin, wt, "restore", "--staged", "internal/transport")
-	status := mustMgit(t, bin, wt, "status")
-	assert.Contains(t, status, "other.go", "unstaging one entry leaves the others staged")
+	left, err := os.ReadFile(filepath.Join(wt, ".mgit", "staging.json")) //nolint:gosec // test-owned path
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"paths":["other.go"]}`, string(left), "unstaging one entry leaves the others staged")
 	mustMgit(t, bin, wt, "add", "internal/transport")
 	mustMgit(t, bin, wt, "commit", "-m", "work")
-	show := mustMgit(t, bin, wt, "show", "HEAD", "--stat")
+	show := headStat(t, bin, wt)
 	assert.Contains(t, show, "internal/transport/t.go")
 	assert.Contains(t, show, "other.go")
 }
@@ -76,7 +89,7 @@ func TestE2E_RestoreStaged_UnstagesExactlyTheNamedPath(t *testing.T) {
 
 	mustMgit(t, bin, wt, "restore", "--staged", "other.go")
 	mustMgit(t, bin, wt, "commit", "-m", "transport only")
-	show := mustMgit(t, bin, wt, "show", "HEAD", "--stat")
+	show := headStat(t, bin, wt)
 	assert.Contains(t, show, "internal/transport/t.go")
 	assert.NotContains(t, show, "other.go")
 }

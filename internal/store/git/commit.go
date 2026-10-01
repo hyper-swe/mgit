@@ -128,6 +128,12 @@ func (cs *CommitStore) buildTreeFromStaging() (plumbing.Hash, error) {
 		return plumbing.ZeroHash, err
 	}
 
+	// Every entry is judged against HEAD as it is, before any is applied.
+	for _, rel := range staged {
+		if err := cs.repo.checkStagedEntry(rel, files); err != nil {
+			return plumbing.ZeroHash, err
+		}
+	}
 	for _, rel := range staged {
 		content, mode, err := cs.repo.workingFileContent(rel)
 		if err != nil {
