@@ -351,7 +351,7 @@ func (s *SyncService) applyResync(ctx context.Context, clean bool, local *gitref
 		return head, nil
 	}
 	c := &model.Commit{
-		AgentID: "mgit-sync",
+		AgentID: model.SyncAgentID,
 		Message: fmt.Sprintf("[mgit-sync] resync base to local working state (git %s)", short(local.HeadCommit)),
 	}
 	hash, err := s.commitStore.CreateCommit(ctx, c)

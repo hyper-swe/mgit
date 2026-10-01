@@ -58,6 +58,8 @@ func (r *Repository) UncommittedAgainst(committed map[string]string) ([]string, 
 // given parent, and moves no ref. It is the fork-base of a new task built from
 // git's committed tree (MGIT-283): the task branch is created at it, while the
 // main checkout's own branch, and every other branch, is left where it was.
+// When the parent's tree already is the snapshot, the parent is returned and
+// nothing is written.
 // Refs: MGIT-283, ADR-008 §2
 func (cs *CommitStore) CreateDetachedCommit(c *model.Commit, parent string, files []SnapshotFile) (string, error) {
 	st := cs.repo.repo.Storer
@@ -75,6 +77,13 @@ func (cs *CommitStore) CreateDetachedCommit(c *model.Commit, parent string, file
 	tree, err := writeNestedTree(st, entries)
 	if err != nil {
 		return "", err
+	}
+	// The parent already IS this tree: there is nothing to record, so no
+	// commit is written and the parent is the fork base.
+	if parent != "" {
+		if pc, err := cs.repo.repo.CommitObject(plumbing.NewHash(parent)); err == nil && pc.TreeHash == tree {
+			return parent, nil
+		}
 	}
 	c.CreatedAt = cs.repo.Now()
 	c.ParentID = parent

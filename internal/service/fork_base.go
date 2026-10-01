@@ -53,7 +53,7 @@ func (s *SyncService) CommittedForkBase(_ context.Context) (base string, uncommi
 		return "", nil, false, fmt.Errorf("resolve the base: %w", err)
 	}
 	c := &model.Commit{
-		AgentID: "mgit-sync",
+		AgentID: model.SyncAgentID,
 		Message: fmt.Sprintf("[mgit-sync] task fork base: git %s's committed tree", short(head)),
 	}
 	if base, err = s.commitStore.CreateDetachedCommit(c, parent, snapshot); err != nil {
