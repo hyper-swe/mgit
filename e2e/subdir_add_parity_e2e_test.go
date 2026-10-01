@@ -137,3 +137,24 @@ func TestE2E_RestoreStagedFromASubdirectory_ResolvesRelativePaths(t *testing.T) 
 	assert.NotContains(t, string(data), "pkg/sub/", "`restore --staged sub` from pkg/ unstages pkg/sub")
 	assert.Contains(t, string(data), "other/o.go", "and nothing else")
 }
+
+// A symlink is staged as the link, as git stages it: never the file or the
+// directory it points to, and a link whose target is outside the project is
+// still inside it. Review finding on #247. Refs: MGIT-278.1
+func TestE2E_AddASymlink_StagesWhatGitStages(t *testing.T) {
+	bin := buildMgitBinary(t)
+	repo := parityTree(t, bin)
+	writeParityFile(t, filepath.Dir(repo), "outside.txt", "outside\n")
+	require.NoError(t, os.Symlink(filepath.Join("pkg", "a.go"), filepath.Join(repo, "lnk")))
+	require.NoError(t, os.Symlink(filepath.Join("..", "outside.txt"), filepath.Join(repo, "escape")))
+	require.NoError(t, os.Symlink("pkg", filepath.Join(repo, "dlnk")))
+	for _, c := range []struct{ dir, arg string }{
+		{".", "lnk"}, {".", "escape"}, {".", "dlnk"},
+		{"pkg", "../lnk"}, {"pkg", "../escape"}, {"pkg", "../dlnk"},
+	} {
+		dir := filepath.Join(repo, c.dir)
+		want := gitStaged(t, repo, dir, c.arg)
+		got := mgitStaged(t, bin, repo, dir, c.arg)
+		assert.Equal(t, want, got, "`add %s` from %s: git staged %v, mgit %v", c.arg, c.dir, want, got)
+	}
+}
