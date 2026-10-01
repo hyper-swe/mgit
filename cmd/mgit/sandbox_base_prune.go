@@ -36,7 +36,10 @@ func hostPruneDeps() (baseprune.Deps, error) {
 	return baseprune.Deps{
 		Cache:    cache,
 		LockPins: images.CachedPins,
-		InUse:    func(ctx context.Context) (map[string]bool, error) { return liveSandboxDigests(ctx, listHostDaemons) },
+		InUse: func(ctx context.Context) (baseprune.Live, error) {
+			digests, err := liveSandboxDigests(ctx, listHostDaemons)
+			return baseprune.Live{Digests: digests}, err
+		},
 	}, nil
 }
 

@@ -219,3 +219,16 @@ func rootKey(root string) string {
 	sum := sha256.Sum256([]byte(root))
 	return hex.EncodeToString(sum[:16])
 }
+
+// FullyRecorded reports whether every pinner of digest is recorded.
+func (c *Cache) FullyRecorded(digest string) bool { return false }
+
+// MarkFullyRecorded marks digest as fully recorded.
+func (c *Cache) MarkFullyRecorded(digest string) error {
+	return errors.New("base cache: not built yet")
+}
+
+// ForgetFullyRecorded clears the mark.
+func (c *Cache) ForgetFullyRecorded(digest string) error {
+	return errors.New("base cache: not built yet")
+}

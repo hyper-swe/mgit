@@ -145,3 +145,51 @@ func TestTreeBytes_SumsRegularFiles(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(8), n, "regular files only; a symlink is not followed or counted")
 }
+
+func TestFullyRecorded_NewEntry_IsNotUntilMarked(t *testing.T) {
+	cache := newCache(t)
+	entry := publish(t, cache, "a")
+	require.NoError(t, cache.RecordPinner(entry.Digest, t.TempDir()))
+	assert.False(t, cache.FullyRecorded(entry.Digest),
+		"a record proves one pinner, never that every pinner was recorded")
+
+	require.NoError(t, cache.MarkFullyRecorded(entry.Digest))
+	assert.True(t, cache.FullyRecorded(entry.Digest))
+}
+
+func TestForgetFullyRecorded_ClearsTheMarkAndIsIdempotent(t *testing.T) {
+	cache := newCache(t)
+	entry := publish(t, cache, "a")
+	require.NoError(t, cache.MarkFullyRecorded(entry.Digest))
+
+	require.NoError(t, cache.ForgetFullyRecorded(entry.Digest))
+	require.NoError(t, cache.ForgetFullyRecorded(entry.Digest))
+	assert.False(t, cache.FullyRecorded(entry.Digest))
+}
+
+// When a pinner's record cannot be written, the mark must still be
+// clearable: it lives beside the entry's record directory, not inside it.
+func TestForgetFullyRecorded_RecordDirectoryUnwritable_StillClears(t *testing.T) {
+	cache := newCache(t)
+	entry := publish(t, cache, "a")
+	require.NoError(t, cache.RecordPinner(entry.Digest, t.TempDir()))
+	require.NoError(t, cache.MarkFullyRecorded(entry.Digest))
+	dir := filepath.Join(cache.Root(), "pinners", strings.TrimPrefix(entry.Digest, "sha256:"))
+	require.NoError(t, os.Chmod(dir, 0o500))       //nolint:gosec // test-owned directory
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o750) }) //nolint:gosec // restore for TempDir cleanup
+
+	require.Error(t, cache.RecordPinner(entry.Digest, t.TempDir()))
+	require.NoError(t, cache.ForgetFullyRecorded(entry.Digest))
+	assert.False(t, cache.FullyRecorded(entry.Digest))
+}
+
+func TestPinners_IgnoresTheFullyRecordedMark(t *testing.T) {
+	cache := newCache(t)
+	entry := publish(t, cache, "a")
+	require.NoError(t, cache.MarkFullyRecorded(entry.Digest))
+
+	roots, recorded, err := cache.Pinners(entry.Digest)
+	require.NoError(t, err)
+	assert.False(t, recorded)
+	assert.Empty(t, roots)
+}

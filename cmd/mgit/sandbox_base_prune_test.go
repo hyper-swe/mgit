@@ -105,7 +105,7 @@ func testPruneOpen(t *testing.T, inUse map[string]bool, asked error) func() (bas
 		return baseprune.Deps{
 			Cache:    testBaseCache(t),
 			LockPins: images.CachedPins,
-			InUse:    func(context.Context) (map[string]bool, error) { return inUse, asked },
+			InUse:    func(context.Context) (baseprune.Live, error) { return baseprune.Live{Digests: inUse}, asked },
 		}, nil
 	}
 }

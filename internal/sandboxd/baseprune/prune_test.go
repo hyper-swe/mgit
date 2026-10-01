@@ -26,6 +26,7 @@ type fixture struct {
 	t     *testing.T
 	cache *basecache.Cache
 	inUse map[string]bool
+	live  []string // host roots of live daemons
 	busy  error
 }
 
@@ -62,8 +63,27 @@ func (f *fixture) repo() repo {
 	return repo{root: root, priv: priv}
 }
 
-// pin registers entry as the repo's base and records the back-reference,
-// as a compose does. It returns the digest-pinned reference.
+// compose publishes a base and pins it the way compose does: the publisher
+// records itself, marks the entry fully recorded, then signs its lock.
+func (f *fixture) compose(r repo, content string) (basecache.Entry, string) {
+	f.t.Helper()
+	entry := f.publish(content)
+	require.NoError(f.t, f.cache.RecordPinner(entry.Digest, r.root))
+	require.NoError(f.t, f.cache.MarkFullyRecorded(entry.Digest))
+	return entry, f.register(r, entry)
+}
+
+// register signs entry into the repo's lock and records nothing: a pin made
+// by an mgit that wrote no back-reference.
+func (f *fixture) register(r repo, entry basecache.Entry) string {
+	f.t.Helper()
+	ref, err := images.Register(r.root, "base", images.BuildCachedBaseEntry(entry.Digest), r.priv)
+	require.NoError(f.t, err)
+	return ref
+}
+
+// pin registers entry as the repo's base and records the back-reference, as
+// a later compose of the same bytes does. It returns the reference.
 func (f *fixture) pin(r repo, entry basecache.Entry) string {
 	f.t.Helper()
 	ref, err := images.Register(r.root, "base", images.BuildCachedBaseEntry(entry.Digest), r.priv)
@@ -76,8 +96,8 @@ func (f *fixture) deps() baseprune.Deps {
 	return baseprune.Deps{
 		Cache:    f.cache,
 		LockPins: images.CachedPins,
-		InUse: func(context.Context) (map[string]bool, error) {
-			return f.inUse, f.busy
+		InUse: func(context.Context) (baseprune.Live, error) {
+			return baseprune.Live{Digests: f.inUse, HostRoots: f.live}, f.busy
 		},
 	}
 }
@@ -95,11 +115,10 @@ func verdicts(items []baseprune.Item) map[string]baseprune.Verdict {
 // repository still launches on what it pinned. Refs: MGIT-239
 func TestApply_OneRepoRepins_RemovesOnlyTheOrphanAndTheOtherStillLaunches(t *testing.T) {
 	f := newFixture(t)
-	x, y, z := f.publish("x"), f.publish("y"), f.publish("z")
 	a, b := f.repo(), f.repo()
-	refA := f.pin(a, x)
-	f.pin(b, y)
-	refB := f.pin(b, z) // b recomposes: y is now pinned by nobody
+	x, refA := f.compose(a, "x")
+	y, _ := f.compose(b, "y")
+	z, refB := f.compose(b, "z") // b recomposes: y is now pinned by nobody
 
 	res, err := baseprune.Apply(t.Context(), f.deps(), nil)
 	require.NoError(t, err)
@@ -122,11 +141,11 @@ func TestApply_OneRepoRepins_RemovesOnlyTheOrphanAndTheOtherStillLaunches(t *tes
 
 func TestPlan_DryRun_ChangesNothingAndNamesEachVerdict(t *testing.T) {
 	f := newFixture(t)
-	x, y, legacy := f.publish("x"), f.publish("y"), f.publish("legacy")
+	legacy := f.publish("legacy")
 	a, b := f.repo(), f.repo()
-	f.pin(a, x)
-	f.pin(b, y)
-	f.pin(b, f.publish("z"))
+	x, _ := f.compose(a, "x")
+	y, _ := f.compose(b, "y")
+	f.compose(b, "z")
 
 	items, err := baseprune.Plan(t.Context(), f.deps())
 	require.NoError(t, err)
@@ -149,9 +168,8 @@ func TestPlan_DryRun_ChangesNothingAndNamesEachVerdict(t *testing.T) {
 
 func TestPlan_PinnerRootDeleted_EntryIsPrunable(t *testing.T) {
 	f := newFixture(t)
-	x := f.publish("x")
 	a := f.repo()
-	f.pin(a, x)
+	f.compose(a, "x")
 	require.NoError(t, os.RemoveAll(filepath.Dir(filepath.Dir(a.root))))
 
 	items, err := baseprune.Plan(t.Context(), f.deps())
@@ -163,11 +181,10 @@ func TestPlan_PinnerRootDeleted_EntryIsPrunable(t *testing.T) {
 
 func TestPlan_AnyLivePinner_KeepsTheEntry(t *testing.T) {
 	f := newFixture(t)
-	x := f.publish("x")
 	a, b := f.repo(), f.repo()
-	f.pin(a, x)
+	x, _ := f.compose(a, "x")
 	f.pin(b, x)
-	f.pin(b, f.publish("z")) // b moved on; a still pins x
+	f.compose(b, "z") // b moved on; a still pins x
 
 	items, err := baseprune.Plan(t.Context(), f.deps())
 	require.NoError(t, err)
@@ -176,10 +193,9 @@ func TestPlan_AnyLivePinner_KeepsTheEntry(t *testing.T) {
 
 func TestApply_SandboxRunningOnAnOrphan_NeverRemovesIt(t *testing.T) {
 	f := newFixture(t)
-	y := f.publish("y")
 	b := f.repo()
-	f.pin(b, y)
-	f.pin(b, f.publish("z"))
+	y, _ := f.compose(b, "y")
+	f.compose(b, "z")
 	f.inUse[y.Digest] = true
 
 	res, err := baseprune.Apply(t.Context(), f.deps(), nil)
@@ -194,10 +210,9 @@ func TestApply_SandboxRunningOnAnOrphan_NeverRemovesIt(t *testing.T) {
 // removed, and the plan says why.
 func TestApply_DaemonCannotBeAsked_RemovesNothing(t *testing.T) {
 	f := newFixture(t)
-	y := f.publish("y")
 	b := f.repo()
-	f.pin(b, y)
-	f.pin(b, f.publish("z"))
+	y, _ := f.compose(b, "y")
+	f.compose(b, "z")
 	f.busy = errors.New("daemon for /some/repo did not answer")
 
 	res, err := baseprune.Apply(t.Context(), f.deps(), nil)
@@ -210,9 +225,8 @@ func TestApply_DaemonCannotBeAsked_RemovesNothing(t *testing.T) {
 
 func TestPlan_PinnerLockUnreadable_KeepsTheEntry(t *testing.T) {
 	f := newFixture(t)
-	y := f.publish("y")
 	b := f.repo()
-	f.pin(b, y)
+	f.compose(b, "y")
 	deps := f.deps()
 	deps.LockPins = func(string) (map[string]bool, error) { return nil, errors.New("permission denied") }
 
@@ -255,11 +269,10 @@ func TestApply_UnknownPinnerNamedButInUse_IsKept(t *testing.T) {
 
 func TestApply_NamedDigestThatIsNotUnknown_Refused(t *testing.T) {
 	f := newFixture(t)
-	x := f.publish("x")
-	f.pin(f.repo(), x)
+	x, _ := f.compose(f.repo(), "x")
 
 	_, err := baseprune.Apply(t.Context(), f.deps(), []string{x.Digest})
-	require.Error(t, err, "the explicit flag is for entries with no recorded pinner only")
+	require.Error(t, err, "the explicit flag is for entries whose pinners are not all recorded")
 	assert.True(t, f.cache.Has(x.Digest))
 }
 
@@ -274,17 +287,16 @@ func TestApply_NamedDigestNotInTheCache_Refused(t *testing.T) {
 // it: the verdict is taken again for each entry immediately before it goes.
 func TestApply_PinnedAgainAfterThePlan_IsKept(t *testing.T) {
 	f := newFixture(t)
-	y := f.publish("y")
 	b := f.repo()
-	f.pin(b, y)
-	f.pin(b, f.publish("z"))
+	y, _ := f.compose(b, "y")
+	f.compose(b, "z")
 	deps := f.deps()
 	// The daemons are asked once for the plan and again just before each
 	// removal; from that second question on, b pins y again.
 	asked := 0
-	deps.InUse = func(context.Context) (map[string]bool, error) {
+	deps.InUse = func(context.Context) (baseprune.Live, error) {
 		asked++
-		return nil, nil
+		return baseprune.Live{}, nil
 	}
 	deps.LockPins = func(root string) (map[string]bool, error) {
 		if asked > 1 {
@@ -297,4 +309,74 @@ func TestApply_PinnedAgainAfterThePlan_IsKept(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, res.Removed)
 	assert.True(t, f.cache.Has(y.Digest))
+}
+
+// THE REVIEW'S CASE. An entry composed before back-references existed gets a
+// record when ONE repository launches on it; another repository pins it from
+// a build that wrote none. A record proves its own repository pins the entry,
+// never that every pinner is recorded, so when the recorded one moves on the
+// entry stays: its pinners are still unknown. Refs: MGIT-239
+func TestApply_EntryWithAnUnrecordedPinner_IsKept(t *testing.T) {
+	f := newFixture(t)
+	x := f.publish("x") // no publisher's mark: composed before records
+	r, s := f.repo(), f.repo()
+	f.pin(r, x) // r's launch backfills its record
+	f.register(s, x)
+	f.compose(r, "y") // r re-pins
+
+	res, err := baseprune.Apply(t.Context(), f.deps(), nil)
+	require.NoError(t, err)
+	assert.Empty(t, res.Removed)
+	assert.True(t, f.cache.Has(x.Digest))
+	assert.Equal(t, baseprune.Unknown, verdicts(res.Items)[x.Digest])
+	pins, err := images.CachedPins(s.root)
+	require.NoError(t, err)
+	assert.True(t, pins[x.Digest], "the unrecorded repository still pins it")
+}
+
+// A pin the records do not know about, in a repository whose daemon is
+// running, is found by reading that repository's lock too.
+func TestPlan_LiveDaemonsRepositoryPinsAnEntry_KeepsIt(t *testing.T) {
+	f := newFixture(t)
+	r, s := f.repo(), f.repo()
+	x, _ := f.compose(r, "x")
+	f.register(s, x)
+	f.compose(r, "y")
+	f.live = []string{s.root}
+
+	items, err := baseprune.Plan(t.Context(), f.deps())
+	require.NoError(t, err)
+	assert.Equal(t, baseprune.Pinned, verdicts(items)[x.Digest])
+}
+
+// A recorded repository that is missing together with the directory that
+// held it is a moved tree or an unmounted volume as likely as a deletion.
+func TestPlan_PinnerRootAndItsParentMissing_CannotTell(t *testing.T) {
+	f := newFixture(t)
+	parent := filepath.Join(t.TempDir(), "volume")
+	root := filepath.Join(parent, "repo", ".mgit", "sandbox")
+	require.NoError(t, os.MkdirAll(root, 0o750))
+	priv, err := images.GenerateTrustRoot(t.Context(), root, noopAuditor{})
+	require.NoError(t, err)
+	r := repo{root: root, priv: priv}
+	x, _ := f.compose(r, "x")
+	require.NoError(t, os.RemoveAll(parent))
+
+	items, err := baseprune.Plan(t.Context(), f.deps())
+	require.NoError(t, err)
+	assert.Equal(t, baseprune.CannotTell, verdicts(items)[x.Digest])
+	assert.Equal(t, baseprune.PinnerMissing, items[0].Pinners[0].State)
+}
+
+func TestApply_EntryWithAnUnrecordedPinnerNamed_IsRemoved(t *testing.T) {
+	f := newFixture(t)
+	x := f.publish("x")
+	r := f.repo()
+	f.pin(r, x)
+	f.compose(r, "y")
+
+	res, err := baseprune.Apply(t.Context(), f.deps(), []string{x.Digest})
+	require.NoError(t, err)
+	require.Len(t, res.Removed, 1, "naming is the consent for an entry whose pinners are not all known")
+	assert.Equal(t, x.Digest, res.Removed[0].Digest)
 }

@@ -75,7 +75,7 @@ type Deps struct {
 	LockPins func(hostRoot string) (map[string]bool, error)
 	// InUse asks every live sandbox daemon which digests its sandboxes boot
 	// from. An error means at least one daemon could not be asked.
-	InUse func(ctx context.Context) (map[string]bool, error)
+	InUse func(ctx context.Context) (Live, error)
 }
 
 // Result is what Apply did.
@@ -92,7 +92,8 @@ func Plan(ctx context.Context, d Deps) ([]Item, error) {
 	if err != nil {
 		return nil, err
 	}
-	inUse, inUseErr := d.InUse(ctx)
+	live, inUseErr := d.InUse(ctx)
+	inUse := live.Digests
 	items := make([]Item, 0, len(listed))
 	for _, l := range listed {
 		it, err := judge(d, l, inUse, inUseErr)
@@ -209,8 +210,8 @@ func removable(v Verdict, named bool) bool {
 
 // rejudge takes one entry's verdict again, asking the daemons afresh.
 func rejudge(ctx context.Context, d Deps, it Item) (Item, error) {
-	inUse, inUseErr := d.InUse(ctx)
-	return judge(d, basecache.Listed{Digest: it.Digest, Path: it.Path}, inUse, inUseErr)
+	live, inUseErr := d.InUse(ctx)
+	return judge(d, basecache.Listed{Digest: it.Digest, Path: it.Path}, live.Digests, inUseErr)
 }
 
 // checkNamed refuses, before anything is removed, a name that is not in the
@@ -234,4 +235,13 @@ func checkNamed(items []Item, unknown []string) (map[string]bool, error) {
 		named[digest] = true
 	}
 	return named, nil
+}
+
+// PinnerMissing is a recorded root that is gone together with its parent.
+const PinnerMissing = "missing"
+
+// Live is what the daemons report.
+type Live struct {
+	Digests   map[string]bool
+	HostRoots []string
 }
