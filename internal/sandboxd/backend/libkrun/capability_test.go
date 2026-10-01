@@ -66,7 +66,7 @@ func TestNewHypervisor_RefusesWhenNetworkingIsMissing(t *testing.T) {
 
 	_, err := newHypervisor(logger, stubCapability{
 		err: errors.New("krun_add_net_unixgram not found"),
-	})
+	}, bundleCheck{})
 	if err == nil {
 		t.Fatal("the hypervisor must not construct against a libkrun that cannot attach a NIC")
 	}
@@ -79,7 +79,7 @@ func TestNewHypervisor_LogsTheLinkedVMMAndItsCapabilities(t *testing.T) {
 	var logged strings.Builder
 	logger := slog.New(slog.NewTextHandler(&logged, nil))
 
-	if _, err := newHypervisor(logger, stubCapability{}); err != nil {
+	if _, err := newHypervisor(logger, stubCapability{}, bundleCheck{}); err != nil {
 		t.Fatalf("newHypervisor: %v", err)
 	}
 	// An operator must be able to tell from the log WHICH VMM is linked and
