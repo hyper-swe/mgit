@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`mgit add` and `mgit restore --staged` resolve paths the way git does
+  from a subdirectory (MGIT-278.1).** A path was taken relative to the
+  project root wherever the command ran, so from `pkg/` `mgit add a.go` did
+  not match and `mgit add .` staged the whole project. Paths now resolve
+  against the working directory: `add .` in a subdirectory stages that
+  subtree, `add -A` still stages the whole tree, and a path that resolves
+  outside the project is refused.
+
 - **`mgit add <directory>` stages the files under it; a directory left in
   staging no longer blocks commits; `mgit restore --staged` unstages
   (MGIT-276).** `mgit add <dir>` used to store the directory itself as one

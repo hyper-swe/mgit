@@ -27,7 +27,8 @@ func parityTree(t *testing.T, bin string) string {
 	repo := t.TempDir()
 	gitCmd(t, repo, "init")
 	files := map[string]string{
-		".gitignore": "*.log\n", "pkg/a.go": "a\n", "pkg/del.go": "d\n",
+		// mgit's own store is never project content, for git either.
+		".gitignore": "*.log\n.mgit/\n", "pkg/a.go": "a\n", "pkg/del.go": "d\n",
 		"pkg/sub/b.go": "b\n", "other/o.go": "o\n",
 	}
 	for rel, content := range files {
