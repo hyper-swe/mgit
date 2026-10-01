@@ -144,6 +144,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Re-adding a worktree for a task that already has commits keeps the
+  task's fork-base (MGIT-275).** When a task's worktree was removed or lost
+  and `mgit work` (or `worktree add`) ran again for the same task, the new
+  worktree pinned the task branch's TIP as its fork-base. Once the task had
+  commits, that was one of its own commits, so every later `mgit diff
+  --task-id`, export and listing failed with "pinned fork-base … != computed
+  base …", and a consumer's recreate path could drop the earlier commits. A
+  re-add now pins the base the task's first commit was made on. `--base` on a
+  re-add is accepted when it names that commit and refused otherwise, naming
+  the fork-base the branch has.
+
 - **The reduced-isolation container backend runs a guest command as the
   identity the daemon requests (MGIT-273).** The fallback backend ran a
   command without applying that identity, so the identity model did not hold
