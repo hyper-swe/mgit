@@ -362,6 +362,13 @@ func composeBaseFromImage(cmd *cobra.Command, refArg string, opts composeOptions
 		return composeResult{}, err
 	}
 
+	// Held shared from publishing (or finding) the entry until the pin is
+	// signed: prune cannot remove what this compose is about to pin.
+	release, err := env.cache.HoldShared()
+	if err != nil {
+		return composeResult{}, err
+	}
+	defer release()
 	cached, err := env.cache.Commit(staging, images.TreeDigest)
 	if err != nil {
 		return composeResult{}, err

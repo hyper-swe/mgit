@@ -62,6 +62,13 @@ func migrateInTreeBase(hostRoot string, cache *basecache.Cache, out io.Writer) e
 			"  pinned digest. The bytes and the digest are unchanged, so what you pinned\n"+
 			"  still resolves.\n", legacy, cache.Root())
 
+	// Held shared from adopting the entry until its pins are repointed and
+	// recorded: prune cannot remove what this migration is pinning.
+	release, err := cache.HoldShared()
+	if err != nil {
+		return fmt.Errorf("migrate in-tree guest base: %w", err)
+	}
+	defer release()
 	entry, err := cache.Adopt(legacy, images.TreeDigest)
 	if err != nil {
 		return fmt.Errorf("migrate in-tree guest base: %w", err)

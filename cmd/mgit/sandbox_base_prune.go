@@ -90,30 +90,37 @@ func occupiesBase(state string) bool {
 // any more. Refs: MGIT-239
 func newSandboxBasePruneCmd(open func() (baseprune.Deps, error)) *cobra.Command {
 	var dryRun bool
-	var unknown []string
+	var unknown, released []string
 	cmd := &cobra.Command{
 		Use:   "prune",
 		Short: "Remove guest-base cache entries that no repository pins any more",
 		Long: "Every repository that pins a cached guest base is recorded beside the cache.\n" +
 			"prune reads each recorded repository's CURRENT images.lock and removes an\n" +
-			"entry only when every one of them has stopped pinning it or no longer\n" +
-			"exists, and no sandbox runs on it. Each live sandbox daemon is asked; if\n" +
-			"one cannot be asked, nothing is removed.\n\n" +
-			"Entries composed before pinners were recorded say \"pinner unknown\" and\n" +
-			"are kept; remove one only by naming it with --remove-unknown. Any later\n" +
-			"compose, adopt or launch from a repository records it as a pinner.",
+			"entry only when every one of them has stopped pinning it, and no sandbox\n" +
+			"runs on it. Each live sandbox daemon is asked; if one cannot be asked,\n" +
+			"nothing is removed.\n\n" +
+			"The records are trusted only for an entry whose publisher recorded every\n" +
+			"pinner from the start. Entries composed before pinners were recorded, or\n" +
+			"with a pin whose record could not be written, say \"pinner unknown\" and\n" +
+			"are kept; remove one only by naming it with --remove-unknown.\n\n" +
+			"A recorded repository with nothing at its path may have been deleted, or\n" +
+			"renamed, moved or unmounted with its pin intact; its entries stay until\n" +
+			"you name its .mgit/sandbox with --release-gone.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			d, err := open()
 			if err != nil {
 				return err
 			}
+			d.ReleasedRoots = released
 			return runBasePrune(cmd.Context(), cmd.OutOrStdout(), d, dryRun, unknown)
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "list every entry, its size, composer and pinners; remove nothing")
 	cmd.Flags().StringArrayVar(&unknown, "remove-unknown", nil,
 		"also remove this entry (sha256:<hex>) although nothing records its pinners; repeatable")
+	cmd.Flags().StringArrayVar(&released, "release-gone", nil,
+		"a recorded repository's .mgit/sandbox that was DELETED: release its pins; repeatable")
 	return cmd
 }
 
