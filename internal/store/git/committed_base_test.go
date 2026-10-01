@@ -58,3 +58,21 @@ func TestCreateDetachedCommit_EscapingPath_Refused(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(filepath.Dir(repo.Root()), "outside"))
 	assert.True(t, os.IsNotExist(statErr))
 }
+
+// When the snapshot's tree is the parent's own tree there is nothing to
+// record: the parent is returned and no commit is written. Refs: MGIT-283
+func TestCreateDetachedCommit_SameTreeAsParent_ReturnsTheParent(t *testing.T) {
+	repo := initTestRepo(t)
+	cs := NewCommitStore(repo)
+	parent := writeAndCommit(t, repo, "MGIT-1", map[string]string{"a.go": "a\n"})
+	before, err := cs.ListCommits(context.Background())
+	require.NoError(t, err)
+
+	id, err := cs.CreateDetachedCommit(&model.Commit{AgentID: "mgit-sync", Message: "fork base"}, parent,
+		[]SnapshotFile{{Path: "a.go", Mode: filemode.Regular, Content: []byte("a\n")}})
+	require.NoError(t, err)
+	assert.Equal(t, parent, id)
+	after, err := cs.ListCommits(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "no commit is written")
+}

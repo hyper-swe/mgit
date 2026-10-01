@@ -90,3 +90,24 @@ func TestE2E_WorkWithIncludeUncommitted_CapturesAndNamesIt(t *testing.T) {
 	assert.Contains(t, out, "tracked.txt", "mgit work names every file it captured")
 	assert.Contains(t, out, "untracked.txt")
 }
+
+// A task's fork base is mgit's own housekeeping commit, not task work, so it
+// carries no index entry, and `mgit verify` must not fail over it. Review
+// finding on #248: the posture job's core_loop.sh failed "verify passes".
+// Here git moves after `mgit init`, so the new task's base differs from the
+// mgit base and a fork-base commit is written. Refs: MGIT-283, FR-12
+func TestE2E_WorkAfterGitMoved_VerifyStillPasses(t *testing.T) {
+	bin, repo := uncommittedProject(t)
+	writeProjectFile(t, repo, "later.txt", "committed after mgit init\n")
+	gitCmd(t, repo, "add", "later.txt")
+	gitCmd(t, repo, "commit", "-m", "later")
+	wt := filepath.Join(t.TempDir(), "wt")
+
+	mustMgit(t, bin, repo, "work", wt, "--task-id", "MGIT-283.V")
+	assert.Equal(t, "committed after mgit init\n", readFileOrEmpty(t, filepath.Join(wt, "later.txt")))
+
+	for _, dir := range []string{wt, repo} { // the worktree's walk starts at the fork base's branch
+		out, err := runMgit(t, bin, dir, "verify")
+		require.NoError(t, err, "verify in %s must pass with a task fork base present: %s", dir, out)
+	}
+}
