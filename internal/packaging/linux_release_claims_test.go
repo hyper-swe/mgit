@@ -14,21 +14,38 @@ import (
 // arm64, so its daemon is built and verified but never boots a guest before
 // a release. Every surface a user reads says so in the same words, so the
 // claim cannot drift into "verified" by paraphrase: the install doc, the
-// CHANGELOG's unreleased section, and the release notes. Refs: MGIT-230.5
+// CHANGELOG's current section (Unreleased, or the newest release while
+// Unreleased is empty, as it is right after a cut), and the release notes. Refs: MGIT-230.5
 func TestLinuxArm64_EverySurfaceSaysBuildVerifiedNotBootVerified(t *testing.T) {
 	const words = "build-verified and not boot-verified"
-	changelog := readRepoFile(t, "CHANGELOG.md")
-	end := strings.Index(changelog, "\n## [0.")
-	require.Positive(t, end, "the CHANGELOG has a released section after [Unreleased]")
-	unreleased := changelog[:end]
+	current := currentChangelogSection(t, readRepoFile(t, "CHANGELOG.md"))
 	for name, text := range map[string]string{
 		"docs/INSTALL-SANDBOX.md":         readRepoFile(t, filepath.Join("docs", "INSTALL-SANDBOX.md")),
-		"CHANGELOG.md [Unreleased]":       unreleased,
+		"CHANGELOG.md current section":    current,
 		".goreleaser.yaml release header": releaseHeader(t),
 	} {
 		assert.Regexp(t, "`?linux_arm64`? is "+regexp.QuoteMeta(words), text,
 			"%s must state linux_arm64 as %s, in those words", name, words)
 	}
+}
+
+// currentChangelogSection is the text of the section a reader meets first:
+// [Unreleased] when it holds anything, else the newest released section.
+func currentChangelogSection(t *testing.T, changelog string) string {
+	t.Helper()
+	start := strings.Index(changelog, "\n## [Unreleased]")
+	require.GreaterOrEqual(t, start, 0, "the CHANGELOG has an [Unreleased] section")
+	rest := changelog[start+1:]
+	end := strings.Index(rest[1:], "\n## [")
+	require.Positive(t, end, "the CHANGELOG has a released section after [Unreleased]")
+	unreleased := rest[:end+1]
+	if strings.Contains(unreleased, "\n- ") {
+		return unreleased
+	}
+	next := rest[end+2:]
+	after := strings.Index(next[1:], "\n## [")
+	require.Positive(t, after, "the CHANGELOG has a second released section")
+	return next[:after+1]
 }
 
 // A go-installed mgit-sandboxd on Linux is the CGO-free firecracker build: it
