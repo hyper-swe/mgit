@@ -132,3 +132,8 @@ func (r *Repository) RestoreStaging(paths []string) error {
 	}
 	return r.stagePaths(paths)
 }
+
+// Unstage removes paths from the staging area.
+func (r *Repository) Unstage(rels []string) ([]string, error) {
+	return nil, errors.New("unstage is not built yet")
+}
