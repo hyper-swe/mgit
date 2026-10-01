@@ -88,6 +88,11 @@ var (
 	// ErrStorageError indicates a low-level storage operation failed.
 	ErrStorageError = errors.New("storage error")
 
+	// ErrNoPatchIdentity indicates no git identity is configured to author an
+	// exported patch: git am records a patch's From: line as the commit's
+	// author, so mgit will not invent one. Refs: MGIT-237
+	ErrNoPatchIdentity = errors.New("no git identity to author the patch")
+
 	// ErrChainBroken indicates the commit parent-child chain is inconsistent.
 	ErrChainBroken = errors.New("commit chain broken")
 
@@ -163,6 +168,10 @@ var (
 	// each overwritten path is destroyed and recorded. Refs: MGIT-71, ADR-011
 	ErrWorktreeSyncConflict = errors.New("worktree sync blocked by guest-side changes")
 
+	// ErrInvalidStagedEntry means the staging area names something commit
+	// cannot record as one path. Refs: MGIT-276
+	ErrInvalidStagedEntry = errors.New("invalid staged entry")
+
 	// ErrLandVerificationFailed indicates dual-hash or task-binding
 	// verification failed during sandbox land; nothing was imported.
 	// Refs: FR-17.5, FR-17.20, FR-17.24
@@ -203,6 +212,14 @@ var (
 	// never answered on its control channel, so the launch failed CLOSED and
 	// the sandbox was torn down rather than reported as running. Refs: MGIT-92
 	ErrGuestNotServing = errors.New("guest never answered on its control channel")
+
+	// ErrGuestExecIdentityMismatch reports that a daemon-internal guest exec
+	// ran as an identity other than the one asked for — the guest confirmed a
+	// different uid/gid. A sync refuses rather than trust a guest that ran the
+	// read-back as the wrong identity. A guest that did not report an identity
+	// at all (a base that predates the field) is unverifiable, not a mismatch,
+	// and is handled softly. Refs: MGIT-272, MGIT-151
+	ErrGuestExecIdentityMismatch = errors.New("guest ran an internal exec as an unexpected identity")
 
 	// ErrSandboxDaemonUnresponsive reports that mgit-sandboxd stopped emitting
 	// liveness beats on an exec stream that was still open: the DAEMON

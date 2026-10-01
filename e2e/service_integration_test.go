@@ -65,7 +65,7 @@ func setupServiceEnv(t *testing.T) *serviceEnv {
 		repo:     repo,
 		idx:      idx,
 		commit:   service.NewCommitService(repo, cs, idx),
-		squash:   service.NewSquashService(repo, cs, idx),
+		squash:   service.NewSquashService(repo, cs, idx).WithPatchAuthor(e2ePatchAuthor),
 		rollback: service.NewRollbackService(repo, cs, idx),
 		branch:   service.NewBranchService(repo, bs, idx),
 		verify:   service.NewVerifyService(cs, idx),

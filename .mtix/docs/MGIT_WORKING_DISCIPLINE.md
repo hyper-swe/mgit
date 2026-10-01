@@ -117,8 +117,17 @@ mgit rollback --task-id MGIT-12.3 --reason "wrong validation lib"
 mgit rollback --commit <hash> --reason "revert just this step"   # resolves task automatically
 ```
 
-**Fork** — branch a new line from a good commit and continue the new approach,
-preserving the old line:
+**Fork** — start a new line from a good commit and continue the new approach,
+preserving the old line. In a task worktree (where `mgit work` put you), the
+worktree is bound to its branch, so switching branches there is refused (`mgit
+checkout`, `checkout -b` and `branch <name>`). Fork into a new task worktree
+instead, from the project root:
+
+```bash
+mgit work ../wt-v2 --task-id MGIT-12.3.1 --base <good-hash>   # new worktree at the decision point
+```
+
+In the project root itself, outside any task worktree, a branch forks in place:
 
 ```bash
 mgit checkout <good-hash>          # move to the decision point
@@ -133,8 +142,8 @@ Then cherry-pick the still-good work from the old line onto the new one
 clobbering a diverged or dirty path):
 
 ```bash
-mgit cherry-pick <useful-hash>                       # apply onto current branch
-mgit cherry-pick <useful-hash> --onto task/MGIT-12.3-v2
+mgit cherry-pick <useful-hash>                       # apply onto current branch (in the new worktree, onto the new line)
+mgit cherry-pick <useful-hash> --onto task/MGIT-12.3-v2   # project root only; refused inside a task worktree
 mgit cherry-pick <useful-hash> --no-commit           # preview only
 ```
 
@@ -195,8 +204,8 @@ mtix done MGIT-12.3
 | Run build/test/install | `mgit run -- <command>` |
 | Orient | `mgit status` · `mgit log --oneline` · `mgit diff [--task-id <ID>]` · `mgit show <hash>` |
 | Backtrack | `mgit rollback --task-id <ID>` / `--commit <hash>` |
-| Fork | `mgit checkout <hash>` then `mgit checkout -b <branch>` |
-| Salvage | `mgit cherry-pick <hash> [--onto <branch>]` |
+| Fork | in a task worktree: `mgit work <new-path> --task-id <new-task-id> --base <hash>` from the project root · in the project root: `mgit checkout <hash>` then `mgit checkout -b <branch>` |
+| Salvage | `mgit cherry-pick <hash>` · `--onto <branch>` from the project root only |
 | Verify | `mgit verify --task-id <ID>` |
 | Squash | `mgit squash --task-id <ID> [--to-git \| --to-main]` |
 | Land (sandbox) | `mgit sandbox land --task <ID>` |

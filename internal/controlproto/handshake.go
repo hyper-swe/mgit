@@ -198,7 +198,9 @@ func SkewMessage(cli, daemon Peer) string {
 			"  go install:   go install github.com/hyper-swe/mgit/cmd/mgit@latest && \\\n" +
 			"                go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest\n" +
 			"  from a clone: go build -o <bindir>/mgit ./cmd/mgit && \\\n" +
-			"                go build -o <bindir>/mgit-sandboxd ./cmd/mgit-sandboxd\n")
+			"                go build -o <bindir>/mgit-sandboxd ./cmd/mgit-sandboxd\n" +
+			"On Linux the two go routes build the firecracker daemon, which boots only a kernel + rootfs\n" +
+			"image; the release archive (install.sh) carries the libkrun daemon. Keep the route you had.\n")
 	b.WriteString(staleSideRemedy(cli, daemon))
 	b.WriteString(
 		"Confirm both, and quote both in any bug report:  mgit --version; mgit-sandboxd --version")

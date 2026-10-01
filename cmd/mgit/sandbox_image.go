@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -93,7 +94,11 @@ func installImage(ctx context.Context, w io.Writer, a imageInstallArgs) error {
 	in := &imageinstall.Installer{HostRoot: hostRoot, Audit: printTrustRootAuditor{w: w}}
 	res, err := in.Install(ctx, a.source, a.name)
 	var status *imageinstall.HTTPStatusError
-	if err != nil && a.defaulted && errors.As(err, &status) && status.Code == http.StatusNotFound {
+	// Only the MANIFEST missing from the default source means releases carry
+	// no bundle; a found manifest whose artifact 404s is a broken bundle.
+	// Refs: MGIT-234.1
+	if err != nil && a.defaulted && errors.As(err, &status) && status.Code == http.StatusNotFound &&
+		strings.HasSuffix(status.URL, "/manifest.json") {
 		return fmt.Errorf("%w\nmgit releases do not carry a guest image bundle: publishing them is on hold "+
 			"(docs/INSTALL-SANDBOX.md). Install one you built or were given with "+
 			"`mgit sandbox image install --from <dir-or-url>`; with the libkrun daemon (macOS, and the Linux "+
