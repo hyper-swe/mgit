@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-02
+
+`linux_arm64` is build-verified and not boot-verified, as in 0.7.1: it is
+built and load-checked, but no hosted CI runner offers KVM on arm64.
+
 ### Fixed
 
 - **Creating several worktrees at once no longer fails when a sibling's
