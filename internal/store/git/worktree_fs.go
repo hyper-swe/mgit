@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
@@ -198,7 +197,7 @@ func isNestedMgitRoot(dir string) bool {
 // internal .gitignore files (if any) never affect project matching.
 // Refs: MGIT-32
 func (r *Repository) ignoreMatcher() (gitignore.Matcher, error) {
-	patterns, err := gitignore.ReadPatterns(osfs.New(r.root), nil)
+	patterns, err := gitignore.ReadPatterns(newIgnoreReadFS(r.root), nil)
 	if err != nil {
 		return nil, fmt.Errorf("read gitignore patterns: %w", err)
 	}
