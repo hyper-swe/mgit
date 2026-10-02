@@ -35,12 +35,16 @@ func newIgnoreReadFS(root string) *ignoreReadFS {
 
 // ReadDir lists path (relative to the project root) without the directories
 // the project walk never enters and without names that vanish mid-listing.
-// A directory that vanishes or is unreadable is reported to the caller as
-// before; only entries inside a listing that did succeed are filtered.
+// A subdirectory that vanished before it could be listed holds no rules and
+// reads as empty; the project root vanishing, and any other failure to list,
+// are reported. Only entries inside a listing that did succeed are filtered.
 // Refs: MGIT-285
 func (f *ignoreReadFS) ReadDir(path string) ([]os.FileInfo, error) {
 	dir := filepath.Join(f.root, path)
 	entries, err := f.readDir(dir)
+	if errors.Is(err, fs.ErrNotExist) && !isProjectRoot(path) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -62,4 +66,10 @@ func (f *ignoreReadFS) ReadDir(path string) ([]os.FileInfo, error) {
 		infos = append(infos, info)
 	}
 	return infos, nil
+}
+
+// isProjectRoot reports whether a path given to ReadDir names the project
+// root itself, as go-git's rule reader spells it ("" or ".").
+func isProjectRoot(path string) bool {
+	return path == "" || path == "."
 }
