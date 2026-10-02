@@ -240,6 +240,18 @@ done
 echo "  the granted host is reachable"
 if reach "$OTHER"; then fail "granted egress" "a host that was not granted ($OTHER) is reachable from the guest"; fi
 echo "  a host that was not granted is refused"
+# Control for the refusal above: the same probe reaches that host once policy
+# set allows it, so the refusal was the policy and not an outage of the host.
+# The revoke below then removes every grant, this one included.
+out="$(cd "$R" && mgit sandbox policy set --task-id "$T2" --allow "$GRANT" --allow "$OTHER" 2>&1)" ||
+	fail "granted egress" "policy set: $(first "$out")"
+widened=no
+for _ in 1 2 3; do
+	if reach "$OTHER"; then widened=yes; break; fi
+	sleep 5
+done
+[ "$widened" = yes ] || fail "granted egress" "$OTHER is not reachable even after policy set allowed it: the refusal above does not prove the deny"
+echo "  the same host is reachable once policy set allows it (the deny was the policy)"
 out="$(cd "$R" && mgit sandbox policy revoke --task-id "$T2" 2>&1)" || fail "granted egress" "revoke: $(first "$out")"
 if reach "$GRANT"; then fail "granted egress" "the revoked host $GRANT is still reachable from the guest"; fi
 echo "  after revoke the granted host is refused"
