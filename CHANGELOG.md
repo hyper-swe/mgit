@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`mgit add` and `mgit restore --staged` resolve paths the way git does
+  from a subdirectory (MGIT-278.1).** A path was taken relative to the
+  project root wherever the command ran, so from `pkg/` `mgit add a.go` did
+  not match and `mgit add .` staged the whole project. Paths now resolve
+  against the working directory: `add .` in a subdirectory stages that
+  subtree, `add -A` still stages the whole tree, and a path that resolves
+  outside the project is refused. A symlink is staged as the link, as git
+  stages it, never the file or directory it points to.
+
+## [0.7.2] - 2026-10-02
+
+`linux_arm64` is build-verified and not boot-verified, as in 0.7.1: it is
+built and load-checked, but no hosted CI runner offers KVM on arm64.
+
+### Changed
+
+- **On the Linux libkrun daemon, `mgit sandbox grant` and `mgit sandbox
+  grants` are not served.** They answer with a refusal that changes nothing
+  and says so: there is no grant coordinator on this build, since the egress
+  policy is enforced inside the VM. Set the allowlist with `mgit sandbox
+  policy set` and remove it with `mgit sandbox policy revoke`, which act on
+  the running sandbox. Checked on hosted CI with two hosts, not on every
+  destination.
+
+### Fixed
+
 - **Creating several worktrees at once no longer fails when a sibling's
   temporary file disappears (MGIT-285).** Reading the project's ignore rules
   descended into every directory, including the `.mgit` of a linked worktree
@@ -18,14 +44,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are now read over the same tree the file listing walks: a nested worktree's
   store is never entered, and a name that vanishes mid-listing is skipped.
 
-- **`mgit add` and `mgit restore --staged` resolve paths the way git does
-  from a subdirectory (MGIT-278.1).** A path was taken relative to the
-  project root wherever the command ran, so from `pkg/` `mgit add a.go` did
-  not match and `mgit add .` staged the whole project. Paths now resolve
-  against the working directory: `add .` in a subdirectory stages that
-  subtree, `add -A` still stages the whole tree, and a path that resolves
-  outside the project is refused. A symlink is staged as the link, as git
-  stages it, never the file or directory it points to.
+- **A sandbox with granted egress boots on the Linux libkrun daemon
+  (MGIT-287).** The Linux archives' daemon installed the firecracker egress
+  controller, which binds the proxy and DNS on a per-sandbox tap gateway that
+  only the firecracker backend creates, so a sandbox launched in allowlist mode
+  failed at its first exec with `bind: cannot assign requested address`; none
+  and open sandboxes were unaffected. The libkrun build now takes no host-tap
+  egress wiring, as on macOS: its egress is enforced inside its own VM child.
+  The release-shaped Linux user path now boots a granted-egress sandbox and
+  checks the grant is enforced and revoked.
 
 ## [0.7.1] - 2026-10-01
 
