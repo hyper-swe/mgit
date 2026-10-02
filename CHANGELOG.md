@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Creating several worktrees at once no longer fails when a sibling's
+  temporary file disappears (MGIT-285).** Reading the project's ignore rules
+  descended into every directory, including the `.mgit` of a linked worktree
+  that another `mgit work` was still creating, and a temporary file removed
+  between the directory listing and its stat failed the whole `mgit work` with
+  `read gitignore patterns: lstat ...: no such file or directory`. The rules
+  are now read over the same tree the file listing walks: a nested worktree's
+  store is never entered, and a name that vanishes mid-listing is skipped.
+
 - **`mgit add` and `mgit restore --staged` resolve paths the way git does
   from a subdirectory (MGIT-278.1).** A path was taken relative to the
   project root wherever the command ran, so from `pkg/` `mgit add a.go` did
@@ -339,6 +348,12 @@ was to ship, and what was fixed after it.
   output, and that failed the v0.7.0 release before anything was published.
   The walk now handles a repository that holds no mgit store, and CI runs
   the whole suite in a workspace shaped like the release job's.
+
+- **A tracked file that an ignore rule also matches is now placed in the
+  worktree (MGIT-277; fixed by MGIT-269).** `mgit work` used to leave such a
+  file out of a new worktree, which a consumer comparing the worktree with
+  the base read as a deletion. Ignore rules decide which files are
+  untracked; they no longer hide a file the base already tracks.
 
 ## [0.6.8] - 2026-09-22
 
