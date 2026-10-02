@@ -115,3 +115,33 @@ func TestIgnoreReadFS_ReadDir_ReportsEveryFailureThatIsNotAVanishedName(t *testi
 		})
 	}
 }
+
+// A directory that vanishes between its parent's listing and its own (a
+// worktree directory rolled back mid-creation, before its store exists) is
+// gone, not a fault: it holds no rules to read. The project root itself
+// vanishing is a fault and is reported. Refs: MGIT-285
+func TestIgnoreReadFS_ReadDir_ASubdirectoryThatVanishedIsEmptyButTheRootIsAFault(t *testing.T) {
+	gone := &os.PathError{Op: "open", Path: "x", Err: fs.ErrNotExist}
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{"vanished_subdirectory_is_empty", "wt-rolled-back", false},
+		{"vanished_nested_subdirectory_is_empty", "a/b", false},
+		{"vanished_project_root_is_a_fault", ".", true},
+		{"vanished_project_root_by_empty_path_is_a_fault", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			infos, err := fsWith(t.TempDir(), nil, gone).ReadDir(tt.path)
+
+			if tt.wantErr {
+				require.ErrorIs(t, err, fs.ErrNotExist)
+				return
+			}
+			require.NoError(t, err)
+			assert.Empty(t, infos)
+		})
+	}
+}
