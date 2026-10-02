@@ -15,12 +15,13 @@ import (
 )
 
 // allowlistManager boots a sandbox in allowlist mode, the shape a launch
-// with a granted egress host takes, and reports it running.
+// with a granted egress host takes, and reports it running under the
+// lifecycle ID the host assigned (the registry records it by that ID).
 type allowlistManager struct{ nopManager }
 
 func (allowlistManager) Launch(_ context.Context, opts model.SandboxLaunchOptions) (*model.SandboxInfo, error) {
 	return &model.SandboxInfo{
-		ID: "01TESTALLOWLISTSANDBOX0000", TaskID: opts.TaskID,
+		ID: opts.SandboxID, TaskID: opts.TaskID,
 		NetworkMode: model.NetworkModeAllowlist, NetworkAllowlist: opts.Network.Allowlist,
 	}, nil
 }
