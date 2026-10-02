@@ -213,7 +213,13 @@ step "8b a sandbox with granted egress boots through the daemon, and the grant i
 # address") while every none or open sandbox ran, which is why the steps above
 # could not see it. Granted host, then any other host, then revoke. The probe
 # is bash's /dev/tcp inside the guest: it resolves the name through the
-# guest's resolver, which the allowlist answers. Refs: MGIT-287, SEC-04
+# guest's resolver, which the allowlist answers. The libkrun VM enforces the
+# policy itself (the daemon's own egress runner is not involved on this
+# backend), so THESE assertions are what prove egress is still enforced: the
+# granted host is reachable (the positive control, so a refusal below cannot be
+# the probe being broken), a host that was NOT granted is refused (the deny),
+# and the granted host is refused again after a revoke (the revoke). None of
+# the three is to be loosened to make this step pass. Refs: MGIT-287, SEC-04
 T2=UP-2
 P2="$W/work2"
 GRANT=example.com

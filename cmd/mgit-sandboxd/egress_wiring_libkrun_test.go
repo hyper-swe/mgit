@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd/backend/firecracker"
 )
 
 // allowlistManager boots a sandbox in allowlist mode, the shape a launch
@@ -52,4 +53,28 @@ func TestWireEgress_LibkrunBuild_InstallsNoHostTapController(t *testing.T) {
 	_, err = svc.EnsureRunning(context.Background(), "MGIT-287")
 
 	require.NoError(t, err, "an allowlist sandbox must boot without the daemon binding a tap gateway that does not exist")
+}
+
+// With the daemon's own controllers gone, the verbs that change or read a
+// running sandbox's policy must still reach an enforcer: the libkrun VM
+// child's, through the platform controller. They must never fall through to a
+// firecracker runner that enforces nothing here, and never be left with no
+// controller while appearing to succeed. Capability grants are the other half:
+// there is no grant coordinator on this build, and the daemon then answers
+// `grant` and `grants` as not served with nothing changed (covered by
+// TestDaemon_GrantsKind_NotServedWhenUnwired and the zero Grants asserted
+// above). Refs: MGIT-287, MGIT-72, SEC-04
+func TestWireEgress_LibkrunBuild_PolicyVerbsReachTheLibkrunEnforcer(t *testing.T) {
+	clock := func() time.Time { return time.Unix(0, 0).UTC() }
+	hostRoot := t.TempDir()
+	svc, events, closeAudit, err := buildSandboxService(allowlistManager{}, hostRoot, newPolicyStore(hostRoot, clock, testLogger()), clock)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = closeAudit() })
+	wired := wireEgress(svc, events, clock, testLogger())
+
+	ctrl := selectPolicyController(platformPolicyController(t.TempDir(), testLogger()), wired)
+
+	require.NotNil(t, ctrl, "the live policy verbs must have an enforcer on the libkrun build")
+	_, isFirecracker := ctrl.(firecracker.PolicyController)
+	assert.False(t, isFirecracker, "the live policy verbs reached the firecracker runner, which enforces nothing for a libkrun sandbox")
 }
