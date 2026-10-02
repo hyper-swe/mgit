@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 `linux_arm64` is build-verified and not boot-verified, as in 0.7.1: it is
 built and load-checked, but no hosted CI runner offers KVM on arm64.
 
+### Changed
+
+- **On the Linux libkrun daemon, `mgit sandbox grant` and `mgit sandbox
+  grants` are not served.** They answer with a refusal that changes nothing
+  and says so: there is no grant coordinator on this build, since the egress
+  policy is enforced inside the VM. Set the allowlist with `mgit sandbox
+  policy set` and remove it with `mgit sandbox policy revoke`, which act on
+  the running sandbox. Checked on hosted CI with two hosts, not on every
+  destination.
+
 ### Fixed
 
 - **Creating several worktrees at once no longer fails when a sibling's
