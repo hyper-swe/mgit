@@ -20,6 +20,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   --include-uncommitted` captures them instead, naming each. ADR-008 §2 is
   amended accordingly.
 
+## [0.7.2] - 2026-10-02
+
+`linux_arm64` is build-verified and not boot-verified, as in 0.7.1: it is
+built and load-checked, but no hosted CI runner offers KVM on arm64.
+
+### Changed
+
+- **On the Linux libkrun daemon, `mgit sandbox grant` and `mgit sandbox
+  grants` are not served.** They answer with a refusal that changes nothing
+  and says so: there is no grant coordinator on this build, since the egress
+  policy is enforced inside the VM. Set the allowlist with `mgit sandbox
+  policy set` and remove it with `mgit sandbox policy revoke`, which act on
+  the running sandbox. Checked on hosted CI with two hosts, not on every
+  destination.
+
 ### Fixed
 
 - **Creating several worktrees at once no longer fails when a sibling's
@@ -30,6 +45,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `read gitignore patterns: lstat ...: no such file or directory`. The rules
   are now read over the same tree the file listing walks: a nested worktree's
   store is never entered, and a name that vanishes mid-listing is skipped.
+
+- **A sandbox with granted egress boots on the Linux libkrun daemon
+  (MGIT-287).** The Linux archives' daemon installed the firecracker egress
+  controller, which binds the proxy and DNS on a per-sandbox tap gateway that
+  only the firecracker backend creates, so a sandbox launched in allowlist mode
+  failed at its first exec with `bind: cannot assign requested address`; none
+  and open sandboxes were unaffected. The libkrun build now takes no host-tap
+  egress wiring, as on macOS: its egress is enforced inside its own VM child.
+  The release-shaped Linux user path now boots a granted-egress sandbox and
+  checks the grant is enforced and revoked.
 
 ## [0.7.1] - 2026-10-01
 
