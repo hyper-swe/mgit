@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Creating several worktrees at once no longer fails when a sibling's
+  temporary file disappears (MGIT-285).** Reading the project's ignore rules
+  descended into every directory, including the `.mgit` of a linked worktree
+  that another `mgit work` was still creating, and a temporary file removed
+  between the directory listing and its stat failed the whole `mgit work` with
+  `read gitignore patterns: lstat ...: no such file or directory`. The rules
+  are now read over the same tree the file listing walks: a nested worktree's
+  store is never entered, and a name that vanishes mid-listing is skipped.
+
 ## [0.7.1] - 2026-10-01
 
 v0.7.0 was tagged but never published: its release failed before any
