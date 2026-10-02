@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are now read over the same tree the file listing walks: a nested worktree's
   store is never entered, and a name that vanishes mid-listing is skipped.
 
+- **A sandbox with granted egress boots on the Linux libkrun daemon
+  (MGIT-287).** The Linux archives' daemon installed the firecracker egress
+  controller, which binds the proxy and DNS on a per-sandbox tap gateway that
+  only the firecracker backend creates, so a sandbox launched in allowlist mode
+  failed at its first exec with `bind: cannot assign requested address`; none
+  and open sandboxes were unaffected. The libkrun build now takes no host-tap
+  egress wiring, as on macOS: its egress is enforced inside its own VM child.
+  The release-shaped Linux user path now boots a granted-egress sandbox and
+  checks the grant is enforced and revoked.
+
 ## [0.7.1] - 2026-10-01
 
 v0.7.0 was tagged but never published: its release failed before any

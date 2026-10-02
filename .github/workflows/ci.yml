@@ -369,3 +369,15 @@ jobs:
         run: |
           go build -buildvcs=false -tags libkrun ./...
           go vet -tags libkrun ./internal/sandboxd/backend/libkrun/ ./cmd/mgit-sandboxd/
+
+      # The daemon's own wiring under the libkrun tag: which egress controller
+      # a Linux libkrun daemon installs is decided by build tags, so only a run
+      # with this tag can see it. The 0.7.1 daemon installed the firecracker
+      # one and failed every allowlist sandbox at boot. Unit tests only: no VM
+      # is booted here. Refs: MGIT-287
+      - name: The daemon's wiring under the libkrun tag
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib64/pkgconfig
+          LIBRARY_PATH: /usr/local/lib64
+          LD_LIBRARY_PATH: /usr/local/lib64
+        run: go test -buildvcs=false -tags libkrun ./cmd/mgit-sandboxd/ -count=1
