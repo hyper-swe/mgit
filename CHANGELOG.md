@@ -329,6 +329,12 @@ was to ship, and what was fixed after it.
   The walk now handles a repository that holds no mgit store, and CI runs
   the whole suite in a workspace shaped like the release job's.
 
+- **A tracked file that an ignore rule also matches is now placed in the
+  worktree (MGIT-277; fixed by MGIT-269).** `mgit work` used to leave such a
+  file out of a new worktree, which a consumer comparing the worktree with
+  the base read as a deletion. Ignore rules decide which files are
+  untracked; they no longer hide a file the base already tracks.
+
 ## [0.6.8] - 2026-09-22
 
 **The base a release vouches for is a digest now, and `mgit doctor` says when
