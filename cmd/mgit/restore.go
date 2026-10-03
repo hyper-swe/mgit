@@ -113,7 +113,11 @@ func runUnstage(paths []string, formatJSON bool) error {
 		return err
 	}
 	defer app.Close()
-	removed, err := app.Restore.Unstage(context.Background(), paths)
+	rels, err := projectPaths(app.Repo.Root(), paths)
+	if err != nil {
+		return fmt.Errorf("restore --staged: %w", err)
+	}
+	removed, err := app.Restore.Unstage(context.Background(), rels)
 	if err != nil {
 		return err
 	}

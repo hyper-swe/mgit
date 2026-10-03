@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   --include-uncommitted` captures them instead, naming each. ADR-008 §2 is
   amended accordingly.
 
+### Fixed
+
+- **`mgit add` and `mgit restore --staged` resolve paths the way git does
+  from a subdirectory (MGIT-278.1).** A path was taken relative to the
+  project root wherever the command ran, so from `pkg/` `mgit add a.go` did
+  not match and `mgit add .` staged the whole project. Paths now resolve
+  against the working directory: `add .` in a subdirectory stages that
+  subtree, `add -A` still stages the whole tree, and a path that resolves
+  outside the project is refused. A symlink is staged as the link, as git
+  stages it, never the file or directory it points to.
+
 ## [0.7.2] - 2026-10-02
 
 `linux_arm64` is build-verified and not boot-verified, as in 0.7.1: it is
