@@ -12,9 +12,11 @@ only the squashed, reviewed result.
 
 > **mgit keeps itself in sync with git — there is no manual `mgit sync` step**
 > (ADR-008). git is authoritative; mgit automatically keeps its `.mgit` base
-> coherent with your current local working state. A new task worktree therefore
-> carries your unpushed local foundation, and each task pins the base it forked
-> from, so a later resync never corrupts its diff. mgit reads `.git` read-only
+> coherent with git. A new task worktree starts from git's committed tree at
+> your local HEAD (unpushed commits included). Uncommitted and untracked files
+> in this checkout are left out and named; pass `mgit work --include-uncommitted`
+> to capture them (each is named). Each task pins the base it forked from, so a
+> later resync never corrupts its diff. mgit reads `.git` read-only
 > to learn git's state and never mutates it. You never run a resync by hand; if
 > mgit cannot safely read git state it fails loud rather than materialize a
 > stale worktree.
@@ -229,9 +231,9 @@ don't rediscover them by stumbling:
    worktree, or list the build-required paths in `.mgit/seed-include` (one glob
    per line) to carry them in.
 
-3. **Do not manually re-import to "refresh" a worktree.** mgit auto-housekeeps
-   its base from your current local working state, so you never need
-   `mgit add . && mgit commit` to pick up just-integrated work. If a worktree
+3. **Do not manually re-import to "refresh" a worktree.** A new task starts
+   from git's committed tree, so commit in git what a task must build on;
+   you never need `mgit add . && mgit commit` to pick up just-integrated work. If a worktree
    looks stale, that is a bug to report — not a manual sync step to run.
 
 4. **The task-id flag is `--task-id`** on every command (`--task` is accepted as

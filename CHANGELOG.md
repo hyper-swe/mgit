@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A new task's base is git's committed tree; capturing uncommitted work is
+  opt-in (MGIT-283, security).** Creating a task worktree used to absorb the
+  checkout's uncommitted and untracked files into the task's base, so a
+  consumer that landed the task's tree could land private uncommitted
+  content, and `mgit status` in the main checkout then read clean. Now `mgit
+  work` and `mgit worktree add` fork a new task from what git has committed
+  at the local HEAD (unpushed commits included), leave the main checkout's
+  branch untouched, and name every uncommitted file they left out. `mgit work
+  --include-uncommitted` captures them instead, naming each. ADR-008 §2 is
+  amended accordingly.
+
 ### Fixed
 
 - **`mgit add` and `mgit restore --staged` resolve paths the way git does

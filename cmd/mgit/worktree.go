@@ -24,6 +24,7 @@ func worktreeCmd() *cobra.Command {
 
 	// mgit worktree add
 	var wtTaskID, wtAgentID, wtBranch string
+	var wtIncludeUncommitted bool
 	addCmd := &cobra.Command{
 		Use:   "add [path]",
 		Short: "Add a linked worktree bound to a task",
@@ -48,11 +49,13 @@ func worktreeCmd() *cobra.Command {
 
 			wt, err := wtSvc.Add(ctx, model.WorktreeAddOptions{
 				Path: args[0], TaskID: wtTaskID, AgentID: wtAgentID, Branch: wtBranch,
+				IncludeUncommitted: wtIncludeUncommitted,
 			})
 			if err != nil {
 				return fmt.Errorf("worktree add: %w", err)
 			}
 			_, _ = fmt.Fprintf(os.Stdout, "Created worktree %s -> task %s (branch %s)\n", wt.Path, wt.TaskID, wt.Branch)
+			reportUncommitted(os.Stderr, wt)
 			// `worktree add` is plumbing (mirrors `git worktree add`) and launches
 			// no sandbox, so the honest-open posture applies: no fail-closed routing
 			// wiring is installed. Use `mgit work --sandbox` for containment. MGIT-47
@@ -63,6 +66,8 @@ func worktreeCmd() *cobra.Command {
 	bindTaskIDFlag(addCmd, &wtTaskID, "Task ID to bind (required)")
 	addCmd.Flags().StringVar(&wtAgentID, "agent-id", "", "Agent ID")
 	addCmd.Flags().StringVar(&wtBranch, "branch", "", "Branch name (default: task/<task-id>)")
+	addCmd.Flags().BoolVar(&wtIncludeUncommitted, "include-uncommitted", false,
+		"also capture this checkout's uncommitted and untracked files into a NEW task's base (each is named)")
 
 	// mgit worktree list
 	var porcelainList, listJSON bool

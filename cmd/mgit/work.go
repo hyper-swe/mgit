@@ -28,15 +28,18 @@ import (
 
 // workOptions are the parsed `mgit work` inputs. Refs: MGIT-34
 type workOptions struct {
-	Path          string
-	TaskID        string
-	AgentID       string
-	Branch        string
-	Base          string   // --base: pin the task fork-base to an explicit ref (ADR-008 §4)
-	LaunchSandbox bool     // --sandbox: also launch the bound task sandbox
-	Image         string   // --image: digest-pinned image (sandbox leg only)
-	Network       string   // --network: none | allowlist | open
-	Allow         []string // --allow: allowlist entries (allowlist mode)
+	Path    string
+	TaskID  string
+	AgentID string
+	Branch  string
+	Base    string // --base: pin the task fork-base to an explicit ref (ADR-008 §4)
+	// IncludeUncommitted captures the checkout's uncommitted state into the
+	// NEW task's base; by default the base is git's committed tree. MGIT-283
+	IncludeUncommitted bool
+	LaunchSandbox      bool     // --sandbox: also launch the bound task sandbox
+	Image              string   // --image: digest-pinned image (sandbox leg only)
+	Network            string   // --network: none | allowlist | open
+	Allow              []string // --allow: allowlist entries (allowlist mode)
 	// Agent declares WHICH harness will work in this worktree, so provisioning
 	// can state that family's routing tier as a single verdict instead of a
 	// matrix the operator has to interpret. Empty means "unknown — report all".
@@ -117,7 +120,9 @@ func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	bindTaskIDFlag(cmd, &opts.TaskID, "task ID to bind the worktree to (required)")
 	cmd.Flags().StringVar(&opts.AgentID, "agent-id", "", "agent ID recorded with the worktree")
 	cmd.Flags().StringVar(&opts.Branch, "branch", "", "branch name (default: task/<task-id>)")
-	cmd.Flags().StringVar(&opts.Base, "base", "", "pin the task's fork-base to an explicit commit/ref (default: current local working state)")
+	cmd.Flags().StringVar(&opts.Base, "base", "", "pin the task's fork-base to an explicit commit/ref (default: git's committed tree)")
+	cmd.Flags().BoolVar(&opts.IncludeUncommitted, "include-uncommitted", false,
+		"also capture this checkout's uncommitted and untracked files into a NEW task's base (each is named)")
 	cmd.Flags().BoolVar(&opts.LaunchSandbox, "sandbox", false, "also launch the task's microVM sandbox (requires --image)")
 	cmd.Flags().StringVar(&opts.Image, "image", "", "digest-pinned image <name>@sha256:<hex>; defaults to this repo's registered guest base")
 	cmd.Flags().StringVar(&opts.Network, "network", model.NetworkModeNone, "sandbox network mode: none | allowlist | open")
@@ -174,13 +179,19 @@ func workSetup(ctx context.Context, out io.Writer, deps workDeps, opts workOptio
 	if err != nil {
 		return nil, err
 	}
+	if opts.IncludeUncommitted && opts.Base != "" {
+		return nil, fmt.Errorf("work: --include-uncommitted captures this checkout's state and --base names " +
+			"another commit; pass one of them")
+	}
 	wt, err := deps.addWorktree(ctx, model.WorktreeAddOptions{
 		Path: opts.Path, TaskID: opts.TaskID, AgentID: opts.AgentID, Branch: opts.Branch, Base: opts.Base,
+		IncludeUncommitted: opts.IncludeUncommitted,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("work: create worktree: %w", err)
 	}
 	_, _ = fmt.Fprintf(out, "Created worktree %s -> task %s (branch %s)\n", wt.Path, wt.TaskID, wt.Branch)
+	reportUncommitted(deps.warnings(), wt)
 
 	// Containment posture for a freshly created worktree: nothing is bound yet,
 	// so it is Pending when --sandbox was requested (we install fail-closed
