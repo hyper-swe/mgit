@@ -1,6 +1,6 @@
 # ADR-008: Git-Authoritative Coexistence and Auto-Housekeeping
 
-**Status:** Accepted (revised 2026-06-26 — §2: base = current LOCAL working state pinned per task, not the pushed integration ref; after real-use validation, MGIT-28/35. **Amended 2026-08-16 — §3: read verbs never absorb uncommitted content; see "Amendment (MGIT-123)" below**)
+**Status:** Accepted (revised 2026-06-26 — §2: base = current LOCAL working state pinned per task, not the pushed integration ref; after real-use validation, MGIT-28/35. **Amended 2026-08-16 — §3: read verbs never absorb uncommitted content; see "Amendment (MGIT-123)" below**. **Amended 2026-10-01 — §2: a new task's base is git's COMMITTED tree by default; capturing uncommitted state is opt-in and every captured file is named; see "Amendment (MGIT-283)" below**)
 **Date:** 2026-06-26
 **Refs:** MGIT-35, MGIT-14 (mgit-over-git coexistence), ADR-001 (Embedded git), ADR-007 (Linked-worktree binding), MGIT-26 (dogfood), MGIT-32 (.gitignore), MGIT-34 (`mgit work`), MGIT-123 (read verbs must not absorb)
 
@@ -181,3 +181,36 @@ fork-base; transactional+locked resync; `--base <ref>`; defensive `.git` reads;
 tests (drift auto-healed, clean path is a cheap no-op, never materializes stale,
 `.git` never mutated); a perf check on the gate; and README + the MGIT-29 agent
 skill documenting "mgit keeps itself in sync with git — no manual step."
+
+## Amendment (MGIT-283) — a new task's base is git's committed tree
+
+**Decided 2026-10-01** by the founder (R-H327 §2), on an external team's
+report of a data exposure.
+
+§2 made a new task's base the checkout's current LOCAL working state, and
+creating a worktree absorbed the checkout's uncommitted and untracked files into
+the base. That turned out to be a liability, not an advantage:
+- uncommitted, possibly private, content entered a task's base without a word;
+- a consumer that landed the task's tree landed that content;
+- and `mgit status` in the main checkout then read clean, because the base had
+  taken the content in.
+
+Unpushed git commits were never the problem: they are committed.
+
+**Default, from MGIT-283.** A NEW task forks from a commit whose tree is exactly
+what git has committed at the local HEAD, unpushed commits included. That commit
+is parented on the current base so history stays connected. It is created without
+moving any branch, so the main checkout's uncommitted work stays visible there as
+uncommitted. `mgit work` (and `worktree add`) names every uncommitted path it
+left out.
+
+**Opt-in.** `--include-uncommitted` keeps the earlier capture (the absorbing
+resync), and names every path it captured, so the user knows exactly what a
+consumer of the task may land. It cannot be combined with `--base`.
+
+**Unchanged:**
+- a project with no readable git commit forks from the mgit base, as before;
+- an existing task branch keeps its fork-base (MGIT-275);
+- read verbs absorb only git-committed content (the MGIT-123 amendment);
+- the MCP server's worktree creation takes the default.
+
