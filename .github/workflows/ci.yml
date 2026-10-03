@@ -107,6 +107,30 @@ jobs:
       - name: Test coverage
         run: make test-cover
 
+  # The whole suite, in a checkout shaped like the release job's. The release
+  # job's workspace also holds dist-prebuilt/, dist-sources/ and dist/, and a
+  # test that walks the repository's working tree met a path there that main's
+  # checkout never has: the v0.7.0 release failed in its before-hook with the
+  # suite green here. The command is the release hook's own. The shape is one
+  # committed script, pinned to release.yml by a packaging test. Refs: MGIT-281
+  release-shaped:
+    name: Tests in a release-shaped workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.26.6"
+
+      - name: Build the release-shaped workspace
+        run: bash scripts/ci/release-workspace-shape.sh
+
+      - name: Run the release hook's tests
+        run: go test ./... -count=1
+
   # The BACKSTOP for the MGIT-142 branch-scope tripwire, not the tripwire
   # itself. The guard's real position is the pre-push hook (scripts/hooks/
   # pre-push), which fires before the pull request exists; this job repeats it
@@ -345,3 +369,15 @@ jobs:
         run: |
           go build -buildvcs=false -tags libkrun ./...
           go vet -tags libkrun ./internal/sandboxd/backend/libkrun/ ./cmd/mgit-sandboxd/
+
+      # The daemon's own wiring under the libkrun tag: which egress controller
+      # a Linux libkrun daemon installs is decided by build tags, so only a run
+      # with this tag can see it. The 0.7.1 daemon installed the firecracker
+      # one and failed every allowlist sandbox at boot. Unit tests only: no VM
+      # is booted here. Refs: MGIT-287
+      - name: The daemon's wiring under the libkrun tag
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib64/pkgconfig
+          LIBRARY_PATH: /usr/local/lib64
+          LD_LIBRARY_PATH: /usr/local/lib64
+        run: go test -buildvcs=false -tags libkrun ./cmd/mgit-sandboxd/ -count=1

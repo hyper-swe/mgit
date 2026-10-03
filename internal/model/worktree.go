@@ -27,6 +27,12 @@ type WorktreeInfo struct {
 	// stored: the registry records what was registered, the listing says what
 	// is still there. Refs: MGIT-194, FR-16
 	Prunable bool `json:"prunable,omitempty"`
+	// UncommittedPaths are the checkout's paths git had not committed when
+	// this NEW worktree was created, and UncommittedIncluded says whether they
+	// went into the task's base (--include-uncommitted) or were left out (the
+	// default). Reported at creation, never stored. Refs: MGIT-283
+	UncommittedPaths    []string `json:"uncommitted_paths,omitempty"`
+	UncommittedIncluded bool     `json:"uncommitted_included,omitempty"`
 }
 
 // Validate checks that the WorktreeInfo has required fields.
@@ -54,6 +60,10 @@ type WorktreeAddOptions struct {
 	// (`mgit work --base <ref>`) for deliberate hotfix/release work instead of
 	// the auto-resynced local base (ADR-008 §4). Refs: MGIT-35
 	Base string `json:"base,omitempty"`
+	// IncludeUncommitted captures the checkout's uncommitted state into a NEW
+	// task's base (`mgit work --include-uncommitted`). Without it the base is
+	// git's committed tree (MGIT-283, ADR-008 §2 as amended). Refs: MGIT-283
+	IncludeUncommitted bool `json:"include_uncommitted,omitempty"`
 }
 
 // Validate checks the add options.

@@ -205,6 +205,59 @@ out="$(cd "$R" && mgit sandbox export --task-id "$TASK" out/exported.txt "$W/exp
 [ "$(cat "$W/exported.txt" 2>/dev/null)" = made-in-guest ] || fail "export" "the exported file is missing or wrong"
 echo "  PASS"
 
+step "8b a sandbox with granted egress boots through the daemon, and the grant is enforced"
+# A launch in allowlist mode is the shape of a run that granted a host for
+# setup. The Linux libkrun daemon once installed the firecracker egress
+# controller, which binds a per-sandbox tap gateway this backend never creates,
+# so such a sandbox failed at its first exec ("bind: cannot assign requested
+# address") while every none or open sandbox ran, which is why the steps above
+# could not see it. Granted host, then any other host, then revoke. The probe
+# is bash's /dev/tcp inside the guest: it resolves the name through the
+# guest's resolver, which the allowlist answers. The libkrun VM enforces the
+# policy itself (the daemon's own egress runner is not involved on this
+# backend), so THESE assertions are what prove egress is still enforced: the
+# granted host is reachable (the positive control, so a refusal below cannot be
+# the probe being broken), a host that was NOT granted is refused (the deny),
+# and the granted host is refused again after a revoke (the revoke). None of
+# the three is to be loosened to make this step pass. Refs: MGIT-287, SEC-04
+T2=UP-2
+P2="$W/work2"
+GRANT=example.com
+OTHER=example.org
+mkdir -p "$P2"
+out="$(cd "$R" && mgit sandbox launch --task-id "$T2" --worktree "$P2" --network allowlist --allow "$GRANT" 2>&1)" ||
+	fail "granted egress" "launch: $(first "$out")"
+out="$(cd "$R" && timeout 300 mgit sandbox exec --task-id "$T2" -- sh -c 'echo egress-boot-ok' 2>&1)"
+printf '%s\n' "$out" | grep -qx 'egress-boot-ok' || fail "granted egress" "an allowlist sandbox did not boot: $(first "$out" 2)"
+echo "  an allowlist sandbox boots"
+reach() { (cd "$R" && timeout 60 mgit sandbox exec --task-id "$T2" -- bash -c "exec 3<>/dev/tcp/$1/80" >/dev/null 2>&1); }
+granted=no
+for _ in 1 2 3; do
+	if reach "$GRANT"; then granted=yes; break; fi
+	sleep 5
+done
+[ "$granted" = yes ] || fail "granted egress" "the granted host $GRANT is not reachable from the guest"
+echo "  the granted host is reachable"
+if reach "$OTHER"; then fail "granted egress" "a host that was not granted ($OTHER) is reachable from the guest"; fi
+echo "  a host that was not granted is refused"
+# Control for the refusal above: the same probe reaches that host once policy
+# set allows it, so the refusal was the policy and not an outage of the host.
+# The revoke below then removes every grant, this one included.
+out="$(cd "$R" && mgit sandbox policy set --task-id "$T2" --allow "$GRANT" --allow "$OTHER" 2>&1)" ||
+	fail "granted egress" "policy set: $(first "$out")"
+widened=no
+for _ in 1 2 3; do
+	if reach "$OTHER"; then widened=yes; break; fi
+	sleep 5
+done
+[ "$widened" = yes ] || fail "granted egress" "$OTHER is not reachable even after policy set allowed it: the refusal above does not prove the deny"
+echo "  the same host is reachable once policy set allows it (the deny was the policy)"
+out="$(cd "$R" && mgit sandbox policy revoke --task-id "$T2" 2>&1)" || fail "granted egress" "revoke: $(first "$out")"
+if reach "$GRANT"; then fail "granted egress" "the revoked host $GRANT is still reachable from the guest"; fi
+echo "  after revoke the granted host is refused"
+(cd "$R" && mgit sandbox remove "$T2" --force >/dev/null 2>&1) || fail "granted egress" "remove failed"
+echo "  PASS"
+
 step "9 remove"
 (cd "$R" && mgit sandbox remove "$TASK" --force >/dev/null 2>&1) || fail "remove" "remove failed"
 if (cd "$R" && mgit sandbox status "$TASK" >/dev/null 2>&1); then

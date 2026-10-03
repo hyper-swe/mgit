@@ -7,46 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A new task's base is git's committed tree; capturing uncommitted work is
+  opt-in (MGIT-283, security).** Creating a task worktree used to absorb the
+  checkout's uncommitted and untracked files into the task's base, so a
+  consumer that landed the task's tree could land private uncommitted
+  content, and `mgit status` in the main checkout then read clean. Now `mgit
+  work` and `mgit worktree add` fork a new task from what git has committed
+  at the local HEAD (unpushed commits included), leave the main checkout's
+  branch untouched, and name every uncommitted file they left out. `mgit work
+  --include-uncommitted` captures them instead, naming each. ADR-008 §2 is
+  amended accordingly.
+
 ### Fixed
 
-- **Every mgit command refuses an argument it does not take (MGIT-284).**
-  Eleven more commands accepted a stray argument and silently dropped it;
-  `mgit squash --to-git <path>` exported the whole task, and `mgit worktree
-  prune <path>` pruned every stale worktree. audit, config list, docs
-  generate, gc, import, init, log, squash, verify, worktree list and
-  worktree prune now refuse one, naming what was given and what to do
-  instead. Commands that print their own errors (doctor, verify and several
-  sandbox commands) used to refuse an argument silently, exiting 1 with
-  nothing on stderr; every refusal is now printed. A test walks the whole
-  command tree, and another runs every command on the binary with a stray
-  argument, so a command added later without an argument rule, or with a
-  silent one, fails them.
+- **`mgit add` and `mgit restore --staged` resolve paths the way git does
+  from a subdirectory (MGIT-278.1).** A path was taken relative to the
+  project root wherever the command ran, so from `pkg/` `mgit add a.go` did
+  not match and `mgit add .` staged the whole project. Paths now resolve
+  against the working directory: `add .` in a subdirectory stages that
+  subtree, `add -A` still stages the whole tree, and a path that resolves
+  outside the project is refused. A symlink is staged as the link, as git
+  stages it, never the file or directory it points to.
 
-- **A path given to `mgit commit`, `mgit status` or `mgit diff` is refused
-  instead of silently ignored (MGIT-282).** None of the three scopes to a
-  path, yet each accepted one and dropped it: `mgit commit -m x pkg`
-  recorded everything staged, not just `pkg`, and `mgit status pkg` printed
-  the whole tree. A path is now refused before anything is recorded or
-  printed. The refusal names what was given and the way to do it: for a
-  commit, stage only what you want (`mgit restore --staged <path>`, `mgit add
-  <path>`), then commit.
+## [0.7.2] - 2026-10-02
 
-- **`mgit add <directory>` stages the files under it; a directory left in
-  staging no longer blocks commits; `mgit restore --staged` unstages
-  (MGIT-276).** `mgit add <dir>` used to store the directory itself as one
-  staged path. Every later commit then failed "read working file …: is a
-  directory", and nothing could unstage it. Now `add <dir>` stages the
-  changed, new and deleted files under the directory with the same rules as
-  `add -A` (ignored and mgit-generated paths skipped, the size limit
-  applied), and an unchanged directory is a no-op. A staging file written by
-  an earlier mgit that still names a directory makes commit refuse with the
-  entry's name and the way out. `mgit restore --staged <path|dir>...` removes
-  exactly the named entries, or everything under a directory, and leaves the
-  rest staged. A tracked file replaced by a directory of the same name (or
-  the reverse) now commits as the replacement; it used to write a tree
-  holding both, after which the task's diff and squash failed.
+`linux_arm64` is build-verified and not boot-verified, as in 0.7.1: it is
+built and load-checked, but no hosted CI runner offers KVM on arm64.
 
-## [0.7.0] - 2026-10-01
+### Changed
+
+- **On the Linux libkrun daemon, `mgit sandbox grant` and `mgit sandbox
+  grants` are not served.** They answer with a refusal that changes nothing
+  and says so: there is no grant coordinator on this build, since the egress
+  policy is enforced inside the VM. Set the allowlist with `mgit sandbox
+  policy set` and remove it with `mgit sandbox policy revoke`, which act on
+  the running sandbox. Checked on hosted CI with two hosts, not on every
+  destination.
+
+### Fixed
+
+- **Creating several worktrees at once no longer fails when a sibling's
+  temporary file disappears (MGIT-285).** Reading the project's ignore rules
+  descended into every directory, including the `.mgit` of a linked worktree
+  that another `mgit work` was still creating, and a temporary file removed
+  between the directory listing and its stat failed the whole `mgit work` with
+  `read gitignore patterns: lstat ...: no such file or directory`. The rules
+  are now read over the same tree the file listing walks: a nested worktree's
+  store is never entered, and a name that vanishes mid-listing is skipped.
+
+- **A sandbox with granted egress boots on the Linux libkrun daemon
+  (MGIT-287).** The Linux archives' daemon installed the firecracker egress
+  controller, which binds the proxy and DNS on a per-sandbox tap gateway that
+  only the firecracker backend creates, so a sandbox launched in allowlist mode
+  failed at its first exec with `bind: cannot assign requested address`; none
+  and open sandboxes were unaffected. The libkrun build now takes no host-tap
+  egress wiring, as on macOS: its egress is enforced inside its own VM child.
+  The release-shaped Linux user path now boots a granted-egress sandbox and
+  checks the grant is enforced and revoked.
+
+## [0.7.1] - 2026-10-01
+
+v0.7.0 was tagged but never published: its release failed before any
+artifact was attached. This release carries everything that version
+was to ship, and what was fixed after it.
 
 ### Changed
 
@@ -319,6 +344,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the message says that pin covered no bytes and how to re-pin it. The
   check that refuses a base inside the repository now also compares by
   file identity.
+
+- **Every mgit command refuses an argument it does not take (MGIT-284).**
+  Eleven more commands accepted a stray argument and silently dropped it;
+  `mgit squash --to-git <path>` exported the whole task, and `mgit worktree
+  prune <path>` pruned every stale worktree. audit, config list, docs
+  generate, gc, import, init, log, squash, verify, worktree list and
+  worktree prune now refuse one, naming what was given and what to do
+  instead. Commands that print their own errors (doctor, verify and several
+  sandbox commands) used to refuse an argument silently, exiting 1 with
+  nothing on stderr; every refusal is now printed. A test walks the whole
+  command tree, and another runs every command on the binary with a stray
+  argument, so a command added later without an argument rule, or with a
+  silent one, fails them.
+
+- **A path given to `mgit commit`, `mgit status` or `mgit diff` is refused
+  instead of silently ignored (MGIT-282).** None of the three scopes to a
+  path, yet each accepted one and dropped it: `mgit commit -m x pkg`
+  recorded everything staged, not just `pkg`, and `mgit status pkg` printed
+  the whole tree. A path is now refused before anything is recorded or
+  printed. The refusal names what was given and the way to do it: for a
+  commit, stage only what you want (`mgit restore --staged <path>`, `mgit add
+  <path>`), then commit.
+
+- **`mgit add <directory>` stages the files under it; a directory left in
+  staging no longer blocks commits; `mgit restore --staged` unstages
+  (MGIT-276).** `mgit add <dir>` used to store the directory itself as one
+  staged path. Every later commit then failed "read working file …: is a
+  directory", and nothing could unstage it. Now `add <dir>` stages the
+  changed, new and deleted files under the directory with the same rules as
+  `add -A` (ignored and mgit-generated paths skipped, the size limit
+  applied), and an unchanged directory is a no-op. A staging file written by
+  an earlier mgit that still names a directory makes commit refuse with the
+  entry's name and the way out. `mgit restore --staged <path|dir>...` removes
+  exactly the named entries, or everything under a directory, and leaves the
+  rest staged. A tracked file replaced by a directory of the same name (or
+  the reverse) now commits as the replacement; it used to write a tree
+  holding both, after which the task's diff and squash failed.
+
+- **The release job's test run no longer panics (MGIT-274, MGIT-281).** A
+  test that walks this repository's working tree panicked in the release
+  job's checkout, which also holds the downloaded daemons and the build
+  output, and that failed the v0.7.0 release before anything was published.
+  The walk now handles a repository that holds no mgit store, and CI runs
+  the whole suite in a workspace shaped like the release job's.
+
+- **A tracked file that an ignore rule also matches is now placed in the
+  worktree (MGIT-277; fixed by MGIT-269).** `mgit work` used to leave such a
+  file out of a new worktree, which a consumer comparing the worktree with
+  the base read as a deletion. Ignore rules decide which files are
+  untracked; they no longer hide a file the base already tracks.
 
 ## [0.6.8] - 2026-09-22
 

@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux && !(libkrun && cgo)
 
 package main
 
@@ -25,7 +25,12 @@ const (
 )
 
 // wireEgress installs the host egress controller on the sandbox service
-// (Linux/KVM). For an allowlist sandbox the service then starts the proxy +
+// (Linux/KVM, the firecracker backend). The libkrun build of the Linux daemon
+// does NOT take this file: its egress is enforced inside its own VM child and
+// it creates no host tap, so the proxy and DNS this controller binds on a tap
+// gateway have nowhere to bind there (MGIT-287). The tags match
+// platform_backend_linux.go, which selects the firecracker backend on exactly
+// the builds this file serves. For an allowlist sandbox the service then starts the proxy +
 // restricted DNS on the firecracker tap gateway at boot and stops them at
 // teardown; none/open sandboxes run no proxy. Wiring is unconditional on
 // Linux: the container fallback refuses allowlist mode before launch, and
