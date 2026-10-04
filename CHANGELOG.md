@@ -9,6 +9,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A new task's base is git's committed tree; capturing uncommitted work is
+  opt-in (MGIT-283, security).** Creating a task worktree used to absorb the
+  checkout's uncommitted and untracked files into the task's base, so a
+  consumer that landed the task's tree could land private uncommitted
+  content, and `mgit status` in the main checkout then read clean. Now `mgit
+  work` and `mgit worktree add` fork a new task from what git has committed
+  at the local HEAD (unpushed commits included), leave the main checkout's
+  branch untouched, and name every uncommitted file they left out. `mgit work
+  --include-uncommitted` captures them instead, naming each. ADR-008 §2 is
+  amended accordingly.
+
+### Fixed
+
+- **`mgit add` and `mgit restore --staged` resolve paths the way git does
+  from a subdirectory (MGIT-278.1).** A path was taken relative to the
+  project root wherever the command ran, so from `pkg/` `mgit add a.go` did
+  not match and `mgit add .` staged the whole project. Paths now resolve
+  against the working directory: `add .` in a subdirectory stages that
+  subtree, `add -A` still stages the whole tree, and a path that resolves
+  outside the project is refused. A symlink is staged as the link, as git
+  stages it, never the file or directory it points to.
+
+## [0.7.2] - 2026-10-02
+
+`linux_arm64` is build-verified and not boot-verified, as in 0.7.1: it is
+built and load-checked, but no hosted CI runner offers KVM on arm64.
+
+### Changed
+
+- **On the Linux libkrun daemon, `mgit sandbox grant` and `mgit sandbox
+  grants` are not served.** They answer with a refusal that changes nothing
+  and says so: there is no grant coordinator on this build, since the egress
+  policy is enforced inside the VM. Set the allowlist with `mgit sandbox
+  policy set` and remove it with `mgit sandbox policy revoke`, which act on
+  the running sandbox. Checked on hosted CI with two hosts, not on every
+  destination.
+
+### Fixed
+
+- **Creating several worktrees at once no longer fails when a sibling's
+  temporary file disappears (MGIT-285).** Reading the project's ignore rules
+  descended into every directory, including the `.mgit` of a linked worktree
+  that another `mgit work` was still creating, and a temporary file removed
+  between the directory listing and its stat failed the whole `mgit work` with
+  `read gitignore patterns: lstat ...: no such file or directory`. The rules
+  are now read over the same tree the file listing walks: a nested worktree's
+  store is never entered, and a name that vanishes mid-listing is skipped.
+
+- **A sandbox with granted egress boots on the Linux libkrun daemon
+  (MGIT-287).** The Linux archives' daemon installed the firecracker egress
+  controller, which binds the proxy and DNS on a per-sandbox tap gateway that
+  only the firecracker backend creates, so a sandbox launched in allowlist mode
+  failed at its first exec with `bind: cannot assign requested address`; none
+  and open sandboxes were unaffected. The libkrun build now takes no host-tap
+  egress wiring, as on macOS: its egress is enforced inside its own VM child.
+  The release-shaped Linux user path now boots a granted-egress sandbox and
+  checks the grant is enforced and revoked.
+
+## [0.7.1] - 2026-10-01
+
+v0.7.0 was tagged but never published: its release failed before any
+artifact was attached. This release carries everything that version
+was to ship, and what was fixed after it.
+
+### Changed
+
+- Carry a patched libkrun in the macOS build; fixes MGIT-225 (MGIT-259).
+- **The daemon's own guest execs run through the audited identity path with
+  absolute program paths (MGIT-272, MGIT-270).** A sync's read-back — the
+  step that confirms the guest sees what was delivered — now runs as an
+  explicit identity, is recorded in the same audit log an operator's audited
+  privileged exec uses, names its program by an absolute path, and refuses
+  the sync
+  if the guest confirms it ran as a different identity (a guest that reports
+  none, on a base predating the field, stays a soft "cannot tell" while the
+  content digest remains a hard check). The step that keeps the guest's view
+  current across a sync is retained, now as a recorded privileged step rather
+  than a silent one. The readiness probe names an absolute program, so only
+  the guest's control plane, never a file, answers it.
+
 - **Every third-party action in the workflows is pinned to a full commit
   SHA (MGIT-246).** Whoever controls an action's repository can move a tag
   to other code, and the release workflow runs its actions with the
@@ -51,6 +131,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it.
 
 ### Added
+
+- **`mgit sandbox base prune` removes the guest bases nothing pins any more
+  (MGIT-239).** The machine-wide guest-base cache never removed a published
+  entry, and could not say which ones were still pinned. Each repository
+  that pins a cached base is now recorded beside the cache when it composes,
+  migrates or launches; a compose that cannot record its pin pins nothing.
+  `prune --dry-run` lists every entry with its size,
+  the mgit version that composed it, its recorded repositories and what each
+  one's images.lock says now. `prune` removes an entry only when every
+  recorded repository has stopped pinning it and no sandbox runs on it, and
+  prints the bytes freed. A recorded repository with nothing at its path
+  (deleted, or renamed, moved or unmounted) keeps its entries until named
+  with `--release-gone`. It asks every live sandbox
+  daemon, and removes nothing if one cannot be asked. Only an entry whose
+  publisher recorded every pinner from the start is judged on its records:
+  entries composed before this release, and any entry with a pin whose
+  record could not be written, say "pinner unknown" and are kept unless
+  named with `--remove-unknown`.
 
 - **A listed word in a pull request's text fails the verdict gate
   (MGIT-242).** This repository is public, and a pull request's title,
@@ -112,6 +210,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Re-adding a worktree for a task that already has commits keeps the
+  task's fork-base (MGIT-275).** When a task's worktree was removed or lost
+  and `mgit work` (or `worktree add`) ran again for the same task, the new
+  worktree pinned the task branch's TIP as its fork-base. Once the task had
+  commits, that was one of its own commits, so every later `mgit diff
+  --task-id`, export and listing failed with "pinned fork-base … != computed
+  base …", and a consumer's recreate path could drop the earlier commits. A
+  re-add now pins the base the task's first commit was made on. `--base` on a
+  re-add is accepted when it names that commit and refused otherwise, naming
+  the fork-base the branch has.
+
+- **The reduced-isolation container backend runs a guest command as the
+  identity the daemon requests (MGIT-273).** The fallback backend ran a
+  command without applying that identity, so the identity model did not hold
+  on it and an audited identity request was recorded without changing what
+  ran. It now applies the requested identity the way the microVM backends do.
+
 - **The course-correction fork mgit prescribes inside a task worktree now
   works (MGIT-82).** The working discipline mgit writes into every task
   worktree said to fork a new line with `mgit checkout -b`, which a task
@@ -134,6 +249,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mgit status` never saw an edit to one. A path git has committed, or mgit
   has, is now kept; untracked ignored files stay out, and `mgit add` still
   skips new ignored files.
+- **An exported patch is authored by you, not by mgit (MGIT-237).** `git
+  am` records a patch's `From:` line as the commit's author, and the
+  patches from `mgit squash --to-git` and `mgit export --format git` named
+  mgit's internal squash identity there. They now carry your git identity:
+  `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL`, else `user.name` and
+  `user.email` from the project's or your global git config. With none
+  configured, `squash --to-git` refuses before it writes anything and
+  names the two `git config` commands; configure one and run the same
+  command again, and it completes with all of the task's work. The
+  read-only `squash --to-git --dry-run` and `export --format git` still
+  work, warn, and name no author at all. mgit's own store keeps its
+  internal author.
 - **`mgit sandbox launch` refuses a worktree that holds the repository's
   store before it registers or writes anything (MGIT-222).** A launch with
   the repository root, or a directory containing it, as its worktree
@@ -185,8 +312,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on its own remote-tracking ref now count as its own. A foreign branch's
   commit that is not on it is still refused, and the server-side check of
   the pushed branch exempts nothing.
-
-### Fixed
+- **A commit made inside a sandbox inherits the worktree's task
+  (MGIT-256).** The CLAUDE.md block mgit writes into a task worktree says
+  no `--task-id` is needed, and on the host that is true. Inside the
+  sandbox, `mgit commit` refused with "--task-id is required": the guest's
+  `.mgit` is the sandbox's private store, which carried no binding, and
+  the host's worktree marker cannot be copied in because it names the
+  host's store. The private store now records the task alone, so a guest
+  commit is tagged with it, a different `--task-id` is refused, and the
+  guest learns nothing of the host's paths. Takes effect for sandboxes
+  launched after the upgrade, with a guest base composed by this release.
 
 - **A recompose compares the source digest like with like (MGIT-223).**
   Since 0.6.8 a base records the image index a tag resolves to, and an
@@ -199,8 +334,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   this host's manifest did not, and prints the moved-tag NOTE only when
   the image itself changed.
 
-### Fixed
-
 - **A guest base set through a symlink is pinned to the tree behind it
   (MGIT-227).** `mgit sandbox base set <symlink>` pinned the SHA-256 of
   empty input: the tree walk did not follow a symlinked root, so nothing
@@ -211,6 +344,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the message says that pin covered no bytes and how to re-pin it. The
   check that refuses a base inside the repository now also compares by
   file identity.
+
+- **Every mgit command refuses an argument it does not take (MGIT-284).**
+  Eleven more commands accepted a stray argument and silently dropped it;
+  `mgit squash --to-git <path>` exported the whole task, and `mgit worktree
+  prune <path>` pruned every stale worktree. audit, config list, docs
+  generate, gc, import, init, log, squash, verify, worktree list and
+  worktree prune now refuse one, naming what was given and what to do
+  instead. Commands that print their own errors (doctor, verify and several
+  sandbox commands) used to refuse an argument silently, exiting 1 with
+  nothing on stderr; every refusal is now printed. A test walks the whole
+  command tree, and another runs every command on the binary with a stray
+  argument, so a command added later without an argument rule, or with a
+  silent one, fails them.
+
+- **A path given to `mgit commit`, `mgit status` or `mgit diff` is refused
+  instead of silently ignored (MGIT-282).** None of the three scopes to a
+  path, yet each accepted one and dropped it: `mgit commit -m x pkg`
+  recorded everything staged, not just `pkg`, and `mgit status pkg` printed
+  the whole tree. A path is now refused before anything is recorded or
+  printed. The refusal names what was given and the way to do it: for a
+  commit, stage only what you want (`mgit restore --staged <path>`, `mgit add
+  <path>`), then commit.
+
+- **`mgit add <directory>` stages the files under it; a directory left in
+  staging no longer blocks commits; `mgit restore --staged` unstages
+  (MGIT-276).** `mgit add <dir>` used to store the directory itself as one
+  staged path. Every later commit then failed "read working file …: is a
+  directory", and nothing could unstage it. Now `add <dir>` stages the
+  changed, new and deleted files under the directory with the same rules as
+  `add -A` (ignored and mgit-generated paths skipped, the size limit
+  applied), and an unchanged directory is a no-op. A staging file written by
+  an earlier mgit that still names a directory makes commit refuse with the
+  entry's name and the way out. `mgit restore --staged <path|dir>...` removes
+  exactly the named entries, or everything under a directory, and leaves the
+  rest staged. A tracked file replaced by a directory of the same name (or
+  the reverse) now commits as the replacement; it used to write a tree
+  holding both, after which the task's diff and squash failed.
+
+- **The release job's test run no longer panics (MGIT-274, MGIT-281).** A
+  test that walks this repository's working tree panicked in the release
+  job's checkout, which also holds the downloaded daemons and the build
+  output, and that failed the v0.7.0 release before anything was published.
+  The walk now handles a repository that holds no mgit store, and CI runs
+  the whole suite in a workspace shaped like the release job's.
+
+- **A tracked file that an ignore rule also matches is now placed in the
+  worktree (MGIT-277; fixed by MGIT-269).** `mgit work` used to leave such a
+  file out of a new worktree, which a consumer comparing the worktree with
+  the base read as a deletion. Ignore rules decide which files are
+  untracked; they no longer hide a file the base already tracks.
 
 ## [0.6.8] - 2026-09-22
 

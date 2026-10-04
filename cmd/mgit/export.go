@@ -128,6 +128,7 @@ func exportGitPatch(ctx context.Context, app *App, taskID string) (exportPayload
 	if err != nil {
 		return exportPayload{}, fmt.Errorf("export git: %w", err)
 	}
+	warnIfNoPatchIdentity(app, os.Stderr)
 	if preview.Empty {
 		return exportPayload{note: emptyNetChangeNote(taskID)}, nil
 	}

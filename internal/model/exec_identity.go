@@ -2,6 +2,16 @@ package model
 
 import "fmt"
 
+// ExecEscalationDetail is what a privileged exec's audit record carries: the
+// program and how many arguments it got — never the arguments, which may hold
+// secrets. Both the operator's audited --as-root exec and the daemon's own
+// privileged internal execs record with this shape, so the audit trail reads
+// the same whoever ran the command. Refs: MGIT-151, MGIT-272, FR-17.18
+type ExecEscalationDetail struct {
+	Program string `json:"program"`
+	Args    int    `json:"args"`
+}
+
 // ExecIdentity is the daemon's verdict on the identity a command ran as:
 // what it asked the guest for, what the guest reported, and whether the two
 // agree. It rides the exec result to the operator so that "the guest ran
