@@ -52,8 +52,9 @@ func (d *guestDialer) DialGuest(ctx context.Context, sandboxID string) (net.Conn
 // port number goes through one validation. Refs: SEC-09, FR-17.8
 func publishVsockPort(guestPort int) (uint32, error) {
 	if guestPort < 1 || guestPort > 65535 {
-		return 0, fmt.Errorf("%w: published guest port %d out of range",
-			model.ErrSandboxBackendUnavailable, guestPort)
+		// An invalid request, not a missing backend. Refs: MGIT-232.1
+		return 0, &model.ValidationError{Field: "publish_port",
+			Message: fmt.Sprintf("published guest port %d is out of range 1-65535", guestPort)}
 	}
 	return uint32(guestPort), nil //nolint:gosec // OK: range-checked immediately above
 }

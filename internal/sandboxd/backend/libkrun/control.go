@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/microvm"
 	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 	"github.com/hyper-swe/mgit/internal/sandboxd/vmctl"
@@ -42,22 +41,21 @@ func serveControlChannel(spec vmSpec, sup *egress.Supervisor, logger *slog.Logge
 		return nil, err
 	}
 	// A stale socket from a crashed predecessor would make Listen fail; the
-	// state dir is per-VM, so removing it here is safe.
+	// state dir is per-VM, so removing it here is safe. The socket errors
+	// below are host I/O faults on a backend that is present, so they carry
+	// the I/O error and no backend-unavailable sentinel. Refs: MGIT-232.1
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("%w: clear stale vm control socket %s: %w",
-			model.ErrSandboxBackendUnavailable, path, err)
+		return nil, fmt.Errorf("clear stale vm control socket %s: %w", path, err)
 	}
 	var lc net.ListenConfig
 	ln, err := lc.Listen(context.Background(), "unix", path)
 	if err != nil {
-		return nil, fmt.Errorf("%w: bind vm control channel %s: %w",
-			model.ErrSandboxBackendUnavailable, path, err)
+		return nil, fmt.Errorf("bind vm control channel %s: %w", path, err)
 	}
 	// Host-only by permission as well as by placement.
 	if err := os.Chmod(path, 0o600); err != nil {
 		_ = ln.Close()
-		return nil, fmt.Errorf("%w: restrict vm control channel %s: %w",
-			model.ErrSandboxBackendUnavailable, path, err)
+		return nil, fmt.Errorf("restrict vm control channel %s: %w", path, err)
 	}
 
 	handler := &policyHandler{sup: sup, sandboxID: spec.SandboxID, taskID: spec.TaskID, logger: logger}
