@@ -104,7 +104,7 @@ func TestE2E_Land_RealGuest_RoundTrip(t *testing.T) {
 	prov, err := provision.NewStoreProvisioner(hostRepoRoot)
 	require.NoError(t, err)
 	privDir := filepath.Join(wtPath, ".mgit")
-	_, err = prov.Provision(task, privDir)
+	_, err = prov.Provision(task, wtPath, privDir)
 	require.NoError(t, err)
 	newCommit := commitIntoPrivateStore(t, privDir, task)
 

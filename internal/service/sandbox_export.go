@@ -65,7 +65,7 @@ func (s *SandboxService) runningSandbox(ctx context.Context, taskID string) (mod
 	}
 	if !reg.booted {
 		return model.SandboxInfo{}, fmt.Errorf("%w: task %q has a registered sandbox that has not booted; "+
-			"run something in it first", model.ErrSandboxBackendUnavailable, taskID)
+			"run something in it first", model.ErrSandboxNotRunning, taskID)
 	}
 	return reg.info, nil
 }

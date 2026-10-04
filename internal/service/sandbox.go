@@ -264,14 +264,8 @@ func (s *SandboxService) Register(ctx context.Context, opts model.SandboxLaunchO
 	}
 	applyPolicyDefaults(&opts, policy)
 
-	// Refuse a network mode this backend cannot ENFORCE, here at the operator's
-	// boundary rather than minutes later when the VM is created. The backend
-	// answers with its own reason, from the same function its boot path uses,
-	// so registration and launch cannot disagree. Refs: MGIT-111, SEC-04
-	if enforcer, ok := s.manager.(model.NetworkModeEnforcer); ok {
-		if err := enforcer.SupportsNetworkMode(opts.Network.Mode); err != nil {
-			return nil, fmt.Errorf("sandbox register: %w", err)
-		}
+	if err := s.backendRefuses(opts); err != nil {
+		return nil, err
 	}
 
 	s.mu.Lock()
@@ -316,6 +310,31 @@ func (s *SandboxService) Register(ctx context.Context, opts model.SandboxLaunchO
 	// reap sweep for a never-booted sandbox. Refs: NFR-17.3, FR-17.9
 	s.byTask[opts.TaskID] = &sandboxReg{info: info, opts: opts, lastActivity: now}
 	return &info, nil
+}
+
+// layoutRemedy follows a layout refusal: what was not done, and what to mount.
+const layoutRemedy = "a guest would reach this repository's own store through that mount, so nothing was " +
+	"registered or written. Mount a linked worktree instead (`mgit work <dir> --task-id <id>`, or " +
+	"`mgit worktree add`), or a directory outside this repository"
+
+// backendRefuses asks the backend, at the operator's boundary, the questions
+// its boot would otherwise answer minutes later: a network mode it cannot
+// ENFORCE (MGIT-111), and a worktree through which the guest would reach the
+// shared store (MGIT-222). Each answer is the backend's own reason, from the
+// same function its boot uses, so registration and launch cannot disagree.
+// Refs: MGIT-111, MGIT-222, SEC-03, SEC-04
+func (s *SandboxService) backendRefuses(opts model.SandboxLaunchOptions) error {
+	if enforcer, ok := s.manager.(model.NetworkModeEnforcer); ok {
+		if err := enforcer.SupportsNetworkMode(opts.Network.Mode); err != nil {
+			return fmt.Errorf("sandbox register: %w", err)
+		}
+	}
+	if checker, ok := s.manager.(model.WorktreeLayoutChecker); ok {
+		if err := checker.CheckWorktreeLayout(opts.WorktreePath); err != nil {
+			return fmt.Errorf("sandbox register: %w; %s", err, layoutRemedy)
+		}
+	}
+	return nil
 }
 
 // persistRegistration writes the durable registry row for a newly registered
@@ -539,10 +558,18 @@ func (s *SandboxService) settleBoot(ctx context.Context, reg *sandboxReg, attemp
 	}()
 	if bootErr != nil {
 		attempt.err = bootErr
+		// The registration stays created and retryable, but no longer reads
+		// like one nobody has used: status names the failed boot until one
+		// succeeds (recordBootLocked replaces reg.info). Refs: MGIT-231
+		reg.info.LastBootFailure = &model.BootFailure{At: s.clock().UTC(), Cause: bootErr.Error()}
 		return nil, bootErr
 	}
 	if err := s.recordBootLocked(ctx, reg, launched); err != nil {
 		attempt.err = err
+		// The VM started and was rolled back: from the caller's side the boot
+		// failed exactly as a failed launch does, and status says so.
+		// Refs: MGIT-231.1
+		reg.info.LastBootFailure = &model.BootFailure{At: s.clock().UTC(), Cause: err.Error()}
 		return nil, err
 	}
 	attempt.info = reg.info
@@ -566,7 +593,7 @@ func (s *SandboxService) recordBootLocked(ctx context.Context, reg *sandboxReg, 
 	if stateErr := s.setPersistedState(ctx, launched.ID, model.StateRunning); stateErr != nil {
 		return errors.Join(stateErr, s.rollbackBoot(ctx, launched.ID))
 	}
-	reg.info = *launched
+	reg.info = *launched // replaces, so a LastBootFailure recorded by an earlier attempt is cleared (MGIT-231)
 	// The backend's SandboxInfo does not carry the published-port mappings
 	// (they are a service-level concern); restore them so List/Status keep
 	// reporting them after boot. Likewise the effective resource caps: not

@@ -29,6 +29,9 @@ on:
   # the merge rule requires lived in hand-dispatched run ids nobody running
   # `gh pr checks` would see (MGIT-200). Pushes stay filtered to main.
   pull_request:
+    # `edited` too: a retargeted pull request's refreshed test-merge is an
+    # edited event, and must be checked like a push.
+    types: [opened, synchronize, reopened, edited]
     # The same list as push, for the same reason. Refs: MGIT-202
     paths-ignore:
       - "**/*.md"
@@ -41,7 +44,9 @@ on:
   # waiting for a release tag. Refs: MGIT-78
   workflow_dispatch: {}
   # Daily, and hours late: GitHub creates this run well after the cron, and
-  # the e2e-schedule-age status below says by how much. The fleet soak runs its
+  # the e2e-schedule-age status says by how much. e2e-schedule-age.yml posts
+  # it once the run completes. It is not a job here, because release.yml
+  # calls this file and could not grant that job's permissions (MGIT-244). The fleet soak runs its
   # SHORT profile on every push and its LONG profile here: a wide fleet costs
   # minutes of real VM boots, and a gate that slow on every push gets disabled
   # rather than fixed. The soak names the profile that ran in its own output,
@@ -80,8 +85,8 @@ jobs:
     name: Posture (daemon-less core loop + MCP)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -121,8 +126,8 @@ jobs:
       matrix:
         channel: [go-install, release-archive]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -135,7 +140,7 @@ jobs:
           test -x "$bin/mgit-sandboxd" || { echo "mgit-sandboxd not installed by go install"; exit 1; }
           echo "BINDIR=$bin" >> "$GITHUB_ENV"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: matrix.channel == 'release-archive'
         with:
           name: linux-sandboxd-amd64
@@ -209,21 +214,42 @@ jobs:
       run:
         shell: bash
     steps:
-      # DECLARED EXCEPTION to the MGIT-143 fetch guard, the same ordering
-      # problem as the other ubuntu:20.04 jobs: checkout needs git, a bare
-      # container has none, and the guard script arrives WITH the checkout.
-      # Clause 2 is served by timeout-minutes; everything after checkout goes
-      # through the guard (scripts/release/linux-build-prereqs.sh).
+      # The ONLY apt before checkout, and the smallest: git (so the checkout
+      # carries history), ca-certificates and curl. This was a DECLARED
+      # EXCEPTION serving only clause 2, because the guard script arrives WITH
+      # the checkout: an ordering problem, not a judgement against retrying.
+      # The clauses are now served inline, so the exception is gone rather than
+      # overruled: three attempts (clause 1), apt's state cleared between them
+      # (clause 3), each bounded (clause 2), and each attempt prints when it
+      # started and how it ended, so the log names every attempt made.
+      # The bound is the MGIT-143 rule on this step's own history: this apt
+      # (update + git ca-certificates curl, ubuntu:20.04) succeeded n=42 times
+      # on 2026-09-23..24, worst 91 s; 4x is 364 s, up the ladder to 600 s.
+      # That history is already slower than the 56 s worst the whole toolchain
+      # install had over n=256 before it: the mirror moved, the rule did not.
+      # Everything heavier is installed after checkout by
+      # scripts/release/linux-build-prereqs.sh, through the guard.
+      # Refs: MGIT-143, MGIT-144, MGIT-243
       # fetch-guard: runs before actions/checkout, so the guard script is not
-      # on disk yet; clause 2 is served by timeout-minutes, clauses 1 and 3
-      # are not served. Refs: MGIT-143, MGIT-144
-      - name: git, so the checkout carries history
-        timeout-minutes: 5
+      # on disk yet; its clauses are served inline below. Refs: MGIT-143
+      - name: Bootstrap git (bounded, retried, before checkout)
+        timeout-minutes: 32 # 3 attempts x 600 s + 45 s of backoff, rounded up
         run: |
-          apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git ca-certificates curl
+          for attempt in 1 2 3; do
+            echo "apt bootstrap: attempt $attempt/3 started $(date -u +%H:%M:%SZ): apt-get update + install git ca-certificates curl (bound 600s)"
+            if timeout 600 sh -c 'apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends git ca-certificates curl'; then
+              echo "apt bootstrap: ok on attempt $attempt at $(date -u +%H:%M:%SZ)"
+              exit 0
+            fi
+            echo "apt bootstrap: attempt $attempt failed or hit its 600s bound at $(date -u +%H:%M:%SZ); clearing apt state before the next"
+            rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/partial/*
+            dpkg --configure -a || true
+            sleep $((attempt * 15))
+          done
+          echo "apt bootstrap: all 3 attempts failed; the apt output above is the evidence"
+          exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # goreleaser stamps {{.ShortCommit}} and {{.CommitDate}} from a full
           # clone; the daemon must be stamped from the same history.
@@ -236,7 +262,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache the pinned libkrunfw kernel tarball
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/mgit-libkrun
           key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}
@@ -274,17 +300,79 @@ jobs:
             --prefix="libkrun-$LIBKRUN_VERSION/" -o "$src/libkrun-$LIBKRUN_VERSION-source.tar.gz" HEAD
           ls -l "$src"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-sandboxd-${{ matrix.arch }}
           path: ${{ runner.temp }}/prebuilt/
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: matrix.arch == 'amd64' && github.ref_type == 'tag'
         with:
           name: linux-sources
           path: ${{ runner.temp }}/dist-sources/
+          if-no-files-found: error
+
+  # The macOS sandbox daemon, built and verified for every pull request by
+  # scripts/release/build-darwin-sandboxd.sh; the release ships the artifact
+  # this job uploads in its own run. Carry a patched libkrun in the macOS
+  # build; fixes MGIT-225. Refs: MGIT-259
+  darwin-sandboxd:
+    name: macOS sandbox daemon (arm64, libkrun bundled)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # the same full history goreleaser stamps from
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.26.6"
+
+      - name: Build prerequisites (guarded)
+        run: |
+          # -t 900: the bound install-libkrun-brew.sh uses for the same CDN.
+          bash scripts/ci/guard-fetch.sh -t 900 -l brew-install-lld \
+            -c none:'brew verifies the checksum of everything it reuses and keeps a partial download as .incomplete, which it resumes rather than re-extracting' -- \
+            brew install lld
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          if ! command -v cargo >/dev/null 2>&1; then
+            bash scripts/ci/guard-fetch.sh -t 120 -l rustup-installer -c 'rm -f "$RUNNER_TEMP/rustup.sh"' -- \
+              curl -sSf https://sh.rustup.rs -o "$RUNNER_TEMP/rustup.sh"
+            bash scripts/ci/guard-fetch.sh -t 120 -l rustup-toolchain -c 'rm -rf "$HOME/.rustup" "$HOME/.cargo"' -- \
+              sh "$RUNNER_TEMP/rustup.sh" -y --default-toolchain stable
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Assemble and verify the daemon + its bundle
+        run: |
+          # A release stamps its tag; anything else stamps the version the
+          # Linux user path tags locally, as linux-sandboxd does.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0-ci.$GITHUB_RUN_ID"; fi
+          export LIBKRUN_BUILD_DIR="$RUNNER_TEMP/libkrun-darwin"
+          mkdir -p "$LIBKRUN_BUILD_DIR"
+          MGIT_BUILD_VERSION="$v" \
+            bash scripts/release/build-darwin-sandboxd.sh "$RUNNER_TEMP/prebuilt/darwin_arm64"
+
+      # Homebrew's libkrun and libkrunfw installed AFTER the build, as the
+      # install guide has a user do: the daemon must still resolve its own
+      # libkrun, and libkrunfw must load. Refs: MGIT-119
+      - name: Cache Homebrew downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/Library/Caches/Homebrew/downloads
+          key: brew-downloads-${{ runner.os }}-libkrun-v1-${{ github.run_id }}
+          restore-keys: |
+            brew-downloads-${{ runner.os }}-libkrun-v1-
+      - name: Verify beside Homebrew's libkrun and libkrunfw
+        run: |
+          bash scripts/ci/install-libkrun-brew.sh
+          MGIT_VERIFY_KERNEL=1 bash scripts/release/verify-darwin-sandboxd.sh "$RUNNER_TEMP/prebuilt/darwin_arm64"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: darwin-sandboxd-arm64
+          path: ${{ runner.temp }}/prebuilt/
           if-no-files-found: error
 
   # THE DOCUMENTED USER PATH ON LINUX, as a release user meets it: the
@@ -301,15 +389,24 @@ jobs:
   # commit (never pushed) — so the build stand-in's stamp check, the one a
   # release depends on, runs on every pull request. Refs: MGIT-229
   linux-user-path:
-    name: Linux user path (release-shaped, stock runner)
+    name: Linux user path (release-shaped, stock runner, ${{ matrix.install }})
     needs: linux-sandboxd
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # archive: the extracted archive, lib/ beside the daemon.
+        # install-script: the same archive installed by install.sh from a
+        # local copy of the release, so the daemon runs from <prefix>/bin
+        # with its libraries in <prefix>/lib/mgit — the README's recommended
+        # path. Refs: MGIT-230.1
+        install: [archive, install-script]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # the same full history the linux-sandboxd job stamped from
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -324,7 +421,7 @@ jobs:
           [ -r /dev/kvm ] && [ -w /dev/kvm ] \
             || { echo "FATAL: /dev/kvm not usable — the user path cannot run"; exit 1; }
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: linux-sandboxd-amd64
           path: ${{ runner.temp }}/prebuilt
@@ -361,11 +458,38 @@ jobs:
           [ "${m#mgit version }" = "${d#mgit-sandboxd version }" ] \
             || { echo "FATAL: mgit and mgit-sandboxd report different builds"; exit 1; }
 
-      - name: The bundle loads on this host (no libkrun installed here)
-        run: bash scripts/release/verify-linux-sandboxd.sh "$RUNNER_TEMP/userbin"
+      - name: Install it the way this matrix leg says
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.install }}" = archive ]; then
+            echo "BIN=$RUNNER_TEMP/userbin" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          # A release-shaped tarball and checksums.txt from the laid-out
+          # archive, installed by the repository's install.sh as a user runs
+          # it, from a local copy of the release instead of GitHub.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then ver="$GITHUB_REF_NAME"; else ver="v0.0.0-ci.$GITHUB_RUN_ID"; fi
+          rel="$RUNNER_TEMP/release"; mkdir -p "$rel"
+          name="mgit_${ver#v}_linux_amd64.tar.gz"
+          tar -czf "$rel/$name" -C "$RUNNER_TEMP/userbin" .
+          (cd "$rel" && sha256sum "$name" > checksums.txt)
+          MGIT_VERSION="$ver" MGIT_DOWNLOAD_BASE="file://$rel" MGIT_PREFIX="$RUNNER_TEMP/prefix" sh install.sh
+          find "$RUNNER_TEMP/prefix" -type f | sort
+          echo "BIN=$RUNNER_TEMP/prefix/bin" >> "$GITHUB_ENV"
 
+      - name: The bundle loads on this host (no libkrun installed here)
+        run: bash scripts/release/verify-linux-sandboxd.sh "$BIN"
+
+      # One leg keeps the scratch root in /tmp. The other puts it under
+      # $RUNNER_TEMP (/home/runner/work/_temp), outside /tmp, where the guest
+      # must make the worktree's mount point by shadowing a directory the
+      # base image ships. The script asserts the guest works at the
+      # worktree's host path in both. Refs: MGIT-230.7, MGIT-230.3
       - name: The user path — must PASS
-        run: bash scripts/e2e/linux_user_path.sh "$RUNNER_TEMP/userbin"
+        run: |
+          root=""
+          if [ "${{ matrix.install }}" = install-script ]; then root="$RUNNER_TEMP/scratch"; mkdir -p "$root"; fi
+          bash scripts/e2e/linux_user_path.sh "$BIN" ${root:+"$root"}
 
   # LIVE Linux containment gate: real firecracker microVMs on real KVM.
   #
@@ -388,8 +512,8 @@ jobs:
     name: Sandbox LIVE (Linux/KVM firecracker)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -692,56 +816,52 @@ jobs:
         # and every assertion below depends on a pipeline's exit status.
         shell: bash
     steps:
-      # DECLARED EXCEPTION to the MGIT-143 fetch guard — the same ordering
-      # problem as ci.yml's libkrun-linux job: this runs BEFORE
-      # actions/checkout, so scripts/ci/guard-fetch.sh is not on disk yet, and
-      # moving checkout first would push it onto the REST tarball path because
-      # a bare ubuntu:20.04 has no git (this step is what installs it).
-      # MGIT-144 carries that. Clause 2 is served natively below: 5 minutes is
-      # 4x this step's worst SUCCESSFUL run (56s, n=256) up the ladder.
+      # The ONLY apt before checkout, and the smallest: git (so the checkout
+      # carries history), ca-certificates and curl. This was a DECLARED
+      # EXCEPTION serving only clause 2, because the guard script arrives WITH
+      # the checkout: an ordering problem, not a judgement against retrying.
+      # The clauses are now served inline, so the exception is gone rather than
+      # overruled: three attempts (clause 1), apt's state cleared between them
+      # (clause 3), each bounded (clause 2), and each attempt prints when it
+      # started and how it ended, so the log names every attempt made.
+      # The bound is the MGIT-143 rule on this step's own history: this apt
+      # (update + git ca-certificates curl, ubuntu:20.04) succeeded n=42 times
+      # on 2026-09-23..24, worst 91 s; 4x is 364 s, up the ladder to 600 s.
+      # That history is already slower than the 56 s worst the whole toolchain
+      # install had over n=256 before it: the mirror moved, the rule did not.
+      # Everything heavier is installed after checkout by
+      # scripts/release/linux-build-prereqs.sh, through the guard.
+      # Refs: MGIT-143, MGIT-144, MGIT-243
       # fetch-guard: runs before actions/checkout, so the guard script is not
-      # on disk yet; clause 2 is served by timeout-minutes below, clauses 1
-      # and 3 are not served. Refs: MGIT-143, MGIT-144
-      - name: Install build prerequisites
-        timeout-minutes: 5
+      # on disk yet; its clauses are served inline below. Refs: MGIT-143
+      - name: Bootstrap git (bounded, retried, before checkout)
+        timeout-minutes: 32 # 3 attempts x 600 s + 45 s of backoff, rounded up
         run: |
-          apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential flex bison libelf-dev python3-pyelftools bc \
-            pkg-config curl git ca-certificates patchelf \
-            libclang1-18 libclang-18-dev libclang-common-18-dev libllvm18
+          for attempt in 1 2 3; do
+            echo "apt bootstrap: attempt $attempt/3 started $(date -u +%H:%M:%SZ): apt-get update + install git ca-certificates curl (bound 600s)"
+            if timeout 600 sh -c 'apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends git ca-certificates curl'; then
+              echo "apt bootstrap: ok on attempt $attempt at $(date -u +%H:%M:%SZ)"
+              exit 0
+            fi
+            echo "apt bootstrap: attempt $attempt failed or hit its 600s bound at $(date -u +%H:%M:%SZ); clearing apt state before the next"
+            rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/partial/*
+            dpkg --configure -a || true
+            sleep $((attempt * 15))
+          done
+          echo "apt bootstrap: all 3 attempts failed; the apt output above is the evidence"
+          exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      # -t 120 is the floor (worst success 5s, n=246). The restore is the
-      # load-bearing half: a `curl: (18) transfer closed` leaves a TRUNCATED
-      # /tmp/go.tgz that the next attempt would re-extract and fail on
-      # identically. Refs: MGIT-143 clause 3
-      - name: Install Go
+      - name: Build prerequisites (toolchains, guarded)
+        # apt (the libkrun build toolchain incl. libclang-18 from focal-updates),
+        # the pinned Go and rustup with the musl target, every fetch through the
+        # guard: the same recipe the release's Linux daemon is built with.
+        # Refs: MGIT-229, MGIT-143
         run: |
-          bash scripts/ci/guard-fetch.sh -t 120 -l go-toolchain-tarball \
-            -c 'rm -f /tmp/go.tgz' -- \
-            curl -fsSL https://go.dev/dl/go1.26.6.linux-amd64.tar.gz -o /tmp/go.tgz
-          tar -C /usr/local -xzf /tmp/go.tgz
+          bash scripts/release/linux-build-prereqs.sh
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
-
-      - name: Install Rust (distro rustc is far too old for libkrun)
-        # The musl target is required, not decorative: krun-init-blob's build.rs
-        # links krun-init as a static musl binary and panics without it.
-        #
-        # Three fetches, three guards. -t 120 is the floor; worst success 26s
-        # (n=246). Refs: MGIT-143
-        run: |
-          bash scripts/ci/guard-fetch.sh -t 120 -l rustup-installer \
-            -c 'rm -f /tmp/rustup.sh' -- \
-            curl -sSf https://sh.rustup.rs -o /tmp/rustup.sh
-          bash scripts/ci/guard-fetch.sh -t 120 -l rustup-toolchain \
-            -c 'rm -rf "$HOME/.rustup" "$HOME/.cargo"' -- \
-            sh /tmp/rustup.sh -y --default-toolchain stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          bash scripts/ci/guard-fetch.sh -t 120 -l rustup-musl-target \
-            -c none:'rustup unpacks a component into a temp directory and moves it into place only once the download is complete and hash-checked; a failed target add leaves the toolchain exactly as it was' -- \
-            "$HOME/.cargo/bin/rustup" target add "$(uname -m)-unknown-linux-musl"
 
       - name: Require /dev/kvm (passed into this container, not granted by udev)
         run: |
@@ -764,7 +884,7 @@ jobs:
       # network, so this can only make the run faster, never weaker.
       # Refs: MGIT-163, MGIT-147
       - name: Cache the pinned libkrunfw kernel tarball
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/mgit-libkrun
           key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}
@@ -899,111 +1019,29 @@ jobs:
           echo "== Linux/libkrun live evidence =="
           grep -E 'REAL VM PASS' "$RUNNER_TEMP/libkrun-validated.log" || true
 
-  schedule-age:
-    # A LATE PASS LOOKS EXACTLY LIKE A PROMPT ONE. Since 2026-08-27 this
-    # workflow's scheduled run has been created about five hours after its
-    # cron — 25 days measured, the cause outside anything we can see — and
-    # nobody noticed, precisely because it stays green: the run is green, the
-    # list is green, and a reader between the cron and the run is reading
-    # YESTERDAY's result believing it is today's. So the scheduled run
-    # publishes its result WITH its timing, on the commit it tested, where
-    # the green is read.
-    #
-    # THE JOB'S CONCLUSION IS NOT THE VERDICT — THE STATUS TEXT IS, and the
-    # two must not be able to disagree. A reporting job that always exits 0
-    # shows a green conclusion while its own description reads NOT green;
-    # that shape cost a sibling lane an hour today, reading `completed/
-    # success` three times while the text said DRIFT. So this job exits with
-    # its own state. It can only say NOT green when one of the jobs it needs
-    # was already red, so the run was failing anyway and no new red is
-    # invented here.
-    #
-    # HOW TO READ THIS STATUS, in three cases rather than two, because the
-    # obvious rule ("a missing status is not a pass") would block every merge
-    # here: it is posted ONLY by a scheduled run, so on a push commit it is
-    # ABSENT — not a pass, not a red, no information at all. Present and
-    # success is the scheduled run's green together with its measured age. Present and
-    # failure means one of the four jobs it needs was already red; present and
-    # error means the instrument could not do the one thing it exists for.
-    # Refs: MGIT-220, MGIT-174
-    name: Scheduled-run age
-    if: ${{ always() && github.event_name == 'schedule' }}
-    needs: [posture, install-channels, sandbox-live-linux, sandbox-live-linux-libkrun]
+  # The reduced-isolation container backend applies the requested exec
+  # identity (MGIT-273). Applying it is only correct if that identity can
+  # still WRITE the mounted worktree, which the launch identity-mapping
+  # exists for — a property no unit test with a faked runtime can show. This
+  # job runs the env-gated container e2e against a real rootless runtime
+  # (present on the hosted runner; the backend needs no VM, so no /dev/kvm),
+  # and records what an audited elevated identity can do. Refs: MGIT-273
+  container-backend-e2e:
+    name: Container backend (identity + worktree write)
     runs-on: ubuntu-latest
-    permissions:
-      statuses: write
-      actions: read # to read this run's own run_started_at; statuses:write alone cannot
     steps:
-      - uses: actions/checkout@v4
-      - name: publish this run's result together with its timing
-        env:
-          GH_TOKEN: ${{ github.token }}
-          POSTURE: ${{ needs.posture.result }}
-          INSTALL: ${{ needs.install-channels.result }}
-          FIRECRACKER: ${{ needs.sandbox-live-linux.result }}
-          LIBKRUN: ${{ needs.sandbox-live-linux-libkrun.result }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.26.6"
+      - name: The rootless runtime is usable
         run: |
-          set -u
-          # The cron is READ FROM THIS FILE, never restated here: a second
-          # copy of the hour drifts from the schedule it claims to measure,
-          # and that drift would be invisible — the very failure this job ends.
-          cron=$(grep -o 'cron: *"[^"]*"' .github/workflows/e2e.yml | head -1 | sed 's/.*"\(.*\)"/\1/')
-          min=${cron%% *}; rest=${cron#* }; hour=${rest%% *}
-          # "0 3 * * *" is 03:00Z, not 3:0Z — a time a reader has to decode is
-          # a time they will misread. A non-numeric field (a step or a range)
-          # is printed as written rather than forced into two digits.
-          pad() { case "$1" in '' | *[!0-9]*) printf '%s' "$1" ;; *) printf '%02d' "$1" ;; esac; }
-          hh=$(pad "$hour"); mm=$(pad "$min")
-          # THIS JOB RUNS LAST, so its own clock is the run's END. The lateness
-          # being reported is the SCHEDULING lateness, so it is measured from
-          # the run's own start; using `now` would silently add however long
-          # the run took (median 0.20h here, once 6.00h). Unreadable is said
-          # out loud rather than quietly replaced by a wrong number.
-          # A NON-EMPTY CAPTURE IS NOT A VALUE. On a failed request gh writes
-          # the ERROR BODY to stdout and does not apply --jq — measured on gh
-          # 2.88.1 against this repo, a 404 prints {"message":"Not Found",…}
-          # and exits 1 — so the previous form stored that JSON as the
-          # timestamp, stopped retrying, failed to parse it, counted the empty
-          # parse as zero and published a nonsense delay as a PASS. The value
-          # is taken only if gh exited 0 AND the result is an instant `date`
-          # accepts. Retried, because a transient read must not red an
-          # otherwise green night; a persistent one must, and does below.
-          started_epoch=""
-          for attempt in 1 2 3; do
-            if raw=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at 2>/dev/null) &&
-              [ -n "$raw" ] && started_epoch=$(date -u -d "$raw" +%s 2>/dev/null); then
-              break
-            fi
-            started_epoch=""
-            sleep 5
-          done
-          now=$(date -u +%s)
-          due=$(date -u -d "today ${hh}:${mm}" +%s)
-          [ "$now" -lt "$due" ] && due=$((due - 86400))
-          if [ -n "$started_epoch" ]; then
-            tenths=$(( (started_epoch - due) * 10 / 3600 ))
-            timing="started $(date -u -d "@$started_epoch" +%H:%MZ) (+$((tenths / 10)).$((tenths % 10))h)"
-          else
-            timing="started UNREADABLE (this run's metadata could not be read; actions:read?)"
-          fi
-          bad=""
-          for j in "posture=$POSTURE" "install=$INSTALL" "firecracker=$FIRECRACKER" "libkrun=$LIBKRUN"; do
-            case "${j#*=}" in success | skipped) ;; *) bad="$bad ${j%%=*}:${j#*=}" ;; esac
-          done
-          # A timing this job could not read is NOT a pass: the instrument
-          # failed at the one thing it exists to do, and `error` says that
-          # without claiming the jobs were bad. A red job outranks it.
-          state=success; verdict="all jobs passed"
-          [ -z "$started_epoch" ] && state=error
-          if [ -n "$bad" ]; then state=failure; verdict="NOT green —$bad"; fi
-          # Absolute instants, not an age: an age computed here is wrong for
-          # every reader after this second. They can subtract.
-          desc="$verdict; cron ${hh}:${mm}Z → $timing, published $(date -u -d "@$now" +%H:%MZ)"
-          printf 'e2e-schedule-age: %s\n' "$desc"
-          { echo '## Scheduled-run age'; echo; echo "$desc"; } >> "$GITHUB_STEP_SUMMARY"
-          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
-            -f state="$state" -f context=e2e-schedule-age \
-            -f description="$(printf '%s' "$desc" | cut -c1-139)" \
-            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null ||
-            { echo "could not publish the status"; exit 1; }
-          [ "$state" = success ] || exit 1
+          podman version
+          podman info >/dev/null
+      - name: Container backend e2e — identity, worktree write, and store isolation
+        env:
+          # The image this release vouches for (release-base.json); it carries
+          # /bin/sh and coreutils, which the e2e needs. Refs: MGIT-273, MGIT-219
+          MGIT_E2E_CONTAINER_IMAGE: debian:12@sha256:f37a335e82bca302e955fa39f9dfe28f1be618f016f8a2b56318e5a5111afc26
+        run: |
+          go test -run 'TestE2E_Container' ./internal/sandboxd/backend/container/ -count=1 -v

@@ -169,6 +169,17 @@ func (in *Installer) fetchTo(ctx context.Context, source, rel, dst string) error
 	return copyFile(filepath.Join(source, rel), dst)
 }
 
+// HTTPStatusError is a fetch the server answered with a status other than
+// 200. It is typed so a caller can tell "the source has no such file" (404)
+// from a transport failure, and say what that means for its source.
+// Refs: MGIT-234
+type HTTPStatusError struct {
+	URL  string
+	Code int
+}
+
+func (e *HTTPStatusError) Error() string { return fmt.Sprintf("fetch %s: HTTP %d", e.URL, e.Code) }
+
 // httpGet fetches a URL, returning its body or a clear error.
 func (in *Installer) httpGet(ctx context.Context, url string) ([]byte, error) {
 	client := in.Client
@@ -185,7 +196,7 @@ func (in *Installer) httpGet(ctx context.Context, url string) ([]byte, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch %s: HTTP %d", url, resp.StatusCode)
+		return nil, &HTTPStatusError{URL: url, Code: resp.StatusCode}
 	}
 	return io.ReadAll(resp.Body)
 }

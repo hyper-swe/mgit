@@ -20,6 +20,7 @@ func commitCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "commit",
+		Args:  refusePaths("commit", commitPathRemedy),
 		Short: "Create a task-tagged micro-commit",
 		Long: "Create a task-tagged micro-commit from the staged changes.\n\n" +
 			"Only STAGED changes are recorded. Stage first with `mgit add <path>` " +

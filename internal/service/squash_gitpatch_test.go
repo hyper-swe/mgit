@@ -52,3 +52,25 @@ func TestSquashService_GitFormatPatch_NilCommit(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, out)
 }
+
+// The exporter authors the patch; mgit's own store keeps its internal
+// squash author, which the cadence logic relies on. Only what leaves for the
+// user's git changes. Refs: MGIT-237
+func TestSquashService_ExporterAuthorsThePatch_TheStoreKeepsItsOwnAuthor(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	require.NoError(t, os.WriteFile(filepath.Join(env.repo.Root(), "feature.go"), []byte("package f\n"), 0o600))
+	require.NoError(t, env.wt.Add(ctx, "feature.go"))
+	_, err := env.commit.CreateCommit(ctx, CreateCommitRequest{TaskID: "MGIT-237", AgentID: "a", Message: "add feature"})
+	require.NoError(t, err)
+
+	squashed, err := env.squash.SquashTask(ctx, SquashRequest{TaskID: "MGIT-237"})
+	require.NoError(t, err)
+	patch, err := env.squash.GitFormatPatch(ctx, squashed)
+	require.NoError(t, err)
+
+	assert.Equal(t, "mgit-squash", squashed.AgentID, "the store's squash commit keeps its internal author")
+	assert.Contains(t, patch, "\nFrom: Test Author <author@example.invalid>\n", "the patch is authored by the exporter")
+	assert.NotContains(t, patch, "mgit-squash")
+	assert.NotContains(t, patch, "mgit.local")
+}

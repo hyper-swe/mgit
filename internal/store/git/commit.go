@@ -128,7 +128,21 @@ func (cs *CommitStore) buildTreeFromStaging() (plumbing.Hash, error) {
 		return plumbing.ZeroHash, err
 	}
 
+	// Every entry is judged against HEAD as it is, before any is applied.
 	for _, rel := range staged {
+		if err := cs.repo.checkStagedEntry(rel, files); err != nil {
+			return plumbing.ZeroHash, err
+		}
+	}
+	for _, rel := range staged {
+		// A tracked file that is now a directory: the entry is its deletion
+		// (checkStagedEntry refused every other directory entry).
+		if isDir, err := cs.repo.isDirOnDisk(rel); err != nil {
+			return plumbing.ZeroHash, err
+		} else if isDir {
+			delete(files, rel)
+			continue
+		}
 		content, mode, err := cs.repo.workingFileContent(rel)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -141,7 +155,12 @@ func (cs *CommitStore) buildTreeFromStaging() (plumbing.Hash, error) {
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
+		replaceInTree(files, rel)
 		files[rel] = blobEntry{hash: blobHash, mode: mode}
+	}
+	if clash := fileDirClash(files); clash != "" {
+		return plumbing.ZeroHash, fmt.Errorf("%w: the commit would record %q as both a file and a directory; "+
+			"stage its deletion or the files under it", model.ErrInvalidStagedEntry, clash)
 	}
 
 	return writeNestedTree(cs.repo.repo.Storer, files)

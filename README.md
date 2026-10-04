@@ -230,7 +230,7 @@ What that means in practice:
 So prefer the install script or Homebrew. If you did download through a browser:
 
 ```bash
-xattr -d com.apple.quarantine mgit mgit-sandboxd
+xattr -dr com.apple.quarantine mgit mgit-sandboxd lib   # lib/: the daemon's libkrun
 ```
 
 That fully resolves it — the binaries themselves are fine. Refs: [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#release-archive), MGIT-64.
@@ -288,8 +288,9 @@ is fine.
 decided by the loop rather than by preference. Linux libkrun boots real microVMs
 and runs the containment, sync and export suites on real KVM — validated and
 CI-gated as of MGIT-87, superseding the older "never validated end to end"
-caveat, and MGIT-89/90/91 closed the gaps that validation found. Two residuals
-do not carry over from macOS, both measured on real hardware and both upstream:
+caveat, and MGIT-89/90/91 closed the gaps that validation found. One residual
+does not carry over from macOS (measured on real hardware, upstream), and one
+difference mgit closes itself:
 
 - **The guest cannot write most of its image root.** `/tmp`, `/etc` and the
   mounted worktree are writable; anything else under `/` fails with `operation
@@ -301,13 +302,16 @@ do not carry over from macOS, both measured on real hardware and both upstream:
   Tracked as MGIT-89; `/etc` is writable because mgit-guest detects the
   refusal and shadows it with a seeded tmpfs, which is what lets a networked
   guest start at all.
-- **A deleted path can stay *visible* to the guest for a few seconds**, though
-  never *readable*: libkrun's Linux virtio-fs caches name lookups for ~5s
-  (macOS measures 0s), so a guest process that already resolved a path may keep
-  resolving it after the sync removes it. mgit empties a file before unlinking
-  it, so what lingers is an empty name, never deleted content — a build reading
-  it fails loudly instead of silently compiling code you deleted. Creations and
-  content edits are visible immediately.
+- **A deleted path is gone from the guest by the time `sandbox sync`
+  returns**, although libkrun's Linux virtio-fs caches name lookups for ~5 s
+  (macOS measures 0 s): the sync asks the guest to drop its caches and checks
+  from inside the guest that every deleted path is gone before it reports
+  success. The agent loop's own per-round canary (host delete, sync, an
+  immediate `[ -e ]` in the guest) measured it on a stock ubuntu-latest KVM
+  host: gone at once, with the delete-bearing sync taking 42–55 ms. mgit also
+  empties a file before unlinking it, so a name that did linger would read as
+  empty, never as deleted content. Creations and content edits are visible
+  immediately.
 
 So on Linux, **libkrun now does the whole loop**: guest egress with live
 policy, host edits re-staged into a long-lived guest, and artifacts read back
@@ -318,9 +322,9 @@ cannot do here.
 The capability set above is exactly what CI asserts on every push, named test
 by test in `scripts/e2e/libkrun_linux_column.sh`.
 
-The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`.
+The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`, but on Linux that builds the firecracker daemon, which boots only a kernel + rootfs image and refuses `sandbox sync` and `sandbox export`: use the release archive for the agent loop ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md)).
 
-- **macOS** requires Apple Silicon (arm64), macOS 14+, and the **libkrun** hypervisor, which is *not* installed with mgit — it lives in a third-party Homebrew tap, and Homebrew will not load a formula from a tap you have not trusted. All three commands are needed, in this order:
+- **macOS** requires Apple Silicon (arm64), macOS 14+, and **libkrunfw**, the guest kernel library, which is *not* installed with mgit — it comes with the libkrun formula of a third-party Homebrew tap, and Homebrew will not load a formula from a tap you have not trusted. All three commands are needed, in this order:
 
   ```bash
   brew tap libkrun/krun
@@ -328,11 +332,11 @@ The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Li
   brew install libkrun
   ```
 
-  `brew install libkrun` on its own fails, and so does the fully-qualified name — see [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#installing-libkrun-on-macos) for why, and for why mgit no longer tries to install it for you. The release/brew daemon links libkrun and is code-signed with the hypervisor entitlement (a `go install`-ed daemon is unsigned and must be signed locally).
+  `brew install libkrun` on its own fails, and so does the fully-qualified name — see [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#installing-libkrun-on-macos) for why, and for why mgit no longer tries to install it for you. The release/brew daemon carries its own libkrun in `lib/` beside it — keep them together — and is code-signed with the hypervisor entitlement (a `go install`-ed daemon links Homebrew's libkrun, is unsigned and must be signed locally).
 - **Linux** requires `/dev/kvm` (read-writable by your user) and glibc 2.31+, and nothing else: the release archive carries libkrun and libkrunfw in `lib/` beside `mgit-sandboxd`, so extract the whole archive and keep them together. The kernel inside libkrunfw is GPL-2.0; its source is published with every release that bundles it ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#the-linux-archive-and-what-it-carries)).
 - **Windows and Intel macOS** have no sandbox backend yet; core mgit runs without it.
 
-Skipping the hypervisor step degrades nothing silently: the daemon refuses to start, and `mgit` reports the missing library together with the commands that fix it.
+Skipping the libkrunfw step degrades nothing silently: no guest boots, and `mgit doctor` names the missing library together with the commands that fix it.
 
 Then compose the Linux userspace the VM boots — from any public OCI image, pulled straight from its registry with no Docker and no container runtime:
 
@@ -351,10 +355,10 @@ The full walkthrough, platform prerequisites, the kernel+rootfs path used by the
 **Without the sandbox**, mgit is still a complete checkpointed working substrate. `mgit run` and `mgit sandbox land` are the only sandbox-gated commands; integrate a task's result by exporting its squash as a patch and applying it to your git:
 
 ```bash
-mgit squash --task-id PROJ-12 --to-git | git apply   # or: git am
+mgit squash --task-id PROJ-12 --to-git | git apply   # needs your git identity (see below); or: git am
 ```
 
-**What the patch carries into your history.** mgit tags each micro-commit in its own store with `[MGIT:<task>]`, which is how it knows a commit's task; the tag stays in mgit's store. With `git apply`, nothing from the patch's header reaches your history: you write the commit yourself. With `git am`, the patch's message is recorded. Given `-m`/`-F`, that message is exactly your words. Without them, mgit's summary lists the micro-commits by what was written, without the task tag. Two things in the patch still name mgit today, and `git am` records them: the author line (`From: mgit-squash <…@mgit.local>`; tracked as MGIT-237; `git commit --amend --reset-author --no-edit` after `git am` replaces it), and any file mgit injected into the worktree that the task's commits recorded (tracked as MGIT-236).
+**What the patch carries into your history.** mgit tags each micro-commit in its own store with `[MGIT:<task>]`, which is how it knows a commit's task; the tag stays in mgit's store. With `git apply`, nothing from the patch's header reaches your history: you write the commit yourself. With `git am`, the patch's message is recorded. Given `-m`/`-F`, that message is exactly your words. Without them, mgit's summary lists the micro-commits by what was written, without the task tag. The patch's author line is you: your git identity, from `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL`, else `user.name` and `user.email` in this project's or your global git config. With none configured, `squash --to-git` refuses before it writes anything, and says how to set one (`git config user.name "Your Name"` and `git config user.email you@example.com`); set it and run the same command again, and it completes with all of the task's work. The read-only `squash --to-git --dry-run` and `export --format git` still produce the patch with no identity, warn, and name no author: `git apply` takes it as is, and `git am` asks you for one. The agent files mgit writes into a worktree are left out of bulk staging, inside a sandbox too, so one reaches the patch only if a commit stages it by name.
 
 ## Commands
 

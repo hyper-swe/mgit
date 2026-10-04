@@ -44,10 +44,10 @@ func NewWorktreeService(idx *index.Store, branch *BranchService, wt *gitstore.Wo
 	}
 }
 
-// WithSync attaches the auto-housekeeping dependencies (ADR-008, MGIT-35): the
-// SyncService resyncs the `.mgit` base from the current local working state
-// BEFORE a new worktree is forked (so it carries the developer's unpushed
-// foundation), and repo/commits resolve+pin the per-task fork-base. Returns the
+// WithSync attaches the auto-housekeeping dependencies (ADR-008, MGIT-35): a
+// new task forks from git's committed tree (CommittedForkBase), or, opted in,
+// from the checkout's captured working state (MGIT-283), and repo/commits
+// resolve+pin the per-task fork-base. Returns the
 // receiver for fluent wiring. When unset, Add behaves as before (no auto-sync,
 // empty fork-base) so legacy callers/tests keep working. Refs: MGIT-35
 func (s *WorktreeService) WithSync(sync *SyncService, repo *gitstore.Repository, cs *gitstore.CommitStore) *WorktreeService {
@@ -121,22 +121,24 @@ func (s *WorktreeService) claim(ctx context.Context, opts model.WorktreeAddOptio
 	branchName string) (*model.WorktreeInfo, error) {
 	var wt *model.WorktreeInfo
 	err := s.guard(func() error {
-		// Auto-housekeep BEFORE forking so the new worktree carries the current
-		// local working state (incl. the developer's unpushed foundation) — the
-		// concrete advantage of an mgit worktree over a git worktree (ADR-008 §2).
-		// Then resolve+pin the fork-base so a later base resync cannot shift it.
-		forkBase, err := s.resolveForkBase(ctx, opts, branchName)
+		// Resolve+pin the fork-base so a later base resync cannot shift it. A
+		// NEW task forks from git's committed tree unless the caller opts into
+		// capturing uncommitted state (MGIT-283, ADR-008 §2 as amended).
+		var report forkReport
+		forkBase, err := s.resolveForkBase(ctx, opts, branchName, &report)
 		if err != nil {
 			return fmt.Errorf("worktree add: %w", err)
 		}
 		wt = &model.WorktreeInfo{
-			Path:      opts.Path,
-			Name:      model.DeriveNameFromPath(opts.Path),
-			Branch:    branchName,
-			TaskID:    opts.TaskID,
-			AgentID:   opts.AgentID,
-			ForkBase:  forkBase,
-			CreatedAt: s.clock(),
+			Path:                opts.Path,
+			Name:                model.DeriveNameFromPath(opts.Path),
+			Branch:              branchName,
+			TaskID:              opts.TaskID,
+			AgentID:             opts.AgentID,
+			ForkBase:            forkBase,
+			CreatedAt:           s.clock(),
+			UncommittedPaths:    report.paths,
+			UncommittedIncluded: report.included,
 		}
 		// Register in SQLite (UNIQUE constraints enforce isolation) BEFORE touching
 		// disk, so a duplicate path/task/branch is rejected without materializing
@@ -184,33 +186,121 @@ func (s *WorktreeService) guard(fn func() error) error {
 	return s.locker.Guard(fn)
 }
 
-// resolveForkBase ensures the base is synced (unless an explicit --base is
-// given) and returns the commit the task branch is/forked at, auto-creating the
-// branch at that pinned base when it does not yet exist. With --base, the branch
-// is pinned to the resolved ref; without it, the branch forks off the
-// auto-resynced local base. An existing branch keeps its current tip as the
-// pinned base. Refs: MGIT-35, ADR-008 §2,§4
-func (s *WorktreeService) resolveForkBase(ctx context.Context, opts model.WorktreeAddOptions, branchName string) (string, error) {
+// resolveForkBase returns the commit the task branch is/forked at, creating
+// the branch at that pinned base when it does not yet exist. With --base, the
+// branch is pinned to the resolved ref. Without it, a NEW branch forks from
+// git's committed tree (CommittedForkBase), or with IncludeUncommitted from
+// the checkout's captured working state; report names the uncommitted paths
+// either way (MGIT-283). An existing branch keeps the fork-base it already has
+// (existingForkBase). Refs: MGIT-35, MGIT-275, MGIT-283, ADR-008 §2,§4
+func (s *WorktreeService) resolveForkBase(ctx context.Context, opts model.WorktreeAddOptions,
+	branchName string, report *forkReport) (string, error) {
 	if existing, err := s.branch.GetBranch(ctx, branchName); err == nil {
-		return existing.HeadCommit, nil
+		return s.existingForkBase(ctx, opts, branchName, existing.HeadCommit)
 	}
 	if opts.Base != "" {
 		return s.createBranchAtBase(ctx, opts.TaskID, opts.Base)
 	}
-	if s.sync != nil {
-		// A NEW worktree legitimately captures the developer's uncommitted local
-		// foundation so it materializes present-and-building (ADR-008 §2). This
-		// is the ONLY caller allowed to absorb uncommitted content; read verbs
-		// use the read-safe EnsureSynced. Refs: MGIT-123, ADR-008 §2,§3
-		if err := s.sync.EnsureSyncedForNewWorktree(ctx); err != nil {
-			return "", fmt.Errorf("auto-resync base: %w", err)
-		}
+	if s.sync == nil {
+		return s.branchAtHead(ctx, opts.TaskID)
 	}
-	br, err := s.branch.CreateBranch(ctx, opts.TaskID)
+	if opts.IncludeUncommitted {
+		return s.forkWithUncommitted(ctx, opts.TaskID, report)
+	}
+	base, uncommitted, ok, err := s.sync.CommittedForkBase(ctx)
+	if err != nil {
+		return "", fmt.Errorf("fork base: %w", err)
+	}
+	if !ok { // no git commit to build from: the mgit base is the base
+		return s.branchAtHead(ctx, opts.TaskID)
+	}
+	report.paths = uncommitted
+	br, err := s.branch.CreateBranchAt(ctx, opts.TaskID, base)
+	if err != nil {
+		return "", fmt.Errorf("create branch at fork base: %w", err)
+	}
+	return br.HeadCommit, nil
+}
+
+// forkReport is what creating a NEW task's base found uncommitted in the
+// checkout, and whether it was captured. Refs: MGIT-283
+type forkReport struct {
+	paths    []string
+	included bool
+}
+
+// forkWithUncommitted is the opt-in of ADR-008 §2 as amended: the checkout's
+// uncommitted state is captured into the base (the absorbing resync), and
+// every captured path is reported first. Refs: MGIT-283, MGIT-123
+func (s *WorktreeService) forkWithUncommitted(ctx context.Context, taskID string, report *forkReport) (string, error) {
+	paths, err := s.sync.UncommittedNow(ctx)
+	if err != nil {
+		return "", fmt.Errorf("fork base: %w", err)
+	}
+	report.paths, report.included = paths, true
+	if err := s.sync.EnsureSyncedForNewWorktree(ctx); err != nil {
+		return "", fmt.Errorf("auto-resync base: %w", err)
+	}
+	return s.branchAtHead(ctx, taskID)
+}
+
+// branchAtHead creates the task branch at the current base head.
+func (s *WorktreeService) branchAtHead(ctx context.Context, taskID string) (string, error) {
+	br, err := s.branch.CreateBranch(ctx, taskID)
 	if err != nil {
 		return "", fmt.Errorf("create branch: %w", err)
 	}
 	return br.HeadCommit, nil
+}
+
+// existingForkBase is the fork-base of a task branch that already exists — a
+// worktree re-added for a task whose earlier worktree was removed or lost.
+//
+// It is the base the task's FIRST micro-commit was made on: the same commit
+// diff and squash compute the task's net change against (assertPinnedForkBase).
+// Pinning the branch's TIP instead, as this did until MGIT-275, pinned one of
+// the task's own commits once it had any, and every later diff, export and
+// listing failed "pinned fork-base != computed base". A branch with no task
+// commits yet still sits at its fork-base, so its tip is the answer.
+//
+// An explicit --base cannot move an existing branch's history: it is accepted
+// when it names that same fork-base, and refused otherwise, naming the
+// fork-base the branch has. Refs: MGIT-275, MGIT-35, ADR-008 §4
+func (s *WorktreeService) existingForkBase(ctx context.Context, opts model.WorktreeAddOptions,
+	branchName, tip string) (string, error) {
+	if s.commits == nil {
+		if opts.Base != "" {
+			return "", fmt.Errorf("--base requires sync wiring")
+		}
+		return tip, nil // no commit store to read history from: the pre-MGIT-35 behavior
+	}
+	base := tip
+	records, err := s.indexStore.GetTaskCommits(ctx, opts.TaskID)
+	if err != nil {
+		return "", fmt.Errorf("read task %s commits: %w", opts.TaskID, err)
+	}
+	if len(records) > 0 {
+		first, err := s.commits.GetCommit(ctx, records[0].CommitHash)
+		if err != nil {
+			return "", fmt.Errorf("read task %s first commit: %w", opts.TaskID, err)
+		}
+		if first.ParentID != "" {
+			base = first.ParentID
+		}
+	}
+	if opts.Base == "" {
+		return base, nil
+	}
+	want, err := s.resolveBaseCommit(ctx, opts.Base)
+	if err != nil {
+		return "", err
+	}
+	if want != base {
+		return "", fmt.Errorf("%w: --base %s is %s, but task branch %s forked at %s and keeps it; "+
+			"re-add without --base, or with --base %s", model.ErrInvalidCommit,
+			opts.Base, short(want), branchName, short(base), base)
+	}
+	return base, nil
 }
 
 // createBranchAtBase resolves the explicit --base ref to a concrete commit and

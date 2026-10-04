@@ -59,7 +59,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 		wt:     wt,
 		idx:    idx,
 		commit: NewCommitService(repo, cs, idx),
-		squash: NewSquashService(repo, cs, idx),
+		squash: NewSquashService(repo, cs, idx).WithPatchAuthor(testPatchAuthor),
 		rollbk: NewRollbackService(repo, cs, idx),
 		branch: NewBranchService(repo, bs, idx),
 	}

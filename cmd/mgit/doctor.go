@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/hyper-swe/mgit/internal/guestnet"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
+	"github.com/hyper-swe/mgit/internal/sandboxd/daemonrec"
 	"github.com/hyper-swe/mgit/internal/sandboxd/guestbase"
 	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
@@ -31,6 +31,17 @@ import (
 // itself. The output names the incident behind each check, so the reason it
 // exists outlives the people who remember it. Refs: MGIT-162, R-H300
 func doctorCmd(connect connectFunc) *cobra.Command {
+	return doctorCmdWith(connect, listHostDaemons)
+}
+
+// hostDaemonLister lists and judges every sandbox daemon record on the host.
+type hostDaemonLister func(context.Context) ([]daemonrec.Listed, error)
+
+// doctorCmdWith builds doctor over an injected daemon lister: production
+// reads the host's real records (doctorCmd), and the doctor wiring tests
+// inject their own, so another session's daemon cannot decide their verdict.
+// Refs: MGIT-262, MGIT-162
+func doctorCmdWith(connect connectFunc, listDaemons hostDaemonLister) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "doctor",
@@ -54,7 +65,7 @@ func doctorCmd(connect connectFunc) *cobra.Command {
 			}
 			defer app.Close()
 
-			results := doctor.Run(cmd.Context(), doctorChecks(app, connect))
+			results := doctor.Run(cmd.Context(), doctorChecks(app, connect, listDaemons))
 			if asJSON {
 				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(
 					map[string]any{"checks": results}); err != nil {
@@ -148,8 +159,9 @@ func (b *doctorBinding) resolve(ctx context.Context) (string, error) {
 }
 
 // doctorChecks assembles the checks with their real probes.
-func doctorChecks(app *App, connect connectFunc) []doctor.Check {
+func doctorChecks(app *App, connect connectFunc, listDaemons hostDaemonLister) []doctor.Check {
 	binding := &doctorBinding{app: app, connect: connect}
+	vmm := memoVMM(probeDaemonVMM)
 	return []doctor.Check{
 		doctor.NestedGitCheck{Scan: func() ([]string, error) {
 			return gitstore.NewWorktreeStore(app.Repo).RecordedNestedRepos(context.Background())
@@ -181,9 +193,17 @@ func doctorChecks(app *App, connect connectFunc) []doctor.Check {
 			return probeGuestDelivery(ctx, connect, task)
 		}},
 		doctor.DaemonLoadsCheck{Probe: probeDaemonLoads},
-		doctor.DaemonVMMCheck{Probe: probeDaemonVMM, GOOS: runtime.GOOS},
-		doctor.HostDaemonsCheck{List: listHostDaemons},
-		doctor.DuplicateDaemonsCheck{List: listHostDaemons},
+		doctor.ServingDaemonVersionCheck{List: listDaemons, CLI: versionString(), RepoRoot: func() (string, error) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			return sandboxRepoRoot(cwd)
+		}},
+		doctor.DaemonVMMCheck{Probe: vmm, GOOS: runtime.GOOS},
+		doctor.BaseBootsCheck{VMM: vmm, Inspect: inspectBaseShape},
+		doctor.HostDaemonsCheck{List: listDaemons},
+		doctor.DuplicateDaemonsCheck{List: listDaemons},
 	}
 }
 
@@ -279,25 +299,9 @@ func probeResponseCap(ctx context.Context, connect connectFunc, bytes int) (doct
 // Refs: MGIT-174
 func inspectBaseCurrency() (doctor.BaseIdentity, error) {
 	none := doctor.BaseIdentity{}
-	hostRoot, err := sandboxHostRoot()
+	hostRoot, resolved, err := resolvePinnedBase()
 	if err != nil {
-		return none, fmt.Errorf("no sandbox host root for this repository: %w", err)
-	}
-	ref, err := images.PinnedRef(hostRoot, defaultGuestBaseName)
-	if err != nil {
-		return none, fmt.Errorf("no guest base registered for this repository: %w", err)
-	}
-	cache, cacheErr := openBaseCache()
-	if cacheErr != nil {
-		return none, fmt.Errorf("could not open the base cache: %w", cacheErr)
-	}
-	store, err := images.NewStoreWithBaseCache(hostRoot, func() time.Time { return time.Now().UTC() }, cache)
-	if err != nil {
-		return none, fmt.Errorf("could not open the image store: %w", err)
-	}
-	resolved, err := store.Resolve(ref)
-	if err != nil {
-		return none, fmt.Errorf("could not resolve the pinned guest base: %w", err)
+		return none, err
 	}
 	// The base's identity comes from the lock, not the tree: the lock is what
 	// boot verifies against, and its Source is the resolved reference — the
