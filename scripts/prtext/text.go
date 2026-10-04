@@ -142,11 +142,19 @@ var productNets = []netip.Prefix{netip.MustParsePrefix("10.0.2.0/24"), netip.Mus
 // privateAddress reports whether text carries a private IPv4 literal
 // (10/8, 172.16/12, 192.168/16) that is neither a range's own name, nor an
 // address in the product's own guest networks, nor four numbers inside a
-// longer dotted version. It needs no list: listing a private address by
+// longer dotted version; or a private IPv6 literal (unique-local fc00::/7,
+// link-local fe80::/10) that is not a range's own name (MGIT-242.2). The
+// product assigns no IPv6 guest network: its gateways serve IPv4 only
+// (internal/guestboot/network.go), so no IPv6 address is exempt as its own. It needs no list: listing a private address by
 // digest would publish it, since such a digest is guessed in seconds. An
 // example address belongs in a documentation range (RFC 5737: 192.0.2.0/24,
 // 198.51.100.0/24, 203.0.113.0/24), which is never private and never a hit.
 func privateAddress(text string) bool {
+	return privateIPv4(text) || privateIPv6(text)
+}
+
+// privateIPv4 is privateAddress for IPv4 literals.
+func privateIPv4(text string) bool {
 	for _, loc := range ipv4RE.FindAllStringIndex(text, -1) {
 		lit := text[loc[0]:loc[1]]
 		if rangeNames[lit] || insideLonger(text, loc[0], loc[1]) {
@@ -158,6 +166,47 @@ func privateAddress(text string) bool {
 		}
 	}
 	return false
+}
+
+// ipv6RE finds IPv6 literal candidates: hex groups joined by colons, with
+// an optional zone and prefix length. Most matches are not addresses (clock
+// times, hardware addresses, scope operators); ParseAddr decides.
+var ipv6RE = regexp.MustCompile(`[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}(?:%[0-9A-Za-z_.-]+)?(?:/\d{1,3})?`)
+
+// ipv6RangeStarts are the private IPv6 ranges written bare, as text about
+// network policy names them ("the fe80:: range").
+var ipv6RangeStarts = map[string]bool{"fc00::": true, "fd00::": true, "fe80::": true}
+
+// privateIPv6 is privateAddress for IPv6 literals.
+func privateIPv6(text string) bool {
+	for _, loc := range ipv6RE.FindAllStringIndex(text, -1) {
+		lit := text[loc[0]:loc[1]]
+		if insideLonger6(text, loc[0], loc[1]) || isIPv6RangeName(lit) {
+			continue
+		}
+		addr, _, _ := strings.Cut(lit, "/")
+		if a, err := netip.ParseAddr(addr); err == nil && a.Is6() && !a.Is4In6() &&
+			(a.IsPrivate() || a.IsLinkLocalUnicast()) {
+			return true
+		}
+	}
+	return false
+}
+
+// isIPv6RangeName: a range's own name identifies no host. Either a prefix
+// of at most 16 bits written at its network address (fc00::/7, fe80::/10),
+// or one of the ranges written bare.
+func isIPv6RangeName(lit string) bool {
+	if ipv6RangeStarts[strings.ToLower(lit)] {
+		return true
+	}
+	p, err := netip.ParsePrefix(lit)
+	return err == nil && p.Bits() <= 16 && p.Addr() == p.Masked().Addr()
+}
+
+// insideLonger6: the literal is glued to a letter or a digit on either side.
+func insideLonger6(text string, start, end int) bool {
+	return start > 0 && isAlnum(text[start-1]) || end < len(text) && isAlnum(text[end])
 }
 
 func isAlnum(b byte) bool {
