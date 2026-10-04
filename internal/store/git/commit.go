@@ -129,10 +129,8 @@ func (cs *CommitStore) buildTreeFromStaging() (plumbing.Hash, error) {
 	}
 
 	// Every entry is judged against HEAD as it is, before any is applied.
-	for _, rel := range staged {
-		if err := cs.repo.checkStagedEntry(rel, files); err != nil {
-			return plumbing.ZeroHash, err
-		}
+	if err := cs.repo.checkStagedEntries(staged, files); err != nil {
+		return plumbing.ZeroHash, err
 	}
 	for _, rel := range staged {
 		// A tracked file that is now a directory: the entry is its deletion

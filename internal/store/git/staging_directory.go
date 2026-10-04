@@ -94,7 +94,7 @@ func hasPathUnder(head map[string]blobEntry, dir string) bool {
 // staging file written before MGIT-276 can still name one. Before this check,
 // commit failed "read working file …: is a directory" — or, for a gone
 // directory, silently recorded nothing for the files under it. The refusal
-// names the entry and the way out. Refs: MGIT-276
+// names the entry and a shell-safe way out. Refs: FR-2.6, MGIT-276, MGIT-288
 func (r *Repository) checkStagedEntry(rel string, head map[string]blobEntry) error {
 	_, trackedFile := head[rel]
 	onDiskDir, err := r.isDirOnDisk(rel)
@@ -114,9 +114,37 @@ func (r *Repository) checkStagedEntry(rel string, head map[string]blobEntry) err
 	if !isDir {
 		return nil
 	}
+	arg := stagedRemedyArg(rel)
 	return fmt.Errorf("%w: %q is a directory, which a commit cannot record as one path; "+
-		"run `mgit restore --staged %s`, then `mgit add %s` to stage the files under it",
-		model.ErrInvalidStagedEntry, rel, rel, rel)
+		"run `mgit restore --staged %s` (also unstages the files under it), "+
+		"then `mgit add %s` to stage the files under it",
+		model.ErrInvalidStagedEntry, rel, arg, arg)
+}
+
+// checkStagedEntries collects entry failures before any content is applied,
+// naming every invalid directory together and preserving error identities.
+// Refs: FR-2.6, MGIT-288.
+func (r *Repository) checkStagedEntries(rels []string, head map[string]blobEntry) error {
+	var problems []error
+	for _, rel := range rels {
+		if err := r.checkStagedEntry(rel, head); err != nil {
+			problems = append(problems, err)
+		}
+	}
+	return errors.Join(problems...)
+}
+
+// stagedRemedyArg quotes a path only when POSIX shell parsing needs it. A
+// leading dash gets a relative prefix so it cannot become a CLI option.
+// Refs: FR-2.6, MGIT-288.
+func stagedRemedyArg(rel string) string {
+	if strings.HasPrefix(rel, "-") {
+		rel = "./" + rel
+	}
+	if rel != "" && strings.Trim(rel, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-") == "" {
+		return rel
+	}
+	return "'" + strings.ReplaceAll(rel, "'", `'\''`) + "'"
 }
 
 // Unstage removes paths from the staging area and returns the entries it
