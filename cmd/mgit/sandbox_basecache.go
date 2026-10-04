@@ -62,6 +62,13 @@ func migrateInTreeBase(hostRoot string, cache *basecache.Cache, out io.Writer) e
 			"  pinned digest. The bytes and the digest are unchanged, so what you pinned\n"+
 			"  still resolves.\n", legacy, cache.Root())
 
+	// Held shared from adopting the entry until its pins are repointed and
+	// recorded: prune cannot remove what this migration is pinning.
+	release, err := cache.HoldShared()
+	if err != nil {
+		return fmt.Errorf("migrate in-tree guest base: %w", err)
+	}
+	defer release()
 	entry, err := cache.Adopt(legacy, images.TreeDigest)
 	if err != nil {
 		return fmt.Errorf("migrate in-tree guest base: %w", err)
@@ -69,6 +76,15 @@ func migrateInTreeBase(hostRoot string, cache *basecache.Cache, out io.Writer) e
 	repointed, err := images.RepointToCache(hostRoot, legacy)
 	if err != nil {
 		return fmt.Errorf("migrate in-tree guest base: %w", err)
+	}
+	for _, name := range repointed {
+		if err := recordCachedPin(cache, hostRoot, name); err != nil {
+			return fmt.Errorf("migrate in-tree guest base: %w", err)
+		}
+	}
+	if !entry.Deduplicated {
+		// This migration published the entry and recorded its one pinner.
+		markFullyRecorded(cache, entry.Digest, out)
 	}
 	switch {
 	case len(repointed) > 0:
@@ -81,6 +97,65 @@ func migrateInTreeBase(hostRoot string, cache *basecache.Cache, out io.Writer) e
 				"  it is cached under its own digest rather than discarded.\n", entry.Digest)
 	}
 	return nil
+}
+
+// recordCachedPin records hostRoot as a pinner of the base registered under
+// name, when that base lives in the cache — a base pinned by path is the
+// operator's tree and no cache entry's business.
+//
+// It runs where a pin already exists: the in-tree migration and launch.
+// Launch is what gives an entry composed before back-references existed its
+// pinners, the first time each repository boots it. A record that cannot be
+// written leaves a pin the records do not name, so it also withdraws the
+// entry's fully-recorded mark: prune then keeps the entry's pinners unknown
+// rather than judge it on an incomplete list. Refs: MGIT-239
+func recordCachedPin(cache *basecache.Cache, hostRoot, name string) error {
+	entry, err := images.LookupEntry(hostRoot, name)
+	if err != nil {
+		return err
+	}
+	if entry.RootfsPath != "" {
+		return nil
+	}
+	if err := cache.RecordPinner(entry.Digest, hostRoot); err != nil {
+		return errors.Join(err, cache.ForgetFullyRecorded(entry.Digest))
+	}
+	return nil
+}
+
+// recordComposedPin records a compose's pin BEFORE the lock is signed, and
+// refuses the compose when it cannot: a repository must never come to pin an
+// entry unrecorded. When this compose published the entry (rather than
+// finding the same bytes cached), it is the entry's first and only pinner,
+// so it marks the entry fully recorded. Bytes already cached keep whatever
+// their publisher asserted. Refs: MGIT-239
+func recordComposedPin(cache *basecache.Cache, hostRoot string, cached basecache.Entry, errOut io.Writer) error {
+	if err := cache.RecordPinner(cached.Digest, hostRoot); err != nil {
+		return fmt.Errorf("base from: record this repository as a pinner of %s; nothing was pinned: %w",
+			cached.Digest, err)
+	}
+	if !cached.Deduplicated {
+		markFullyRecorded(cache, cached.Digest, errOut)
+	}
+	return nil
+}
+
+// markFullyRecorded asserts completeness for an entry this process published.
+// Failing to is a warning: the entry then keeps its pinners unknown, which is
+// the safe direction.
+func markFullyRecorded(cache *basecache.Cache, digest string, w io.Writer) {
+	if err := cache.MarkFullyRecorded(digest); err != nil {
+		_, _ = fmt.Fprintf(w, "warning: %v\n  `mgit sandbox base prune` will keep this entry unless it is named.\n", err)
+	}
+}
+
+// warnUnrecordedPin says that a pin holds but its back-reference could not be
+// written. It is a warning and not a failure because the pin itself is sound.
+// Prune then treats the entry's pinners as unknown, until a later launch
+// records this repository. Refs: MGIT-239
+func warnUnrecordedPin(w io.Writer, err error) {
+	_, _ = fmt.Fprintf(w, "warning: could not record this repository as a pinner of its guest base: %v\n"+
+		"  `mgit sandbox base prune` keeps that base's pinners unknown until a launch records it.\n", err)
 }
 
 // composeOptions are the knobs `sandbox base from` and `sandbox base set`
@@ -110,19 +185,24 @@ type composeResult struct {
 // as the human-facing half of the record. A recompose whose input digest
 // differs is a NEW cache entry and a NEW journal line; it never overwrites
 // what came before. Refs: MGIT-147, MGIT-105
-func registerComposedBase(hostRoot string, cached basecache.Entry, sourceRef string,
+func registerComposedBase(hostRoot string, cached basecache.Entry, resolved guestbase.Ref,
 	opts composeOptions, signer signFunc, clock func() time.Time,
 ) (composeResult, error) {
+	sourceRef := resolved.String()
 	rec := guestbase.Compose{
 		Name:       opts.name,
 		SourceTag:  guestbase.SourceTag(sourceRef),
 		SourceRef:  sourceRef,
 		BaseDigest: cached.Digest,
+		// The platform manifest the index selected, kept beside the index so
+		// a later recompose can compare like with like. Refs: MGIT-223
+		PlatformDigest: resolved.SelectedPlatform,
 	}
 	// What this compose is about to supersede, read BEFORE the lock is
 	// rewritten — afterwards it is unrecoverable from the lock alone.
 	if prev, err := images.LookupEntry(hostRoot, opts.name); err == nil {
 		rec.PrevSourceRef, rec.PrevBaseDigest = prev.Source, prev.Digest
+		rec.PrevPlatformDigest = previousPlatform(hostRoot, opts.name, prev.Source)
 	} else if !errors.Is(err, images.ErrNoSuchImage) {
 		return composeResult{}, fmt.Errorf("base %s: %w", opts.name, err)
 	}
@@ -139,6 +219,25 @@ func registerComposedBase(hostRoot string, cached basecache.Entry, sourceRef str
 	return composeResult{Ref: ref, CachePath: cached.Path, Reused: cached.Deduplicated, Record: rec}, nil
 }
 
+// previousPlatform is the platform manifest the superseded compose recorded
+// selecting, read from the journal: the newest entry for this name whose
+// source is the one being replaced. Empty when that compose recorded none (a
+// single-platform tag, or an mgit before the field existed) or the journal
+// cannot say; the comparison then falls back to what it can prove.
+// Refs: MGIT-223
+func previousPlatform(hostRoot, name, prevSource string) string {
+	history, err := guestbase.ComposeHistory(hostRoot)
+	if err != nil {
+		return ""
+	}
+	for i := len(history) - 1; i >= 0; i-- {
+		if h := history[i]; h.Name == name && h.SourceRef == prevSource {
+			return h.PlatformDigest
+		}
+	}
+	return ""
+}
+
 // signFunc registers a signed entry and returns its digest-pinned reference.
 // Injected so the compose flow does not carry the signing key around.
 type signFunc func(hostRoot, name string, entry images.Entry) (string, error)
@@ -150,20 +249,7 @@ type signFunc func(hostRoot, name string, entry images.Entry) (string, error)
 // old base is still cached, is the difference between an audit trail and a
 // surprise. Refs: MGIT-147
 func reportComposition(out io.Writer, res composeResult) {
-	if res.Record.TagMoved() {
-		_, _ = fmt.Fprintf(out,
-			"\n  NOTE: %s now resolves to a different image than the base you had pinned.\n"+
-				"        was  %s  (base %s)\n"+
-				"        now  %s  (base %s)\n"+
-				"        Nothing was replaced: the previous base is still in the cache, and\n"+
-				"        anything already pinned to it keeps resolving. (Since mgit 0.6.8 the\n"+
-				"        pinned digest is the image index, the same on every host; a base\n"+
-				"        composed by an older mgit recorded its platform manifest, whose digest\n"+
-				"        differs even when nothing moved.)\n",
-			res.Record.SourceTag,
-			guestbase.SourceDigest(res.Record.PrevSourceRef), res.Record.PrevBaseDigest,
-			guestbase.SourceDigest(res.Record.SourceRef), res.Record.BaseDigest)
-	}
+	reportSourceChange(out, res.Record)
 	_, _ = fmt.Fprintf(out, "Registered guest base %s\n", res.Ref)
 	if res.Record.SourceRef != "" {
 		_, _ = fmt.Fprintf(out, "  from %s\n", res.Record.SourceRef)
@@ -173,6 +259,38 @@ func reportComposition(out io.Writer, res composeResult) {
 		reused = " (already cached; nothing was re-unpacked)"
 	}
 	_, _ = fmt.Fprintf(out, "  bytes in %s%s\n", res.CachePath, reused)
+}
+
+// reportSourceChange says what a recompose of the same tag did to its
+// source, comparing like with like (MGIT-223): it shouts only when the image
+// itself moved, and names each digest by its kind.
+func reportSourceChange(out io.Writer, rec guestbase.Compose) {
+	prev, now := guestbase.SourceDigest(rec.PrevSourceRef), guestbase.SourceDigest(rec.SourceRef)
+	switch rec.SourceChange() {
+	case guestbase.SourceKindChanged:
+		_, _ = fmt.Fprintf(out, "\n  %s resolves to the same image as the base you had pinned.\n"+
+			"        selects   %s  (the platform manifest that base recorded)\n"+
+			"        recorded  %s  (the image index: since mgit 0.6.8, the same on every host)\n"+
+			"        base      %s -> %s  (it includes mgit's own guest binaries)\n",
+			rec.SourceTag, prev, now, rec.PrevBaseDigest, rec.BaseDigest)
+	case guestbase.SourceIndexMoved:
+		_, _ = fmt.Fprintf(out, "\n  NOTE: %s's image index moved; the image this host composes is unchanged.\n"+
+			"        index     %s -> %s\n"+
+			"        selects   %s  (unchanged: the platform manifest for this host)\n"+
+			"        Other architectures may now compose a different image.\n",
+			rec.SourceTag, prev, now, rec.PlatformDigest)
+	case guestbase.SourceImageMoved:
+		selected := ""
+		if rec.PlatformDigest != "" {
+			selected = fmt.Sprintf(", selecting platform manifest %s for this host", rec.PlatformDigest)
+		}
+		_, _ = fmt.Fprintf(out, "\n  NOTE: %s now resolves to a different image than the base you had pinned.\n"+
+			"        was  %s  (base %s)\n"+
+			"        now  %s%s  (base %s)\n"+
+			"        Nothing was replaced: the previous base is still in the cache, and\n"+
+			"        anything already pinned to it keeps resolving.\n",
+			rec.SourceTag, prev, rec.PrevBaseDigest, now, selected, rec.BaseDigest)
+	}
 }
 
 // composeJSON is the machine-readable form of a composition.

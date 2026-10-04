@@ -82,7 +82,7 @@ func TestE2E_Notify_RealGuest_AutoLand(t *testing.T) {
 	prov, err := provision.NewStoreProvisioner(hostRepoRoot)
 	require.NoError(t, err)
 	privDir := filepath.Join(wtPath, ".mgit")
-	_, err = prov.Provision(task, privDir)
+	_, err = prov.Provision(task, wtPath, privDir)
 	require.NoError(t, err)
 	// No commit is made here: the store is delivered as the host knows it, and
 	// the agent's commit happens INSIDE the guest below — the only commit the

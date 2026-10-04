@@ -193,12 +193,14 @@ func (c *client) resolveManifest(ctx context.Context, ref Ref) (manifestDoc, Ref
 	pin := digest
 
 	// An index lists per-platform manifests; pick the host's and fetch it.
+	selected := ""
 	if len(doc.Manifests) > 0 {
 		pick, err := selectPlatform(doc.Manifests)
 		if err != nil {
 			return manifestDoc{}, Ref{}, err
 		}
 		c.reportf("index: selected %s", shortDigest(pick.Digest))
+		selected = pick.Digest
 		doc, _, err = c.fetchManifest(ctx, ref, pick.Digest)
 		if err != nil {
 			return manifestDoc{}, Ref{}, err
@@ -211,6 +213,10 @@ func (c *client) resolveManifest(ctx context.Context, ref Ref) (manifestDoc, Ref
 
 	resolved := ref
 	resolved.Digest = pin
+	// Kept beside the index so a later recompose can compare an older
+	// record, which named this platform manifest, with its own kind.
+	// Refs: MGIT-223
+	resolved.SelectedPlatform = selected
 	return doc, resolved, nil
 }
 

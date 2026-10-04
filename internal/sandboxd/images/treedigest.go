@@ -48,6 +48,14 @@ func TreeDigest(root string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("images: resolve tree %s: %w", root, err)
 	}
+	// A symlinked root is walked as the tree it names. os.Stat above follows
+	// the link, but filepath.WalkDir does not: walking the link itself hashed
+	// nothing and pinned the SHA-256 of empty input, which then verified any
+	// tree the link came to point at (MGIT-227). Every path below, including
+	// the within-tree check for inner symlinks, is relative to the real root.
+	if abs, err = filepath.EvalSymlinks(abs); err != nil {
+		return "", fmt.Errorf("images: resolve tree %s: %w", root, err)
+	}
 
 	hasher := sha256.New()
 	err = filepath.WalkDir(abs, func(path string, d os.DirEntry, walkErr error) error {

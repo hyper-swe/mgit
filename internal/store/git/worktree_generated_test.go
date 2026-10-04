@@ -324,3 +324,58 @@ func TestWorktreeStore_IsGenerated_ClassifiesPathsForTheCLIWarning(t *testing.T)
 		})
 	}
 }
+
+// A SANDBOX LAUNCH READS THE LIST WITHOUT FOLLOWING ANY LINK (MGIT-236).
+// The list is copied into the guest's store, so whatever the read reaches
+// on the host reaches the guest. Neither the worktree's .mgit nor the list
+// in it may be a link: a symlinked .mgit would read a list from anywhere on
+// the host, and paths-shaped lines of any host file would pass validation.
+// Refs: MGIT-236, MGIT-80, SEC-03
+func TestReadGeneratedPathsNoFollow_FollowsNoLink(t *testing.T) {
+	elsewhere := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, generatedFileName), []byte("host-secret-line\n"), 0o600))
+		return dir
+	}
+	tests := []struct {
+		name    string
+		prepare func(t *testing.T, wt string)
+		want    []string
+		wantErr string
+	}{
+		{"a_recorded_list", func(t *testing.T, wt string) {
+			require.NoError(t, RecordGeneratedPaths(wt, []string{"AGENTS.md"}))
+		}, []string{"AGENTS.md"}, ""},
+		{"no_mgit_dir", func(*testing.T, string) {}, nil, ""},
+		{"an_mgit_dir_without_a_list", func(t *testing.T, wt string) {
+			require.NoError(t, os.MkdirAll(filepath.Join(wt, mgitDirName), 0o750))
+		}, nil, ""},
+		{"a_symlinked_mgit_dir", func(t *testing.T, wt string) {
+			require.NoError(t, os.Symlink(elsewhere(t), filepath.Join(wt, mgitDirName)))
+		}, nil, "not a directory"},
+		{"an_mgit_that_is_a_file", func(t *testing.T, wt string) {
+			require.NoError(t, os.WriteFile(filepath.Join(wt, mgitDirName), []byte("x"), 0o600))
+		}, nil, "not a directory"},
+		{"a_symlinked_list", func(t *testing.T, wt string) {
+			require.NoError(t, os.MkdirAll(filepath.Join(wt, mgitDirName), 0o750))
+			require.NoError(t, os.Symlink(filepath.Join(elsewhere(t), generatedFileName),
+				filepath.Join(wt, mgitDirName, generatedFileName)))
+		}, nil, "not a regular file"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wt := t.TempDir()
+			tt.prepare(t, wt)
+			got, err := ReadGeneratedPathsNoFollow(wt)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				assert.Nil(t, got, "nothing read through a link reaches the caller")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

@@ -35,8 +35,8 @@ func (m *Manager) ExportArtifact(_ context.Context, id string, req model.Artifac
 		return nil, fmt.Errorf("%w: %q", model.ErrSandboxNotFound, id)
 	}
 	if sb.info.State != model.StateRunning {
-		return nil, fmt.Errorf("%w: sandbox %q is %s, not running",
-			model.ErrSandboxBackendUnavailable, id, sb.info.State)
+		return nil, fmt.Errorf("%w: sandbox %q is %s",
+			model.ErrSandboxNotRunning, id, sb.info.State)
 	}
 	staged := stagedTreePath(sb.dir)
 	if staged == "" {

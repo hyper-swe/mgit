@@ -8,6 +8,9 @@ on:
   # the merge rule requires lived in hand-dispatched run ids nobody running
   # `gh pr checks` would see (MGIT-200). Pushes stay filtered to main.
   pull_request:
+    # `edited` too: a retargeted pull request's refreshed test-merge is an
+    # edited event, and must be checked like a push.
+    types: [opened, synchronize, reopened, edited]
   # Lets a feature branch's jobs be verified before they ever reach main or a
   # PR -- added specifically to give the new libkrun-linux job (below) its
   # first real run, since push/pull_request alone never fire on this branch.
@@ -31,9 +34,9 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -41,7 +44,7 @@ jobs:
         run: go test ./... -race -count=1
 
       - name: Run linter
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7.0.1
         with:
           version: v2.11.3
 
@@ -104,6 +107,30 @@ jobs:
       - name: Test coverage
         run: make test-cover
 
+  # The whole suite, in a checkout shaped like the release job's. The release
+  # job's workspace also holds dist-prebuilt/, dist-sources/ and dist/, and a
+  # test that walks the repository's working tree met a path there that main's
+  # checkout never has: the v0.7.0 release failed in its before-hook with the
+  # suite green here. The command is the release hook's own. The shape is one
+  # committed script, pinned to release.yml by a packaging test. Refs: MGIT-281
+  release-shaped:
+    name: Tests in a release-shaped workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.26.6"
+
+      - name: Build the release-shaped workspace
+        run: bash scripts/ci/release-workspace-shape.sh
+
+      - name: Run the release hook's tests
+        run: go test ./... -count=1
+
   # The BACKSTOP for the MGIT-142 branch-scope tripwire, not the tripwire
   # itself. The guard's real position is the pre-push hook (scripts/hooks/
   # pre-push), which fires before the pull request exists; this job repeats it
@@ -116,21 +143,26 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
       - name: Fetch every branch, so an inherited one can be recognized
         run: git fetch --no-tags --prune origin "+refs/heads/*:refs/remotes/origin/*"
 
+      # Against the pull request's OWN base: a stacked pull request's base is
+      # another open pull request's branch, and judged against main it would
+      # carry that branch's commits as not its own (MGIT-257). The base comes
+      # through the environment; main only if an event carries none.
       - name: Check the head branch's scope
         env:
           HEAD_REF: ${{ github.head_ref }}
-        run: go run ./scripts/branchguard --branch "origin/$HEAD_REF" --base origin/main
+          BASE_REF: ${{ github.base_ref }}
+        run: go run ./scripts/branchguard --branch "origin/$HEAD_REF" --base "origin/${BASE_REF:-main}"
 
   # The libkrun backend is opt-in at build time on Linux (-tags libkrun) and
   # the default on macOS (ADR-010's GA backend split); the pure-Go `test` job
@@ -143,9 +175,9 @@ jobs:
     name: libkrun backend (tagged build, macOS)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -161,7 +193,7 @@ jobs:
       # building something unexpected. restore-keys lets an older entry serve a
       # newer formula's unchanged sources. Refs: MGIT-119
       - name: Cache Homebrew downloads
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/Library/Caches/Homebrew/downloads
           key: brew-downloads-${{ runner.os }}-libkrun-v1-${{ github.run_id }}
@@ -208,9 +240,9 @@ jobs:
     name: brew install without libkrun (first-hour macOS install)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -280,7 +312,7 @@ jobs:
           echo "apt bootstrap: all 3 attempts failed; the apt output above is the evidence"
           exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Build prerequisites (toolchains, guarded)
         # apt (the libkrun build toolchain incl. libclang-18 from focal-updates),
@@ -303,7 +335,7 @@ jobs:
       # network, so this can only make the run faster, never weaker.
       # Refs: MGIT-163, MGIT-147
       - name: Cache the pinned libkrunfw kernel tarball
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/mgit-libkrun
           key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}
@@ -337,3 +369,15 @@ jobs:
         run: |
           go build -buildvcs=false -tags libkrun ./...
           go vet -tags libkrun ./internal/sandboxd/backend/libkrun/ ./cmd/mgit-sandboxd/
+
+      # The daemon's own wiring under the libkrun tag: which egress controller
+      # a Linux libkrun daemon installs is decided by build tags, so only a run
+      # with this tag can see it. The 0.7.1 daemon installed the firecracker
+      # one and failed every allowlist sandbox at boot. Unit tests only: no VM
+      # is booted here. Refs: MGIT-287
+      - name: The daemon's wiring under the libkrun tag
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib64/pkgconfig
+          LIBRARY_PATH: /usr/local/lib64
+          LD_LIBRARY_PATH: /usr/local/lib64
+        run: go test -buildvcs=false -tags libkrun ./cmd/mgit-sandboxd/ -count=1

@@ -142,7 +142,7 @@ func e2ePrivateWorktree(t *testing.T, hostRepo *gitstore.Repository, hostRepoRoo
 	prov, err := provision.NewStoreProvisioner(hostRepoRoot)
 	require.NoError(t, err)
 	privDir := filepath.Join(wtPath, ".mgit")
-	_, err = prov.Provision(task, privDir)
+	_, err = prov.Provision(task, wtPath, privDir)
 	require.NoError(t, err)
 	return wtPath, commitIntoVZFPrivateStore(t, privDir, task)
 }

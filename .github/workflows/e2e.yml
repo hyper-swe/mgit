@@ -29,6 +29,9 @@ on:
   # the merge rule requires lived in hand-dispatched run ids nobody running
   # `gh pr checks` would see (MGIT-200). Pushes stay filtered to main.
   pull_request:
+    # `edited` too: a retargeted pull request's refreshed test-merge is an
+    # edited event, and must be checked like a push.
+    types: [opened, synchronize, reopened, edited]
     # The same list as push, for the same reason. Refs: MGIT-202
     paths-ignore:
       - "**/*.md"
@@ -82,8 +85,8 @@ jobs:
     name: Posture (daemon-less core loop + MCP)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -123,8 +126,8 @@ jobs:
       matrix:
         channel: [go-install, release-archive]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -137,7 +140,7 @@ jobs:
           test -x "$bin/mgit-sandboxd" || { echo "mgit-sandboxd not installed by go install"; exit 1; }
           echo "BINDIR=$bin" >> "$GITHUB_ENV"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: matrix.channel == 'release-archive'
         with:
           name: linux-sandboxd-amd64
@@ -246,7 +249,7 @@ jobs:
           echo "apt bootstrap: all 3 attempts failed; the apt output above is the evidence"
           exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # goreleaser stamps {{.ShortCommit}} and {{.CommitDate}} from a full
           # clone; the daemon must be stamped from the same history.
@@ -259,7 +262,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache the pinned libkrunfw kernel tarball
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/mgit-libkrun
           key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}
@@ -297,17 +300,79 @@ jobs:
             --prefix="libkrun-$LIBKRUN_VERSION/" -o "$src/libkrun-$LIBKRUN_VERSION-source.tar.gz" HEAD
           ls -l "$src"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-sandboxd-${{ matrix.arch }}
           path: ${{ runner.temp }}/prebuilt/
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: matrix.arch == 'amd64' && github.ref_type == 'tag'
         with:
           name: linux-sources
           path: ${{ runner.temp }}/dist-sources/
+          if-no-files-found: error
+
+  # The macOS sandbox daemon, built and verified for every pull request by
+  # scripts/release/build-darwin-sandboxd.sh; the release ships the artifact
+  # this job uploads in its own run. Carry a patched libkrun in the macOS
+  # build; fixes MGIT-225. Refs: MGIT-259
+  darwin-sandboxd:
+    name: macOS sandbox daemon (arm64, libkrun bundled)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # the same full history goreleaser stamps from
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.26.6"
+
+      - name: Build prerequisites (guarded)
+        run: |
+          # -t 900: the bound install-libkrun-brew.sh uses for the same CDN.
+          bash scripts/ci/guard-fetch.sh -t 900 -l brew-install-lld \
+            -c none:'brew verifies the checksum of everything it reuses and keeps a partial download as .incomplete, which it resumes rather than re-extracting' -- \
+            brew install lld
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          if ! command -v cargo >/dev/null 2>&1; then
+            bash scripts/ci/guard-fetch.sh -t 120 -l rustup-installer -c 'rm -f "$RUNNER_TEMP/rustup.sh"' -- \
+              curl -sSf https://sh.rustup.rs -o "$RUNNER_TEMP/rustup.sh"
+            bash scripts/ci/guard-fetch.sh -t 120 -l rustup-toolchain -c 'rm -rf "$HOME/.rustup" "$HOME/.cargo"' -- \
+              sh "$RUNNER_TEMP/rustup.sh" -y --default-toolchain stable
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Assemble and verify the daemon + its bundle
+        run: |
+          # A release stamps its tag; anything else stamps the version the
+          # Linux user path tags locally, as linux-sandboxd does.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0-ci.$GITHUB_RUN_ID"; fi
+          export LIBKRUN_BUILD_DIR="$RUNNER_TEMP/libkrun-darwin"
+          mkdir -p "$LIBKRUN_BUILD_DIR"
+          MGIT_BUILD_VERSION="$v" \
+            bash scripts/release/build-darwin-sandboxd.sh "$RUNNER_TEMP/prebuilt/darwin_arm64"
+
+      # Homebrew's libkrun and libkrunfw installed AFTER the build, as the
+      # install guide has a user do: the daemon must still resolve its own
+      # libkrun, and libkrunfw must load. Refs: MGIT-119
+      - name: Cache Homebrew downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/Library/Caches/Homebrew/downloads
+          key: brew-downloads-${{ runner.os }}-libkrun-v1-${{ github.run_id }}
+          restore-keys: |
+            brew-downloads-${{ runner.os }}-libkrun-v1-
+      - name: Verify beside Homebrew's libkrun and libkrunfw
+        run: |
+          bash scripts/ci/install-libkrun-brew.sh
+          MGIT_VERIFY_KERNEL=1 bash scripts/release/verify-darwin-sandboxd.sh "$RUNNER_TEMP/prebuilt/darwin_arm64"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: darwin-sandboxd-arm64
+          path: ${{ runner.temp }}/prebuilt/
           if-no-files-found: error
 
   # THE DOCUMENTED USER PATH ON LINUX, as a release user meets it: the
@@ -337,11 +402,11 @@ jobs:
         # path. Refs: MGIT-230.1
         install: [archive, install-script]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # the same full history the linux-sandboxd job stamped from
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -356,7 +421,7 @@ jobs:
           [ -r /dev/kvm ] && [ -w /dev/kvm ] \
             || { echo "FATAL: /dev/kvm not usable — the user path cannot run"; exit 1; }
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: linux-sandboxd-amd64
           path: ${{ runner.temp }}/prebuilt
@@ -415,8 +480,16 @@ jobs:
       - name: The bundle loads on this host (no libkrun installed here)
         run: bash scripts/release/verify-linux-sandboxd.sh "$BIN"
 
+      # One leg keeps the scratch root in /tmp. The other puts it under
+      # $RUNNER_TEMP (/home/runner/work/_temp), outside /tmp, where the guest
+      # must make the worktree's mount point by shadowing a directory the
+      # base image ships. The script asserts the guest works at the
+      # worktree's host path in both. Refs: MGIT-230.7, MGIT-230.3
       - name: The user path — must PASS
-        run: bash scripts/e2e/linux_user_path.sh "$BIN"
+        run: |
+          root=""
+          if [ "${{ matrix.install }}" = install-script ]; then root="$RUNNER_TEMP/scratch"; mkdir -p "$root"; fi
+          bash scripts/e2e/linux_user_path.sh "$BIN" ${root:+"$root"}
 
   # LIVE Linux containment gate: real firecracker microVMs on real KVM.
   #
@@ -439,8 +512,8 @@ jobs:
     name: Sandbox LIVE (Linux/KVM firecracker)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.26.6"
 
@@ -778,7 +851,7 @@ jobs:
           echo "apt bootstrap: all 3 attempts failed; the apt output above is the evidence"
           exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Build prerequisites (toolchains, guarded)
         # apt (the libkrun build toolchain incl. libclang-18 from focal-updates),
@@ -811,7 +884,7 @@ jobs:
       # network, so this can only make the run faster, never weaker.
       # Refs: MGIT-163, MGIT-147
       - name: Cache the pinned libkrunfw kernel tarball
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/mgit-libkrun
           key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}
@@ -945,3 +1018,30 @@ jobs:
             "$RUNNER_TEMP/libkrun-validated.log" "$RUNNER_TEMP/libkrun-gap.log"
           echo "== Linux/libkrun live evidence =="
           grep -E 'REAL VM PASS' "$RUNNER_TEMP/libkrun-validated.log" || true
+
+  # The reduced-isolation container backend applies the requested exec
+  # identity (MGIT-273). Applying it is only correct if that identity can
+  # still WRITE the mounted worktree, which the launch identity-mapping
+  # exists for — a property no unit test with a faked runtime can show. This
+  # job runs the env-gated container e2e against a real rootless runtime
+  # (present on the hosted runner; the backend needs no VM, so no /dev/kvm),
+  # and records what an audited elevated identity can do. Refs: MGIT-273
+  container-backend-e2e:
+    name: Container backend (identity + worktree write)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.26.6"
+      - name: The rootless runtime is usable
+        run: |
+          podman version
+          podman info >/dev/null
+      - name: Container backend e2e — identity, worktree write, and store isolation
+        env:
+          # The image this release vouches for (release-base.json); it carries
+          # /bin/sh and coreutils, which the e2e needs. Refs: MGIT-273, MGIT-219
+          MGIT_E2E_CONTAINER_IMAGE: debian:12@sha256:f37a335e82bca302e955fa39f9dfe28f1be618f016f8a2b56318e5a5111afc26
+        run: |
+          go test -run 'TestE2E_Container' ./internal/sandboxd/backend/container/ -count=1 -v

@@ -20,7 +20,7 @@ func TestWriteSandboxEnvDoc_WritesPosture(t *testing.T) {
 	var warn bytes.Buffer
 	writeSandboxEnvDoc(&warn, &model.SandboxInfo{
 		WorktreePath: wt, NetworkMode: model.NetworkModeAllowlist, NetworkAllowlist: []string{"github.com"},
-	})
+	}, "mgit sandbox launch")
 
 	b, err := os.ReadFile(filepath.Join(wt, "CLAUDE.md")) //nolint:gosec // test-owned temp path
 	require.NoError(t, err)
@@ -33,7 +33,7 @@ func TestWriteSandboxEnvDoc_WritesPosture(t *testing.T) {
 // worktree path writes nothing and does not panic. Refs: MGIT-11.11.2
 func TestWriteSandboxEnvDoc_NilOrEmpty_NoOp(t *testing.T) {
 	var warn bytes.Buffer
-	writeSandboxEnvDoc(&warn, nil)
-	writeSandboxEnvDoc(&warn, &model.SandboxInfo{WorktreePath: ""})
+	writeSandboxEnvDoc(&warn, nil, "mgit work")
+	writeSandboxEnvDoc(&warn, &model.SandboxInfo{WorktreePath: ""}, "mgit work")
 	assert.Empty(t, warn.String())
 }
