@@ -54,6 +54,12 @@ func NewCommitStore(repo *Repository) *CommitStore {
 // timestamp from the injected clock. Staging is cleared on success.
 // Refs: FR-2, FR-3, ADR-002, MGIT-14.3
 func (cs *CommitStore) CreateCommit(_ context.Context, c *model.Commit) (string, error) {
+	return cs.createCommit(c, cs.buildTreeFromStaging)
+}
+
+// createCommit appends the supplied tree using the same ref CAS and metadata
+// for task commits and housekeeping commits. Refs: FR-2, MGIT-290
+func (cs *CommitStore) createCommit(c *model.Commit, buildTree func() (plumbing.Hash, error)) (string, error) {
 	goRepo := cs.repo.repo
 
 	// Set timestamp from injected clock.
@@ -69,7 +75,7 @@ func (cs *CommitStore) CreateCommit(_ context.Context, c *model.Commit) (string,
 	c.ParentID = parentHash.String()
 
 	// Build the new tree from HEAD + staged working files via plumbing.
-	treeHash, err := cs.buildTreeFromStaging()
+	treeHash, err := buildTree()
 	if err != nil {
 		return "", err
 	}
