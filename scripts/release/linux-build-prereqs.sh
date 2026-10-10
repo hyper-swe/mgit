@@ -19,7 +19,12 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 GUARD="$here/../ci/guard-fetch.sh"
-GO_VERSION="${MGIT_GO_VERSION:-1.26.6}"
+module_go_version="$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2 }' "$here/../../go.mod")"
+GO_VERSION="${MGIT_GO_VERSION:-$module_go_version}"
+[[ "$GO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    echo "linux-build-prereqs: invalid Go toolchain in go.mod or MGIT_GO_VERSION" >&2
+    exit 1
+}
 
 [ "$(id -u)" = 0 ] || { echo "linux-build-prereqs: run as root (inside the build container)" >&2; exit 1; }
 case "$(uname -m)" in
@@ -52,6 +57,10 @@ if ! /usr/local/go/bin/go version 2>/dev/null | grep -q "go$GO_VERSION "; then
 	tar -C /usr/local -xzf /tmp/go.tgz
 	rm -f /tmp/go.tgz
 fi
+
+# Print the actual installed compiler, not only the requested pin: this is
+# the receipt for the container jobs that supply the published Linux daemon.
+/usr/local/go/bin/go version
 
 if [ ! -x "$HOME/.cargo/bin/rustup" ]; then
 	"$GUARD" -t 120 -l rustup-installer -c 'rm -f /tmp/rustup.sh' -- \

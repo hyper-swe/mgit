@@ -9,12 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.3] - Draft (not released)
 
+`linux_arm64` is build-verified and not boot-verified: it is built and
+load-checked, but no hosted CI runner offers KVM on arm64.
+
 ### Security
 
-- Built with Go 1.26.9 and golang.org/x/net v0.60.0, which fix
+- Main uses Go 1.26.9 and golang.org/x/net v0.60.0, which fix
   standard-library net/http, crypto/tls and net/textproto advisories and
   x/net advisories (GO-2026-6603, -6604, -6605, -6607, -6608, -6610,
-  -6611, -6612, -6613, -6617).
+  -6611, -6612, -6613, -6617). The release workflow toolchain change
+  remains pending explicit maintainer confirmation; this is not a claim
+  about published binaries.
 
 ### Changed
 
