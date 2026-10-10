@@ -20,12 +20,12 @@ permissions:
 
 env:
   # Pin the toolchain to the one setup-go installs, and forbid Go from
-  # downloading another. Without this, go.mod's `toolchain` directive makes
+  # downloading another. Without this, automatic toolchain selection makes
   # Go fetch golang.org/toolchain AS A MODULE into the module cache; setup-go
   # then caches that directory, and the next run's restore collides with the
   # toolchain setup-go itself installed -- `gtar: Cannot open: File exists`,
-  # which is a hard job failure. Keep this in step with go.mod's toolchain
-  # line and the go-version pins below. Refs: MGIT-118
+  # which is a hard job failure. The sole version is go.mod's go directive;
+  # setup-go reads it and the next step asserts the installed compiler. Refs: MGIT-118
   GOTOOLCHAIN: local
 
 jobs:
@@ -41,6 +41,9 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Verify Go modules
         run: go mod verify
@@ -100,6 +103,9 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Install cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1

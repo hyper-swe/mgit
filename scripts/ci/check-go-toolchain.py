@@ -5,8 +5,7 @@ import re
 import subprocess
 import sys
 
-# temporary: held for explicit maintainer confirmation on #260 (MGIT-293); remove with #260
-EXEMPT_PATHS = {".github/workflows/release.yml"}
+EXEMPT_PATHS = set()
 
 
 def main():
