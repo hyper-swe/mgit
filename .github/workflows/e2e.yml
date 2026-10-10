@@ -75,7 +75,7 @@ env:
   # then caches that directory, and the next run's restore collides with the
   # toolchain setup-go itself installed -- `gtar: Cannot open: File exists`,
   # which is a hard job failure. Keep this in step with go.mod's toolchain
-  # line and the go-version pins below. Refs: MGIT-118
+  # line; setup-go reads that file below. Refs: MGIT-118
   GOTOOLCHAIN: local
 
 jobs:
@@ -88,7 +88,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
 
       - name: Build mgit only (no mgit-sandboxd — daemon-less posture)
         run: |
@@ -129,7 +129,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
 
       - name: Install via go install
         if: matrix.channel == 'go-install'
@@ -327,7 +327,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
 
       - name: Build prerequisites (guarded)
         run: |
@@ -408,7 +408,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
 
       - name: Require /dev/kvm (the documented host requirement)
         run: |
@@ -515,7 +515,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
 
       - name: Require /dev/kvm (nested virtualization)
         run: |
@@ -1033,7 +1033,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
       - name: The rootless runtime is usable
         run: |
           podman version

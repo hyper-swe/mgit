@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - Draft (not released)
+
+### Security
+
+- Built with Go 1.26.9 and golang.org/x/net v0.60.0, which fix
+  standard-library net/http, crypto/tls and net/textproto advisories and
+  x/net advisories (GO-2026-6603, -6604, -6605, -6607, -6608, -6610,
+  -6611, -6612, -6613, -6617).
+
 ### Changed
 
 - **A new task's base is git's committed tree; capturing uncommitted work is
@@ -21,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   amended accordingly.
 
 ### Fixed
+
+- Tracked files matched by ignore rules remain present when a task tree is
+  materialized (MGIT-277).
+- Verification recognizes internal synchronization commits without requiring
+  task index entries for them (MGIT-283).
 
 - **`mgit add` and `mgit restore --staged` resolve paths the way git does
   from a subdirectory (MGIT-278.1).** A path was taken relative to the

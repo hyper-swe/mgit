@@ -26,7 +26,7 @@ env:
   # then caches that directory, and the next run's restore collides with the
   # toolchain setup-go itself installed -- `gtar: Cannot open: File exists`,
   # which is a hard job failure. Keep this in step with go.mod's toolchain
-  # line and the go-version pins below. Refs: MGIT-118
+  # line; setup-go reads that file below. Refs: MGIT-118
   GOTOOLCHAIN: local
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
 
       - name: Run tests with race detector
         run: go test ./... -race -count=1
@@ -123,7 +123,7 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
 
       - name: Build the release-shaped workspace
         run: bash scripts/ci/release-workspace-shape.sh
@@ -149,7 +149,7 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
 
       - name: Fetch every branch, so an inherited one can be recognized
         run: git fetch --no-tags --prune origin "+refs/heads/*:refs/remotes/origin/*"
@@ -179,7 +179,7 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
 
       # Cache Homebrew's DOWNLOADS, not its installs. libkrun's dependency
       # virglrenderer is the one formula built FROM SOURCE, and it fetches its
@@ -244,7 +244,7 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
 
       - name: Install mgit from the repo formula on a libkrun-free runner
         run: scripts/brew-install-no-libkrun.sh
