@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refuse execution-path Go pins that disagree with go.mod's toolchain."""
+"""Refuse execution-path Go pins that disagree with go.mod's go directive."""
 import pathlib
 import re
 import subprocess
@@ -14,11 +14,15 @@ def main():
     if not EXEMPT_PATHS <= {".github/workflows/release.yml"}:
         print("Go toolchain: a second or unrelated exemption is forbidden", file=sys.stderr)
         return 1
-    match = re.search(r"^toolchain go(\d+\.\d+\.\d+)\s*$", (root / "go.mod").read_text(), re.M)
+    match = re.search(r"^go (\d+\.\d+\.\d+)\s*$", (root / "go.mod").read_text(), re.M)
     if not match:
-        print("Go toolchain: missing exact toolchain pin", file=sys.stderr)
+        print("Go toolchain: missing exact go directive pin", file=sys.stderr)
         return 1
     expected = match[1]
+    toolchain = re.search(r"^toolchain go(\S+)\s*$", (root / "go.mod").read_text(), re.M)
+    if toolchain and toolchain[1] != expected:
+        print(f"Go toolchain: go directive {expected} differs from toolchain {toolchain[1]}; go-version-file is unsafe", file=sys.stderr)
+        return 1
     paths = subprocess.check_output(
         ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"]
     ).decode().split("\0")

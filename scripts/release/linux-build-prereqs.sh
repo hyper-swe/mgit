@@ -19,7 +19,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 GUARD="$here/../ci/guard-fetch.sh"
-module_go_version="$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2 }' "$here/../../go.mod")"
+module_go_version="$(awk '$1 == "go" { print $2 }' "$here/../../go.mod")"
 GO_VERSION="${MGIT_GO_VERSION:-$module_go_version}"
 [[ "$GO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
     echo "linux-build-prereqs: invalid Go toolchain in go.mod or MGIT_GO_VERSION" >&2

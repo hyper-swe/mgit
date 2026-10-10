@@ -15,11 +15,11 @@ func TestLinuxPrereqs_GoToolchainFromModule(t *testing.T) {
 		name, module, override, want string
 		bad                          bool
 	}{
-		{"module_default", "toolchain go1.26.9\n", "", "go1.26.9.linux-amd64.tar.gz", false},
-		{"module_changed", "toolchain go1.27.2\n", "", "go1.27.2.linux-amd64.tar.gz", false},
-		{"override", "toolchain go1.26.9\n", "1.27.1", "go1.27.1.linux-amd64.tar.gz", false},
-		{"missing", "go 1.26.0\n", "", "", true},
-		{"invalid", "toolchain goNOT_A_VERSION\n", "", "", true},
+		{"module_default", "go 1.26.9\n", "", "go1.26.9.linux-amd64.tar.gz", false},
+		{"module_changed", "go 1.27.2\n", "", "go1.27.2.linux-amd64.tar.gz", false},
+		{"override", "go 1.26.9\n", "1.27.1", "go1.27.1.linux-amd64.tar.gz", false},
+		{"missing", "module fixture\n", "", "", true},
+		{"invalid", "go NOT_A_VERSION\n", "", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -61,12 +61,15 @@ func TestLinuxPrereqs_GoToolchainFromModule(t *testing.T) {
 }
 
 func TestGoToolchain_InventoryRejectsDriftAndExtraExemption(t *testing.T) {
+	held := strings.Contains(readRepoFile(t, "scripts/ci/check-go-toolchain.py"), `EXEMPT_PATHS = {".github/workflows/release.yml"}`)
 	for _, tc := range []struct {
 		name, path, text string
 		bad, extra       bool
 	}{
+		{"conflicting_directives", "go.mod", "go 1.26.0\ntoolchain go1.26.9\n", true, false},
+		{"equal_directives", "go.mod", "go 1.26.9\ntoolchain go1.26.9\n", false, false},
 		{"match", ".github/workflows/ci.yml", "go-version: \"1.26.9\"\n", false, false},
-		{"visible_release_hold", ".github/workflows/release.yml", "go-version: \"1.26.6\"\n", false, false},
+		{"visible_release_hold", ".github/workflows/release.yml", "go-version: \"1.26.6\"\n", !held, false},
 		{"workflow", ".github/workflows/ci.yml", "go-version: \"1.26.6\"\n", true, false},
 		{"docker", "Dockerfile", "FROM golang:1.26.6-alpine\n", true, false},
 		{"docker_lowercase", "docker/Dockerfile.build", "from golang:1.26.6-alpine\n", true, false},
@@ -91,10 +94,16 @@ func TestGoToolchain_InventoryRejectsDriftAndExtraExemption(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			write("go.mod", "toolchain go1.26.9\n")
+			write("go.mod", "go 1.26.9\n")
 			script := readRepoFile(t, "scripts/ci/check-go-toolchain.py")
 			if tc.extra {
-				script = strings.Replace(script, `EXEMPT_PATHS = {".github/workflows/release.yml"}`, `EXEMPT_PATHS = {".github/workflows/release.yml", "scripts/build.sh"}`, 1)
+				lines := strings.Split(script, "\n")
+				for i, line := range lines {
+					if strings.HasPrefix(line, "EXEMPT_PATHS = ") {
+						lines[i] = `EXEMPT_PATHS = {".github/workflows/release.yml", "scripts/build.sh"}`
+					}
+				}
+				script = strings.Join(lines, "\n")
 			}
 			write("scripts/ci/check-go-toolchain.py", script)
 			write(tc.path, tc.text)
@@ -107,7 +116,7 @@ func TestGoToolchain_InventoryRejectsDriftAndExtraExemption(t *testing.T) {
 			if (err != nil) != tc.bad {
 				t.Fatalf("bad=%v: %s: %v", tc.bad, out, err)
 			}
-			if tc.name == "visible_release_hold" && !strings.Contains(string(out), "EXEMPT .github/workflows/release.yml:1 pin 1.26.6") {
+			if tc.name == "visible_release_hold" && held && !strings.Contains(string(out), "EXEMPT .github/workflows/release.yml:1 pin 1.26.6") {
 				t.Fatalf("exemption not printed: %s", out)
 			}
 		})

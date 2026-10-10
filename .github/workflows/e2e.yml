@@ -70,12 +70,12 @@ permissions:
 
 env:
   # Pin the toolchain to the one setup-go installs, and forbid Go from
-  # downloading another. Without this, go.mod's `toolchain` directive makes
+  # downloading another. Without this, automatic toolchain selection makes
   # Go fetch golang.org/toolchain AS A MODULE into the module cache; setup-go
   # then caches that directory, and the next run's restore collides with the
   # toolchain setup-go itself installed -- `gtar: Cannot open: File exists`,
-  # which is a hard job failure. Keep this in step with go.mod's toolchain
-  # line; setup-go reads that file below. Refs: MGIT-118
+  # which is a hard job failure. The sole version is go.mod's go directive;
+  # setup-go and the container recipe read it, then assert the installed binary. Refs: MGIT-118
   GOTOOLCHAIN: local
 
 jobs:
@@ -89,6 +89,9 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Build mgit only (no mgit-sandboxd — daemon-less posture)
         run: |
@@ -130,6 +133,9 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Install via go install
         if: matrix.channel == 'go-install'
@@ -258,6 +264,7 @@ jobs:
       - name: Build prerequisites (toolchains, guarded)
         run: |
           bash scripts/release/linux-build-prereqs.sh
+          PATH="/usr/local/go/bin:$PATH" bash scripts/ci/assert-go-version.sh
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
@@ -328,6 +335,9 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Build prerequisites (guarded)
         run: |
@@ -409,6 +419,9 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Require /dev/kvm (the documented host requirement)
         run: |
@@ -516,6 +529,9 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Require /dev/kvm (nested virtualization)
         run: |
@@ -860,6 +876,7 @@ jobs:
         # Refs: MGIT-229, MGIT-143
         run: |
           bash scripts/release/linux-build-prereqs.sh
+          PATH="/usr/local/go/bin:$PATH" bash scripts/ci/assert-go-version.sh
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
@@ -1034,6 +1051,9 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
+
       - name: The rootless runtime is usable
         run: |
           podman version
