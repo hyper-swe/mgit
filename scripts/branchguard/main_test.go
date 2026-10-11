@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -118,4 +120,72 @@ func TestRun_UnknownBranch_ReturnsError(t *testing.T) {
 
 	require.Equal(t, exitError, code)
 	require.Contains(t, errOut.String(), "no/such/branch")
+}
+
+// The pre-push entry point reads developer Git trees, not only mgit's store.
+// Stock maintenance packs must work for normal and linked worktrees.
+// Refs: FEAT-3.153
+func TestRun_StockMaintenancePacks(t *testing.T) {
+	for _, linked := range []bool{false, true} {
+		name := "normal"
+		if linked {
+			name = "linked"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := incidentClone(t)
+			gitRun := func(args ...string) {
+				t.Helper()
+				output, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput() //nolint:gosec // fixed Git verbs, test-owned fixture
+				require.NoError(t, err, "%s", output)
+			}
+			path := root
+			args := []string{"--repo", path, "--branch", "fix/other-task"}
+			if linked {
+				path = filepath.Join(t.TempDir(), "linked")
+				gitRun("worktree", "add", path, "fix/other-task")
+				args = []string{"--repo", path}
+			}
+			gitRun("maintenance", "run", "--task=loose-objects")
+			gitRun("maintenance", "run", "--task=loose-objects")
+			gitRun("fsck", "--full")
+			packs, err := filepath.Glob(filepath.Join(root, ".git", "objects", "pack", "loose-*.pack"))
+			require.NoError(t, err)
+			require.NotEmpty(t, packs)
+			before := branchguardGitSnapshot(t, root)
+			var out, errOut bytes.Buffer
+			code := run(args, &out, &errOut)
+			require.Equal(t, 0, code, "%s", errOut.String())
+			require.Empty(t, errOut.String())
+			errOut.Reset()
+			code = run([]string{"--repo", path, "--branch", "fix/ci-retry"}, &out, &errOut)
+			require.Equal(t, exitRefused, code, "%s", errOut.String())
+			require.Contains(t, errOut.String(), "classifier.go")
+			require.Equal(t, before, branchguardGitSnapshot(t, root), "guard reads must not change Git bytes")
+		})
+	}
+}
+
+func branchguardGitSnapshot(t *testing.T, root string) map[string]string {
+	t.Helper()
+	dotGit := filepath.Join(root, ".git")
+	result := map[string]string{}
+	require.NoError(t, filepath.WalkDir(dotGit, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(dotGit, path)
+		if err != nil {
+			return err
+		}
+		content, err := os.ReadFile(path) //nolint:gosec // path from test-owned Git snapshot walk
+		if err != nil {
+			return err
+		}
+		result[relative] = string(content)
+		return nil
+	}))
+	return result
 }
