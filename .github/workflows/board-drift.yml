@@ -29,6 +29,9 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
+
       - name: tickets referenced since the board's last update, against the board
         env:
           GH_TOKEN: ${{ github.token }}
