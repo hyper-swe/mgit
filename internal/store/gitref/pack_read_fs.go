@@ -148,5 +148,12 @@ func NewReadOnlyStorage(base billy.Filesystem) (*filesystem.Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return filesystem.NewStorage(readFS, cache.NewObjectLRUDefault()), nil
+	if err := validateAbsoluteAlternates(base, make(map[string]bool)); err != nil {
+		return nil, err
+	}
+	alternates, err := newPackReadFS(&alternateReadFS{Filesystem: base})
+	if err != nil {
+		return nil, err
+	}
+	return filesystem.NewStorageWithOptions(readFS, cache.NewObjectLRUDefault(), filesystem.Options{AlternatesFS: alternates}), nil
 }
