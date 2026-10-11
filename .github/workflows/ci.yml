@@ -21,12 +21,12 @@ permissions:
 
 env:
   # Pin the toolchain to the one setup-go installs, and forbid Go from
-  # downloading another. Without this, go.mod's `toolchain` directive makes
+  # downloading another. Without this, automatic toolchain selection makes
   # Go fetch golang.org/toolchain AS A MODULE into the module cache; setup-go
   # then caches that directory, and the next run's restore collides with the
   # toolchain setup-go itself installed -- `gtar: Cannot open: File exists`,
-  # which is a hard job failure. Keep this in step with go.mod's toolchain
-  # line and the go-version pins below. Refs: MGIT-118
+  # which is a hard job failure. The sole version is go.mod's go directive;
+  # setup-go and the container recipe read it, then assert the installed binary. Refs: MGIT-118
   GOTOOLCHAIN: local
 
 jobs:
@@ -38,7 +38,10 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Run tests with race detector
         run: go test ./... -race -count=1
@@ -57,6 +60,7 @@ jobs:
           bash scripts/ci/guard-fetch.sh -t 120 -l govulncheck-install \
             -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
             go install golang.org/x/vuln/cmd/govulncheck@latest
+          python3 scripts/ci/check-go-toolchain.py
           govulncheck ./...
 
       # Every third-party fetch reachable from CI is guarded or a declared
@@ -123,7 +127,10 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Build the release-shaped workspace
         run: bash scripts/ci/release-workspace-shape.sh
@@ -149,7 +156,10 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Fetch every branch, so an inherited one can be recognized
         run: git fetch --no-tags --prune origin "+refs/heads/*:refs/remotes/origin/*"
@@ -179,7 +189,7 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
 
       # Cache Homebrew's DOWNLOADS, not its installs. libkrun's dependency
       # virglrenderer is the one formula built FROM SOURCE, and it fetches its
@@ -192,6 +202,9 @@ jobs:
       # so a corrupted or wrong-version entry fails the install rather than
       # building something unexpected. restore-keys lets an older entry serve a
       # newer formula's unchanged sources. Refs: MGIT-119
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
+
       - name: Cache Homebrew downloads
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -244,7 +257,10 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Install mgit from the repo formula on a libkrun-free runner
         run: scripts/brew-install-no-libkrun.sh
@@ -321,6 +337,7 @@ jobs:
         # Refs: MGIT-229, MGIT-143
         run: |
           bash scripts/release/linux-build-prereqs.sh
+          PATH="/usr/local/go/bin:$PATH" bash scripts/ci/assert-go-version.sh
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
