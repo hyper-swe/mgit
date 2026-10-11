@@ -47,6 +47,7 @@ this file, not an afterthought.**
 | ADR-008 auto-resync / pinned fork-base | unit | `internal/service` sync tests |
 | Base resync excludes ignored Git-untracked paths after an earlier capture; tracked ignored paths remain, user Git state and earlier commits stay unchanged | e2e | `e2e/ignored_import_e2e_test.go::TestE2E_Resync_IgnoredUntrackedCaptureOrders` (real CLI; `.git/info/exclude` and nested `.gitignore`, both capture orders) |
 | Common Git exclusions in normal and linked worktrees; first work and later explicit resync preserve tracked files, negations, ordinary captures and existing task bases | e2e | `e2e/common_exclude_e2e_test.go::TestE2E_Work_CommonExclude` (real CLI, default work and explicit capture; native Git bytes unchanged) |
+| Stale linked-worktree gitdir refuses checkpoints with repair guidance; no new checkpoint, native pointer unchanged, repaired retry honors exclusions | e2e | `e2e/common_exclude_e2e_test.go::TestE2E_Commit_StaleLinkedGitdir` (real CLI) |
 | Install channels produce working binaries (`go install`, release archive incl. `mgit-sandboxd`) | e2e | e2e.yml install-channels matrix |
 | Daemon-less honest posture (`mgit work` open, no shims, truthful CLAUDE.md, `Containment:` line) | e2e | daemonless_posture.sh |
 | `mgit run` fails closed with install pointer when no daemon | e2e | daemonless_posture.sh |

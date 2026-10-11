@@ -2,7 +2,9 @@ package e2e
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,4 +103,54 @@ func TestE2E_Work_CommonExclude(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Checkpoints refuse stale Git pointers without importing unknown exclusions.
+// Restoring and repairing the native worktree permits a retry. Refs: MGIT-295.
+func TestE2E_Commit_StaleLinkedGitdir(t *testing.T) {
+	bin := buildMgitBinary(t)
+	root := t.TempDir()
+	gitCmd(t, root, "init")
+	writeProjectFile(t, root, ".gitignore", ".mgit/\n.mtix/\n")
+	writeProjectFile(t, root, "tracked.txt", "seed\n")
+	gitCmd(t, root, "add", "-A")
+	gitCmd(t, root, "commit", "-m", "seed")
+	project := filepath.Join(t.TempDir(), "linked")
+	gitCmd(t, root, "worktree", "add", "--detach", project, "HEAD")
+	writeProjectFile(t, root, ".git/info/exclude", "private.log\n")
+	mustMgit(t, bin, project, "init")
+	mustMgit(t, bin, project, "commit", "-a", "--task-id", "MGIT-295", "-m", "first")
+	pointer, err := os.ReadFile(filepath.Join(project, ".git")) //nolint:gosec // read-only native Git fixture pointer
+	require.NoError(t, err)
+	target := strings.TrimSpace(strings.TrimPrefix(string(pointer), "gitdir:"))
+	repo, err := gitstore.Open(project, time.Now)
+	require.NoError(t, err)
+	defer repo.Close() //nolint:errcheck // fixture
+	before, err := repo.Head()
+	require.NoError(t, err)
+	moved := filepath.Join(t.TempDir(), "moved-git")
+	require.NoError(t, os.Rename(filepath.Join(root, ".git"), moved))
+	writeProjectFile(t, project, "tracked.txt", "changed\n")
+	writeProjectFile(t, project, "private.log", "excluded\n")
+	out, err := runMgit(t, bin, project, "commit", "-a", "--task-id", "MGIT-295", "-m", "second")
+	require.Error(t, err, "checkpoint must refuse: %s", out)
+	assert.Contains(t, out, target)
+	assert.Contains(t, out, "git worktree repair")
+	assert.Contains(t, out, "recreate the worktree")
+	after, err := repo.Head()
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "refusal creates no checkpoint")
+	afterPointer, err := os.ReadFile(filepath.Join(project, ".git")) //nolint:gosec // read-only native Git fixture pointer
+	require.NoError(t, err)
+	assert.Equal(t, pointer, afterPointer, "refusal does not repair native Git itself")
+	require.NoError(t, os.Rename(moved, filepath.Join(root, ".git")))
+	gitCmd(t, root, "worktree", "repair", project)
+	mustMgit(t, bin, project, "commit", "-a", "--task-id", "MGIT-295", "-m", "second")
+	after, err = repo.Head()
+	require.NoError(t, err)
+	assert.NotEqual(t, before, after)
+	cs := gitstore.NewCommitStore(repo)
+	_, err = cs.GetFileFromCommit(context.Background(), after, "private.log")
+	assert.Error(t, err, "repaired retry honors shared exclusions")
+	assert.FileExists(t, filepath.Join(project, "private.log"))
 }

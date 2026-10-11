@@ -2,12 +2,14 @@ package git
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hyper-swe/mgit/internal/store/gitref"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -56,4 +58,25 @@ func commonExcludeGit(t *testing.T, root string, args ...string) string {
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "git %v: %s", args, out)
 	return string(out)
+}
+
+// Unresolved exclusions must not silently become an empty matcher. Refs: MGIT-295.
+func TestIgnoreMatcher_StaleLinkedGitdir(t *testing.T) {
+	root := t.TempDir()
+	commonExcludeGit(t, root, "init")
+	writeFileMk(t, root, "tracked.txt", "seed\n")
+	commonExcludeGit(t, root, "add", "-A")
+	commonExcludeGit(t, root, "commit", "-m", "seed")
+	project := filepath.Join(t.TempDir(), "linked")
+	commonExcludeGit(t, root, "worktree", "add", "--detach", project, "HEAD")
+	pointer, err := os.ReadFile(filepath.Join(project, ".git")) //nolint:gosec // read-only native Git fixture pointer
+	require.NoError(t, err)
+	target := strings.TrimSpace(strings.TrimPrefix(string(pointer), "gitdir:"))
+	require.NoError(t, os.Rename(filepath.Join(root, ".git"), filepath.Join(t.TempDir(), "moved-git")))
+	matcher, err := (&Repository{root: project}).ignoreMatcher()
+	require.ErrorIs(t, err, gitref.ErrUnsupportedGitState)
+	assert.Nil(t, matcher, "do not proceed without resolved exclusions")
+	assert.Contains(t, err.Error(), target, "name the stale gitdir pointer")
+	assert.Contains(t, err.Error(), "git worktree repair")
+	assert.Contains(t, err.Error(), "recreate the worktree")
 }

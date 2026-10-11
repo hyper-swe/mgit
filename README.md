@@ -91,7 +91,9 @@ Working-state capture and resynchronization honor Git's common `info/exclude`
 rules in ordinary repositories and linked worktrees, followed by `.gitignore`
 rules and their negations. Ignored, untracked files are excluded; Git-tracked
 inputs and unexcluded captures remain. Existing task bases stay pinned.
-
+If a linked worktree points to a missing Git directory, checkpoints refuse rather
+than proceed without exclusions. Restore the directory and run `git worktree repair`,
+or recreate the worktree, before retrying.
 
 <p align="center">
   <a href="#why-this-exists">Why</a> &middot;

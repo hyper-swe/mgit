@@ -203,7 +203,7 @@ func (r *Repository) ignoreMatcher() (gitignore.Matcher, error) {
 	fs := newIgnoreReadFS(r.root)
 	exclude, err := gitref.CommonExcludePath(r.root)
 	if err != nil && !errors.Is(err, gitref.ErrNoGit) {
-		return nil, fmt.Errorf("resolve Git exclusions: %w", err)
+		return nil, fmt.Errorf("resolve Git exclusions: %w; restore the Git directory and run git worktree repair, or recreate the worktree before retrying", err)
 	}
 	fs.commonExclude = exclude
 	patterns, err := gitignore.ReadPatterns(fs, nil)
