@@ -24,13 +24,24 @@ import (
 // Refs: MGIT-285, MGIT-120, MGIT-157
 type ignoreReadFS struct {
 	billy.Filesystem
-	root    string
-	readDir func(string) ([]os.DirEntry, error)
+	root          string
+	commonExclude string
+	readDir       func(string) ([]os.DirEntry, error)
 }
 
 // newIgnoreReadFS returns the pruned view of the project at root.
 func newIgnoreReadFS(root string) *ignoreReadFS {
 	return &ignoreReadFS{Filesystem: osfs.New(root), root: root, readDir: os.ReadDir}
+}
+
+// Open routes only the root info/exclude read to Git's common directory.
+// In-tree and nested .gitignore reads retain their original paths and priority.
+// This is a read-only view; no Git file is created or modified. Refs: MGIT-295.
+func (f *ignoreReadFS) Open(path string) (billy.File, error) {
+	if f.commonExclude != "" && filepath.ToSlash(filepath.Clean(path)) == ".git/info/exclude" {
+		return osfs.New(filepath.Dir(f.commonExclude)).Open(filepath.Base(f.commonExclude))
+	}
+	return f.Filesystem.Open(path)
 }
 
 // ReadDir lists path (relative to the project root) without the directories
