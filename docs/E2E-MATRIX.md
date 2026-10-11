@@ -29,6 +29,7 @@ this file, not an afterthought.**
 
 | Capability / claim | Proof | Where |
 |---|---|---|
+| `mgit diff` accepts unique abbreviated commit IDs and rejects unknown or ambiguous IDs | **e2e** | diff_abbreviation_e2e_test.go:TestE2E_Diff_Abbreviations; both operands, mixed case, invalid inputs and real object-prefix collisions |
 | `init` over a **fresh** repo, worktree add/list/remove, task-inherited `commit`, `add`/`status`/`log`/`verify`/`audit`, `squash --to-git \| git apply` round-trip | e2e | core_loop.sh |
 | `init` over an **existing** git repo with real prior history — byte-for-byte `.git` untouched before/after | e2e | `e2e/coexist_e2e_test.go::TestE2E_FullLifecycle_OverRealGitRepo_HistoryIntact` (spawns the real compiled binary; **not previously listed in this file** — `core_loop.sh`'s `init` is a fresh scratch repo and never checks this claim at all) |
 | **Course-correction loop**: 3 micro-commits (one wrong) → content-restoring `rollback` (files removed from disk, not just metadata) → `checkout -b` fork → checkpoint-bounded `restore --all --commit` → materializing `cherry-pick` with provenance → `squash --to-git` (corrected content only) — append-only survives every step | e2e | course_correction.sh |
@@ -114,14 +115,14 @@ e2e call site).
 
 Of 30 top-level `cmd/mgit` commands, **20 have no dedicated cmd-level test
 file at all** (`add`, `audit`, `checkout`, `cherry_pick`, `commit`, `config`,
-`diff`, `docs`, `export`, `gc`, `import_cmd`, `init_cmd`, `log`, `merge`,
+`docs`, `export`, `gc`, `import_cmd`, `init_cmd`, `log`, `merge`,
 `restore`, `rollback`, `show`, `squash`, `status`, `worktree`) — flag
 parsing, error-message text, and output formatting for these rely entirely
 on whatever an e2e script happens to exercise, which for several is nothing:
 
 | Capability / claim | Proof | Where |
 |---|---|---|
-| `show`, `config` (get/set/list/delete), `export`, `diff`, `gc`, `import`, `docs generate`, `merge` (as a standalone CLI command, distinct from the library call `squash --to-main` makes) | unit | package tests only — **none of these commands is invoked in any `scripts/e2e/*` script** |
+| `show`, `config` (get/set/list/delete), `export`, `gc`, `import`, `docs generate`, `merge` (as a standalone CLI command, distinct from the library call `squash --to-main` makes) | unit | package tests only — **none of these commands is invoked in any `scripts/e2e/*` script** |
 | `mgit worktree prune` | unit | service-layer unit tests exist (`service_operations_test.go`); as of 2026-07-29 a cmd-level test also exists (`cmd/mgit/worktree_prune_test.go`, covering dry-run/removal/no-stale-worktrees against a real repo). Still no e2e — not named in `scripts/e2e/core_loop.sh`'s worktree add/list/remove sequence, which remains the fourth subcommand it's missing |
 | `mgit version` / `mgit --version` (MGIT-40 build-info resolution: ldflags vs. `debug.ReadBuildInfo` fallback) | unit | version_test.go; used only for diagnostic printing in `lib.sh`, never asserted on as a behavioral claim in any e2e script. Not mentioned anywhere in the previous matrix |
 | `mgit branch` (bare/list form) | e2e (mislabeled) | actually exercised in course_correction.sh:100 (`assert_contains "$(mgit branch)" ...`) — the previous matrix filed `branch` under a blanket "unit only" line, which undercounts real coverage for at least the list form |
