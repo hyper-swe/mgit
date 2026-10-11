@@ -28,15 +28,13 @@ func NewDiffStore(repo *Repository) *DiffStore {
 // Returns a list of FileDiffs describing what changed.
 // Refs: FR-11
 func (ds *DiffStore) DiffCommits(_ context.Context, fromHash, toHash string) ([]model.FileDiff, error) {
-	goRepo := ds.repo.repo
-
-	fromCommit, err := goRepo.CommitObject(hashFromString(fromHash))
+	fromCommit, err := ds.diffCommit(fromHash, "from")
 	if err != nil {
-		return nil, fmt.Errorf("%w: from commit %s", model.ErrCommitNotFound, fromHash)
+		return nil, err
 	}
-	toCommit, err := goRepo.CommitObject(hashFromString(toHash))
+	toCommit, err := ds.diffCommit(toHash, "to")
 	if err != nil {
-		return nil, fmt.Errorf("%w: to commit %s", model.ErrCommitNotFound, toHash)
+		return nil, err
 	}
 
 	fromTree, err := fromCommit.Tree()
@@ -117,15 +115,30 @@ func (ds *DiffStore) commitTree(hash, side string) (*object.Tree, error) {
 	if hash == "" {
 		return nil, nil //nolint:nilnil // a nil tree IS the empty tree for go-git's differ
 	}
-	commit, err := ds.repo.repo.CommitObject(hashFromString(hash))
+	commit, err := ds.diffCommit(hash, side)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s commit %s", model.ErrCommitNotFound, side, hash)
+		return nil, err
 	}
 	tree, err := commit.Tree()
 	if err != nil {
 		return nil, fmt.Errorf("get %s tree: %w", side, err)
 	}
 	return tree, nil
+}
+
+// diffCommit resolves the same full or unique abbreviated references as
+// commit lookup, preserving ambiguous and unknown verdicts with the operand.
+// Refs: MGIT-292, FR-11
+func (ds *DiffStore) diffCommit(ref, side string) (*object.Commit, error) {
+	hash, err := NewCommitStore(ds.repo).resolveCommitHash(ref)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s commit %q: %w", side, ref, err)
+	}
+	commit, err := ds.repo.repo.CommitObject(hash)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s commit %s", model.ErrCommitNotFound, side, ref)
+	}
+	return commit, nil
 }
 
 // patchBetweenTrees renders the unified diff between two trees via go-git's own
