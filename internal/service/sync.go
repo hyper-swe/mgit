@@ -157,7 +157,7 @@ func (s *SyncService) EnsureSyncedForNewWorktree(ctx context.Context) error {
 	if err != nil || !proceed {
 		return err
 	}
-	liveWT, err := s.repo.WorkingTreeFingerprint()
+	liveWT, err := s.repo.WorkingTreeFingerprintForResync()
 	if err != nil {
 		return fmt.Errorf("sync: working-tree fingerprint: %w", err)
 	}
@@ -227,7 +227,7 @@ func (s *SyncService) resync(ctx context.Context, local *gitref.LocalState, live
 			return fmt.Errorf("sync: exclude task WIP from base: %w", err)
 		}
 	}
-	clean, err := s.commitStore.StagedTreeMatchesHead()
+	clean, err := s.commitStore.StagedResyncTreeMatchesHead()
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)
 	}
@@ -275,7 +275,7 @@ func (s *SyncService) resyncCommitted(ctx context.Context, local *gitref.LocalSt
 	if err := s.repo.RestoreStaging(absorb); err != nil {
 		return fmt.Errorf("sync: limit base to git-committed content: %w", err)
 	}
-	clean, err := s.commitStore.StagedTreeMatchesHead()
+	clean, err := s.commitStore.StagedResyncTreeMatchesHead()
 	if err != nil {
 		return fmt.Errorf("sync: %w", err)
 	}
@@ -354,7 +354,7 @@ func (s *SyncService) applyResync(ctx context.Context, clean bool, local *gitref
 		AgentID: model.SyncAgentID,
 		Message: fmt.Sprintf("[mgit-sync] resync base to local working state (git %s)", short(local.HeadCommit)),
 	}
-	hash, err := s.commitStore.CreateCommit(ctx, c)
+	hash, err := s.commitStore.CreateResyncCommit(ctx, c)
 	if err != nil {
 		return "", fmt.Errorf("sync: append base commit: %w", err)
 	}
