@@ -143,10 +143,18 @@ func (fs *packReadFS) Chroot(path string) (billy.Filesystem, error) {
 // object readers. The caller supplies the reference-aware filesystem so a
 // linked worktree retains its own HEAD and its common object/ref directory.
 // Refs: FEAT-3.153, MGIT-14
-func NewReadOnlyStorage(base billy.Filesystem) (*filesystem.Storage, error) {
+func NewReadOnlyStorage(base billy.Filesystem) (*ReadOnlyStorage, error) {
+	storage, err := newPrimaryReadStorage(base)
+	if err != nil {
+		return nil, err
+	}
+	return &ReadOnlyStorage{Storage: storage, base: base}, nil
+}
+
+func newPrimaryReadStorage(base billy.Filesystem) (*filesystem.Storage, error) {
 	readFS, err := newPackReadFS(base)
 	if err != nil {
 		return nil, err
 	}
-	return filesystem.NewStorage(readFS, cache.NewObjectLRUDefault()), nil
+	return filesystem.NewStorage(&primaryOnlyFS{Filesystem: readFS}, cache.NewObjectLRUDefault()), nil
 }
