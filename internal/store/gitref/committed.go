@@ -61,7 +61,11 @@ func CommittedBlobs(projectRoot string) (map[string]string, error) {
 // headTree opens the project's git object store read-only and returns the tree
 // of the given commit. Refs: MGIT-123, ADR-008 §6
 func headTree(gitDir, headCommit string) (*object.Tree, error) {
-	storage := filesystem.NewStorage(osfs.New(commonDir(gitDir)), cache.NewObjectLRUDefault())
+	readFS, err := newPackReadFS(osfs.New(commonDir(gitDir)))
+	if err != nil {
+		return nil, fmt.Errorf("%w: read git pack inventory: %w", ErrUnsupportedGitState, err)
+	}
+	storage := filesystem.NewStorage(readFS, cache.NewObjectLRUDefault())
 	// A nil worktree makes this an object-read-only handle: go-git has no
 	// filesystem to write into, so `.git` cannot be mutated through it.
 	repo, err := gogit.Open(storage, nil)
