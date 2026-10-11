@@ -30,6 +30,7 @@ this file, not an afterthought.**
 | Capability / claim | Proof | Where |
 |---|---|---|
 | `mgit diff` accepts unique abbreviated commit IDs and rejects unknown or ambiguous IDs | **e2e** | diff_abbreviation_e2e_test.go:TestE2E_Diff_Abbreviations; both operands, mixed case, invalid inputs and real object-prefix collisions |
+| `mgit commit` joins repeated message flags as paragraphs, preserves single messages, and refuses mixing message and file inputs without committing or staging | **e2e** | `e2e/commit_message_paragraphs_e2e_test.go::TestE2E_Commit_MessageParagraphs`; real CLI and Git paragraph/refusal comparator |
 | `init` over a **fresh** repo, worktree add/list/remove, task-inherited `commit`, `add`/`status`/`log`/`verify`/`audit`, `squash --to-git \| git apply` round-trip | e2e | core_loop.sh |
 | `init` over an **existing** git repo with real prior history — byte-for-byte `.git` untouched before/after | e2e | `e2e/coexist_e2e_test.go::TestE2E_FullLifecycle_OverRealGitRepo_HistoryIntact` (spawns the real compiled binary; **not previously listed in this file** — `core_loop.sh`'s `init` is a fresh scratch repo and never checks this claim at all) |
 | **Course-correction loop**: 3 micro-commits (one wrong) → content-restoring `rollback` (files removed from disk, not just metadata) → `checkout -b` fork → checkpoint-bounded `restore --all --commit` → materializing `cherry-pick` with provenance → `squash --to-git` (corrected content only) — append-only survives every step | e2e | course_correction.sh |

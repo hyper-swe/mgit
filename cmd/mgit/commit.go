@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -16,6 +17,7 @@ import (
 // commitCmd implements mgit commit. Refs: FR-8.3, MGIT-4.1.2, MGIT-77, MGIT-105
 func commitCmd() *cobra.Command {
 	var taskID, message, messageFile, agentID, sessionID string
+	var paragraphs []string
 	var formatJSON, allowEmpty, dryRun, stageAll, allowLarge bool
 
 	cmd := &cobra.Command{
@@ -29,7 +31,8 @@ func commitCmd() *cobra.Command {
 			"refused; pass --allow-empty to create one deliberately.\n\n" +
 			"The message comes from -m/--message inline, or from --file/-F, which " +
 			"reads it verbatim from a file (or from stdin when the path is -) with " +
-			"no shell involved. The two are mutually exclusive.",
+			"no shell involved. Repeat -m to join messages as separate paragraphs. " +
+			"The two sources are mutually exclusive.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Past flag parsing, a failure is a runtime condition, not misuse:
 			// dumping the flag table after it buries the remedy the caller needs.
@@ -38,7 +41,7 @@ func commitCmd() *cobra.Command {
 
 			// Resolve the message BEFORE anything is opened, staged or written:
 			// an unreadable message file must commit nothing. Refs: MGIT-105
-			resolved, err := resolveMessage(cmd, "commit", message, messageFile)
+			resolved, err := resolveMessage(cmd, "commit", strings.Join(paragraphs, "\n\n"), messageFile)
 			if err != nil {
 				return err
 			}
@@ -87,8 +90,9 @@ func commitCmd() *cobra.Command {
 	}
 
 	bindTaskIDFlag(cmd, &taskID, "Task ID (required)")
-	bindMessageFlags(cmd, &message, &messageFile, "commit",
-		"Commit message (auto-generated if empty)")
+	cmd.Flags().StringArrayVarP(&paragraphs, "message", "m", nil,
+		"Commit message (repeat for separate paragraphs; auto-generated if empty)")
+	bindMessageFileFlag(cmd, &messageFile, "commit")
 	cmd.Flags().StringVar(&agentID, "agent-id", "cli", "Agent ID")
 	cmd.Flags().StringVar(&sessionID, "session-id", "", "Session ID")
 	cmd.Flags().BoolVar(&formatJSON, "json", false, "Output as JSON")
