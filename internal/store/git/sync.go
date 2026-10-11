@@ -28,6 +28,12 @@ func (r *Repository) WorkingTreeFingerprint() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("working-tree fingerprint: %w", err)
 	}
+	return r.fingerprintPaths(paths)
+}
+
+// fingerprintPaths hashes a selected working set, with content and modes.
+// Refs: MGIT-35, MGIT-290
+func (r *Repository) fingerprintPaths(paths []string) (string, error) {
 	sort.Strings(paths)
 	h := sha256.New()
 	for _, rel := range paths {
@@ -84,6 +90,12 @@ func (r *Repository) ClearStaging() error {
 // actually changed (idempotence): if the staged tree equals HEAD's tree, the
 // resync records the new fingerprint and skips the commit. Refs: MGIT-35, ADR-008 §3
 func (cs *CommitStore) StagedTreeMatchesHead() (bool, error) {
+	return cs.treeMatchesHead(cs.buildTreeFromStaging)
+}
+
+// treeMatchesHead compares the same tree builder the commit will use.
+// Refs: MGIT-35, MGIT-290
+func (cs *CommitStore) treeMatchesHead(buildTree func() (plumbing.Hash, error)) (bool, error) {
 	headRef, err := cs.repo.currentRef()
 	if err != nil {
 		return false, fmt.Errorf("resync compare: resolve HEAD: %w", err)
@@ -92,7 +104,7 @@ func (cs *CommitStore) StagedTreeMatchesHead() (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("resync compare: load HEAD commit: %w", err)
 	}
-	staged, err := cs.buildTreeFromStaging()
+	staged, err := buildTree()
 	if err != nil {
 		return false, fmt.Errorf("resync compare: build staged tree: %w", err)
 	}
