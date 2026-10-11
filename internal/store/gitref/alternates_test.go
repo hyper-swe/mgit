@@ -96,7 +96,9 @@ func TestCommittedContent_ChainedAbsoluteAlternates(t *testing.T) {
 func TestReadOnlyStorage_UnreadableAlternatesNamesRecovery(t *testing.T) {
 	root := t.TempDir()
 	fs := &deniedAlternatesFS{Filesystem: osfs.New(root)}
-	_, err := NewReadOnlyStorage(fs)
+	storage, err := NewReadOnlyStorage(fs)
+	require.NoError(t, err)
+	_, err = storage.EncodedObject(plumbing.AnyObject, plumbing.ZeroHash)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, root)
 	assert.ErrorIs(t, err, os.ErrPermission)
@@ -150,8 +152,8 @@ func TestCommittedContent_UnreadableAlternateStore(t *testing.T) {
 	assert.ErrorContains(t, err, "restore access")
 }
 
-// Validate cycles before go-git's recursive fallback can loop on a missing
-// object. This invokes construction only, never an unsafe cyclic lookup.
+// A missing-object search bounds cycles instead of entering go-git's recursive
+// fallback; constructing storage does not eagerly inspect alternate stores.
 // Refs: MGIT-294
 func TestReadOnlyStorage_CyclicAlternatesNamesRecovery(t *testing.T) {
 	root := gitRepoWithCommit(t, "file.txt", "borrowed\n")
@@ -159,10 +161,118 @@ func TestReadOnlyStorage_CyclicAlternatesNamesRecovery(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(objects, "info"), 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(objects, "info", "alternates"), []byte(objects+"\n"), 0600))
 	before := dotGitSnapshot(t, root)
-	_, err := NewReadOnlyStorage(osfs.New(filepath.Join(root, ".git")))
+	storage, err := NewReadOnlyStorage(osfs.New(filepath.Join(root, ".git")))
+	require.NoError(t, err)
+	_, err = storage.EncodedObject(plumbing.AnyObject, plumbing.ZeroHash)
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "cyclic alternate object store")
 	assert.ErrorContains(t, err, objects)
 	assert.ErrorContains(t, err, "restore access")
 	assert.Equal(t, before, dotGitSnapshot(t, root))
+}
+
+// Repacking a shared clone makes it self-contained. A stale alternates line
+// must not prevent reading objects already present locally. Refs: MGIT-294
+func TestCommittedContent_RepackedSharedCloneMissingSource(t *testing.T) {
+	source := gitRepoWithCommit(t, "file.txt", "borrowed\n")
+	clone := filepath.Join(t.TempDir(), "shared")
+	alternatesGit(t, source, "clone", "--shared", source, clone)
+	alternatesGit(t, clone, "repack", "-a", "-d")
+	require.NoError(t, os.RemoveAll(source)) // source is exclusively created by this test's t.TempDir
+	require.Contains(t, alternatesGit(t, clone, "show", "HEAD:file.txt"), "borrowed\n")
+	before := dotGitSnapshot(t, clone)
+	blobs, err := CommittedBlobs(clone)
+	require.NoError(t, err)
+	assert.Contains(t, blobs, "file.txt")
+	files, _, err := CommittedFiles(clone)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, "borrowed\n", string(files[0].Content))
+	assert.Equal(t, before, dotGitSnapshot(t, clone))
+}
+
+// Git relative alternates are relative to the object database, including paths
+// outside the clone; they are not host-root paths. Refs: MGIT-294
+func TestCommittedContent_RelativeAlternateOutsideClone(t *testing.T) {
+	source := gitRepoWithCommit(t, "file.txt", "borrowed\n")
+	clone := filepath.Join(t.TempDir(), "shared")
+	alternatesGit(t, source, "clone", "--shared", source, clone)
+	relative, err := filepath.Rel(filepath.Join(clone, ".git", "objects"), filepath.Join(source, ".git", "objects"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(clone, ".git", "objects", "info", "alternates"), []byte(relative+"\n"), 0600))
+	require.Contains(t, alternatesGit(t, clone, "show", "HEAD:file.txt"), "borrowed\n")
+	beforeSource, beforeClone := dotGitSnapshot(t, source), dotGitSnapshot(t, clone)
+	files, _, err := CommittedFiles(clone)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, "borrowed\n", string(files[0].Content))
+	assert.Equal(t, beforeSource, dotGitSnapshot(t, source))
+	assert.Equal(t, beforeClone, dotGitSnapshot(t, clone))
+}
+
+// One unavailable configured source must not hide a later readable source.
+// Refs: MGIT-294
+func TestCommittedContent_UnavailableThenReadableAlternate(t *testing.T) {
+	source := gitRepoWithCommit(t, "file.txt", "borrowed\n")
+	clone := filepath.Join(t.TempDir(), "shared")
+	alternatesGit(t, source, "clone", "--shared", source, clone)
+	missing := filepath.Join(t.TempDir(), "missing", "objects")
+	borrowed := filepath.Join(source, ".git", "objects")
+	require.NoError(t, os.WriteFile(filepath.Join(clone, ".git", "objects", "info", "alternates"), []byte(missing+"\n"+borrowed+"\n"), 0600))
+	require.Contains(t, alternatesGit(t, clone, "show", "HEAD:file.txt"), "borrowed\n")
+	beforeSource, beforeClone := dotGitSnapshot(t, source), dotGitSnapshot(t, clone)
+	files, _, err := CommittedFiles(clone)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, "borrowed\n", string(files[0].Content))
+	assert.Equal(t, beforeSource, dotGitSnapshot(t, source))
+	assert.Equal(t, beforeClone, dotGitSnapshot(t, clone))
+}
+
+// Cached borrowed pack indexes are shared across reads without a mutable-map
+// race. Refs: MGIT-294
+func TestReadOnlyStorage_ConcurrentBorrowedReads(t *testing.T) {
+	source := gitRepoWithCommit(t, "file.txt", "borrowed\n")
+	alternatesGit(t, source, "maintenance", "run", "--task=loose-objects")
+	alternatesGit(t, source, "maintenance", "run", "--task=loose-objects")
+	clone := filepath.Join(t.TempDir(), "shared")
+	alternatesGit(t, source, "clone", "--shared", source, clone)
+	hash := plumbing.NewHash(strings.TrimSpace(alternatesGit(t, clone, "rev-parse", "HEAD")))
+	storage, err := NewReadOnlyStorage(osfs.New(filepath.Join(clone, ".git")))
+	require.NoError(t, err)
+	results := make(chan error, 10)
+	for range 10 {
+		go func() { _, readErr := storage.EncodedObject(plumbing.CommitObject, hash); results <- readErr }()
+	}
+	failures := make([]error, 0, 10)
+	for range 10 {
+		failures = append(failures, <-results)
+	}
+	for _, readErr := range failures {
+		require.NoError(t, readErr)
+	}
+	require.NoError(t, storage.HasEncodedObject(hash))
+	size, err := storage.EncodedObjectSize(hash)
+	require.NoError(t, err)
+	assert.Positive(t, size)
+}
+
+// The alternate names an object directory, not a repository; its basename is
+// not constrained to "objects". Refs: MGIT-294
+func TestCommittedContent_AlternateObjectDirectoryName(t *testing.T) {
+	source := gitRepoWithCommit(t, "file.txt", "borrowed\n")
+	clone := filepath.Join(t.TempDir(), "shared")
+	alternatesGit(t, source, "clone", "--shared", source, clone)
+	original := filepath.Join(source, ".git", "objects")
+	renamed := filepath.Join(source, ".git", "borrowed-objects")
+	require.NoError(t, os.Rename(original, renamed))
+	require.NoError(t, os.WriteFile(filepath.Join(clone, ".git", "objects", "info", "alternates"), []byte(renamed+"\n"), 0600))
+	require.Contains(t, alternatesGit(t, clone, "show", "HEAD:file.txt"), "borrowed\n")
+	beforeSource, beforeClone := dotGitSnapshot(t, source), dotGitSnapshot(t, clone)
+	files, _, err := CommittedFiles(clone)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Equal(t, "borrowed\n", string(files[0].Content))
+	assert.Equal(t, beforeSource, dotGitSnapshot(t, source))
+	assert.Equal(t, beforeClone, dotGitSnapshot(t, clone))
 }
