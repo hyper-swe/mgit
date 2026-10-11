@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	billy "github.com/go-git/go-billy/v5"
+	"github.com/go-git/go-git/v5/plumbing/cache"
+	"github.com/go-git/go-git/v5/storage/filesystem"
 )
 
 // packReadFS supplies read-only aliases for EVERY indexed Git pack, including
@@ -135,4 +137,16 @@ func (fs *packReadFS) Chroot(path string) (billy.Filesystem, error) {
 		return nil, err
 	}
 	return newPackReadFS(child)
+}
+
+// NewReadOnlyStorage adapts a filesystem's indexed packs for external Git
+// object readers. The caller supplies the reference-aware filesystem so a
+// linked worktree retains its own HEAD and its common object/ref directory.
+// Refs: FEAT-3.153, MGIT-14
+func NewReadOnlyStorage(base billy.Filesystem) (*filesystem.Storage, error) {
+	readFS, err := newPackReadFS(base)
+	if err != nil {
+		return nil, err
+	}
+	return filesystem.NewStorage(readFS, cache.NewObjectLRUDefault()), nil
 }

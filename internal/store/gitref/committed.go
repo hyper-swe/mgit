@@ -6,10 +6,8 @@ import (
 	"github.com/go-git/go-billy/v5/osfs"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/filesystem"
 )
 
 // CommittedBlobs returns, READ-ONLY, the file set git has COMMITTED at the
@@ -61,11 +59,10 @@ func CommittedBlobs(projectRoot string) (map[string]string, error) {
 // headTree opens the project's git object store read-only and returns the tree
 // of the given commit. Refs: MGIT-123, ADR-008 §6
 func headTree(gitDir, headCommit string) (*object.Tree, error) {
-	readFS, err := newPackReadFS(osfs.New(commonDir(gitDir)))
+	storage, err := NewReadOnlyStorage(osfs.New(commonDir(gitDir)))
 	if err != nil {
 		return nil, fmt.Errorf("%w: read git pack inventory: %w", ErrUnsupportedGitState, err)
 	}
-	storage := filesystem.NewStorage(readFS, cache.NewObjectLRUDefault())
 	// A nil worktree makes this an object-read-only handle: go-git has no
 	// filesystem to write into, so `.git` cannot be mutated through it.
 	repo, err := gogit.Open(storage, nil)
