@@ -14,6 +14,7 @@ import (
 	"github.com/hyper-swe/mgit/internal/controlproto"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
+	"github.com/hyper-swe/mgit/internal/sandboxd/staging"
 )
 
 // sandboxClient is the control-plane client surface the sandbox commands
@@ -118,6 +119,7 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 		sandboxCodexHookCmd(connect),  // hidden: Codex PreToolUse hook (MGIT-149)
 		sandboxCursorHookCmd(connect), // hidden: Cursor beforeShellExecution hook (MGIT-149)
 	)
+	addTaskIDHelp(cmd)
 	return cmd
 }
 
@@ -127,7 +129,7 @@ func sandboxLandCmd(connect connectFunc) *cobra.Command {
 	var task string
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use:   "land --task <id>",
+		Use:   "land --" + canonicalTaskFlag + " <id>",
 		Short: "Land a task's sandbox commits onto the host branch (verified host-side)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -173,7 +175,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 	var asJSON bool
 	var res resourceFlags
 	cmd := &cobra.Command{
-		Use:   "launch --task <id> --worktree <path>",
+		Use:   "launch --" + canonicalTaskFlag + " <id> --worktree <path>",
 		Short: "Register a sandbox for a task (the VM boots on first exec)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -226,6 +228,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 			// A base composed by another mgit is said here, where the sandbox
 			// is created, not only in doctor. Refs: MGIT-224
 			warnStaleBase(cmd.ErrOrStderr(), imageRefDigest(image))
+			writeGitViewNote(cmd.ErrOrStderr(), worktree, task)
 			return nil
 		},
 	}
@@ -290,7 +293,7 @@ const validationStubImageRef = "x@sha256:000000000000000000000000000000000000000
 func sandboxShellCmd(connect connectFunc) *cobra.Command {
 	var task string
 	cmd := &cobra.Command{
-		Use:           "shell --task <id>",
+		Use:           "shell --" + canonicalTaskFlag + " <id>",
 		Short:         "Attach an interactive session to a task's sandbox (T2 confined agent)",
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
@@ -494,4 +497,12 @@ func deadLine(info *model.SandboxInfo) string {
 	}
 	return fmt.Sprintf("the guest stopped answering and nothing runs in it: `mgit sandbox remove %s --force`, "+
 		"then relaunch (any `mgit run` prints the exact command, declared memory kept)\n", info.TaskID)
+}
+
+// writeGitViewNote tells a launch on a tree with git metadata that the guest
+// gets the files, not the repository, and how to give it one (FEAT-6.114).
+func writeGitViewNote(w io.Writer, worktree, task string) {
+	if note := staging.GitMetadataNote(worktree, task); note != "" {
+		_, _ = io.WriteString(w, note)
+	}
 }

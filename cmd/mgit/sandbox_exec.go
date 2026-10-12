@@ -21,7 +21,7 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 	var timeout time.Duration
 	var asRoot bool
 	cmd := &cobra.Command{
-		Use:   "exec --task <id> -- <command> [args...]",
+		Use:   "exec --" + canonicalTaskFlag + " <id> -- <command> [args...]",
 		Short: "Run a command in a task's sandbox (streams output, propagates exit code)",
 		Long: "Runs one command inside the task's guest, streaming its output and propagating " +
 			"its exit code. The command runs as the daemon's own user inside the guest — the " +

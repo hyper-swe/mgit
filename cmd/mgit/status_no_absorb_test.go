@@ -46,7 +46,7 @@ func projectWithGit(t *testing.T) string {
 	_, err = wt.Commit("seed", &gogit.CommitOptions{Author: sig, Committer: sig})
 	require.NoError(t, err)
 	t.Chdir(dir)
-	require.NoError(t, runCLI(t, "init"))
+	require.NoError(t, runCLI(t, "init", "--no-agent-files"))
 	return dir
 }
 

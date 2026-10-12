@@ -17,6 +17,7 @@ import (
 func initCmd() *cobra.Command {
 	var path string
 	var linkMtix bool
+	var noAgentFiles bool
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -58,6 +59,14 @@ func initCmd() *cobra.Command {
 
 			_, _ = fmt.Fprintf(os.Stdout, "Initialized mgit repository at %s\n", filepath.Join(path, ".mgit"))
 
+			// The agent instructions are mgit's own file plus pointer lines;
+			// a failure here must not undo an initialized repository.
+			if !noAgentFiles {
+				if err := writeAgentEntry(path, os.Stdout); err != nil {
+					_, _ = fmt.Fprintf(os.Stderr, "warning: could not write the agent instructions (%v)\n", err)
+				}
+			}
+
 			// --link-mtix: check for mtix project directory and print linking note.
 			if linkMtix {
 				mtixPaths := []string{
@@ -77,6 +86,8 @@ func initCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&path, "path", "", "Repository path (default: current directory)")
+	cmd.Flags().BoolVar(&noAgentFiles, "no-agent-files", false,
+		"Do not write MGIT.md or the CLAUDE.md/AGENTS.md pointer lines")
 	cmd.Flags().BoolVar(&linkMtix, "link-mtix", false, "Check for mtix project directory and print linking note")
 	return cmd
 }
