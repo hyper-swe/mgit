@@ -30,7 +30,7 @@ func sandboxExportCmd(connect connectFunc) *cobra.Command {
 	var task string
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use:   "export --task <id> <guest-path> <host-path>",
+		Use:   "export --task-id <id> <guest-path> <host-path>",
 		Short: "Export a guest-built artifact from a task's sandbox to a host path",
 		Long: "Copy <guest-path> (relative to the sandbox worktree) out to <host-path> on the host.\n\n" +
 			"Both paths are named by YOU, on the host; the guest never chooses either.\n" +

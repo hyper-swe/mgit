@@ -127,7 +127,7 @@ func sandboxLandCmd(connect connectFunc) *cobra.Command {
 	var task string
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use:   "land --task <id>",
+		Use:   "land --task-id <id>",
 		Short: "Land a task's sandbox commits onto the host branch (verified host-side)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -173,7 +173,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 	var asJSON bool
 	var res resourceFlags
 	cmd := &cobra.Command{
-		Use:   "launch --task <id> --worktree <path>",
+		Use:   "launch --task-id <id> --worktree <path>",
 		Short: "Register a sandbox for a task (the VM boots on first exec)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -290,7 +290,7 @@ const validationStubImageRef = "x@sha256:000000000000000000000000000000000000000
 func sandboxShellCmd(connect connectFunc) *cobra.Command {
 	var task string
 	cmd := &cobra.Command{
-		Use:           "shell --task <id>",
+		Use:           "shell --task-id <id>",
 		Short:         "Attach an interactive session to a task's sandbox (T2 confined agent)",
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,

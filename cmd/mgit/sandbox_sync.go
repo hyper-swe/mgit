@@ -26,7 +26,7 @@ func sandboxSyncCmd(connect connectFunc) *cobra.Command {
 	var task string
 	var force, dryRun, asJSON bool
 	cmd := &cobra.Command{
-		Use:   "sync --task <id>",
+		Use:   "sync --task-id <id>",
 		Short: "Re-stage the host worktree into a task's running sandbox (--dry-run classifies only)",
 		Long: "Propagate host worktree changes into a task's running sandbox.\n\n" +
 			"An unchanged worktree is a genuine no-op — for paths the guest edited too:\n" +

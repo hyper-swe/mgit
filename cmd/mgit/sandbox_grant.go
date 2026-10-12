@@ -16,7 +16,7 @@ func sandboxGrantsCmd(connect connectFunc) *cobra.Command {
 	var taskID string
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use:   "grants --task <id>",
+		Use:   "grants --task-id <id>",
 		Short: "List a sandbox's pending capability requests",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -57,7 +57,7 @@ func sandboxGrantsCmd(connect connectFunc) *cobra.Command {
 func sandboxGrantCmd(connect connectFunc) *cobra.Command {
 	var taskID string
 	cmd := &cobra.Command{
-		Use:   "grant --task <id> <key>",
+		Use:   "grant --task-id <id> <key>",
 		Short: "Approve one pending capability request (scoped to the sandbox lifetime)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
