@@ -186,7 +186,8 @@ func TestBuild_DropsAGitPointerFile(t *testing.T) {
 	assert.True(t, h["main.go"], "the worktree's files are still packed")
 	assert.False(t, h[".git"], "a worktree's .git pointer file is not delivered")
 	assert.False(t, h["vendor/foo/.git"], "a nested .git pointer file is not delivered")
-	raw, _ := os.ReadFile(filepath.Join(stage, "main.go"))
+	raw, err := os.ReadFile(filepath.Join(stage, "main.go")) //nolint:gosec // test fixture path under t.TempDir()
+	require.NoError(t, err)
 	assert.Equal(t, "package main", string(raw))
 }
 
