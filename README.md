@@ -87,6 +87,14 @@ If a decision turns out wrong mid-task, [backtrack, fork, and salvage](#course-c
 
 > **Worktree notes.** An mgit worktree is **not** a git repo (no `.git`); integrate by exporting the squash as a patch (`mgit squash --task-id <ID> --to-git | git apply`), never by running `git` inside the worktree. Gitignored build artifacts (e.g. an embedded `web/dist`) are not seeded into worktrees; list them in `.mgit/seed-include` (one glob per line) to carry them in.
 
+Working-state capture and resynchronization honor Git's common `info/exclude`
+rules in ordinary repositories and linked worktrees, followed by `.gitignore`
+rules and their negations. Ignored, untracked files are excluded; Git-tracked
+inputs and unexcluded captures remain. Existing task bases stay pinned.
+If a linked worktree points to a missing Git directory, checkpoints refuse rather
+than proceed without exclusions. Restore the directory and run `git worktree repair`,
+or recreate the worktree, before retrying.
+
 <p align="center">
   <a href="#why-this-exists">Why</a> &middot;
   <a href="#how-containment-works">Containment</a> &middot;

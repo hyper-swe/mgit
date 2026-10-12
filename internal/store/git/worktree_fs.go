@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -11,6 +12,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
+	"github.com/hyper-swe/mgit/internal/store/gitref"
 )
 
 // This file is the bridge between mgit's bare .mgit/ object store and the
@@ -195,9 +197,16 @@ func isNestedMgitRoot(dir string) bool {
 // git exactly. It is rebuilt per status/add walk so newly written rules take
 // effect immediately. .git/.mgit are excluded by the walk regardless, so their
 // internal .gitignore files (if any) never affect project matching.
-// Refs: MGIT-32
+// Shared info/exclude rules also apply to Git linked worktrees.
+// Refs: MGIT-32, MGIT-295
 func (r *Repository) ignoreMatcher() (gitignore.Matcher, error) {
-	patterns, err := gitignore.ReadPatterns(newIgnoreReadFS(r.root), nil)
+	fs := newIgnoreReadFS(r.root)
+	exclude, err := gitref.CommonExcludePath(r.root)
+	if err != nil && !errors.Is(err, gitref.ErrNoGit) {
+		return nil, fmt.Errorf("resolve Git exclusions: %w; restore the Git directory and run git worktree repair, or recreate the worktree before retrying", err)
+	}
+	fs.commonExclude = exclude
+	patterns, err := gitignore.ReadPatterns(fs, nil)
 	if err != nil {
 		return nil, fmt.Errorf("read gitignore patterns: %w", err)
 	}
