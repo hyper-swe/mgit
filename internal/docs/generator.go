@@ -210,3 +210,14 @@ func (g *Generator) generateSquashGuide() string {
 func (g *Generator) generateTroubleshooting() string {
 	return "# TROUBLESHOOTING.md\n\n## Common Issues\n\n### \"repository already exists\"\nRun `mgit init` only once. Use `mgit status` to check.\n\n### \"task not found\"\nCheck task ID format (PREFIX-N.N.N). Verify with `mgit log --task-id=ID`.\n\n### \"commit not found\"\nUse full 40-character hash. Check with `mgit log`.\n\n### \"branch locked\"\nWait for timeout (30s) or check with `mgit branch`.\n\n### \"append-only constraint violated\"\nUse `mgit rollback` to create revert commits.\n\n## Verify Integrity\n\n```bash\nmgit verify\nmgit verify --task-id=ID\n```\n"
 }
+
+// AgentInstructions is the text of MGIT.md: mgit's instructions for a coding
+// agent, in the file mgit owns. It is the workflow section the generated
+// agent guide carries, under a heading that names the file.
+// Refs: HSWE-19.3
+func AgentInstructions() string {
+	g := &Generator{}
+	return strings.Replace(g.generateClaude(),
+		"# CLAUDE.md — mgit Instructions for Claude Code",
+		"# MGIT.md — mgit instructions for coding agents", 1)
+}

@@ -283,7 +283,7 @@ func gitRun(t *testing.T, dir string, args ...string) {
 func TestExportFormatGit_EmptyNetChange_ReportedDistinctlyFromFailure(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	require.NoError(t, runCLI(t, "init"))
+	require.NoError(t, runCLI(t, "init", "--no-agent-files"))
 
 	const taskID = "EXP-EMPTY"
 	f := filepath.Join(dir, "tmp.txt")

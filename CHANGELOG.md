@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `mgit init` writes `MGIT.md`, which holds mgit's instructions for a coding
+  agent, and adds one pointer line to `CLAUDE.md` (`@MGIT.md`) and to
+  `AGENTS.md` (one sentence). It adds no pointer when `HYPERSWE.md` exists,
+  since that file links `MGIT.md` itself, and it never removes a pointer line
+  you placed. `mgit init --no-agent-files` skips all three files.
+
 ## [0.7.3] - 2026-10-11
 
 `linux_arm64` is build-verified and not boot-verified: it is built and
