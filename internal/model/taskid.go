@@ -13,6 +13,10 @@ import (
 const taskIDGrammar = "<PREFIX>-<segments> using letters/digits/.-_ " +
 	"(e.g. MTIX-30.6, MGIT-1.2.3, MTIX-30-probe)"
 
+// TaskIDGrammar is the accepted task-id form in words, for help text that
+// states it before a refusal has to. Refs: FEAT-6.115
+func TaskIDGrammar() string { return taskIDGrammar }
+
 // taskIDPattern validates task IDs in the broadened form PREFIX-BODY.
 //
 // PREFIX is an alphanumeric project token (e.g. MGIT, MTIX, PROJ2). BODY is a
