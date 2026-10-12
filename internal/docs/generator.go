@@ -188,15 +188,15 @@ func (g *Generator) generateSkill() string {
 // --- Template docs ---
 
 func (g *Generator) generateAgents() string {
-	return "# AGENTS.md — mgit Agent Quickstart\n\n## What is mgit?\n\nmgit (micro git) is a safety-critical micro version control system for LLM coding agents.\nEvery commit is tagged with a task ID, enabling full traceability and auditability.\n\n## Quick Start\n\n```bash\nmgit init\nmgit commit --task-id=PROJ-1.2.3 --message=\"implement feature\"\nmgit log --task-id=PROJ-1.2.3\nmgit squash --task-id=PROJ-1.2.3\n```\n\n## Available Commands\n\nRun `mgit --help` for the full command list.\nSee CLI_REFERENCE.md for detailed usage.\nSee MCP_TOOLS.md for MCP tool integration.\n"
+	return "# AGENTS.md — mgit Agent Quickstart\n\n## What is mgit?\n\nmgit (micro git) is a safety-critical micro version control system for LLM coding agents.\nEvery commit is tagged with a task ID, enabling full traceability and auditability.\n\n## Quick Start\n\n```bash\nmgit init\nmgit commit -a --task-id=PROJ-1.2.3 -m \"implement feature\"\nmgit log --task-id=PROJ-1.2.3\nmgit squash --task-id=PROJ-1.2.3\n```\n\n## Available Commands\n\nRun `mgit --help` for the full command list.\nSee CLI_REFERENCE.md for detailed usage.\nSee MCP_TOOLS.md for MCP tool integration.\n"
 }
 
 func (g *Generator) generateClaude() string {
-	return "# CLAUDE.md — mgit Instructions for Claude Code\n\n## Setup\n\nmgit is available as a CLI tool. Initialize with `mgit init`.\n\n## Workflow\n\n1. `mgit commit --task-id=TASK-ID --message=\"description\"`\n2. `mgit log --task-id=TASK-ID` to verify\n3. `mgit squash --task-id=TASK-ID` when task is complete\n4. `mgit verify` to check integrity\n\n## MCP Tools\n\nmgit exposes 15 MCP tools. See MCP_TOOLS.md for the full reference.\n"
+	return "# CLAUDE.md — mgit Instructions for Claude Code\n\n## Setup\n\nmgit is available as a CLI tool. Initialize with `mgit init`.\n\n## Workflow\n\n1. `mgit commit -a --task-id=TASK-ID -m \"description\"` (without -a or `mgit add`, nothing is recorded)\n2. `mgit log --task-id=TASK-ID` to verify\n3. `mgit squash --task-id=TASK-ID` when task is complete\n4. `mgit verify` to check integrity\n\n## MCP Tools\n\nmgit exposes 15 MCP tools. See MCP_TOOLS.md for the full reference.\n"
 }
 
 func (g *Generator) generateWorkflows() string {
-	return "# WORKFLOWS.md — mgit Workflow Guide\n\n## Single Agent Sequential\n\n1. Claim task via mtix\n2. `mgit commit --task-id=TASK-ID` after each change\n3. `mgit squash --task-id=TASK-ID` when done\n4. Mark task done in mtix\n\n## Multi-Agent Parallel\n\n1. Each agent on separate task branch\n2. `mgit branch --task-id=TASK-ID`\n3. Commits isolated per branch\n4. Squash and merge when complete\n\n## Rollback and Rework\n\n1. `mgit rollback --task-id=TASK-ID --dry-run` to preview\n2. `mgit rollback --task-id=TASK-ID` to execute\n3. Original commits preserved (append-only)\n"
+	return "# WORKFLOWS.md — mgit Workflow Guide\n\n## Single Agent Sequential\n\n1. Claim task via mtix\n2. `mgit commit -a --task-id=TASK-ID -m \"description\"` after each change\n3. `mgit squash --task-id=TASK-ID` when done\n4. Mark task done in mtix\n\n## Multi-Agent Parallel\n\n1. Each agent on separate task branch\n2. `mgit branch --task-id=TASK-ID`\n3. Commits isolated per branch\n4. Squash and merge when complete\n\n## Rollback and Rework\n\n1. `mgit rollback --task-id=TASK-ID --dry-run` to preview\n2. `mgit rollback --task-id=TASK-ID` to execute\n3. Original commits preserved (append-only)\n"
 }
 
 func (g *Generator) generateRollbackGuide() string {
@@ -212,12 +212,52 @@ func (g *Generator) generateTroubleshooting() string {
 }
 
 // AgentInstructions is the text of MGIT.md: mgit's instructions for a coding
-// agent, in the file mgit owns. It is the workflow section the generated
-// agent guide carries, under a heading that names the file.
-// Refs: HSWE-19.3
+// agent, in the file mgit owns. Every command in its first fenced block is
+// run, in order, by a test on a fresh repository, so the file cannot drift
+// from what the commands do. Refs: HSWE-19.3
 func AgentInstructions() string {
-	g := &Generator{}
-	return strings.Replace(g.generateClaude(),
-		"# CLAUDE.md — mgit Instructions for Claude Code",
-		"# MGIT.md — mgit instructions for coding agents", 1)
+	return `# MGIT.md — mgit instructions for coding agents
+
+mgit records your work as small commits, each tagged with a task id, and
+exports the result as a patch for the project's own git. Run these commands in
+the project root.
+
+## Record work
+
+Record the starting state once, before the first task, so a task's patch holds
+only your change. Without that commit the first task's patch includes every
+file in the tree, and ` + "`mgit commit -a`" + ` also takes in the files ` + "`mgit init`" + `
+wrote: MGIT.md, CLAUDE.md and AGENTS.md.
+
+` + "```bash" + `
+mgit commit -a --task-id=PROJ-0 -m "baseline"
+# ... edit files for the task ...
+mgit commit -a --task-id=PROJ-1 -m "what changed"
+mgit log --task-id=PROJ-1
+mgit squash --task-id=PROJ-1 -m "summary" --to-git --to-git-output PROJ-1.patch
+mgit verify
+` + "```" + `
+
+- ` + "`-a`" + ` stages every change. Without ` + "`-a`" + ` or ` + "`mgit add`" + `, a commit records nothing.
+- ` + "`squash --to-git`" + ` consolidates the task's commits and writes a patch. The
+  reviewer applies it in their own git checkout with ` + "`git apply PROJ-1.patch`" + `.
+- ` + "`mgit verify`" + ` checks the integrity of what mgit recorded.
+
+## Run untrusted code in the sandbox
+
+Run installs, builds and tests of code you did not write through ` + "`mgit run`" + `:
+
+` + "```bash" + `
+mgit run --check
+mgit run -- <command> [args...]
+` + "```" + `
+
+` + "`mgit run`" + ` runs the command in the sandbox bound to this worktree. If no
+sandbox is bound or the daemon is not running, it refuses and never runs the
+command on the host. ` + "`--check`" + ` reports whether a sandbox is available.
+
+## More help
+
+Run ` + "`mgit --help`" + ` or ` + "`mgit <command> --help`" + `.
+`
 }
