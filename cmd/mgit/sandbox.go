@@ -119,6 +119,7 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 		sandboxCodexHookCmd(connect),  // hidden: Codex PreToolUse hook (MGIT-149)
 		sandboxCursorHookCmd(connect), // hidden: Cursor beforeShellExecution hook (MGIT-149)
 	)
+	addTaskIDHelp(cmd)
 	return cmd
 }
 
@@ -128,7 +129,7 @@ func sandboxLandCmd(connect connectFunc) *cobra.Command {
 	var task string
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use:   "land --task <id>",
+		Use:   "land --" + canonicalTaskFlag + " <id>",
 		Short: "Land a task's sandbox commits onto the host branch (verified host-side)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -174,7 +175,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 	var asJSON bool
 	var res resourceFlags
 	cmd := &cobra.Command{
-		Use:   "launch --task <id> --worktree <path>",
+		Use:   "launch --" + canonicalTaskFlag + " <id> --worktree <path>",
 		Short: "Register a sandbox for a task (the VM boots on first exec)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -292,7 +293,7 @@ const validationStubImageRef = "x@sha256:000000000000000000000000000000000000000
 func sandboxShellCmd(connect connectFunc) *cobra.Command {
 	var task string
 	cmd := &cobra.Command{
-		Use:           "shell --task <id>",
+		Use:           "shell --" + canonicalTaskFlag + " <id>",
 		Short:         "Attach an interactive session to a task's sandbox (T2 confined agent)",
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
