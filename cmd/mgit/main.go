@@ -91,7 +91,32 @@ func rootCmd() *cobra.Command {
 		versionCmd(),
 	)
 
+	announceArgErrors(root)
 	return root
+}
+
+// announceArgErrors makes every command's argument refusal reach the user.
+//
+// A command that sets SilenceErrors prints its own runtime failures, and
+// cobra prints nothing for it, but argument validation runs BEFORE the
+// command's own code, so its refusal was printed by no one: `mgit verify
+// zzstray` exited 1 with empty stdout and stderr (MGIT-284). Each Args rule
+// in the tree is wrapped once, here, so a silenced command prints the refusal
+// itself in cobra's own form. Usage is left as cobra decides (MGIT-157), and a
+// command added later is covered without doing anything. Refs: MGIT-284
+func announceArgErrors(cmd *cobra.Command) {
+	if rule := cmd.Args; rule != nil {
+		cmd.Args = func(c *cobra.Command, args []string) error {
+			err := rule(c, args)
+			if err != nil && c.SilenceErrors {
+				_, _ = fmt.Fprintln(c.ErrOrStderr(), "Error:", err)
+			}
+			return err
+		}
+	}
+	for _, sub := range cmd.Commands() {
+		announceArgErrors(sub)
+	}
 }
 
 // openAppFromCwd opens the mgit app from the current working directory.

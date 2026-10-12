@@ -230,7 +230,7 @@ What that means in practice:
 So prefer the install script or Homebrew. If you did download through a browser:
 
 ```bash
-xattr -d com.apple.quarantine mgit mgit-sandboxd
+xattr -dr com.apple.quarantine mgit mgit-sandboxd lib   # lib/: the daemon's libkrun
 ```
 
 That fully resolves it — the binaries themselves are fine. Refs: [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#release-archive), MGIT-64.
@@ -324,7 +324,7 @@ by test in `scripts/e2e/libkrun_linux_column.sh`.
 
 The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`, but on Linux that builds the firecracker daemon, which boots only a kernel + rootfs image and refuses `sandbox sync` and `sandbox export`: use the release archive for the agent loop ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md)).
 
-- **macOS** requires Apple Silicon (arm64), macOS 14+, and the **libkrun** hypervisor, which is *not* installed with mgit — it lives in a third-party Homebrew tap, and Homebrew will not load a formula from a tap you have not trusted. All three commands are needed, in this order:
+- **macOS** requires Apple Silicon (arm64), macOS 14+, and **libkrunfw**, the guest kernel library, which is *not* installed with mgit — it comes with the libkrun formula of a third-party Homebrew tap, and Homebrew will not load a formula from a tap you have not trusted. All three commands are needed, in this order:
 
   ```bash
   brew tap libkrun/krun
@@ -332,11 +332,11 @@ The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Li
   brew install libkrun
   ```
 
-  `brew install libkrun` on its own fails, and so does the fully-qualified name — see [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#installing-libkrun-on-macos) for why, and for why mgit no longer tries to install it for you. The release/brew daemon links libkrun and is code-signed with the hypervisor entitlement (a `go install`-ed daemon is unsigned and must be signed locally).
+  `brew install libkrun` on its own fails, and so does the fully-qualified name — see [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#installing-libkrun-on-macos) for why, and for why mgit no longer tries to install it for you. The release/brew daemon carries its own libkrun in `lib/` beside it — keep them together — and is code-signed with the hypervisor entitlement (a `go install`-ed daemon links Homebrew's libkrun, is unsigned and must be signed locally).
 - **Linux** requires `/dev/kvm` (read-writable by your user) and glibc 2.31+, and nothing else: the release archive carries libkrun and libkrunfw in `lib/` beside `mgit-sandboxd`, so extract the whole archive and keep them together. The kernel inside libkrunfw is GPL-2.0; its source is published with every release that bundles it ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#the-linux-archive-and-what-it-carries)).
 - **Windows and Intel macOS** have no sandbox backend yet; core mgit runs without it.
 
-Skipping the hypervisor step degrades nothing silently: the daemon refuses to start, and `mgit` reports the missing library together with the commands that fix it.
+Skipping the libkrunfw step degrades nothing silently: no guest boots, and `mgit doctor` names the missing library together with the commands that fix it.
 
 Then compose the Linux userspace the VM boots — from any public OCI image, pulled straight from its registry with no Docker and no container runtime:
 
@@ -355,10 +355,10 @@ The full walkthrough, platform prerequisites, the kernel+rootfs path used by the
 **Without the sandbox**, mgit is still a complete checkpointed working substrate. `mgit run` and `mgit sandbox land` are the only sandbox-gated commands; integrate a task's result by exporting its squash as a patch and applying it to your git:
 
 ```bash
-mgit squash --task-id PROJ-12 --to-git | git apply   # or: git am
+mgit squash --task-id PROJ-12 --to-git | git apply   # needs your git identity (see below); or: git am
 ```
 
-**What the patch carries into your history.** mgit tags each micro-commit in its own store with `[MGIT:<task>]`, which is how it knows a commit's task; the tag stays in mgit's store. With `git apply`, nothing from the patch's header reaches your history: you write the commit yourself. With `git am`, the patch's message is recorded. Given `-m`/`-F`, that message is exactly your words. Without them, mgit's summary lists the micro-commits by what was written, without the task tag. Two things in the patch still name mgit today, and `git am` records them: the author line (`From: mgit-squash <…@mgit.local>`; tracked as MGIT-237; `git commit --amend --reset-author --no-edit` after `git am` replaces it), and any file mgit injected into the worktree that the task's commits recorded (tracked as MGIT-236).
+**What the patch carries into your history.** mgit tags each micro-commit in its own store with `[MGIT:<task>]`, which is how it knows a commit's task; the tag stays in mgit's store. With `git apply`, nothing from the patch's header reaches your history: you write the commit yourself. With `git am`, the patch's message is recorded. Given `-m`/`-F`, that message is exactly your words. Without them, mgit's summary lists the micro-commits by what was written, without the task tag. The patch's author line is you: your git identity, from `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL`, else `user.name` and `user.email` in this project's or your global git config. With none configured, `squash --to-git` refuses before it writes anything, and says how to set one (`git config user.name "Your Name"` and `git config user.email you@example.com`); set it and run the same command again, and it completes with all of the task's work. The read-only `squash --to-git --dry-run` and `export --format git` still produce the patch with no identity, warn, and name no author: `git apply` takes it as is, and `git am` asks you for one. The agent files mgit writes into a worktree are left out of bulk staging, inside a sandbox too, so one reaches the patch only if a commit stages it by name.
 
 ## Commands
 

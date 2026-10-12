@@ -19,6 +19,7 @@ func squashCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "squash",
+		Args:  refuseArgs("squash", "Name the task with --task-id <id>; a squash covers the whole task, never a path."),
 		Short: "Squash micro-commits for a task",
 		Long: "Consolidate a task's micro-commits into one commit on its own " +
 			"task/<ID> branch.\n\n" +
@@ -64,6 +65,15 @@ func squashCmd() *cobra.Command {
 			// --apply implies --to-git behavior.
 			if apply {
 				toGit = true
+			}
+
+			// The patch is authored by the exporter; with no identity it is
+			// refused BEFORE the squash commit is made, so a refusal leaves
+			// the store as it was. Refs: MGIT-237
+			if toGit && !dryRun {
+				if _, err := app.Squash.PatchAuthor(); err != nil {
+					return fmt.Errorf("squash --to-git: %w", err)
+				}
 			}
 
 			squashed, err := app.Squash.SquashTask(ctx, service.SquashRequest{
@@ -217,6 +227,7 @@ func squashPatchText(ctx context.Context, app *App, opts squashPatchOptions) (st
 	if err != nil {
 		return "", err
 	}
+	warnIfNoPatchIdentity(app, os.Stderr)
 	if preview.Empty {
 		_, _ = fmt.Fprintln(os.Stderr, emptyNetChangeNote(opts.taskID))
 		return "", nil

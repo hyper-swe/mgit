@@ -104,3 +104,27 @@ func TestAskedOverTheCap_IsExactlyTheBytesAboveTheLimit(t *testing.T) {
 	assert.True(t, askedOverTheCap(controlproto.MaxResponseBytes+1))
 	assert.False(t, askedOverTheCap(4096))
 }
+
+// Only an OVER-SIZE refusal of a probe is quiet. A probe whose write fails
+// for any other reason (here the peer has gone) is a real failure and warns
+// like any other. The two guards back each other up in the echo path, so
+// this pins the write-side one on its own. Refs: MGIT-235.1, MGIT-235
+func TestDaemon_AProbeWriteThatFailsForAnotherReason_StillWarns(t *testing.T) {
+	cfg, logs := testConfig(t, newFakeManager("01JXSB1"))
+	d, err := New(cfg)
+	require.NoError(t, err)
+	near, far := net.Pipe()
+	require.NoError(t, far.Close()) // the peer is gone before the write
+	defer func() { _ = near.Close() }()
+
+	d.writeResponseAs(near, &controlproto.Response{Error: "small"}, true)
+
+	var warned bool
+	for _, rec := range logRecords(t, logs.String()) {
+		if rec["event"] == "write_error" && rec["level"] == "WARN" {
+			warned = true
+		}
+		assert.NotEqual(t, "response_cap_probe", rec["event"], "only a refusal for size is the probe: %v", rec)
+	}
+	assert.True(t, warned, "a probe's write that fails for another reason still warns:\n%s", logs.String())
+}

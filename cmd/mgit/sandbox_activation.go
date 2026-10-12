@@ -94,6 +94,9 @@ func missingLibrary(log string) string {
 	if m == nil {
 		return ""
 	}
+	if strings.HasPrefix(m[1], "@rpath/") {
+		return m[1]
+	}
 	return path.Base(m[1])
 }
 
@@ -131,6 +134,15 @@ func missingLibrary(log string) string {
 // which loaderRemedy reads from the loader's own words.
 // Refs: MGIT-75, MGIT-61.15, MGIT-230.4
 func missingLibraryRemedy(lib, daemonPath, goos string) string {
+	if bundled, ok := strings.CutPrefix(lib, "@rpath/"); ok {
+		// Carry a patched libkrun in the macOS build; fixes MGIT-225. Refs: MGIT-259
+		return fmt.Sprintf(
+			"%s is missing. It ships beside mgit-sandboxd, in lib/ of the release archive\n"+
+				"(an installed mgit keeps it in <prefix>/lib/mgit), so no sandbox can start;\n"+
+				"core mgit is unaffected. Reinstall mgit from the release archive and keep lib/\n"+
+				"beside mgit-sandboxd.\n"+
+				"Full prerequisites: docs/INSTALL-SANDBOX.md", path.Base(bundled))
+	}
 	detail := fmt.Sprintf(
 		"%s is missing. mgit-sandboxd links it, so no sandbox can start; core mgit\n"+
 			"is unaffected.\n", lib)

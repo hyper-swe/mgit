@@ -29,9 +29,10 @@
 #       the LINUX guest pair `mgit sandbox base from <image>` injects. It goes
 #       in libexec, never bin: everything in bin lands on PATH, and mgit-guest
 #       is guest-only — it refuses to run on a host. Refs: MGIT-65
-#   $PREFIX/lib/mgit/{libkrun.so.1,libkrunfw.so.5}
-#       Linux only: the hypervisor libraries the daemon is linked against,
-#       where its run path looks ($ORIGIN/../lib/mgit). Refs: MGIT-230.1
+#   $PREFIX/lib/mgit/{libkrun.so.1,libkrunfw.so.5} (Linux), libkrun.1.dylib (macOS)
+#       the hypervisor libraries the daemon is linked against, where its run
+#       path looks ($ORIGIN/../lib/mgit, @executable_path/../lib/mgit).
+#       Refs: MGIT-230.1, MGIT-259
 #   $PREFIX/share/mgit/THIRD_PARTY/
 #       their license texts and the note naming their published source.
 set -eu
@@ -143,10 +144,10 @@ if [ -d "$tmp/guest" ]; then
 	done
 	say "    installed $guestdir/ (guest pair for 'mgit sandbox base from')"
 fi
-# The Linux archive bundles the daemon's hypervisor libraries (libkrun and
-# libkrunfw) in lib/. They go where the daemon's run path looks for them from
-# $PREFIX/bin — $PREFIX/lib/mgit — never onto PATH, and their license texts
-# go with them. Refs: MGIT-230.1, MGIT-229
+# The Linux and macOS archives bundle the daemon's hypervisor libraries in
+# lib/. They go where the daemon's run path looks for them from $PREFIX/bin —
+# $PREFIX/lib/mgit — never onto PATH, and their license texts go with them.
+# Refs: MGIT-230.1, MGIT-229, MGIT-259
 if [ -d "$tmp/lib" ]; then
 	libdir="$prefix/lib/mgit"
 	mkdir -p "$libdir" || die "cannot create $libdir"
@@ -174,11 +175,11 @@ if ! out="$("$bindir/mgit" --version 2>&1)"; then
 fi
 say ""
 say "$out"
-# On Linux the archive carries everything the daemon links, so a daemon that
-# does not load here is an incomplete install, said now rather than at the
-# first sandbox. (On macOS the daemon links a Homebrew libkrun the user
-# installs separately, so it is not asked here.) Refs: MGIT-230.1
-if [ "$os_name" = linux ] && [ -f "$bindir/mgit-sandboxd" ]; then
+# On Linux, and on macOS when the archive carries lib/, the archive carries
+# everything the daemon links, so a daemon that does not load here is an
+# incomplete install, said now rather than at the first sandbox.
+# Refs: MGIT-230.1, MGIT-259
+if { [ "$os_name" = linux ] || [ -d "$tmp/lib" ]; } && [ -f "$bindir/mgit-sandboxd" ]; then
 	if ! sout="$("$bindir/mgit-sandboxd" --version 2>&1)"; then
 		die "the installed sandbox daemon does not load: $sout
   Its libraries belong in $prefix/lib/mgit. Core mgit is installed and works;

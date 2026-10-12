@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux || (libkrun && cgo)
 
 package main
 
@@ -10,8 +10,13 @@ import (
 	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
-// wireEgress is a no-op off Linux. The allowlist host-tap proxy/DNS
-// enforcement is the firecracker (KVM) backend's; the macOS vzf backend's
+// wireEgress is a no-op off the Linux firecracker build, and on the libkrun
+// build wherever it runs. The allowlist host-tap proxy/DNS enforcement is the
+// firecracker (KVM) backend's. The libkrun backend enforces egress inside its
+// own VM child and creates no host tap, so installing the firecracker
+// controller there bound a gateway address that does not exist and failed every
+// allowlist sandbox at boot (MGIT-287); its live policy verbs are served by the
+// libkrun path (selectPolicyController). The macOS vzf backend's
 // allowlist support is tracked separately (it uses a NAT attachment, not a
 // host tap + firewall). With no host egress runner there is no live granter,
 // so capability escalation's egress-widening is Linux-only too; the service

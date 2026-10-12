@@ -172,3 +172,21 @@ func LegacyInTreeBase(hostRoot string) string {
 	}
 	return ""
 }
+
+// CachedPins returns the digests this host root's images.lock pins from the
+// machine-wide base cache: every entry located by digest alone. An entry with
+// a path (a file image, or a bring-your-own base) lives outside the cache and
+// is no pin on any cache entry. No lock pins nothing. Refs: MGIT-239
+func CachedPins(hostRoot string) (map[string]bool, error) {
+	lock, err := readLockFile(hostRoot)
+	if err != nil {
+		return nil, err
+	}
+	pins := map[string]bool{}
+	for _, entry := range lock.Images {
+		if entry.RootfsPath == "" && entry.Digest != "" {
+			pins[entry.Digest] = true
+		}
+	}
+	return pins, nil
+}

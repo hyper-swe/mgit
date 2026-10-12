@@ -11,6 +11,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
+	"github.com/hyper-swe/mgit/internal/store/gitref"
 )
 
 // newWorktreeSvcWithSync wires a WorktreeService with the auto-housekeeping
@@ -21,24 +22,56 @@ func newWorktreeSvcWithSync(env *testEnv, gitHead string) *WorktreeService {
 		WithSync(sync, env.repo, env.cs)
 }
 
-// TestWorktreeAdd_NewWorktree_CarriesUnpushedFoundation verifies ADR-008 §2: the
-// worktree is materialized FROM the resynced local base, so a file present only
-// in the local working tree (never committed to .mgit) lands in the worktree.
-// Refs: MGIT-35, ADR-008 §2
-func TestWorktreeAdd_NewWorktree_CarriesUnpushedFoundation(t *testing.T) {
+// newWorktreeSvcOverEmptyGit is a WorktreeService whose project git has one
+// commit with an EMPTY tree, so every file in the checkout is uncommitted.
+func newWorktreeSvcOverEmptyGit(env *testEnv) *WorktreeService {
+	sync := newSyncService(env, "head-A", "").
+		withCommittedReader(func(string) (map[string]string, error) { return map[string]string{}, nil }).
+		withCommittedFilesReader(func(string) ([]gitref.CommittedFile, string, error) { return nil, "head-A", nil })
+	return NewWorktreeService(env.idx, env.branch, env.wt, fixedClock()).WithSync(sync, env.repo, env.cs)
+}
+
+// TestWorktreeAdd_IncludeUncommitted_CarriesUnpushedFoundation verifies the
+// opt-in of ADR-008 §2 as amended (MGIT-283): with IncludeUncommitted the
+// worktree is materialized FROM the resynced local base, so a file present
+// only in the local working tree lands in the worktree, and is reported as
+// captured. Refs: MGIT-35, MGIT-283, ADR-008 §2
+func TestWorktreeAdd_IncludeUncommitted_CarriesUnpushedFoundation(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
 	writeProjectFile(t, env, "foundation.go", "package foundation\n")
 	dest := filepath.Join(t.TempDir(), "wt")
 
-	svc := newWorktreeSvcWithSync(env, "head-A")
-	_, err := svc.Add(ctx, model.WorktreeAddOptions{Path: dest, TaskID: "MGIT-1.1"})
+	wt, err := newWorktreeSvcOverEmptyGit(env).Add(ctx,
+		model.WorktreeAddOptions{Path: dest, TaskID: "MGIT-1.1", IncludeUncommitted: true})
 	require.NoError(t, err)
 
 	got, err := os.ReadFile(filepath.Join(dest, "foundation.go")) //nolint:gosec // test path
 	require.NoError(t, err)
 	assert.Equal(t, "package foundation\n", string(got))
+	assert.Contains(t, wt.UncommittedPaths, "foundation.go")
+	assert.True(t, wt.UncommittedIncluded)
+}
+
+// TestWorktreeAdd_Default_LeavesUncommittedOutAndReportsIt is the default of
+// ADR-008 §2 as amended (MGIT-283): a NEW task's base is git's committed tree,
+// so a file only in the checkout's working tree is left out of the task and
+// reported as left out. Refs: MGIT-283, ADR-008 §2
+func TestWorktreeAdd_Default_LeavesUncommittedOutAndReportsIt(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	writeProjectFile(t, env, "private.go", "package private\n")
+	dest := filepath.Join(t.TempDir(), "wt")
+
+	wt, err := newWorktreeSvcOverEmptyGit(env).Add(ctx, model.WorktreeAddOptions{Path: dest, TaskID: "MGIT-1.1"})
+	require.NoError(t, err)
+
+	_, statErr := os.Stat(filepath.Join(dest, "private.go"))
+	assert.True(t, os.IsNotExist(statErr), "an uncommitted file is not in the task")
+	assert.Contains(t, wt.UncommittedPaths, "private.go")
+	assert.False(t, wt.UncommittedIncluded)
 }
 
 // TestWorktreeAdd_PinnedBase_UnchangedByLaterResync is the critical ADR-008 §4

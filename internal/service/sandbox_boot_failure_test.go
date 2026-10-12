@@ -50,3 +50,26 @@ func TestSandboxService_EnsureRunning_AFailedBootIsRecordedUntilOneSucceeds(t *t
 	require.NoError(t, err)
 	assert.Nil(t, booted.LastBootFailure, "a later successful boot clears the record")
 }
+
+// A boot can fail AFTER the VM started: recordBootLocked's audit append or
+// durable state write fails, and it rolls the VM back. From the caller's
+// side that boot failed exactly as a failed launch does, and status must say
+// so; a rolled-back boot that left no record reads like a sandbox nobody has
+// used, the defect MGIT-231 fixed. Refs: MGIT-231.1, MGIT-231
+func TestSandboxService_EnsureRunning_ABootRolledBackAfterTheVMStartedIsRecordedToo(t *testing.T) {
+	ctx := context.Background()
+	events := &fakeEventAppender{}
+	svc := newSvc(t, &fakeSandboxManager{}, events)
+	_, err := svc.Register(ctx, regOpts("MGIT-231", "/work/a"))
+	require.NoError(t, err)
+	events.failNth = len(events.events) + 1 // the boot's own audit append fails
+
+	_, err = svc.EnsureRunning(ctx, "MGIT-231")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "audit write failed", "the rollback path is the one under test")
+	got, err := svc.Status(ctx, "MGIT-231")
+	require.NoError(t, err)
+	require.NotNil(t, got.LastBootFailure, "a boot rolled back after the VM started is a failed boot")
+	assert.Contains(t, got.LastBootFailure.Cause, "audit write failed")
+	assert.Equal(t, model.StateCreated, got.State)
+}

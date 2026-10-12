@@ -5,21 +5,23 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mgit/internal/model"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // --- ExportToGitPatch Tests ---
 // Refs: FR-7, MGIT-4.2.2
 
 func TestSquashService_ExportToGitPatch_NilCommit(t *testing.T) {
-	svc := &SquashService{}
+	svc := (&SquashService{}).WithPatchAuthor(testPatchAuthor)
 	out := svc.ExportToGitPatch(nil)
 	assert.Empty(t, out)
 }
 
 func TestSquashService_ExportToGitPatch_BasicCommit(t *testing.T) {
-	svc := &SquashService{}
+	svc := (&SquashService{}).WithPatchAuthor(testPatchAuthor)
 	c := &model.Commit{
 		CommitID:  "abc123def456",
 		AgentID:   "agent-01",
@@ -29,14 +31,15 @@ func TestSquashService_ExportToGitPatch_BasicCommit(t *testing.T) {
 	out := svc.ExportToGitPatch(c)
 
 	assert.Contains(t, out, "From abc123def456")
-	assert.Contains(t, out, "From: agent-01 <agent-01@mgit.local>")
+	assert.Contains(t, out, "From: Test Author <author@example.invalid>")
+	assert.NotContains(t, out, "agent-01", "the commit's agent is not the patch's author")
 	assert.Contains(t, out, "Subject: [PATCH] [squashed] implement feature X")
 	assert.Contains(t, out, "---")
 	assert.Contains(t, out, "-- \nmgit\n")
 }
 
 func TestSquashService_ExportToGitPatch_AlreadySquashedPrefix(t *testing.T) {
-	svc := &SquashService{}
+	svc := (&SquashService{}).WithPatchAuthor(testPatchAuthor)
 	c := &model.Commit{
 		CommitID:  "abc123",
 		AgentID:   "agent-01",
@@ -51,7 +54,7 @@ func TestSquashService_ExportToGitPatch_AlreadySquashedPrefix(t *testing.T) {
 }
 
 func TestSquashService_ExportToGitPatch_WithBody(t *testing.T) {
-	svc := &SquashService{}
+	svc := (&SquashService{}).WithPatchAuthor(testPatchAuthor)
 	c := &model.Commit{
 		CommitID:  "abc123",
 		AgentID:   "agent-01",
@@ -65,7 +68,7 @@ func TestSquashService_ExportToGitPatch_WithBody(t *testing.T) {
 }
 
 func TestSquashService_ExportToGitPatch_EmptyAgentID(t *testing.T) {
-	svc := &SquashService{}
+	svc := (&SquashService{}).WithPatchAuthor(testPatchAuthor)
 	c := &model.Commit{
 		CommitID:  "abc123",
 		Message:   "test",
@@ -73,12 +76,15 @@ func TestSquashService_ExportToGitPatch_EmptyAgentID(t *testing.T) {
 	}
 	out := svc.ExportToGitPatch(c)
 
-	// Should default to mgit-squash.
-	assert.Contains(t, out, "From: mgit-squash <mgit-squash@mgit.local>")
+	// The exporter authors the patch whatever the commit's agent: mgit's
+	// internal identity never reaches it. Refs: MGIT-237
+	assert.Contains(t, out, "From: Test Author <author@example.invalid>")
+	assert.NotContains(t, out, "mgit-squash")
+	assert.NotContains(t, out, "mgit.local")
 }
 
 func TestSquashService_ExportToGitPatch_ZeroCreatedAt(t *testing.T) {
-	svc := &SquashService{}
+	svc := (&SquashService{}).WithPatchAuthor(testPatchAuthor)
 	c := &model.Commit{
 		CommitID: "abc123",
 		AgentID:  "agent-01",
@@ -93,7 +99,7 @@ func TestSquashService_ExportToGitPatch_ZeroCreatedAt(t *testing.T) {
 }
 
 func TestSquashService_ExportToGitPatch_EmptyCommitID(t *testing.T) {
-	svc := &SquashService{}
+	svc := (&SquashService{}).WithPatchAuthor(testPatchAuthor)
 	c := &model.Commit{
 		ContentHash: "sha256hash",
 		AgentID:     "agent-01",
@@ -107,7 +113,7 @@ func TestSquashService_ExportToGitPatch_EmptyCommitID(t *testing.T) {
 }
 
 func TestSquashService_ExportToGitPatch_WithFileDiffs(t *testing.T) {
-	svc := &SquashService{}
+	svc := (&SquashService{}).WithPatchAuthor(testPatchAuthor)
 	c := &model.Commit{
 		CommitID:  "abc123",
 		AgentID:   "agent-01",
@@ -210,4 +216,20 @@ func TestShortPatchHash(t *testing.T) {
 			assert.Equal(t, tt.want, shortPatchHash(tt.hash))
 		})
 	}
+}
+
+// testPatchIdentity is the exporter the service tests inject, so no test
+// reads the machine's git config. Refs: MGIT-237
+var testPatchIdentity = gitstore.AuthorIdentity{Name: "Test Author", Email: "author@example.invalid"}
+
+func testPatchAuthor() (gitstore.AuthorIdentity, error) { return testPatchIdentity, nil }
+
+// With no identity wired, exporting a patch is refused with
+// model.ErrNoPatchIdentity, and no patch text is produced. Refs: MGIT-237
+func TestSquashService_NoPatchAuthor_RefusesToExport(t *testing.T) {
+	svc := &SquashService{}
+	_, err := svc.PatchAuthor()
+	require.ErrorIs(t, err, model.ErrNoPatchIdentity)
+	assert.Empty(t, svc.ExportToGitPatch(&model.Commit{CommitID: "abc", Message: "m"}),
+		"no identity, no patch")
 }

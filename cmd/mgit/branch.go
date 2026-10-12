@@ -70,7 +70,7 @@ func branchCmd() *cobra.Command {
 			// `mgit worktree list` / `mgit sandbox list`.
 			if len(args) > 0 && !isBranchListArg(args) {
 				if app.BoundTask != "" {
-					return fmt.Errorf("cannot switch branches in a linked worktree (bound to task %s)", app.BoundTask)
+					return errBranchSwitchInWorktree(app)
 				}
 				if err := app.Branch.SwitchBranch(ctx, args[0]); err != nil {
 					return fmt.Errorf("branch switch: %w", err)

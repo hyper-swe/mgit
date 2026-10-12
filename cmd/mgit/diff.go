@@ -30,6 +30,7 @@ func diffCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "diff",
+		Args:  refusePaths("diff", diffPathRemedy),
 		Short: "Show differences between commits or for a task",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			app, err := openAppFromCwd()

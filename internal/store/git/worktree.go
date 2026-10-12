@@ -213,6 +213,14 @@ func (ws *WorktreeStore) Add(ctx context.Context, path string) error {
 	if err := validateRelPath(rel); err != nil {
 		return fmt.Errorf("add %s: %w", path, err)
 	}
+	// A directory stages the files under it, never itself (MGIT-276).
+	isDir, err := ws.isDirectoryTarget(rel)
+	if err != nil {
+		return fmt.Errorf("add %s: %w", path, err)
+	}
+	if isDir {
+		return ws.addChanged(ctx, rel, "add "+path)
+	}
 	// A path may be staged only if it exists on disk (add/modify) or is tracked
 	// in HEAD (staging a deletion); otherwise it is an error, like `git add` of
 	// a nonexistent, never-tracked path.
@@ -260,34 +268,7 @@ func (ws *WorktreeStore) assertStageable(rel string) error {
 // (see Add), so a deliberate edit to one of these files still commits.
 // Refs: MGIT-80, MGIT-77, FR-16
 func (ws *WorktreeStore) addAll(ctx context.Context) error {
-	files, err := ws.Status(ctx)
-	if err != nil {
-		return fmt.Errorf("add all: %w", err)
-	}
-	generated, err := ws.repo.generatedSet()
-	if err != nil {
-		return fmt.Errorf("add all: %w", err)
-	}
-	paths := make([]string, 0, len(files))
-	for _, f := range files {
-		if strings.HasPrefix(f.Path, mgitDirName+"/") || f.Path == mgitDirName {
-			continue
-		}
-		if generated[f.Path] {
-			continue
-		}
-		paths = append(paths, f.Path)
-	}
-	// The size tripwire (MGIT-131). Status only reports paths that DIFFER from
-	// HEAD, so this weighs exactly the content a bulk stage would add — an
-	// already-committed large file staged by nobody is not re-flagged.
-	if err := ws.assertNotOversized(paths); err != nil {
-		return err
-	}
-	if err := ws.repo.stagePaths(paths); err != nil {
-		return fmt.Errorf("add all: %w", err)
-	}
-	return nil
+	return ws.addChanged(ctx, "", "add all")
 }
 
 // Checkout switches HEAD to the named branch and MATERIALIZES that branch's
