@@ -166,3 +166,46 @@ func TestBuild_EmptyWorktree(t *testing.T) {
 func TestBuild_GuestStoreName(t *testing.T) {
 	assert.Equal(t, ".mgit", GuestStoreName)
 }
+
+// A linked git worktree's .git is a FILE that points at a path on the host.
+// Delivered, it would hand the guest a host path it cannot follow and make
+// git in the guest fail with an error that names nothing the user can fix.
+// Like a store directory, it is dropped at any depth. Refs: FEAT-6.114, SEC-03
+func TestBuild_DropsAGitPointerFile(t *testing.T) {
+	wt := t.TempDir()
+	hostGitDir := "/host/private/path/.git/worktrees/task"
+	require.NoError(t, os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+hostGitDir+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "main.go"), []byte("package main"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(wt, "vendor", "foo"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "vendor", "foo", ".git"), []byte("gitdir: ../../../.git/modules/foo\n"), 0o600))
+
+	stage := filepath.Join(t.TempDir(), "stage")
+	require.NoError(t, Build(wt, privateStoreWith(t), stage))
+
+	h := have(t, stage)
+	assert.True(t, h["main.go"], "the worktree's files are still packed")
+	assert.False(t, h[".git"], "a worktree's .git pointer file is not delivered")
+	assert.False(t, h["vendor/foo/.git"], "a nested .git pointer file is not delivered")
+	raw, _ := os.ReadFile(filepath.Join(stage, "main.go"))
+	assert.Equal(t, "package main", string(raw))
+}
+
+// GitMetadataNote says what the guest will and will not see of a worktree's
+// git state, and how to give the guest a repository when its commands need
+// one. Refs: FEAT-6.114
+func TestGitMetadataNote(t *testing.T) {
+	plain := t.TempDir()
+	assert.Equal(t, "", GitMetadataNote(plain, "X-1"), "no git metadata, nothing to say")
+
+	clone := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(clone, ".git"), 0o750))
+	linked := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: /elsewhere\n"), 0o600))
+	for name, wt := range map[string]string{"a clone": clone, "a linked worktree": linked} {
+		note := GitMetadataNote(wt, "X-1")
+		for _, want := range []string{"git metadata", "does not carry", "history", "git init", "X-1"} {
+			assert.Contains(t, note, want, name)
+		}
+		assert.NotContains(t, note, "/elsewhere", name+": the note never repeats a host path from the pointer")
+	}
+}

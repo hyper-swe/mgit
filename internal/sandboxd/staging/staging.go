@@ -77,6 +77,13 @@ func Build(worktreePath, privateStorePath, stagingDir string) error {
 		if d.IsDir() && isStoreDir(rel) {
 			return filepath.SkipDir
 		}
+		// A linked git worktree's .git is a FILE naming a path on the host.
+		// Delivered, it hands the guest a host path it cannot follow and
+		// makes git there fail with an error that names nothing fixable, so
+		// it is dropped at any depth like a store directory (FEAT-6.114).
+		if !d.IsDir() && filepath.Base(rel) == ".git" {
+			return nil
+		}
 		dst := filepath.Join(stagingDir, rel)
 		return copyStagingEntry(root, path, rel, dst, d)
 	})
@@ -242,4 +249,22 @@ func copyFile(src, dst string) error {
 		return fmt.Errorf("chmod %s: %w", dst, err)
 	}
 	return nil
+}
+
+// GitMetadataNote says what the guest will and will not see of a worktree's
+// git state, or "" when the worktree has none at its root. The guest is
+// given the files and a private store, never the host repository's history
+// (SEC-03), so git commands there find no repository; the note says so and
+// names the one command that gives the guest a repository of its own. It
+// never repeats what a .git pointer file says, since that is a host path.
+// Refs: FEAT-6.114
+func GitMetadataNote(worktreePath, taskID string) string {
+	if _, err := os.Lstat(filepath.Join(worktreePath, ".git")); err != nil {
+		return ""
+	}
+	return "note: this worktree has git metadata (a .git file or directory). The sandbox does not carry it: " +
+		"the guest gets the files and a private mgit store, never the repository's history, so git commands in the guest find no repository.\n" +
+		"  If a command there needs one, create it in the guest, from the worktree directory:\n" +
+		"    mgit sandbox exec --task-id " + taskID + " -- sh -c 'git init -q && git add -A && git commit -qm base'\n" +
+		"  (the guest image must include git).\n"
 }
