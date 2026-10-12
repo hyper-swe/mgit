@@ -3,6 +3,7 @@ package docs
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,4 +172,18 @@ func TestGenerator_Skill_HasYAMLFrontmatter(t *testing.T) {
 	assert.Contains(t, content, "name: mgit")
 	assert.Contains(t, content, "version: 1.0.0")
 	assert.Contains(t, content, "mgit_commit")
+}
+
+// The generated guides show commit commands that record something: a commit
+// without -a or a prior `mgit add` records nothing, and the squash that
+// follows then fails with "task not found". Refs: HSWE-19.3
+func TestGeneratedGuidesCommitWithDashA(t *testing.T) {
+	g := &Generator{}
+	for name, text := range map[string]string{"AGENTS.md": g.generateAgents(), "CLAUDE.md": g.generateClaude(), "WORKFLOWS.md": g.generateWorkflows()} {
+		for _, line := range strings.Split(text, "\n") {
+			if strings.Contains(line, "mgit commit") {
+				assert.Contains(t, line, "commit -a", "%s: %q", name, line)
+			}
+		}
+	}
 }

@@ -150,7 +150,7 @@ func TestCommit_StageAllFlag_RecordsWorkInOneCommand(t *testing.T) {
 func TestCommit_StageAllFlag_NoChanges_ReturnsErrNothingToCommit(t *testing.T) {
 	repo := t.TempDir()
 	t.Chdir(repo)
-	require.NoError(t, runCLI(t, "init"))
+	require.NoError(t, runCLI(t, "init", "--no-agent-files"))
 
 	err := runCLI(t, "commit", "-a", "--task-id", "MGIT-77", "-m", "nothing at all")
 	require.Error(t, err, "-a must not manufacture a change out of a clean tree")

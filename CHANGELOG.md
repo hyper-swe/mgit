@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `mgit init` writes `MGIT.md`, which holds mgit's instructions for a coding
+  agent, and adds one pointer line to `CLAUDE.md` (`@MGIT.md`) and to
+  `AGENTS.md` (one sentence). It adds no pointer when `HYPERSWE.md` exists,
+  since that file links `MGIT.md` itself, and it never removes a pointer line
+  you placed. `mgit init --no-agent-files` skips all three files.
+- The three files are new and untracked, so `mgit commit -a` takes them into
+  the first task commit and into that task's `--to-git` patch. Record the
+  starting state once with a baseline commit, as `MGIT.md` shows, to keep them
+  out of a task's patch.
+- The agent guides that `mgit docs` generates (`AGENTS.md`, `CLAUDE.md`,
+  `WORKFLOWS.md`) now show `mgit commit -a`; without `-a` or `mgit add` a
+  commit records nothing, and the `mgit squash` after it fails with "task not
+  found".
+
 ## [0.7.3] - 2026-10-11
 
 `linux_arm64` is build-verified and not boot-verified: it is built and
