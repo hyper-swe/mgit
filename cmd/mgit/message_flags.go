@@ -24,6 +24,11 @@ import (
 // Refs: MGIT-105, MGIT-106
 func bindMessageFlags(cmd *cobra.Command, message, file *string, noun, inlineUsage string) {
 	cmd.Flags().StringVarP(message, "message", "m", "", inlineUsage)
+	bindMessageFileFlag(cmd, file, noun)
+}
+
+// bindMessageFileFlag keeps file input consistent for scalar and repeated messages.
+func bindMessageFileFlag(cmd *cobra.Command, file *string, noun string) {
 	// No backticks in this usage string: pflag's UnquoteUsage would read the
 	// backticked span as the flag's value placeholder. Refs: MGIT-105
 	cmd.Flags().StringVarP(file, "file", "F", "",

@@ -5,14 +5,13 @@ import re
 import subprocess
 import sys
 
-# temporary: held for explicit maintainer confirmation on #260 (MGIT-293); remove with #260
-EXEMPT_PATHS = {".github/workflows/release.yml"}
+EXEMPT_PATHS = set()
 
 
 def main():
     root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
-    if not EXEMPT_PATHS <= {".github/workflows/release.yml"}:
-        print("Go toolchain: a second or unrelated exemption is forbidden", file=sys.stderr)
+    if EXEMPT_PATHS:
+        print("Go toolchain: all execution-pin exemptions are forbidden", file=sys.stderr)
         return 1
     match = re.search(r"^go (\d+\.\d+\.\d+)\s*$", (root / "go.mod").read_text(), re.M)
     if not match:
@@ -49,9 +48,7 @@ def main():
             pins = {pin for pattern in patterns for pin in re.findall(pattern, line, re.I)}
             for pin in sorted(pins):
                 where = f"{name}:{number}"
-                if name in EXEMPT_PATHS:
-                    print(f"Go toolchain: EXEMPT {where} pin {pin} (expected {expected}); held #260")
-                elif pin != expected:
+                if pin != expected:
                     print(f"Go toolchain: MISMATCH {where} pin {pin}, expected {expected}", file=sys.stderr)
                     failed = True
     if failed:

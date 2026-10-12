@@ -188,13 +188,16 @@ func TestLogAuditor_RecordsEveryFieldOfAnEgressDecision(t *testing.T) {
 
 func TestNetGateway_DialGuestPort_FailsClosed(t *testing.T) {
 	tests := []struct {
-		name    string
-		port    int
-		waitFor time.Duration
-		wantErr string
+		name           string
+		port           int
+		waitFor        time.Duration
+		wantErr        string
+		invalidRequest bool
 	}{
-		{name: "port_below_range", port: 0, waitFor: time.Second, wantErr: "out of range"},
-		{name: "port_above_range", port: 70000, waitFor: time.Second, wantErr: "out of range"},
+		// An out-of-range port is an invalid request, not a missing backend
+		// (MGIT-232.1): invalidRequest selects the ValidationError check below.
+		{name: "port_below_range", port: 0, waitFor: time.Second, wantErr: "out of range", invalidRequest: true},
+		{name: "port_above_range", port: 70000, waitFor: time.Second, wantErr: "out of range", invalidRequest: true},
 		// Until the guest has transmitted, its return address is unknown and
 		// outbound frames have nowhere to go — say so instead of hanging.
 		{name: "guest_has_not_spoken_yet", port: 22, waitFor: 50 * time.Millisecond,
@@ -219,7 +222,11 @@ func TestNetGateway_DialGuestPort_FailsClosed(t *testing.T) {
 			if !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("error %q does not mention %q", err, tt.wantErr)
 			}
-			if !errors.Is(err, model.ErrSandboxBackendUnavailable) {
+			var invalid *model.ValidationError
+			switch {
+			case tt.invalidRequest && !errors.As(err, &invalid):
+				t.Errorf("error %v is not a ValidationError", err)
+			case !tt.invalidRequest && !errors.Is(err, model.ErrSandboxBackendUnavailable):
 				t.Errorf("error %v does not wrap ErrSandboxBackendUnavailable", err)
 			}
 		})
