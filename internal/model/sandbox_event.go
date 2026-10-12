@@ -1,9 +1,18 @@
 package model
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
+
+// SandboxEventAppender appends one event to the append-only audit log. It is
+// the narrow capability a backend needs to record a privileged internal exec
+// (MGIT-272) without importing the store or the service; *index.Store
+// satisfies it. Refs: MGIT-272, FR-17.18
+type SandboxEventAppender interface {
+	AppendSandboxEvent(ctx context.Context, ev *SandboxEvent) error
+}
 
 // Sandbox lifecycle event types, the closed vocabulary of the
 // event-sourced sandbox_events audit table. Sandbox state is derived

@@ -185,3 +185,45 @@ func TestGobinaryPrebuilt_SelfTest(t *testing.T) {
 	require.NoError(t, err, "%s", out)
 	assert.Contains(t, string(out), "gobinary-prebuilt selftest: PASS")
 }
+
+// A published Linux archive gets the same post-publish scrutiny as macOS'
+// (release_smoke.sh skips every daemon check off macOS): installed from the
+// release by install.sh on a fresh runner, its daemon verified, the user path
+// walked, and the kernel's corresponding source checked on the release.
+// Refs: MGIT-230.6
+func TestReleaseWorkflow_SmokesThePublishedLinuxArchive(t *testing.T) {
+	job := jobBlock(t, readRepoFile(t, ".github/workflows/release.yml"), "release-smoke-linux")
+	for _, want := range []string{
+		"runs-on: ubuntu-latest",
+		"needs: release",
+		"github.event_name == 'workflow_dispatch'",
+		"sh install.sh",
+		"scripts/release/verify-linux-sandboxd.sh",
+		"scripts/e2e/linux_user_path.sh",
+		"kernel-linux-$LIBKRUNFW_KERNEL_VERSION.tar.xz",
+		"checksums.txt does not cover",
+	} {
+		assert.Contains(t, job, want, "the release-smoke-linux job must carry %q", want)
+	}
+	// Each check reports on its own: the boot runs even when the bundle check
+	// failed, so a red archive shows every way it is red (v0.6.8 fails both).
+	// This job runs binaries and scripts it DOWNLOADED. It gets only read
+	// access, never release.yml's contents:write and id-token:write, whose
+	// OIDC request env would let that code mint the release's signing
+	// identity. And its checkout leaves no token in the git config.
+	// Refs: MGIT-230.6
+	wf := parseWorkflowPerms(t, "release.yml", readRepoFile(t, ".github/workflows/release.yml"))
+	var perms map[string]string
+	for _, j := range wf.jobs {
+		if j.id == "release-smoke-linux" {
+			perms = j.perms
+		}
+	}
+	assert.Equal(t, map[string]string{"contents": "read"}, perms,
+		"the smoke states its own grant, read only, rather than inheriting the release's write and OIDC scopes")
+	assert.Regexp(t, `actions/checkout@\S+.*\n\s+with:\n\s+persist-credentials: false`, job,
+		"the smoke's checkout does not persist the token")
+	//nolint:misspell // OK: cancelled() is GitHub Actions' own function name, spelled this way
+	assert.Contains(t, job, "if: ${{ !cancelled() && env.BIN != '' }}\n        run: bash scripts/e2e/linux_user_path.sh",
+		"the user path runs after a failed bundle check, as long as the install produced BIN")
+}

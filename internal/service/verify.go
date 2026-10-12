@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/hyper-swe/mgit/internal/model"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
@@ -74,6 +75,15 @@ func (s *VerifyService) VerifyTaskCommits(ctx context.Context, taskID string) er
 	return nil
 }
 
+// isSyncCommit reports whether a commit is mgit's own housekeeping: a base
+// resync or a task's fork base. It records no task work, so it carries no
+// index entry, and verify must not flag it. Both the sync author and the sync
+// message prefix are required, and it may carry no task tag, so an ordinary
+// commit cannot pass as one. Refs: MGIT-283, MGIT-35
+func isSyncCommit(c *model.Commit) bool {
+	return c.AgentID == model.SyncAgentID && c.TaskID.IsZero() && strings.HasPrefix(c.Message, "[mgit-sync]")
+}
+
 // VerifyIndexIntegrity checks that all commits in git have index entries
 // and all index entries point to valid commits. Detects orphaned records.
 // Refs: FR-12
@@ -87,10 +97,11 @@ func (s *VerifyService) VerifyIndexIntegrity(ctx context.Context) ([]string, err
 	}
 
 	// Check each git commit has an index entry. The parentless genesis
-	// commit is created by mgit itself (FR-1.2) and is not task-tagged, so
-	// it legitimately has no index entry and must not be flagged.
+	// commit and mgit's sync commits (a base resync, a task's fork base) are
+	// created by mgit itself and are not task-tagged, so they legitimately
+	// have no index entry and must not be flagged.
 	for _, gc := range gitCommits {
-		if gc.ParentID == "" {
+		if gc.ParentID == "" || isSyncCommit(gc) {
 			continue
 		}
 		_, err := s.indexStore.GetCommitTask(ctx, gc.CommitID)

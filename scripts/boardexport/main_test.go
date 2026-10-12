@@ -24,6 +24,10 @@ func TestTheCommittedBoardCarriesNoAgentIdentities(t *testing.T) {
 	assert.Zero(t, assignees, "nodes still name who claimed them")
 	assert.Zero(t, agents, "the agents section still lists identities")
 	assert.Zero(t, sessions, "the sessions section still lists identities")
+	for _, n := range d.Nodes {
+		assert.Contains(t, []string{"", "cli", "mcp"}, n.Creator,
+			"%s names who filed it: a creator is the interface (cli, mcp), never an identity (MGIT-264)", n.ID)
+	}
 }
 
 // fixture is a small board as the tracker writes it.
@@ -187,4 +191,38 @@ func TestRewrite_ARedactionThatBreaksTheBoardIsRefused(t *testing.T) {
 	assert.Equal(t, 1, n)
 	_, err = load(body)
 	require.NoError(t, err, "the real redaction's output verifies")
+}
+
+// A CREATOR CAN NAME SOMEONE. The tracker records a node's creator from
+// `create --assign`, or from the filer's author identity (MTIX_AUTHOR_ID)
+// when one is set, not only as the interface ("cli", "mcp"). A ticket filed
+// that way carried a session name onto the board while -check reported "the
+// board names no identities". A board whose ONLY identity is a creator must
+// fail -check, and the rewrite must blank it while keeping the interface
+// names and a board that verifies. Refs: MGIT-264, MGIT-241
+func TestRun_ACreatorThatNamesSomeoneIsAnIdentity(t *testing.T) {
+	d := fixture(t)
+	d.Nodes[0].Assignee, d.Agents, d.Sessions = "", nil, nil
+	d.Nodes[0].Creator = "some-session-35"
+	sum, err := checksum(d)
+	require.NoError(t, err)
+	d.Checksum = sum
+	raw, err := encode(d)
+	require.NoError(t, err)
+	board := filepath.Join(t.TempDir(), "tasks.json")
+	require.NoError(t, os.WriteFile(board, raw, 0o600))
+
+	err = run(board, board, true)
+	require.Error(t, err, "-check fails on a board whose only identity is a creator")
+	assert.Contains(t, err.Error(), "names identities")
+
+	require.NoError(t, run(board, board, false))
+	after, err := os.ReadFile(board) //nolint:gosec // G304: test-only; board is this test's own temp file
+	require.NoError(t, err)
+	got, err := load(after)
+	require.NoError(t, err, "the rewritten board is reproducible and its checksum verifies")
+	assert.Empty(t, got.Nodes[0].Creator, "the creator that named someone is blanked")
+	assert.Equal(t, "mcp", got.Nodes[1].Creator, "an interface name is not an identity and stays")
+	assert.Equal(t, d.Nodes[0].ContentHash, got.Nodes[0].ContentHash, "content is untouched")
+	require.NoError(t, run(board, board, true), "after the rewrite, -check passes")
 }

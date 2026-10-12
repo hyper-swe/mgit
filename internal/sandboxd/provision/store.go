@@ -87,8 +87,9 @@ func (p *StoreProvisioner) SharedDir() string {
 // The store is provisioned FOR worktreePath, the worktree the guest is
 // given: in the guest that worktree's .mgit is this store, so the list of
 // files mgit generated into it (MGIT-80) is carried here, or the guest's bulk
-// staging would commit mgit's own agent files (MGIT-236).
-// Refs: SEC-03, FR-17.5, MGIT-14, MGIT-236
+// staging would commit mgit's own agent files (MGIT-236), and so is the task
+// the worktree is bound to, or a guest commit could not inherit it (MGIT-256).
+// Refs: SEC-03, FR-17.5, MGIT-14, MGIT-236, MGIT-256
 func (p *StoreProvisioner) Provision(taskID, worktreePath, privateDir string) (PrivateStore, error) {
 	sharedDir := p.SharedDir()
 	if _, err := os.Stat(sharedDir); err != nil {
@@ -137,6 +138,10 @@ func (p *StoreProvisioner) Provision(taskID, worktreePath, privateDir string) (P
 	if err := gitstore.WriteGeneratedPathsInStore(privateDir, generated); err != nil {
 		_ = os.RemoveAll(privateDir)
 		return PrivateStore{}, fmt.Errorf("provision: carry the worktree's generated list: %w", err)
+	}
+	if err := gitstore.WriteBoundTaskInStore(privateDir, taskID); err != nil {
+		_ = os.RemoveAll(privateDir)
+		return PrivateStore{}, fmt.Errorf("provision: carry the worktree's task binding: %w", err)
 	}
 	return PrivateStore{Dir: privateDir, SharedDir: sharedDir}, nil
 }

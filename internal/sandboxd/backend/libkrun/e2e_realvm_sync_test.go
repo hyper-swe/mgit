@@ -268,8 +268,10 @@ func launchRealVMForSyncIn(t *testing.T, sandboxID, taskID, worktreeParent strin
 	return syncSandbox{mgr: mgr, id: info.ID, workDir: workDir, worktree: worktree, staged: staged}
 }
 
-// seedProjectWithLinkedWorktree builds a real mgit project with one commit for
-// taskID and a LINKED worktree bound to that task, returning both.
+// seedProjectWithLinkedWorktreeIn builds a real mgit project with one commit
+// for taskID and a LINKED worktree bound to that task, returning both. The
+// worktree goes under parent when one is given (a directory the guest image
+// ships, MGIT-230.7), and under a temp dir otherwise.
 //
 // The linked layout is not incidental. A sandbox is launched against a
 // worktree, and SEC-03 requires the shared object store to live OUTSIDE the
@@ -278,14 +280,7 @@ func launchRealVMForSyncIn(t *testing.T, sandboxID, taskID, worktreeParent strin
 // IS the worktree (its .mgit inside) therefore cannot boot through the
 // production path at all; the earlier version of this file only got away with
 // it by bypassing the manager. This is the layout `mgit work` produces and the
-// one HyperSwe runs. Refs: SEC-03, FR-16, MGIT-76
-func seedProjectWithLinkedWorktree(t *testing.T, taskID string) (project, worktree string) {
-	t.Helper()
-	return seedProjectWithLinkedWorktreeIn(t, taskID, "")
-}
-
-// seedProjectWithLinkedWorktreeIn is seedProjectWithLinkedWorktree with the
-// worktree placed under parent ("" = a t.TempDir()).
+// one HyperSwe runs. Refs: SEC-03, FR-16, MGIT-76, MGIT-230.7
 func seedProjectWithLinkedWorktreeIn(t *testing.T, taskID, parent string) (project, worktree string) {
 	t.Helper()
 	project = t.TempDir()

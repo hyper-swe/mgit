@@ -6,9 +6,8 @@ import (
 	"github.com/go-git/go-billy/v5/osfs"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/cache"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/filesystem"
 )
 
 // CommittedBlobs returns, READ-ONLY, the file set git has COMMITTED at the
@@ -60,7 +59,10 @@ func CommittedBlobs(projectRoot string) (map[string]string, error) {
 // headTree opens the project's git object store read-only and returns the tree
 // of the given commit. Refs: MGIT-123, ADR-008 §6
 func headTree(gitDir, headCommit string) (*object.Tree, error) {
-	storage := filesystem.NewStorage(osfs.New(commonDir(gitDir)), cache.NewObjectLRUDefault())
+	storage, err := NewReadOnlyStorage(osfs.New(commonDir(gitDir)))
+	if err != nil {
+		return nil, fmt.Errorf("%w: read git pack inventory: %w", ErrUnsupportedGitState, err)
+	}
 	// A nil worktree makes this an object-read-only handle: go-git has no
 	// filesystem to write into, so `.git` cannot be mutated through it.
 	repo, err := gogit.Open(storage, nil)
@@ -76,4 +78,46 @@ func headTree(gitDir, headCommit string) (*object.Tree, error) {
 		return nil, fmt.Errorf("%w: read git HEAD tree: %w", ErrUnsupportedGitState, err)
 	}
 	return tree, nil
+}
+
+// CommittedFile is one file of git's committed tree with its content.
+type CommittedFile struct {
+	Path    string
+	Mode    filemode.FileMode
+	Content []byte
+}
+
+// CommittedFiles returns, READ-ONLY, every file git has committed at the
+// project's local HEAD with its mode and content, and the HEAD commit id. It
+// is what a new task's fork-base is built from (MGIT-283): the task starts
+// from what git has committed, never from the checkout's uncommitted state.
+// Errors mirror CommittedBlobs. Refs: MGIT-283, ADR-008 §2,§6
+func CommittedFiles(projectRoot string) ([]CommittedFile, string, error) {
+	gitDir, err := resolveGitDir(projectRoot)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := assertSupportedState(gitDir); err != nil {
+		return nil, "", err
+	}
+	local, err := resolveHead(gitDir)
+	if err != nil {
+		return nil, "", err
+	}
+	tree, err := headTree(gitDir, local.HeadCommit)
+	if err != nil {
+		return nil, "", err
+	}
+	var files []CommittedFile
+	if err := tree.Files().ForEach(func(f *object.File) error {
+		content, err := f.Contents()
+		if err != nil {
+			return err
+		}
+		files = append(files, CommittedFile{Path: f.Name, Mode: f.Mode, Content: []byte(content)})
+		return nil
+	}); err != nil {
+		return nil, "", fmt.Errorf("%w: read git HEAD tree: %w", ErrUnsupportedGitState, err)
+	}
+	return files, local.HeadCommit, nil
 }

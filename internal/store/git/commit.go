@@ -54,6 +54,12 @@ func NewCommitStore(repo *Repository) *CommitStore {
 // timestamp from the injected clock. Staging is cleared on success.
 // Refs: FR-2, FR-3, ADR-002, MGIT-14.3
 func (cs *CommitStore) CreateCommit(_ context.Context, c *model.Commit) (string, error) {
+	return cs.createCommit(c, cs.buildTreeFromStaging)
+}
+
+// createCommit appends the supplied tree using the same ref CAS and metadata
+// for task commits and housekeeping commits. Refs: FR-2, MGIT-290
+func (cs *CommitStore) createCommit(c *model.Commit, buildTree func() (plumbing.Hash, error)) (string, error) {
 	goRepo := cs.repo.repo
 
 	// Set timestamp from injected clock.
@@ -69,7 +75,7 @@ func (cs *CommitStore) CreateCommit(_ context.Context, c *model.Commit) (string,
 	c.ParentID = parentHash.String()
 
 	// Build the new tree from HEAD + staged working files via plumbing.
-	treeHash, err := cs.buildTreeFromStaging()
+	treeHash, err := buildTree()
 	if err != nil {
 		return "", err
 	}
@@ -128,7 +134,19 @@ func (cs *CommitStore) buildTreeFromStaging() (plumbing.Hash, error) {
 		return plumbing.ZeroHash, err
 	}
 
+	// Every entry is judged against HEAD as it is, before any is applied.
+	if err := cs.repo.checkStagedEntries(staged, files); err != nil {
+		return plumbing.ZeroHash, err
+	}
 	for _, rel := range staged {
+		// A tracked file that is now a directory: the entry is its deletion
+		// (checkStagedEntry refused every other directory entry).
+		if isDir, err := cs.repo.isDirOnDisk(rel); err != nil {
+			return plumbing.ZeroHash, err
+		} else if isDir {
+			delete(files, rel)
+			continue
+		}
 		content, mode, err := cs.repo.workingFileContent(rel)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -141,7 +159,12 @@ func (cs *CommitStore) buildTreeFromStaging() (plumbing.Hash, error) {
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
+		replaceInTree(files, rel)
 		files[rel] = blobEntry{hash: blobHash, mode: mode}
+	}
+	if clash := fileDirClash(files); clash != "" {
+		return plumbing.ZeroHash, fmt.Errorf("%w: the commit would record %q as both a file and a directory; "+
+			"stage its deletion or the files under it", model.ErrInvalidStagedEntry, clash)
 	}
 
 	return writeNestedTree(cs.repo.repo.Storer, files)
