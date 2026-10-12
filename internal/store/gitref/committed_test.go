@@ -118,3 +118,23 @@ func dotGitSnapshot(t *testing.T, dir string) map[string]string {
 	}))
 	return snap
 }
+
+// CommittedFiles returns the committed content, never the working tree's.
+// Refs: MGIT-283
+func TestCommittedFiles_ReturnsCommittedContentNotTheWorkingTree(t *testing.T) {
+	root := gitRepoWithCommit(t, "a.txt", "committed\n")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.txt"), []byte("edited\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "untracked.txt"), []byte("u\n"), 0o600))
+
+	files, head, err := CommittedFiles(root)
+	require.NoError(t, err)
+	assert.Len(t, head, 40)
+	require.Len(t, files, 1)
+	assert.Equal(t, "a.txt", files[0].Path)
+	assert.Equal(t, "committed\n", string(files[0].Content))
+}
+
+func TestCommittedFiles_NoGit_ReturnsErrNoGit(t *testing.T) {
+	_, _, err := CommittedFiles(t.TempDir())
+	assert.ErrorIs(t, err, ErrNoGit)
+}

@@ -257,7 +257,9 @@ composed from anything else.
    archive contents (both binaries + `guest/`, MGIT-65), the Gatekeeper
    quarantine behaviour in both directions (MGIT-64), that the shipped binaries
    run, that `mgit` and `mgit-sandboxd` report the SAME build, the libkrun
-   `NET=1` capability (MGIT-61.14), and the Homebrew channel.
+   `NET=1` capability (MGIT-61.14), that the daemon resolves the archive's own
+   `lib/libkrun.1.dylib` with Homebrew's libkrun installed (MGIT-259), and the
+   Homebrew channel.
    - **Why a script.** These were prose, and prose drifted from the binaries
      four times in the 0.4.3 cycle (MGIT-84): a daemon flag that did not exist,
      the same flag reinstated against a release predating it, a missing
@@ -285,9 +287,11 @@ composed from anything else.
      desensitising an operator to malware alerts is worse than skipping one
      check. Set `MGIT_SMOKE_QUARANTINE=1` on a real Mac to run it — that is
      step 7, and it is genuinely manual.
-   - **A missing libkrun is not a broken archive.** `mgit-sandboxd` links
-     libkrun by absolute path on macOS, so on a host without it dyld aborts
-     before `main` — MGIT-75's deliberate fail-closed design. Core `mgit` is
+   - **A missing libkrun is not a broken archive — before MGIT-259.** An
+     archive without `lib/` has `mgit-sandboxd` link a Homebrew libkrun by
+     absolute path, so on a host without it dyld aborts before `main` —
+     MGIT-75's deliberate fail-closed design. An archive that carries
+     `lib/libkrun.1.dylib` must always load, and the script fails it if not. Core `mgit` is
      CGO-free and unaffected. The script tells the two apart by the loader's own
      "Library not loaded" message and skips rather than failing; the first
      version asserted the daemon must run and reported a perfectly good archive

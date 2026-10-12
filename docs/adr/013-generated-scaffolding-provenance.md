@@ -134,3 +134,27 @@ agent remembers an exception is the failure mode MGIT-77 closed.
 - A failure to write the manifest is warned about with its consequence named,
   not swallowed — but it does not abort worktree creation, matching the other
   best-effort wiring legs.
+
+## Amendment (MGIT-82): the checkout guard is not what refuses a fork
+
+The consequence above named a risk: inside a worktree whose project tracks
+`CLAUDE.md`, mgit's block makes the file dirty, so the checkout guard
+(`dirtyTrackedPaths`) could refuse `mgit checkout -b`, the fork the block
+itself prescribes. Reproduced as MGIT-82 asked, the refusal is real but comes
+from elsewhere: a task worktree is bound to one branch (MGIT-24), so
+`checkout`, `checkout -b` and `branch <name>` are refused there before the
+guard is consulted, whatever the state of `CLAUDE.md`. No change to the guard
+or to this ADR's exclusion surface could make the prescribed fork work.
+
+The decision is to prescribe the fork a task worktree allows and to make the
+refusal say it (the ticket's second option: refuse, with the exact command to
+proceed). A new line from a good commit is a new task worktree forked at that
+commit, from the project root: `mgit work <new-path> --task-id <new-task-id>
+--base <good-commit>`. The generated working discipline names that command,
+and the branch-switch refusal names it with the project root to run it from.
+`mgit rollback` and `mgit cherry-pick` work inside the worktree and are
+unchanged. In the parent repository `mgit checkout -b` still forks as before.
+
+The dirty-guard observation in the consequences stands: `mgit status` still
+shows a tracked `CLAUDE.md` carrying mgit's block as modified. It no longer
+blocks a prescribed step.

@@ -214,10 +214,10 @@ func copyRegular(path, target string, info os.FileInfo) error {
 // A failure is tolerated: the seeded copy is more useful with the wrong owner
 // than absent, and mgit-guest runs everything as root inside the guest anyway.
 func chownLike(target string, info os.FileInfo) error {
-	st, ok := info.Sys().(*unix.Stat_t)
+	uid, gid, ok := ownerOf(info)
 	if !ok {
 		return nil
 	}
-	_ = os.Lchown(target, int(st.Uid), int(st.Gid))
+	_ = os.Lchown(target, uid, gid)
 	return nil
 }

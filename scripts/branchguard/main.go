@@ -27,6 +27,8 @@ import (
 	"strings"
 
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/hyper-swe/mgit/internal/store/gitref"
 
 	"github.com/hyper-swe/mgit/internal/branchguard"
 )
@@ -77,6 +79,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "branchguard: open %s: %v\n", *repoPath, err)
+		return exitError
+	}
+
+	// PlainOpen preserves the linked worktree's HEAD/common-dir overlay. Reuse
+	// that filesystem, not a reconstructed common-dir-only reference view.
+	// Refs: FEAT-3.153, MGIT-182
+	original, ok := repo.Storer.(*filesystem.Storage)
+	if !ok {
+		fmt.Fprintln(stderr, "branchguard: unsupported repository storage")
+		return exitError
+	}
+	readStorage, err := gitref.NewReadOnlyStorage(original.Filesystem())
+	if err == nil {
+		repo, err = gogit.Open(readStorage, nil)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "branchguard: read indexed Git packs: %v\n", err)
 		return exitError
 	}
 	opts := branchguard.Options{Branch: *branch, Bases: bases}

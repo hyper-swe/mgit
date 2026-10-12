@@ -18,6 +18,7 @@ func gcCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "gc",
+		Args:  refuseArgs("gc", "It packs the whole store; see `mgit gc --help`."),
 		Short: "Garbage collection — pack loose objects and report stats",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			app, err := openAppFromCwd()

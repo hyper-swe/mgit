@@ -105,7 +105,7 @@ func TestGuestLandDialer_DialGuest_UnknownSandbox_FailsClosed(t *testing.T) {
 	conn, err := newGuestLandDialer(newLiveVMs()).DialGuest(context.Background(), "ghost")
 	assert.Nil(t, conn)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, model.ErrSandboxBackendUnavailable)
+	assert.ErrorIs(t, err, model.ErrSandboxNotRunning)
 }
 
 // TestGuestLandDialer_DialGuest_AfterRemove_FailsClosed verifies a torn-down
@@ -118,7 +118,7 @@ func TestGuestLandDialer_DialGuest_AfterRemove_FailsClosed(t *testing.T) {
 
 	conn, err := newGuestLandDialer(reg).DialGuest(context.Background(), "sb-gone")
 	assert.Nil(t, conn)
-	assert.ErrorIs(t, err, model.ErrSandboxBackendUnavailable)
+	assert.ErrorIs(t, err, model.ErrSandboxNotRunning)
 }
 
 // TestGuestDialer_DialGuest_UnknownSandbox_FailsClosed verifies a sandbox
@@ -127,7 +127,7 @@ func TestGuestDialer_DialGuest_UnknownSandbox_FailsClosed(t *testing.T) {
 	conn, err := newGuestExecDialer(newLiveVMs()).DialGuest(context.Background(), "ghost")
 	assert.Nil(t, conn)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, model.ErrSandboxBackendUnavailable)
+	assert.ErrorIs(t, err, model.ErrSandboxNotRunning)
 }
 
 // TestGuestDialer_DialGuest_ConnectorError_FailsClosed verifies a framework
@@ -153,7 +153,7 @@ func TestGuestDialer_DialGuest_AfterRemove_FailsClosed(t *testing.T) {
 
 	conn, err := newGuestExecDialer(reg).DialGuest(context.Background(), "sb-gone")
 	assert.Nil(t, conn)
-	assert.ErrorIs(t, err, model.ErrSandboxBackendUnavailable)
+	assert.ErrorIs(t, err, model.ErrSandboxNotRunning)
 }
 
 // TestLiveVMs_PutGetRemove covers the registry's lookup lifecycle.

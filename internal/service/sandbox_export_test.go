@@ -126,7 +126,7 @@ func TestSandboxService_ExportArtifact_UnbootedSandbox_IsRefused(t *testing.T) {
 	_, err = svc.ExportArtifact(context.Background(), "MGIT-73",
 		model.ArtifactExportRequest{GuestPath: "out", HostPath: filepath.Join(t.TempDir(), "x")})
 
-	require.ErrorIs(t, err, model.ErrSandboxBackendUnavailable)
+	require.ErrorIs(t, err, model.ErrSandboxNotRunning)
 }
 
 func TestSandboxService_ExportArtifact_InvalidRequest_IsRejectedBeforeTheBackend(t *testing.T) {

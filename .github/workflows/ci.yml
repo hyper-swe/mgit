@@ -21,12 +21,12 @@ permissions:
 
 env:
   # Pin the toolchain to the one setup-go installs, and forbid Go from
-  # downloading another. Without this, go.mod's `toolchain` directive makes
+  # downloading another. Without this, automatic toolchain selection makes
   # Go fetch golang.org/toolchain AS A MODULE into the module cache; setup-go
   # then caches that directory, and the next run's restore collides with the
   # toolchain setup-go itself installed -- `gtar: Cannot open: File exists`,
-  # which is a hard job failure. Keep this in step with go.mod's toolchain
-  # line and the go-version pins below. Refs: MGIT-118
+  # which is a hard job failure. The sole version is go.mod's go directive;
+  # setup-go and the container recipe read it, then assert the installed binary. Refs: MGIT-118
   GOTOOLCHAIN: local
 
 jobs:
@@ -38,7 +38,10 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Run tests with race detector
         run: go test ./... -race -count=1
@@ -57,6 +60,7 @@ jobs:
           bash scripts/ci/guard-fetch.sh -t 120 -l govulncheck-install \
             -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
             go install golang.org/x/vuln/cmd/govulncheck@latest
+          python3 scripts/ci/check-go-toolchain.py
           govulncheck ./...
 
       # Every third-party fetch reachable from CI is guarded or a declared
@@ -107,6 +111,33 @@ jobs:
       - name: Test coverage
         run: make test-cover
 
+  # The whole suite, in a checkout shaped like the release job's. The release
+  # job's workspace also holds dist-prebuilt/, dist-sources/ and dist/, and a
+  # test that walks the repository's working tree met a path there that main's
+  # checkout never has: the v0.7.0 release failed in its before-hook with the
+  # suite green here. The command is the release hook's own. The shape is one
+  # committed script, pinned to release.yml by a packaging test. Refs: MGIT-281
+  release-shaped:
+    name: Tests in a release-shaped workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
+
+      - name: Build the release-shaped workspace
+        run: bash scripts/ci/release-workspace-shape.sh
+
+      - name: Run the release hook's tests
+        run: go test ./... -count=1
+
   # The BACKSTOP for the MGIT-142 branch-scope tripwire, not the tripwire
   # itself. The guard's real position is the pre-push hook (scripts/hooks/
   # pre-push), which fires before the pull request exists; this job repeats it
@@ -125,15 +156,23 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Fetch every branch, so an inherited one can be recognized
         run: git fetch --no-tags --prune origin "+refs/heads/*:refs/remotes/origin/*"
 
+      # Against the pull request's OWN base: a stacked pull request's base is
+      # another open pull request's branch, and judged against main it would
+      # carry that branch's commits as not its own (MGIT-257). The base comes
+      # through the environment; main only if an event carries none.
       - name: Check the head branch's scope
         env:
           HEAD_REF: ${{ github.head_ref }}
-        run: go run ./scripts/branchguard --branch "origin/$HEAD_REF" --base origin/main
+          BASE_REF: ${{ github.base_ref }}
+        run: go run ./scripts/branchguard --branch "origin/$HEAD_REF" --base "origin/${BASE_REF:-main}"
 
   # The libkrun backend is opt-in at build time on Linux (-tags libkrun) and
   # the default on macOS (ADR-010's GA backend split); the pure-Go `test` job
@@ -150,7 +189,7 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
 
       # Cache Homebrew's DOWNLOADS, not its installs. libkrun's dependency
       # virglrenderer is the one formula built FROM SOURCE, and it fetches its
@@ -163,6 +202,9 @@ jobs:
       # so a corrupted or wrong-version entry fails the install rather than
       # building something unexpected. restore-keys lets an older entry serve a
       # newer formula's unchanged sources. Refs: MGIT-119
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
+
       - name: Cache Homebrew downloads
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -187,6 +229,21 @@ jobs:
           export PKG_CONFIG_PATH="$(brew --prefix libkrun)/lib/pkgconfig"
           export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix libkrunfw)/lib:$(brew --prefix libkrun)/lib"
           make test-libkrun   # includes check-libkrun-net (MGIT-61.14)
+
+      # LINT WHAT UBUNTU CANNOT SEE. golangci-lint sees only files whose build
+      # tags match its host, and the test job lints on ubuntu without the
+      # libkrun tag, so darwin-only files, and (darwin || linux && libkrun)
+      # files such as the libkrun real-VM suite, were linted by no job. An
+      # unused test helper reached main that way (#173). This job already has
+      # libkrun and its cgo binding, so it lints the darwin view at the same
+      # pinned version. Refs: MGIT-253
+      - name: pkg-config path for the cgo binding, for the lint below
+        run: echo "PKG_CONFIG_PATH=$(brew --prefix libkrun)/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      - name: Run linter (darwin view, libkrun linked)
+        uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7.0.1
+        with:
+          version: v2.11.3
 
   # Proves `brew install` of the formula works for a user who does NOT have
   # libkrun -- the first-hour macOS install (MGIT-75).
@@ -215,7 +272,10 @@ jobs:
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
 
       - name: Install mgit from the repo formula on a libkrun-free runner
         run: scripts/brew-install-no-libkrun.sh
@@ -292,6 +352,7 @@ jobs:
         # Refs: MGIT-229, MGIT-143
         run: |
           bash scripts/release/linux-build-prereqs.sh
+          PATH="/usr/local/go/bin:$PATH" bash scripts/ci/assert-go-version.sh
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
@@ -340,3 +401,15 @@ jobs:
         run: |
           go build -buildvcs=false -tags libkrun ./...
           go vet -tags libkrun ./internal/sandboxd/backend/libkrun/ ./cmd/mgit-sandboxd/
+
+      # The daemon's own wiring under the libkrun tag: which egress controller
+      # a Linux libkrun daemon installs is decided by build tags, so only a run
+      # with this tag can see it. The 0.7.1 daemon installed the firecracker
+      # one and failed every allowlist sandbox at boot. Unit tests only: no VM
+      # is booted here. Refs: MGIT-287
+      - name: The daemon's wiring under the libkrun tag
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib64/pkgconfig
+          LIBRARY_PATH: /usr/local/lib64
+          LD_LIBRARY_PATH: /usr/local/lib64
+        run: go test -buildvcs=false -tags libkrun ./cmd/mgit-sandboxd/ -count=1

@@ -82,7 +82,9 @@ func orUnnamed(vmm string) string {
 func vmmRemedy(vmm, goos string) string {
 	switch {
 	case vmm == model.BackendLibkrun && goos == "darwin":
-		return "Install the hypervisor library (libkrunfw ships as a dependency of the libkrun formula): " +
+		return "The macOS release ships libkrun in lib/ beside mgit-sandboxd (install.sh and Homebrew put " +
+			"it in <prefix>/lib/mgit); if it is missing, reinstall from the release archive. libkrunfw, the " +
+			"guest kernel library, comes from Homebrew (it ships as a dependency of the libkrun formula): " +
 			"`brew tap libkrun/krun && brew trust libkrun/krun && brew install libkrun`; " +
 			"details: docs/INSTALL-SANDBOX.md"
 	case vmm == model.BackendLibkrun:

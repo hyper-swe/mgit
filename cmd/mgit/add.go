@@ -55,12 +55,18 @@ func addCmd() *cobra.Command {
 				return fmt.Errorf("specify files to add, or use --all")
 			}
 
-			for _, path := range args {
-				if err := ws.Add(ctx, path); err != nil {
+			// Paths resolve against the working directory, as git's do.
+			// Refs: MGIT-278.1
+			rels, err := projectPaths(app.Repo.Root(), args)
+			if err != nil {
+				return fmt.Errorf("add: %w", err)
+			}
+			for i, path := range args {
+				if err := ws.Add(ctx, rels[i]); err != nil {
 					return addError("add "+path, err)
 				}
 				_, _ = fmt.Fprintf(os.Stdout, "Staged: %s\n", path)
-				warnIfGenerated(cmd.ErrOrStderr(), ws, path)
+				warnIfGenerated(cmd.ErrOrStderr(), ws, rels[i])
 			}
 			return nil
 		},

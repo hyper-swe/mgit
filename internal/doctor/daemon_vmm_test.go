@@ -57,7 +57,7 @@ func TestDaemonVMMCheck_Verdicts(t *testing.T) {
 			probe:       vmmProbe(DaemonVMM{Path: "/opt/homebrew/bin/mgit-sandboxd", Report: noKernel}, nil),
 			wantStatus:  StatusFailed,
 			wantSummary: []string{"no guest can boot"},
-			wantRemedy:  []string{"brew install libkrun"},
+			wantRemedy:  []string{"brew install libkrun", "lib/", "release archive"},
 		},
 		{
 			name: "firecracker_problem_names_the_prerequisite",

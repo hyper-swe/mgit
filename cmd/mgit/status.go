@@ -19,6 +19,7 @@ func statusCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "status",
+		Args:  refusePaths("status", statusPathRemedy),
 		Short: "Show working tree status",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			app, err := openAppFromCwd()

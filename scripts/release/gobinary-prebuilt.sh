@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # goreleaser's build `tool` (formerly `gobinary`) for the mgit-sandboxd-linux
-# build: hands goreleaser
+# and mgit-sandboxd-darwin builds: hands goreleaser
 # the libkrun-linked daemon that scripts/release/build-linux-sandboxd.sh built
 # in ubuntu:20.04, instead of compiling one here.
 #
@@ -24,8 +24,12 @@
 #     archive must report one build. A snapshot's version is goreleaser's own
 #     invention, so a snapshot says it did not compare, and why.
 #
-# Env: MGIT_LINUX_PREBUILT  directory holding linux_amd64/ and/or linux_arm64/
-#      GOOS, GOARCH         set by goreleaser for the target
+# darwin/arm64: scripts/release/build-darwin-sandboxd.sh builds it on an Apple
+# Silicon Mac. Refs: MGIT-259
+#
+# Env: MGIT_LINUX_PREBUILT   directory holding linux_amd64/ and/or linux_arm64/
+#      MGIT_DARWIN_PREBUILT  directory holding darwin_arm64/
+#      GOOS, GOARCH          set by goreleaser for the target
 set -euo pipefail
 
 say() { echo "gobinary-prebuilt: $*" >&2; }
@@ -45,9 +49,17 @@ done
 if [ "$(basename "$out")" != mgit-sandboxd ]; then
 	die "goreleaser asked for $(basename "$out"); this stand-in serves only mgit-sandboxd"
 fi
-[ "${GOOS:-}" = linux ] || die "the prebuilt daemon is Linux-only; asked for GOOS=${GOOS:-unset}"
-[ -n "${MGIT_LINUX_PREBUILT:-}" ] || die "MGIT_LINUX_PREBUILT is not set: build the daemon with scripts/release/build-linux-sandboxd.sh (in ubuntu:20.04) and point MGIT_LINUX_PREBUILT at the directory holding linux_<arch>/"
-src="$MGIT_LINUX_PREBUILT/linux_${GOARCH:?GOARCH unset}"
+case "${GOOS:-}/${GOARCH:-}" in
+linux/?*)
+	[ -n "${MGIT_LINUX_PREBUILT:-}" ] || die "MGIT_LINUX_PREBUILT is not set: build the daemon with scripts/release/build-linux-sandboxd.sh (in ubuntu:20.04) and point MGIT_LINUX_PREBUILT at the directory holding linux_<arch>/"
+	src="$MGIT_LINUX_PREBUILT/linux_$GOARCH"
+	;;
+darwin/arm64)
+	[ -n "${MGIT_DARWIN_PREBUILT:-}" ] || die "MGIT_DARWIN_PREBUILT is not set: build the daemon with scripts/release/build-darwin-sandboxd.sh (on an Apple Silicon Mac) and point MGIT_DARWIN_PREBUILT at the directory holding darwin_arm64/"
+	src="$MGIT_DARWIN_PREBUILT/darwin_arm64"
+	;;
+*) die "the prebuilt daemon is Linux and darwin/arm64 only; asked for GOOS=${GOOS:-unset} GOARCH=${GOARCH:-unset}" ;;
+esac
 [ -f "$src/mgit-sandboxd" ] || die "no prebuilt daemon at $src/mgit-sandboxd"
 [ -f "$src/MANIFEST.sha256" ] || die "no MANIFEST.sha256 in $src"
 
@@ -95,4 +107,4 @@ cp "$src"/lib/* "$dest/lib/"
 cp "$src"/THIRD_PARTY/* "$dest/THIRD_PARTY/"
 cp "$src/buildinfo.json" "$dest/"
 check_manifest "$dest"
-say "linux/$GOARCH: $out <- $src (manifest verified in and out)"
+say "$GOOS/$GOARCH: $out <- $src (manifest verified in and out)"

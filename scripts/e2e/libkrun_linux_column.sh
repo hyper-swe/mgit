@@ -85,8 +85,14 @@ FLAKY=""
 
 # Measurements, not capabilities: they need an input CI does not supply and are
 # allowed to skip.
+#
+# ListingADanglingLinkInTheShare is MGIT-225's receipt for the macOS share: it
+# was measured against stock and patched libkrun on Apple Silicon, not on
+# Linux/KVM. It sits here, gated neither way, until a KVM run measures it; then
+# it moves to VALIDATED or KNOWN_GAP like any other. Refs: MGIT-225
 OPTIONAL="
 TestE2E_Libkrun_RealVM_NpmTreePerf
+TestE2E_Libkrun_RealVM_ListingADanglingLinkInTheShare_PrintsNoError
 "
 
 # The subset the tripwire actually runs, one per gap mechanism.

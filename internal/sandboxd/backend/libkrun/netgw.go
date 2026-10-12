@@ -364,8 +364,9 @@ func (g *netGateway) handleForward(r *tcp.ForwarderRequest) {
 // server) reuses that machinery unchanged. Refs: SEC-09, FR-17.8
 func (g *netGateway) DialGuestPort(ctx context.Context, port int) (net.Conn, error) {
 	if port < 1 || port > 65535 {
-		return nil, fmt.Errorf("%w: guest port %d out of range",
-			model.ErrSandboxBackendUnavailable, port)
+		// An invalid request, not a missing backend. Refs: MGIT-232.1
+		return nil, &model.ValidationError{Field: "publish_port",
+			Message: fmt.Sprintf("guest port %d is out of range 1-65535", port)}
 	}
 	// The guest's return address is only known once it has transmitted, and
 	// until then outbound frames have nowhere to go. A booted guest ARPs the
