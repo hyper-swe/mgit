@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `mgit init` in a directory that already has files now records those files
+  (ignore rules applied; `.git` and `.mgit` left out) as the base. Before, the
+  store started empty, so the first task's `--to-git` patch carried every
+  existing file and `git apply` failed on a checkout that already had them
+  with "already exists in working directory". The base is a sync-style commit
+  with no task, which `mgit verify` does not flag. A directory with no files
+  keeps the empty base.
+
 ## [0.7.3] - 2026-10-11
 
 `linux_arm64` is build-verified and not boot-verified: it is built and
