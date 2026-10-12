@@ -115,25 +115,22 @@ func TestLinuxUserPath_TheTmpLabelComparesPhysicalPaths(t *testing.T) {
 	}
 }
 
-// THE CANARY RECORDS WHETHER THE CACHE DROP TOOK EFFECT. A sync's settle step
-// asks the guest to drop its caches (`sync; echo 2 > /proc/sys/vm/drop_caches`)
-// before it reads the delivered paths back, and deliberately does not consult
-// the result (internal/sandboxd/backend/microvm/settle.go). It runs as the
-// exec identity, which is unprivileged since MGIT-151, and only root may
-// write drop_caches. So "the deleted path was gone at once" did not say
-// whether the drop worked or the guest simply held no stale name.
-// MGIT-230.2's acceptance asks the leg to record it. Step 7b now runs the
-// settle's own drop, as the same identity, and prints whether it took
-// effect. Refs: MGIT-230.2
-func TestE2E_TheCanaryRecordsWhetherTheCacheDropTookEffect(t *testing.T) {
+// THE CANARY'S DROP RECORD NAMES THE IDENTITY IT RAN AS. Step 7b runs
+// `sync; echo 2 > /proc/sys/vm/drop_caches` through `mgit run` and prints
+// whether the drop took effect. `mgit run` runs as the daemon's identity,
+// the agent's (MGIT-151). The settle step's own execs do not use that
+// identity (MGIT-270), so a line that called this "the settle's cache drop"
+// read as an instrument of the settle that it is not. It now names the
+// identity it measured, and no line calls it the settle's. The command is
+// unchanged. Refs: MGIT-270, MGIT-230.2
+func TestE2E_TheCanaryDropRecordNamesTheIdentityItRanAs(t *testing.T) {
 	script := readRepoFile(t, filepath.Join("scripts", "e2e", "linux_user_path.sh"))
 	for _, want := range []string{
-		// the same command the settle step runs, as the same (default) identity
 		`mgit run -- sh -c 'sync; echo 2 > /proc/sys/vm/drop_caches && echo took-effect || echo did-not-take-effect'`,
-		`echo "  the settle's cache drop, as the exec identity: $drop"`,
+		`echo "  a cache drop as the agent's identity (mgit run; not the settle step's identity): $drop"`,
 	} {
-		assert.Contains(t, script, want, "the canary records the drop: %q", want)
+		assert.Contains(t, script, want, "the record names the identity it ran as: %q", want)
 	}
-	assert.NotContains(t, script, "mgit sandbox exec --task-id \"$TASK\" --as-root -- /bin/sh -c 'sync; echo 2",
-		"the drop is measured as the identity the settle step uses, never as root")
+	assert.False(t, strings.Contains(script, "the settle's cache drop"),
+		"no line labels the mgit run measurement as the settle's cache drop")
 }
