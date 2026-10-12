@@ -33,11 +33,19 @@ sha() {
   [[ "$val" =~ ^[0-9a-f]{64}$ ]] && ok "$name is a sha256" || bad "$name is not a 64-hex sha256 (got '${val}')"
 }
 
-for t in GO JRE TLC GOLANGCI_LINT GOVULNCHECK NODE; do
+# Per-architecture binary archives.
+for t in GO JRE GOLANGCI_LINT NODE; do
   need "${t}_VERSION"
   sha "${t}_SHA256_AMD64"
   sha "${t}_SHA256_ARM64"
 done
+# Architecture-independent: the TLC jar, and govulncheck, built from source in
+# the base from a module pinned by its go.sum hash.
+need TLC_VERSION
+sha TLC_SHA256
+need GOVULNCHECK_VERSION
+h1="${GOVULNCHECK_MODULE_H1:-}"
+[[ "$h1" =~ ^h1:[A-Za-z0-9+/]{43}=$ ]] && ok "GOVULNCHECK_MODULE_H1 is a go.sum hash" || bad "GOVULNCHECK_MODULE_H1 is not an h1: hash (got '$h1')"
 
 gomod="$(awk '/^go /{print $2; exit}' "$root/go.mod")"
 [ "${GO_VERSION:-}" = "$gomod" ] && ok "GO_VERSION matches go.mod ($gomod)" || bad "GO_VERSION '${GO_VERSION:-}' != go.mod '$gomod'"
