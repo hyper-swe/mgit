@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -14,13 +15,19 @@ import (
 // the whole-tree checkpoint-recovery primitive). Refs: FR-6.7, MGIT-4.2.8, MGIT-55
 func restoreCmd() *cobra.Command {
 	var commitHash string
-	var formatJSON, all, force bool
+	var formatJSON, all, force, staged bool
 
 	cmd := &cobra.Command{
-		Use:   "restore [file] [commit]",
-		Short: "Restore a file — or with --all the whole working tree — from a commit",
-		Args:  cobra.RangeArgs(0, 2),
+		Use:   "restore [file] [commit] | restore --staged <path>...",
+		Short: "Restore a file — or with --all the whole working tree — from a commit; or unstage paths",
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(_ *cobra.Command, args []string) error {
+			if staged {
+				return runUnstage(args, formatJSON)
+			}
+			if len(args) > 2 {
+				return fmt.Errorf("restore takes at most a file and a commit (got %d arguments)", len(args))
+			}
 			// Resolve the source commit. Per-file form: `restore <file> <commit>`
 			// or `restore <file> --commit <hash>`. Whole-tree form:
 			// `restore --all <commit>` or `restore --all --commit <hash>`.
@@ -91,6 +98,38 @@ func restoreCmd() *cobra.Command {
 	cmd.Flags().StringVar(&commitHash, "commit", "", "Commit to restore from (required)")
 	cmd.Flags().BoolVar(&all, "all", false, "Restore the entire working tree to the commit's state (restored paths are staged; no commit is created)")
 	cmd.Flags().BoolVar(&force, "force", false, "With --all: restore over uncommitted local changes (checkpoint recovery)")
+	cmd.Flags().BoolVar(&staged, "staged", false,
+		"Unstage the named paths (a directory unstages everything under it); the working tree is not touched")
 	cmd.Flags().BoolVar(&formatJSON, "json", false, "Output as JSON")
 	return cmd
+}
+
+// runUnstage is `mgit restore --staged <path>...`: it removes the named
+// entries, or everything under a named directory, from the staging area and
+// leaves the rest staged. Refs: MGIT-276
+func runUnstage(paths []string, formatJSON bool) error {
+	app, err := openAppFromCwd()
+	if err != nil {
+		return err
+	}
+	defer app.Close()
+	rels, err := projectPaths(app.Repo.Root(), paths)
+	if err != nil {
+		return fmt.Errorf("restore --staged: %w", err)
+	}
+	removed, err := app.Restore.Unstage(context.Background(), rels)
+	if err != nil {
+		return err
+	}
+	if formatJSON {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"unstaged": removed})
+	}
+	if len(removed) == 0 {
+		_, _ = fmt.Fprintf(os.Stdout, "Nothing staged at %s\n", strings.Join(paths, " "))
+		return nil
+	}
+	for _, p := range removed {
+		_, _ = fmt.Fprintf(os.Stdout, "Unstaged: %s\n", p)
+	}
+	return nil
 }

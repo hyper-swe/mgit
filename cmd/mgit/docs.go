@@ -36,6 +36,7 @@ func docsCmd() *cobra.Command {
 	var force bool
 	genCmd := &cobra.Command{
 		Use:   "generate",
+		Args:  refuseArgs("docs generate", "It regenerates every documentation file; see `mgit docs generate --help`."),
 		Short: "Generate all documentation files",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			cwd, err := os.Getwd()

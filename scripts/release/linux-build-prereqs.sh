@@ -19,7 +19,12 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 GUARD="$here/../ci/guard-fetch.sh"
-GO_VERSION="${MGIT_GO_VERSION:-1.26.6}"
+module_go_version="$(awk '$1 == "go" { print $2 }' "$here/../../go.mod")"
+GO_VERSION="${MGIT_GO_VERSION:-$module_go_version}"
+[[ "$GO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    echo "linux-build-prereqs: invalid Go toolchain in go.mod or MGIT_GO_VERSION" >&2
+    exit 1
+}
 
 [ "$(id -u)" = 0 ] || { echo "linux-build-prereqs: run as root (inside the build container)" >&2; exit 1; }
 case "$(uname -m)" in
@@ -29,9 +34,18 @@ aarch64) goarch=arm64 ;;
 esac
 
 apt_restore='rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/partial/*; dpkg --configure -a'
-"$GUARD" -t 300 -l apt-update -c "$apt_restore" -- apt-get update -qq
-DEBIAN_FRONTEND=noninteractive "$GUARD" -t 600 -l apt-install-libkrun-prereqs -c "$apt_restore" -- \
-	apt-get install -y -qq --no-install-recommends \
+# -q, not -qq: apt then prints each fetch as it happens, so a slow mirror is
+# visible while it is slow rather than as a silent bound expiring (MGIT-229).
+# The bounds follow the MGIT-143 rule. The two calls' histories cannot yet be
+# told apart: under -qq apt printed nothing while it fetched. The slowest
+# successful run of the step that makes both calls (n=42, 2026-09-23..24)
+# spent about 205 s inside them together, so each is bounded as if it alone
+# had taken that long: 4 x 205 s = 820 s, up the ladder to 900 s. Now that
+# -q prints every fetch, a later run can measure the calls apart and
+# tighten this. Refs: MGIT-143, MGIT-243
+"$GUARD" -t 900 -l apt-update -c "$apt_restore" -- apt-get update -q
+DEBIAN_FRONTEND=noninteractive "$GUARD" -t 900 -l apt-install-libkrun-prereqs -c "$apt_restore" -- \
+	apt-get install -y -q --no-install-recommends \
 	build-essential flex bison libelf-dev python3-pyelftools bc cpio \
 	pkg-config curl git ca-certificates patchelf binutils \
 	libclang1-18 libclang-18-dev libclang-common-18-dev libllvm18
@@ -43,6 +57,10 @@ if ! /usr/local/go/bin/go version 2>/dev/null | grep -q "go$GO_VERSION "; then
 	tar -C /usr/local -xzf /tmp/go.tgz
 	rm -f /tmp/go.tgz
 fi
+
+# Print the actual installed compiler, not only the requested pin: this is
+# the receipt for the container jobs that supply the published Linux daemon.
+/usr/local/go/bin/go version
 
 if [ ! -x "$HOME/.cargo/bin/rustup" ]; then
 	"$GUARD" -t 120 -l rustup-installer -c 'rm -f /tmp/rustup.sh' -- \

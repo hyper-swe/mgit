@@ -215,3 +215,28 @@ func TestContainer_NewManager_ProvisionerRequiresWorkDir(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "work dir")
 }
+
+// THE STAGED GUEST TREE CARRIES THE WORKTREE'S GENERATED LIST (MGIT-236).
+// The guest's mgit reads <worktree>/.mgit/generated to keep mgit's own
+// agent files out of bulk staging, and in the guest that .mgit is the
+// private store. Launched through the real provisioner and staging, the
+// tree the container mounts names exactly what the host worktree recorded.
+// Refs: MGIT-236, MGIT-80, SEC-03
+func TestContainer_Quarantine_TheGuestReadsTheWorktreesGeneratedList(t *testing.T) {
+	fx := setupQuarantineFixture(t)
+	recorded := []string{".claude/settings.json", "AGENTS.md", "CLAUDE.md"}
+	require.NoError(t, gitstore.RecordGeneratedPaths(fx.wtPath, recorded))
+
+	runner := &fakeRunner{}
+	mgr := quarantinedManager(t, runner, fx)
+	_, err := mgr.Launch(context.Background(), launchOpts(fx))
+	require.NoError(t, err)
+
+	runs := runner.callsFor("run")
+	require.Len(t, runs, 1)
+	src := runVolumeSource(t, runs[0], fx.wtPath)
+	require.NotEmpty(t, src)
+	got, err := gitstore.ReadGeneratedPaths(src)
+	require.NoError(t, err)
+	assert.Equal(t, recorded, got, "the guest excludes what the host worktree excludes")
+}

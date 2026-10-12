@@ -66,7 +66,6 @@ func TestGenDoc_StatesWorkingDiscipline(t *testing.T) {
 	assert.Contains(t, s, "mgit diff")
 	// Course-correction (backtrack / fork / salvage), reviewer-directable.
 	assert.Contains(t, s, "mgit rollback")
-	assert.Contains(t, s, "mgit checkout")
 	assert.Contains(t, s, "mgit cherry-pick")
 	// `mgit run` routes the shell.
 	assert.Contains(t, s, "mgit run")
@@ -183,4 +182,36 @@ func TestGenDoc_StatesResourceCeilingAndForbidsReshapingTheProject(t *testing.T)
 func TestGenDoc_UnknownResourceCaps_OmitsTheSection(t *testing.T) {
 	s := RenderClaudeMdSection(SandboxEnv{WorktreePath: filepath.FromSlash("/repo/wt"), NetworkMode: "none"})
 	assert.NotContains(t, s, "### Resources")
+}
+
+// THE BLOCK NAMES THE VERB THAT WROTE IT (MGIT-222). `sandbox launch` writes
+// this block into a worktree it did not create, and the block said "`mgit
+// work` wrote this worktree's agent scaffolding", which sends a reader after
+// a command nobody ran. Only `mgit work` writes the agent config under
+// .claude/, so only its block says so. Refs: MGIT-222
+func TestGenDoc_NamesTheVerbThatWroteIt(t *testing.T) {
+	launch := RenderClaudeMdSection(SandboxEnv{WorktreePath: "/wt", NetworkMode: "none", WrittenBy: "mgit sandbox launch"})
+	assert.Contains(t, launch, "`mgit sandbox launch` wrote this worktree's agent scaffolding")
+	assert.NotContains(t, launch, "`mgit work` wrote")
+	assert.NotContains(t, launch, "config under `.claude/`", "launch writes no agent config")
+
+	work := RenderClaudeMdSection(SandboxEnv{WorktreePath: "/wt", NetworkMode: "none", WrittenBy: "mgit work"})
+	assert.Contains(t, work, "`mgit work` wrote this worktree's agent scaffolding")
+	assert.Contains(t, work, "config under `.claude/`")
+}
+
+// THE FORK THE BLOCK PRESCRIBES MUST WORK WHERE THE BLOCK IS READ (MGIT-82).
+// This block is written into a task worktree, and a task worktree is bound to
+// one branch: `mgit checkout -b` and `mgit branch <name>` are refused there by
+// design (MGIT-24). The block told the agent to fork with `mgit checkout -b`,
+// so the course-correction step it prescribed failed every time an agent
+// followed it. A new line from a good commit is a new task worktree forked at
+// that commit, which is what `mgit work --base` does. Refs: MGIT-82, MGIT-24
+func TestGenDoc_CourseCorrectionForksWithACommandAWorktreeAllows(t *testing.T) {
+	s := RenderClaudeMdSection(SandboxEnv{WorktreePath: "/repo/wt", NetworkMode: "none"})
+
+	assert.NotContains(t, s, "mgit checkout -b", "refused inside a task worktree (MGIT-24)")
+	assert.NotContains(t, s, "mgit branch <", "refused inside a task worktree (MGIT-24)")
+	assert.Contains(t, s, "mgit work <new-path> --task-id <new-task-id> --base <good-commit>")
+	assert.Contains(t, s, "from the project root")
 }

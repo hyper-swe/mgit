@@ -65,7 +65,7 @@ func currentMgitBin() string {
 // (MGIT-80) — this path also fires for a worktree created by the plumbing
 // `mgit worktree add`, which generates nothing until a sandbox is launched.
 // Refs: MGIT-11.11.2, MGIT-80
-func writeSandboxEnvDoc(warn io.Writer, info *model.SandboxInfo) {
+func writeSandboxEnvDoc(warn io.Writer, info *model.SandboxInfo, writtenBy string) {
 	if info == nil || info.WorktreePath == "" {
 		return
 	}
@@ -76,8 +76,9 @@ func writeSandboxEnvDoc(warn io.Writer, info *model.SandboxInfo) {
 		// The effective resource ceiling, stated where the agent reads its
 		// environment — so a workload that does not fit is reported rather
 		// than designed around (R-H212).
-		CPUs:     info.CPUs,
-		MemoryMB: info.MemoryMB,
+		CPUs:      info.CPUs,
+		MemoryMB:  info.MemoryMB,
+		WrittenBy: writtenBy,
 	}
 	if err := agentadapter.UpsertClaudeMd(info.WorktreePath, env); err != nil {
 		_, _ = fmt.Fprintf(warn, "warning: could not update CLAUDE.md sandbox section (%v)\n", err)

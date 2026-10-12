@@ -329,6 +329,45 @@ go vet ./...
 govulncheck ./...
 ```
 
+## Workflow Actions Are Pinned
+
+Every third-party action in `.github/workflows` is pinned to the full commit
+SHA of a release, with the release named in a trailing comment:
+
+```yaml
+- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+```
+
+Whoever controls an action's repository can move a tag such as `@v4` to
+other code, and the workflow would then run that code with its own
+permissions. The release workflow's permissions include the signing
+identity. A commit SHA cannot move.
+`TestWorkflows_PinEveryThirdPartyActionToAFullCommitSHA`
+(`internal/packaging`) fails on any other form. References to this
+repository's own workflows (`./...`) are exempt. Tools installed *by* an
+action are pinned by that action's version input (for example
+`cosign-release`), which `scripts/ci/check-pinned-tools.sh` checks.
+
+To move a pin to a new release:
+
+1. Pick the release in the action's own repository, for example `v4.5.0`.
+2. Resolve its tag to a commit from two sources, and check they agree:
+
+   ```bash
+   gh api repos/actions/checkout/commits/v4.5.0 --jq .sha
+   git ls-remote https://github.com/actions/checkout 'refs/tags/v4.5.0' 'refs/tags/v4.5.0^{}'
+   ```
+
+   An annotated tag prints two lines; the `^{}` line is the commit it
+   points to, and that is the SHA to use.
+3. Replace every `@<old-sha> # <old-version>` of that action with the new
+   pair, in every workflow. One action gets one SHA across the repository.
+4. Run `go test ./internal/packaging/ -run TestWorkflow` and
+   `make check-pinned-tools`.
+5. Name the old and new version of each action in the pull request. A
+   change to `release.yml` is a reserved path: it waits for the owner's
+   confirmation before it merges.
+
 ## Submitting Changes
 
 1. Fork the repository

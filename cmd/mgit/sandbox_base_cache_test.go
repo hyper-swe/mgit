@@ -232,7 +232,10 @@ func TestSandboxBaseFrom_ATagThatMoved_AddsAnEntryAndSaysWhatChanged(t *testing.
 		"--guest-bin-dir", fakeGuestBins(t), "--plain-http")
 	require.NoError(t, err, "base from: %s", out)
 
-	assert.Contains(t, out, "image index", "the NOTE says what a differing digest can also mean across the 0.6.8 line: an older compose pinned the platform manifest")
+	// The NOTE used to hedge that a differing digest "differs even when
+	// nothing moved" across the 0.6.8 line. MGIT-223 tells that case apart
+	// (like with like), so a NOTE that is printed is a finding, not a maybe.
+	assert.NotContains(t, out, "even when nothing moved", "a moved-tag NOTE is a finding; the kind change has its own line")
 	assert.Contains(t, out, "now resolves to a different image",
 		"a moved tag must be reported, not absorbed silently:\n%s", out)
 	assert.Contains(t, out, firstDoc["base_digest"].(string),

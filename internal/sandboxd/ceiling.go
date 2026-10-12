@@ -60,6 +60,27 @@ func NewCeilingManager(inner model.SandboxManager, maxConcurrent, maxTotalMemory
 	}
 }
 
+// SupportsNetworkMode forwards the backend's model.NetworkModeEnforcer check.
+// The daemon hands the service this wrapper, and the service finds optional
+// checks by type assertion, so a check the wrapper does not forward never
+// runs: MGIT-111's registration-time refusal did not, until MGIT-251. A
+// backend without the check has no objection. Refs: MGIT-251, MGIT-111
+func (c *CeilingManager) SupportsNetworkMode(mode string) error {
+	if e, ok := c.inner.(model.NetworkModeEnforcer); ok {
+		return e.SupportsNetworkMode(mode)
+	}
+	return nil
+}
+
+// CheckWorktreeLayout forwards the backend's model.WorktreeLayoutChecker
+// check, for the same reason. Refs: MGIT-251, MGIT-222
+func (c *CeilingManager) CheckWorktreeLayout(worktreePath string) error {
+	if e, ok := c.inner.(model.WorktreeLayoutChecker); ok {
+		return e.CheckWorktreeLayout(worktreePath)
+	}
+	return nil
+}
+
 // Launch admits the request against the ceiling, then delegates.
 // Refs: FR-17.26
 func (c *CeilingManager) Launch(ctx context.Context, opts model.SandboxLaunchOptions) (*model.SandboxInfo, error) {
@@ -218,6 +239,22 @@ func (c *CeilingManager) SyncWorktree(ctx context.Context, id string, opts model
 			model.ErrSandboxSyncUnsupported)
 	}
 	return syncer.SyncWorktree(ctx, id, opts)
+}
+
+// internalExecWirer is a backend whose own privileged internal execs can be
+// given an explicit identity and an audit sink. Refs: MGIT-272
+type internalExecWirer interface {
+	SetInternalExec(auditor model.SandboxEventAppender, identity model.GuestIdentity)
+}
+
+// SetInternalExec forwards the internal-exec identity and audit sink to the
+// inner backend when it has such execs (the microVM backends). The ceiling
+// wraps every manager, so without this passthrough the wiring would never
+// reach the backend. Refs: MGIT-272
+func (c *CeilingManager) SetInternalExec(auditor model.SandboxEventAppender, identity model.GuestIdentity) {
+	if w, ok := c.inner.(internalExecWirer); ok {
+		w.SetInternalExec(auditor, identity)
+	}
 }
 
 // VerifyGuestView forwards to the inner backend when it can ask a guest what

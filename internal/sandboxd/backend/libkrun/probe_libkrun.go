@@ -73,7 +73,7 @@ import (
 // networking API is present. Refs: MGIT-229
 func probeInProcess() model.VMMReport {
 	ctxErr := loadKernelLibrary()
-	r := describeLoaded(loadedImages(), newCapabilityProbe().ProbeNetworking())
+	r := describeLoaded(loadedImages(), newCapabilityProbe().ProbeNetworking(), realBundleCheck().err())
 	if ctxErr != nil {
 		r.Problems = append(r.Problems, ctxErr.Error())
 	}

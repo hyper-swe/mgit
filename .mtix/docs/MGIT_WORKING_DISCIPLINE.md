@@ -12,9 +12,11 @@ only the squashed, reviewed result.
 
 > **mgit keeps itself in sync with git — there is no manual `mgit sync` step**
 > (ADR-008). git is authoritative; mgit automatically keeps its `.mgit` base
-> coherent with your current local working state. A new task worktree therefore
-> carries your unpushed local foundation, and each task pins the base it forked
-> from, so a later resync never corrupts its diff. mgit reads `.git` read-only
+> coherent with git. A new task worktree starts from git's committed tree at
+> your local HEAD (unpushed commits included). Uncommitted and untracked files
+> in this checkout are left out and named; pass `mgit work --include-uncommitted`
+> to capture them (each is named). Each task pins the base it forked from, so a
+> later resync never corrupts its diff. mgit reads `.git` read-only
 > to learn git's state and never mutates it. You never run a resync by hand; if
 > mgit cannot safely read git state it fails loud rather than materialize a
 > stale worktree.
@@ -117,8 +119,17 @@ mgit rollback --task-id MGIT-12.3 --reason "wrong validation lib"
 mgit rollback --commit <hash> --reason "revert just this step"   # resolves task automatically
 ```
 
-**Fork** — branch a new line from a good commit and continue the new approach,
-preserving the old line:
+**Fork** — start a new line from a good commit and continue the new approach,
+preserving the old line. In a task worktree (where `mgit work` put you), the
+worktree is bound to its branch, so switching branches there is refused (`mgit
+checkout`, `checkout -b` and `branch <name>`). Fork into a new task worktree
+instead, from the project root:
+
+```bash
+mgit work ../wt-v2 --task-id MGIT-12.3.1 --base <good-hash>   # new worktree at the decision point
+```
+
+In the project root itself, outside any task worktree, a branch forks in place:
 
 ```bash
 mgit checkout <good-hash>          # move to the decision point
@@ -133,8 +144,8 @@ Then cherry-pick the still-good work from the old line onto the new one
 clobbering a diverged or dirty path):
 
 ```bash
-mgit cherry-pick <useful-hash>                       # apply onto current branch
-mgit cherry-pick <useful-hash> --onto task/MGIT-12.3-v2
+mgit cherry-pick <useful-hash>                       # apply onto current branch (in the new worktree, onto the new line)
+mgit cherry-pick <useful-hash> --onto task/MGIT-12.3-v2   # project root only; refused inside a task worktree
 mgit cherry-pick <useful-hash> --no-commit           # preview only
 ```
 
@@ -195,8 +206,8 @@ mtix done MGIT-12.3
 | Run build/test/install | `mgit run -- <command>` |
 | Orient | `mgit status` · `mgit log --oneline` · `mgit diff [--task-id <ID>]` · `mgit show <hash>` |
 | Backtrack | `mgit rollback --task-id <ID>` / `--commit <hash>` |
-| Fork | `mgit checkout <hash>` then `mgit checkout -b <branch>` |
-| Salvage | `mgit cherry-pick <hash> [--onto <branch>]` |
+| Fork | in a task worktree: `mgit work <new-path> --task-id <new-task-id> --base <hash>` from the project root · in the project root: `mgit checkout <hash>` then `mgit checkout -b <branch>` |
+| Salvage | `mgit cherry-pick <hash>` · `--onto <branch>` from the project root only |
 | Verify | `mgit verify --task-id <ID>` |
 | Squash | `mgit squash --task-id <ID> [--to-git \| --to-main]` |
 | Land (sandbox) | `mgit sandbox land --task <ID>` |
@@ -220,9 +231,9 @@ don't rediscover them by stumbling:
    worktree, or list the build-required paths in `.mgit/seed-include` (one glob
    per line) to carry them in.
 
-3. **Do not manually re-import to "refresh" a worktree.** mgit auto-housekeeps
-   its base from your current local working state, so you never need
-   `mgit add . && mgit commit` to pick up just-integrated work. If a worktree
+3. **Do not manually re-import to "refresh" a worktree.** A new task starts
+   from git's committed tree, so commit in git what a task must build on;
+   you never need `mgit add . && mgit commit` to pick up just-integrated work. If a worktree
    looks stale, that is a bug to report — not a manual sync step to run.
 
 4. **The task-id flag is `--task-id`** on every command (`--task` is accepted as

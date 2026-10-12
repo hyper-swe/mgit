@@ -118,3 +118,8 @@ func (c Commit) ShortID() string {
 	}
 	return c.CommitID[:shortIDLen]
 }
+
+// SyncAgentID is the author mgit writes its own housekeeping commits under:
+// a base resync and a task's fork base. They record no task work and carry
+// no index entry. Refs: MGIT-283, MGIT-35
+const SyncAgentID = "mgit-sync"

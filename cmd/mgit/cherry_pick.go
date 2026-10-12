@@ -60,6 +60,17 @@ func cherryPickCmd() *cobra.Command {
 				return nil
 			}
 
+			// In a task worktree the pick is that worktree's task's work, as a
+			// commit there is: recorded under the SOURCE commit's task it was
+			// invisible to the new task and broke its squash (MGIT-82). A
+			// contradicting --task-id is refused. Outside a worktree the task is
+			// derived from the source, as before.
+			if app.BoundTask != "" {
+				if taskID, err = resolveCommitTaskID(app.BoundTask, taskID); err != nil {
+					return err
+				}
+			}
+
 			// The pick itself (content-applying, conflict-safe -- MGIT-54)
 			// lives in the service layer.
 			c, err := app.Commit.CherryPick(ctx, service.CherryPickRequest{
@@ -77,6 +88,6 @@ func cherryPickCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&noCommit, "no-commit", false, "Print what would be cherry-picked without committing")
 	cmd.Flags().StringVar(&onto, "onto", "", "Switch to branch before cherry-picking")
-	bindTaskIDFlag(cmd, &taskID, "Override the task ID for the cherry-picked commit (default: derived from source)")
+	bindTaskIDFlag(cmd, &taskID, "Override the task ID for the cherry-picked commit (default: the worktree's task in a task worktree, else derived from source)")
 	return cmd
 }

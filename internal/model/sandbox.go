@@ -330,6 +330,19 @@ type SandboxInfo struct {
 	// host 127.0.0.1:<HostPort> forwarding into the guest's <GuestPort>.
 	// Refs: SEC-09, FR-17.8
 	PublishPorts []PortPublish `json:"publish_ports,omitempty"`
+	// LastBootFailure is the most recent boot of this registration that
+	// failed, and is nil once a boot succeeds. Without it a sandbox whose
+	// first boot failed reads "created" exactly like one nobody has used,
+	// and status could not answer the one question it exists for.
+	// Refs: MGIT-231
+	LastBootFailure *BootFailure `json:"last_boot_failure,omitempty"`
+}
+
+// BootFailure records when a sandbox's boot failed and the error it failed
+// with. Refs: MGIT-231
+type BootFailure struct {
+	At    time.Time `json:"at"`    // ISO-8601 UTC, from the service clock
+	Cause string    `json:"cause"` // the boot's error, as the caller received it
 }
 
 // Validate checks that the SandboxInfo has required, well-formed
@@ -442,6 +455,25 @@ type NetworkModeEnforcer interface {
 	// SupportsNetworkMode returns nil when this backend can enforce mode, or
 	// an error naming what it cannot enforce and what to use instead.
 	SupportsNetworkMode(mode string) error
+}
+
+// WorktreeLayoutChecker is an OPTIONAL SandboxManager extension by which a
+// backend answers, at registration, the layout question its boot asks: would
+// the host's shared object store be reachable from a guest that mounts this
+// worktree (SEC-03)?
+//
+// It exists for the reason NetworkModeEnforcer does. The boot refuses such a
+// layout (fail closed), but provisioning is lazy, so `sandbox launch
+// --worktree <the repository root>` registered, reported created, and let the
+// CLI write agent scaffolding into the project's tracked files before the
+// first use refused it (MGIT-222). Implementations MUST delegate to the same
+// function their boot uses, so registration and boot cannot disagree.
+// Refs: MGIT-222, SEC-03
+type WorktreeLayoutChecker interface {
+	// CheckWorktreeLayout returns nil when a guest mounting worktreePath
+	// could not reach the shared store, or an error wrapping
+	// ErrSharedStoreReachable that names the store and the worktree.
+	CheckWorktreeLayout(worktreePath string) error
 }
 
 // SandboxManager abstracts microVM lifecycle per platform backend.

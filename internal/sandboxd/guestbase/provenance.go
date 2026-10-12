@@ -42,6 +42,56 @@ type Compose struct {
 	// Empty on a first compose.
 	PrevSourceRef  string `json:"prev_source_ref,omitempty"`
 	PrevBaseDigest string `json:"prev_base_digest,omitempty"`
+	// PlatformDigest is the platform manifest the index selected for this
+	// host, when SourceRef names an index; PrevPlatformDigest is the one the
+	// superseded compose recorded, when it recorded one. Refs: MGIT-223
+	PlatformDigest     string `json:"platform_digest,omitempty"`
+	PrevPlatformDigest string `json:"prev_platform_digest,omitempty"`
+}
+
+// SourceChange is what a recompose of the same tag did to its source.
+type SourceChange int
+
+const (
+	// SourceUnchanged is a first compose, another tag, or the same digest.
+	SourceUnchanged SourceChange = iota
+	// SourceKindChanged is the same image, recorded as a different KIND of
+	// digest. The superseded compose (by an mgit before 0.6.8) recorded the
+	// platform manifest the index selects for this host, and the index still
+	// selects exactly that manifest; this compose records the index.
+	SourceKindChanged
+	// SourceIndexMoved means the tag's image index moved, and the platform
+	// manifest it selects for this host did not: this host composes the same
+	// image, while other architectures may not.
+	SourceIndexMoved
+	// SourceImageMoved means the tag resolves to a different image.
+	SourceImageMoved
+)
+
+// SourceChange classifies this compose against the one it superseded, by
+// comparing each digest with one of its own kind.
+//
+// Since 0.6.8 SourceRef names the image INDEX a tag resolves to (MGIT-219),
+// while an older compose recorded the PLATFORM MANIFEST the index selected.
+// Comparing those two raw said a tag had moved on every recompose after an
+// upgrade, although the index selected the very manifest the old record
+// names (MGIT-223). So: the previous digest against the platform manifest
+// selected now; index against index; and, when both composes recorded the
+// platform manifest they selected, those two. Refs: MGIT-223, MGIT-219
+func (c Compose) SourceChange() SourceChange {
+	if c.PrevSourceRef == "" || c.SourceRef == "" || SourceTag(c.PrevSourceRef) != SourceTag(c.SourceRef) {
+		return SourceUnchanged
+	}
+	prev, now := SourceDigest(c.PrevSourceRef), SourceDigest(c.SourceRef)
+	switch {
+	case prev == now:
+		return SourceUnchanged
+	case c.PlatformDigest != "" && prev == c.PlatformDigest:
+		return SourceKindChanged
+	case c.PlatformDigest != "" && c.PrevPlatformDigest == c.PlatformDigest:
+		return SourceIndexMoved
+	}
+	return SourceImageMoved
 }
 
 // SourceTag splits the human half out of a resolved reference:
@@ -66,13 +116,7 @@ func SourceDigest(sourceRef string) string {
 // composed a different image" (the tags differ — you asked for that) and "you
 // recomposed the same image" (the digests agree — nothing moved). Refs: MGIT-147
 func (c Compose) TagMoved() bool {
-	if c.PrevSourceRef == "" || c.SourceRef == "" {
-		return false
-	}
-	if SourceTag(c.PrevSourceRef) != SourceTag(c.SourceRef) {
-		return false
-	}
-	return SourceDigest(c.PrevSourceRef) != SourceDigest(c.SourceRef)
+	return c.SourceChange() == SourceImageMoved
 }
 
 // RecordCompose appends one composition to the journal under hostRoot.

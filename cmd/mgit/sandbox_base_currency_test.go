@@ -1,0 +1,187 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/sandboxd/basecache"
+	"github.com/hyper-swe/mgit/internal/sandboxd/guestbase"
+	"github.com/hyper-swe/mgit/internal/sandboxd/images"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
+)
+
+// baseFixture stores a base tree in this test's own cache whose composed-by
+// marker names version ("" writes no marker), and returns its digest.
+func baseFixture(t *testing.T, version string) string {
+	t.Helper()
+	cache, err := basecache.Open()
+	require.NoError(t, err)
+	dir, err := cache.Stage()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "bin"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bin", "sh"), []byte("#!/bin/sh\n# "+version+"\n"), 0o600))
+	if version != "" {
+		require.NoError(t, guestbase.WriteComposedBy(dir, version, ""))
+	}
+	entry, err := cache.Commit(dir, images.TreeDigest)
+	require.NoError(t, err)
+	return entry.Digest
+}
+
+// A STALE BASE IS SAID WHERE IT MATTERS, NOT ONLY IN DOCTOR (MGIT-224,
+// MGIT-174's second bullet). A base composed by another mgit carries that
+// release's guest binaries, so it silently lacks every guest-side change
+// since. The note names both versions and the recompose command; a base
+// that does not record its composer is UNKNOWN; a current base, or an image
+// this CLI did not compose, says nothing. Refs: MGIT-224, MGIT-174
+func TestBaseCurrencyNotice_NamesBothVersionsAndTheRecompose(t *testing.T) {
+	t.Setenv(basecache.EnvRoot, t.TempDir())
+	stale, unknown, current := baseFixture(t, "0.6.7"), baseFixture(t, ""), baseFixture(t, Version)
+	cache, err := basecache.Open()
+	require.NoError(t, err)
+
+	notice := baseCurrencyNotice(cache, stale, Version)
+	for _, want := range []string{"composed by mgit 0.6.7", "this is mgit " + Version, "mgit sandbox base from", "nothing was refused"} {
+		assert.Contains(t, notice, want)
+	}
+	assert.Contains(t, baseCurrencyNotice(cache, unknown, Version), "UNKNOWN")
+	assert.Empty(t, baseCurrencyNotice(cache, current, Version), "a current base says nothing")
+	assert.Empty(t, baseCurrencyNotice(cache, "sha256:"+strings.Repeat("9", 64), Version), "an image this CLI did not compose says nothing")
+}
+
+func runSplit(t *testing.T, cmdOut func() (*bytes.Buffer, *bytes.Buffer, error)) (string, string) {
+	t.Helper()
+	stdout, stderr, err := cmdOut()
+	require.NoError(t, err)
+	return stdout.String(), stderr.String()
+}
+
+// The moments that matter: `sandbox status`, the launch (and `mgit work
+// --sandbox`'s), and the `mgit run` that boots the VM. The note goes to
+// stderr, so every verb's stdout is what it was, and it is said once per
+// boot, not once per command: an exec into a sandbox that is already
+// running says nothing. It never refuses and never changes an exit code.
+// Refs: MGIT-224, MGIT-174
+func TestStaleBase_IsWarnedAtStatusLaunchAndTheExecThatBoots(t *testing.T) {
+	t.Setenv(basecache.EnvRoot, t.TempDir())
+	stale := baseFixture(t, "0.6.7")
+	const warning = "composed by mgit 0.6.7"
+	sandbox := func(state, dir string) *model.SandboxInfo {
+		return &model.SandboxInfo{ID: "01JSB", TaskID: "MGIT-224", State: state, WorktreePath: dir, ImageDigest: stale}
+	}
+	sandboxCmd := func(fake *fakeSandboxClient, args ...string) func() (*bytes.Buffer, *bytes.Buffer, error) {
+		return func() (*bytes.Buffer, *bytes.Buffer, error) {
+			cmd := newSandboxCmd(okConnect(fake))
+			var o, e bytes.Buffer
+			cmd.SetOut(&o)
+			cmd.SetErr(&e)
+			cmd.SetArgs(args)
+			return &o, &e, cmd.Execute()
+		}
+	}
+	runCmdWith := func(fake *fakeSandboxClient, dir string) func() (*bytes.Buffer, *bytes.Buffer, error) {
+		return func() (*bytes.Buffer, *bytes.Buffer, error) {
+			cmd := newRunCmd(okConnect(fake), func() (string, error) { return dir, nil })
+			var o, e bytes.Buffer
+			cmd.SetOut(&o)
+			cmd.SetErr(&e)
+			cmd.SetArgs([]string{"--", "id"})
+			return &o, &e, cmd.Execute()
+		}
+	}
+	dir := t.TempDir()
+
+	out, errOut := runSplit(t, sandboxCmd(&fakeSandboxClient{statusInfo: sandbox(model.StateRunning, dir)}, "status", "MGIT-224"))
+	assert.Equal(t, 1, strings.Count(errOut, warning), "status warns once: %q", errOut)
+	assert.NotContains(t, out, warning, "stdout is unchanged")
+
+	out, errOut = runSplit(t, sandboxCmd(&fakeSandboxClient{}, "launch", "--task-id", "MGIT-224", "--worktree", dir, "--image", "base@"+stale))
+	assert.Equal(t, 1, strings.Count(errOut, warning), "the launch warns once: %q", errOut)
+	assert.NotContains(t, out, warning)
+
+	booting := &fakeSandboxClient{execStdout: "uid=501\n", listResult: []model.SandboxInfo{*sandbox(model.StateCreated, canonicalPath(dir))}}
+	out, errOut = runSplit(t, runCmdWith(booting, dir))
+	assert.Equal(t, 1, strings.Count(errOut, warning), "the exec that boots the VM warns once: %q", errOut)
+	assert.Equal(t, "uid=501\n", out, "the command's own output is untouched")
+
+	running := &fakeSandboxClient{execStdout: "uid=501\n", listResult: []model.SandboxInfo{*sandbox(model.StateRunning, canonicalPath(dir))}}
+	_, errOut = runSplit(t, runCmdWith(running, dir))
+	assert.NotContains(t, errOut, warning, "an exec into a running sandbox says nothing")
+
+	// `sandbox exec` is not given a pre-exec Status call to learn the state:
+	// that round trip before every exec is the cost MGIT-133 removed from
+	// this verb. Launch, status and `mgit run` carry the warning.
+	_, errOut = runSplit(t, sandboxCmd(&fakeSandboxClient{execStdout: "uid=501\n", statusInfo: sandbox(model.StateCreated, dir)},
+		"exec", "--task-id", "MGIT-224", "--", "id"))
+	assert.NotContains(t, errOut, warning)
+}
+
+// `mgit work --sandbox` is the launch a loop's orchestrator runs, so it warns
+// too, on stderr like every other verb, leaving its stdout as it was.
+// Refs: MGIT-224
+func TestStaleBase_IsWarnedWhenMgitWorkLaunchesTheSandbox(t *testing.T) {
+	t.Setenv(basecache.EnvRoot, t.TempDir())
+	stale := baseFixture(t, "0.6.7")
+	opts := workOptions{
+		Path: filepath.Join(t.TempDir(), "wt"), TaskID: "MGIT-224", LaunchSandbox: true,
+		Image: "base@" + stale, Network: model.NetworkModeNone,
+	}
+	var out, errOut bytes.Buffer
+	deps := workDeps{
+		addWorktree: (&fakeWorktreeAdder{}).add, writeAdapters: injectAgentAdapters,
+		upsertEnvDoc: upsertWorktreeEnvDoc, recordGenerated: gitstore.RecordGeneratedPaths,
+		connect: okConnect(&fakeSandboxClient{}), mgitBinForDocs: "mgit", stderr: &errOut,
+	}
+	_, err := workSetup(context.Background(), &out, deps, opts)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(errOut.String(), "composed by mgit 0.6.7"), "work --sandbox warns once, on stderr: %s", errOut.String())
+	assert.NotContains(t, out.String(), "composed by mgit", "stdout is unchanged")
+}
+
+// The recompose command names the image this repository's lock records for
+// that base, and only when the lock's digest is the sandbox's: another
+// image keeps the placeholder rather than naming the wrong source. With
+// --json, stdout stays one JSON document and the warning is on stderr.
+// Refs: MGIT-224
+func TestStaleBase_NamesTheLockedImageOnlyForItsOwnDigest(t *testing.T) {
+	t.Setenv(basecache.EnvRoot, t.TempDir())
+	repo := newRepo(t)
+	t.Chdir(repo)
+	stale, other := baseFixture(t, "0.6.7"), baseFixture(t, "0.6.6")
+	hostRoot := filepath.Join(repo, ".mgit", "sandbox")
+	priv, err := images.EnsureSigningKey(context.Background(), hostRoot, printTrustRootAuditor{w: &bytes.Buffer{}})
+	require.NoError(t, err)
+	_, err = images.Register(hostRoot, defaultGuestBaseName, images.Entry{Digest: stale,
+		Source: "registry.example/library/debian:12@sha256:" + strings.Repeat("a", 64)}, priv)
+	require.NoError(t, err)
+
+	status := func(digest string, args ...string) (string, string) {
+		fake := &fakeSandboxClient{statusInfo: &model.SandboxInfo{ID: "01JSB", TaskID: "MGIT-224", State: model.StateRunning, ImageDigest: digest}}
+		cmd := newSandboxCmd(okConnect(fake))
+		var o, e bytes.Buffer
+		cmd.SetOut(&o)
+		cmd.SetErr(&e)
+		cmd.SetArgs(append([]string{"status", "MGIT-224"}, args...))
+		require.NoError(t, cmd.Execute())
+		return o.String(), e.String()
+	}
+	_, errOut := status(stale)
+	assert.Contains(t, errOut, "`mgit sandbox base from registry.example/library/debian:12`", "the lock's image is named")
+	_, errOut = status(other)
+	assert.Contains(t, errOut, "composed by mgit 0.6.6")
+	assert.Contains(t, errOut, "`mgit sandbox base from <image>`", "another image keeps the placeholder")
+
+	out, errOut := status(stale, "--json")
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &doc), "stdout is one JSON document: %q", out)
+	assert.Contains(t, errOut, "composed by mgit 0.6.7")
+}
