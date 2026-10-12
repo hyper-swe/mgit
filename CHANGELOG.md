@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-10-11
+
+`linux_arm64` is build-verified and not boot-verified: it is built and
+load-checked, but no hosted CI runner offers KVM on arm64.
+
+### Security
+
+- Main uses Go 1.26.9 and golang.org/x/net v0.60.0, which fix
+  standard-library net/http, crypto/tls and net/textproto advisories and
+  x/net advisories (GO-2026-6603, -6604, -6605, -6607, -6608, -6610,
+  -6611, -6612, -6613, -6617; MGIT-293). The merged release workflow
+  reads the Go version from go.mod and asserts the installed compiler.
+  This is not a claim about published binaries; compiler verification for
+  those binaries is recorded from the release run itself.
+
 ### Changed
 
 - **A new task's base is git's committed tree; capturing uncommitted work is
@@ -21,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   amended accordingly.
 
 ### Fixed
+
+- Read committed Git objects after stock incremental repacking, including
+  linked worktrees, without changing the Git repository (FEAT-3.153).
+- Resynchronization drops ignored, untracked files captured before an
+  exclusion rule was added while preserving tracked files and user data
+  (MGIT-290).
+- Tracked files matched by ignore rules remain present when a task tree is
+  materialized (MGIT-277).
+- Verification recognizes internal synchronization commits without requiring
+  task index entries for them (MGIT-283).
 
 - **`mgit add` and `mgit restore --staged` resolve paths the way git does
   from a subdirectory (MGIT-278.1).** A path was taken relative to the
