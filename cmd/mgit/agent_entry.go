@@ -79,7 +79,8 @@ func addPointerLine(path, line string) error {
 // writes them ahead of the base. The rule is that nothing that was there
 // before is ever removed: a path that did not exist is removed only if it is
 // still a regular file init could have made; a path that existed and whose
-// bytes were read is rewritten to those bytes if it changed; a path that
+// bytes were read (through a symlink, the target's) is rewritten to those bytes
+// if it changed; a path that
 // existed and could not be read (mode 000, a directory) is left alone, since
 // init wrote nothing in it.
 func snapshotAgentFiles(root string) func() {
@@ -94,9 +95,13 @@ func snapshotAgentFiles(root string) func() {
 	for _, name := range []string{mgitDocFile, claudeDocName, agentsDocName} {
 		p := filepath.Join(root, name)
 		s := saved{path: p}
-		if st, err := os.Lstat(p); err == nil {
+		if _, err := os.Lstat(p); err == nil {
 			s.existed = true
-			if st.Mode().IsRegular() {
+			// Stat and ReadFile follow a symlink: the bytes of the file the
+			// link points at are what a write through the link changes, so
+			// they are what is put back. A target that is a directory, is
+			// missing or cannot be read stays unread, and is left alone.
+			if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
 				if raw, err := os.ReadFile(p); err == nil { //nolint:gosec // path built from the repository root
 					s.read, s.data, s.mode = true, raw, st.Mode().Perm()
 				}

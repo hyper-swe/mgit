@@ -38,8 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that task's change, and no baseline commit is needed. `MGIT.md` no longer
   asks for one.
   If `mgit init` then fails, the files it wrote are taken back: ones it created
-  are removed, a `CLAUDE.md` or `AGENTS.md` you had is restored byte for byte,
-  and a directory it created for `--path` is removed if nothing is in it.
+  are removed, a `CLAUDE.md` or `AGENTS.md` you had is restored byte for byte
+  (for a symlink, the file it points at), and a directory it created for
+  `--path` is removed if nothing is in it. A path that was there is never removed.
 - The agent guides that `mgit docs` generates (`AGENTS.md`, `CLAUDE.md`,
   `WORKFLOWS.md`) now show `mgit commit -a`; without `-a` or `mgit add` a
   commit records nothing, and the `mgit squash` after it fails with "task not
