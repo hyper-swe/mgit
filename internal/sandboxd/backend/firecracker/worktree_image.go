@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -70,6 +71,13 @@ var createImageFile = func(path string) (imageFile, error) {
 // When privateStorePath is empty (no provisioner wired) the worktree is packed
 // directly, the pre-SEC-03 behavior. Refs: FR-17.3, SEC-03, MGIT-11.6.4, MGIT-11.6.8
 func buildWorktreeImage(ctx context.Context, runner mkfsRunner, worktreePath, imagePath, privateStorePath string, sizeMB int) error {
+	return buildWorktreeImageRepo(ctx, runner, worktreePath, imagePath, privateStorePath, sizeMB, false)
+}
+
+// buildWorktreeImageRepo is buildWorktreeImage that also gives the guest its
+// own repository (one base commit, no host history) when guestRepo is set.
+// Refs: FEAT-6.114.1
+func buildWorktreeImageRepo(ctx context.Context, runner mkfsRunner, worktreePath, imagePath, privateStorePath string, sizeMB int, guestRepo bool) error {
 	if !filepath.IsAbs(worktreePath) {
 		return fmt.Errorf("firecracker worktree image: worktree path must be absolute, got %q", worktreePath)
 	}
@@ -88,7 +96,7 @@ func buildWorktreeImage(ctx context.Context, runner mkfsRunner, worktreePath, im
 	stagingDir := ""
 	if privateStorePath != "" {
 		stagingDir = filepath.Join(filepath.Dir(imagePath), stagingDirName)
-		if err := staging.Build(worktreePath, privateStorePath, stagingDir); err != nil {
+		if err := staging.BuildForGuest(worktreePath, privateStorePath, stagingDir, guestRepo); err != nil && !errors.Is(err, staging.ErrNoGit) {
 			_ = os.RemoveAll(stagingDir)
 			return fmt.Errorf("firecracker worktree image: stage: %w", err)
 		}

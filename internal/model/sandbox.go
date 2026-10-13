@@ -255,6 +255,10 @@ type SandboxLaunchOptions struct {
 	// this to reach a host loopback service. Empty (the default) publishes
 	// nothing. Refs: SEC-09, FR-17.8
 	PublishPorts []PortPublish `json:"publish_ports,omitempty"`
+	// NoGuestRepo turns off the guest's repository. By default the guest is
+	// given a fresh one: the delivered files as a single base commit, with
+	// none of the host's history (FEAT-6.114.1).
+	NoGuestRepo bool `json:"no_guest_repo,omitempty"`
 }
 
 // Validate checks launch options: task binding, worktree path,

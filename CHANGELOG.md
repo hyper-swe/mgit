@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `mgit sandbox launch` now gives the guest a repository of its own: the
+  delivered files as a single base commit, with none of the host's history.
+  `git status`, `git diff` and `git rev-parse HEAD` work in the guest, and the
+  guest's private `.mgit` store is not part of the base. Host sync never reads,
+  deletes or reports a conflict on that repository. `--no-guest-repo` turns it
+  off; the launch note about git metadata is printed only then. If the host has
+  no git, the files are still delivered and the guest has no repository.
+
 - `mgit init` writes `MGIT.md`, which holds mgit's instructions for a coding
   agent, and adds one pointer line to `CLAUDE.md` (`@MGIT.md`) and to
   `AGENTS.md` (one sentence). It adds no pointer when `HYPERSWE.md` exists,

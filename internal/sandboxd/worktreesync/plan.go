@@ -202,5 +202,7 @@ func (p *Plan) appendDeletes(delivered, host, guest Manifest) {
 
 // skipPath reports whether a path is out of sync's scope entirely.
 func skipPath(path string) bool {
-	return path == storeRoot || strings.HasPrefix(path, storePrefix)
+	// .git at the root is the repository the guest was given (FEAT-6.114.1):
+	// the guest's own, never host content.
+	return path == storeRoot || strings.HasPrefix(path, storePrefix) || path == ".git" || strings.HasPrefix(path, ".git/")
 }

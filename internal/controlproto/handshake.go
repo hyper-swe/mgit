@@ -75,7 +75,13 @@ const (
 	// failed from one nobody has used (MGIT-231). A response field is a
 	// wire change: an older client decodes responses with
 	// DisallowUnknownFields and would fail on it.
-	ProtocolVersion = 5
+	//
+	// 6 adds no_guest_repo to the launch options, which `mgit sandbox
+	// launch --no-guest-repo` sends so the daemon leaves the guest without
+	// the repository it is given by default (FEAT-6.114.1). A request field
+	// is a wire change: a daemon from a 5 build would refuse the request
+	// as unknown, so the handshake names the restart instead.
+	ProtocolVersion = 6
 
 	// LegacyProtocol names every mgit built before the handshake existed
 	// (0.5.x and earlier). Such a peer never states a version, so this number

@@ -198,7 +198,7 @@ func deliverWorktree(cfg microvm.VMConfig) (string, error) {
 			model.ErrSandboxBackendUnavailable)
 	}
 	stagingDir := filepath.Join(cfg.StateDir, stagingDirName)
-	if err := staging.Build(cfg.WorktreePath, cfg.PrivateStorePath, stagingDir); err != nil {
+	if err := staging.BuildForGuest(cfg.WorktreePath, cfg.PrivateStorePath, stagingDir, !cfg.NoGuestRepo); err != nil && !errors.Is(err, staging.ErrNoGit) {
 		return "", fmt.Errorf("libkrun worktree quarantine: %w", err)
 	}
 	return stagingDir, nil
