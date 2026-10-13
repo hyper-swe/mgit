@@ -172,7 +172,7 @@ func writeLandResult(w io.Writer, res *controlproto.LandResult, asJSON bool, tas
 func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 	var task, worktree, image, network string
 	var allow, publish []string
-	var asJSON bool
+	var asJSON, noGuestRepo bool
 	var res resourceFlags
 	cmd := &cobra.Command{
 		Use:   "launch --" + canonicalTaskFlag + " <id> --worktree <path>",
@@ -207,6 +207,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 				TaskID: task, WorktreePath: canonicalPath(worktree), ImageRef: image,
 				Network:      model.NetworkPolicy{Mode: network, Allowlist: allow},
 				PublishPorts: ports,
+				NoGuestRepo:  noGuestRepo,
 			}
 			// Declared caps travel with the launch; the daemon bounds them
 			// against host policy and refuses (never clamps) an over-large
@@ -228,7 +229,7 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 			// A base composed by another mgit is said here, where the sandbox
 			// is created, not only in doctor. Refs: MGIT-224
 			warnStaleBase(cmd.ErrOrStderr(), imageRefDigest(image))
-			writeGitViewNote(cmd.ErrOrStderr(), worktree, task)
+			writeGitViewNote(cmd.ErrOrStderr(), worktree, task, noGuestRepo)
 			return nil
 		},
 	}
@@ -240,6 +241,8 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 	cmd.Flags().StringArrayVar(&allow, "allow", nil, "allowlist entry (repeatable; allowlist mode only)")
 	cmd.Flags().StringArrayVar(&publish, "publish", nil,
 		"one-way published port HOST:GUEST or PORT (repeatable; host binds 127.0.0.1 only, SEC-09)")
+	cmd.Flags().BoolVar(&noGuestRepo, "no-guest-repo", false,
+		"do not give the guest a repository (by default it gets the delivered files as one base commit, with no host history)")
 	bindResourceFlags(cmd, &res)
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output as JSON")
 	return cmd
@@ -501,7 +504,12 @@ func deadLine(info *model.SandboxInfo) string {
 
 // writeGitViewNote tells a launch on a tree with git metadata that the guest
 // gets the files, not the repository, and how to give it one (FEAT-6.114).
-func writeGitViewNote(w io.Writer, worktree, task string) {
+// It is printed only when the guest repository is off (--no-guest-repo):
+// by default the guest has one and there is nothing to say (FEAT-6.114.1).
+func writeGitViewNote(w io.Writer, worktree, task string, noGuestRepo bool) {
+	if !noGuestRepo {
+		return
+	}
 	if note := staging.GitMetadataNote(worktree, task); note != "" {
 		_, _ = io.WriteString(w, note)
 	}

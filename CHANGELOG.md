@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `mgit init` in a directory that already has files now records those files
+  (ignore rules applied; `.git` and `.mgit` left out) as the base. Before, the
+  store started empty, so the first task's `--to-git` patch carried every
+  existing file and `git apply` failed on a checkout that already had them
+  with "already exists in working directory". The base is a sync-style commit
+  with no task, which `mgit verify` does not flag. A directory with no files
+  keeps the empty base.
+
 ### Changed
+
+- `mgit sandbox launch` now gives the guest a repository of its own: the
+  delivered files as a single base commit, with none of the host's history.
+  `git status`, `git diff` and `git rev-parse HEAD` work in the guest, and the
+  guest's private `.mgit` store is not part of the base. Host sync never reads,
+  deletes or reports a conflict on that repository. `--no-guest-repo` turns it
+  off; the launch note about git metadata is printed only then. The
+  repository is made in process, so the host's git binary, configuration and
+  environment play no part. If it cannot be made, the launch fails and says so.
 
 - `mgit init` writes `MGIT.md`, which holds mgit's instructions for a coding
   agent, and adds one pointer line to `CLAUDE.md` (`@MGIT.md`) and to

@@ -36,6 +36,7 @@ import (
 // Refs: MGIT-250, MGIT-231, MGIT-136
 var wireShapeDigests = map[int]string{
 	5: "44b0d5cc5d5864ff8909d342c04dcd3b413be3eb014565f6ea7f7536cac9e2a3",
+	6: "98cc5aa909cd52eb7688e6f1f1aec0aac704b624ebde996b56ce205be8177a4a",
 }
 
 func TestWireShape_IsPinnedToProtocolVersion(t *testing.T) {
