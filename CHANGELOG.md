@@ -33,10 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AGENTS.md` (one sentence). It adds no pointer when `HYPERSWE.md` exists,
   since that file links `MGIT.md` itself, and it never removes a pointer line
   you placed. `mgit init --no-agent-files` skips all three files.
-- The three files are new and untracked, so `mgit commit -a` takes them into
-  the first task commit and into that task's `--to-git` patch. Record the
-  starting state once with a baseline commit, as `MGIT.md` shows, to keep them
-  out of a task's patch.
+- The three files are written before the starting state is recorded, so they
+  are part of it: the first task's commit and its `--to-git` patch carry only
+  that task's change, and no baseline commit is needed. `MGIT.md` no longer
+  asks for one.
 - The agent guides that `mgit docs` generates (`AGENTS.md`, `CLAUDE.md`,
   `WORKFLOWS.md`) now show `mgit commit -a`; without `-a` or `mgit add` a
   commit records nothing, and the `mgit squash` after it fails with "task not
