@@ -161,3 +161,26 @@ func TestAFailedInitLeavesADirectoryNamedLikeAnAgentFileAlone(t *testing.T) {
 		assert.True(t, st.IsDir())
 	}
 }
+
+// A CLAUDE.md that is a symlink to a file outside the project: the pointer
+// line init appends goes through the link, so a failed init puts the target's
+// bytes back and leaves the link in place.
+func TestAFailedInitRestoresTheTargetOfASymlinkedInstructionFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("an unreadable file stays readable to root")
+	}
+	dir := failingInitDir(t)
+	outside := filepath.Join(t.TempDir(), "shared-claude.md")
+	require.NoError(t, os.WriteFile(outside, []byte("shared notes"), 0o600))
+	link := filepath.Join(dir, "CLAUDE.md")
+	require.NoError(t, os.Symlink(outside, link))
+	t.Chdir(dir)
+
+	require.Error(t, runCLI(t, "init"))
+	got, err := os.ReadFile(outside) //nolint:gosec // test fixture path
+	require.NoError(t, err)
+	assert.Equal(t, "shared notes", string(got), "the file the link points at is as it was")
+	st, err := os.Lstat(link)
+	require.NoError(t, err)
+	assert.NotZero(t, st.Mode()&os.ModeSymlink, "the link is still a link")
+}
