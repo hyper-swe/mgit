@@ -95,7 +95,7 @@ func TestPrintGroupedStatus_Deletions_ReadAsDeletions(t *testing.T) {
 func TestStatus_MachineReadableModes_UnchangedByTheWording(t *testing.T) {
 	repo := t.TempDir()
 	t.Chdir(repo)
-	require.NoError(t, runCLI(t, "init"))
+	require.NoError(t, runCLI(t, "init", "--no-agent-files"))
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "a.txt"), []byte("a\n"), 0o600))
 	require.NoError(t, runCLI(t, "add", "a.txt"))
 

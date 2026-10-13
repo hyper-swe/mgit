@@ -626,6 +626,29 @@ anything to fetch** — use `--from <local bundle dir>` (built with
 `scripts/sandbox-image/build-bundle.sh`). The mechanism itself is unchanged
 and live-validated; only the "attach to a GitHub release" step is paused.
 
+## Git inside the guest
+
+The guest gets your worktree's files and a private mgit store. It does not
+get the repository's git history, and it does not get a `.git` file or
+directory, because history is not allowed to reach the guest. A linked git
+worktree's `.git` is a file that names a path on the host; that file is
+not delivered either, at any depth.
+
+So a git command in the guest, such as `git rev-parse HEAD`, finds no
+repository, on a clone and on a linked worktree alike. `mgit sandbox launch`
+prints a note when the worktree has git metadata.
+
+If a command in the guest needs a repository, create one there. The guest
+image must include git:
+
+```
+mgit sandbox exec --task-id X-1 -- sh -c 'git init -q && git add -A && git commit -qm base'
+```
+
+This history is the guest's own; it starts at the delivered files and is
+not the host repository's. Commands that read a specific commit from the
+host's history cannot work in the guest.
+
 ## Trust model
 
 Whichever shape you provision, it is pinned by content digest and Ed25519

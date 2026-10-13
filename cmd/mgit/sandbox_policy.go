@@ -58,7 +58,7 @@ func sandboxPolicySetCmd(connect connectFunc) *cobra.Command {
 	var allow []string
 	var drain, asJSON bool
 	cmd := &cobra.Command{
-		Use:   "set --task <id> --allow <host:port> [--allow ...]",
+		Use:   "set --" + canonicalTaskFlag + " <id> --allow <host:port> [--allow ...]",
 		Short: "Replace a running sandbox's egress allowlist",
 		Long: "Replace a running sandbox's egress allowlist in ONE atomic change.\n\n" +
 			"The replacement is compiled before it is swapped in, so a flow is authorized\n" +
@@ -108,7 +108,7 @@ func sandboxPolicyRevokeCmd(connect connectFunc) *cobra.Command {
 	var taskID string
 	var drain, asJSON bool
 	cmd := &cobra.Command{
-		Use:   "revoke --task <id>",
+		Use:   "revoke --" + canonicalTaskFlag + " <id>",
 		Short: "Revoke ALL egress from a running sandbox",
 		Long: "Revoke ALL egress from a running sandbox, without relaunching it.\n\n" +
 			"This is the sequence provisioning runs: grant registry egress for setup, then\n" +
@@ -145,7 +145,7 @@ func sandboxPolicyShowCmd(connect connectFunc) *cobra.Command {
 	var taskID string
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use:   "show --task <id>",
+		Use:   "show --" + canonicalTaskFlag + " <id>",
 		Short: "Show the egress policy a running sandbox is enforcing right now",
 		Long: "Show the egress policy a running sandbox is enforcing RIGHT NOW.\n\n" +
 			"This is not the launch-time policy on `mgit sandbox status`: once a live\n" +

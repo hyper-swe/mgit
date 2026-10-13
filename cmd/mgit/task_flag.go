@@ -1,6 +1,11 @@
 package main
 
-import "github.com/spf13/cobra"
+import (
+	"strings"
+
+	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/spf13/cobra"
+)
 
 // canonicalTaskFlag is the single documented spelling for the task-ID flag
 // across every mgit command that takes one.
@@ -22,4 +27,26 @@ func bindTaskIDFlag(cmd *cobra.Command, target *string, usage string) {
 	cmd.Flags().StringVar(target, legacyTaskFlag, "", "alias for --task-id")
 	// Hide the alias so only the canonical spelling appears in help output.
 	_ = cmd.Flags().MarkHidden(legacyTaskFlag)
+}
+
+// addTaskIDHelp states, in the help of every command under root that takes
+// the task flag, what a task id looks like and shows one in that command's
+// own usage. The format was only in the refusal error before; help is where
+// a person looks first. Refs: FEAT-6.115
+func addTaskIDHelp(root *cobra.Command) {
+	for _, c := range root.Commands() {
+		addTaskIDHelp(c)
+	}
+	if c := root; c.Flags().Lookup(canonicalTaskFlag) != nil {
+		body := c.Long
+		if body == "" {
+			body = c.Short
+		}
+		example := "mgit " + strings.TrimPrefix(c.CommandPath(), "mgit ")
+		if i := strings.Index(c.Use, " "); i >= 0 {
+			example += c.Use[i:]
+		}
+		example = strings.ReplaceAll(example, "<id>", "MGIT-1.2")
+		c.Long = body + "\n\nTask id format: " + model.TaskIDGrammar() + "\n\nExample:\n  " + example
+	}
 }
