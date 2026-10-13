@@ -119,6 +119,31 @@ gwd="$(cd "$P" && timeout 120 mgit run -- pwd 2>&1)"
 echo "  the guest works in the worktree at its host path ($where)"
 echo "  PASS"
 
+step "6b the guest's own repository: git works as the exec identity (FEAT-6.114.1)"
+# By default the guest is given a repository of its own: the delivered files
+# as ONE base commit, none of the host's history. This runs the three
+# commands an agent runs, as the identity `mgit run` uses, before any sync
+# moves the files off the base. A guest whose base carries no git cannot run
+# them: that is said, and is not a pass. Git also refuses a repository owned
+# by another user ("dubious ownership"); a failure here shows it.
+gg() { (cd "$P" && timeout 120 mgit run -- /bin/sh -c "$1" 2>&1); }
+if [ "$(gg 'command -v git >/dev/null 2>&1 && echo has-git || echo no-git' | tail -1)" != has-git ]; then
+	echo "  NOT CHECKED: the composed base has no git, so git status, git diff and git rev-parse HEAD were not run in the guest"
+else
+	head="$(gg 'git rev-parse HEAD' | tail -1)"
+	printf '%s\n' "$head" | grep -Eqx '[0-9a-f]{40}' || fail "guest git" "git rev-parse HEAD said: $(first "$head" 3)"
+	n="$(gg 'git rev-list --count HEAD' | tail -1)"
+	[ "$n" = 1 ] || fail "guest git" "the guest repository has $n commits, not one"
+	st="$(gg 'git status --porcelain')"
+	[ -z "$st" ] || fail "guest git" "git status is not clean on a fresh launch: $(first "$st" 3)"
+	gg 'echo edited >> f.txt' >/dev/null
+	df="$(gg 'git diff --stat')"
+	printf '%s\n' "$df" | grep -q 'f.txt' || fail "guest git" "git diff does not show an edit: $(first "$df" 3)"
+	gg 'git checkout -- f.txt' >/dev/null
+	echo "  git rev-parse HEAD, status and diff work in the guest as the exec identity; one base commit"
+fi
+echo "  PASS"
+
 step "7 sync a host edit into the running guest"
 printf 'v2\n' >"$P/f.txt"
 out="$(cd "$R" && mgit sandbox sync --task-id "$TASK" --force 2>&1)" || fail "sync" "$(first "$out")"
