@@ -21,7 +21,7 @@ import (
 // pull request once spent a whole hour's budget. A page that overflows is
 // NOT CHECKED, never skipped.
 const (
-	editsFields = `pageInfo{hasNextPage} nodes{editedAt deletedAt diff}`
+	editsFields = `pageInfo{hasNextPage} nodes{editedAt deletedAt diff editor{__typename login}}`
 	rateFields  = `rateLimit{remaining resetAt} `
 	prHead      = rateFields + `repository(owner:$owner,name:$name){pullRequest(number:$number){`
 	// GraphQL refuses a declared variable that goes unused, so only the
@@ -55,6 +55,10 @@ type editConn struct {
 		EditedAt  string  `json:"editedAt"`
 		DeletedAt *string `json:"deletedAt"`
 		Diff      *string `json:"diff"`
+		Editor    *struct {
+			Type  string `json:"__typename"`
+			Login string `json:"login"`
+		} `json:"editor"`
 	} `json:"nodes"`
 }
 
@@ -62,6 +66,7 @@ type editConn struct {
 type textNode struct {
 	DatabaseID       int64    `json:"databaseId"`
 	CreatedAt        string   `json:"createdAt"`
+	LastEditedAt     string   `json:"lastEditedAt"`
 	Body             string   `json:"body"`
 	UserContentEdits editConn `json:"userContentEdits"`
 }
@@ -98,10 +103,11 @@ type prNode struct {
 // collected is everything read from one pull request, and the API budget
 // the last query left (nil when the answer did not say).
 type collected struct {
-	versions []version
-	deleted  int
-	counts   map[string]int
-	budget   *rateLimit
+	versions        []version
+	deleted         int
+	counts          map[string]int
+	botDescriptions int
+	budget          *rateLimit
 }
 
 // rateLimit is what the API says is left of the hour's budget.
@@ -120,7 +126,8 @@ func parseTime(s string) time.Time {
 	return t
 }
 
-// addText adds a piece of text and every revision in its history. Text
+// addText checks description history except revisions written by Dependabot.
+// The current description and all other text histories are always checked. Text
 // with no history is one version, as written; empty text is nothing.
 func (c *collected) addText(kind, field string, n *textNode) error {
 	if n.UserContentEdits.PageInfo.HasNextPage {
@@ -138,8 +145,21 @@ func (c *collected) addText(kind, field string, n *textNode) error {
 			c.deleted++
 			continue
 		}
+		// GraphQL's Bot login is "dependabot", not the REST login suffix.
+		// Missing provenance never grants an exemption, and the PR author
+		// cannot grant an exemption to a human's edit.
+		if kind == "description" && e.Editor != nil && e.Editor.Type == "Bot" && e.Editor.Login == "dependabot" {
+			c.botDescriptions++
+			continue
+		}
 		c.counts["revisions"]++
 		c.versions = append(c.versions, version{Field: field, Rev: "revision", At: parseTime(e.EditedAt), Text: *e.Diff})
+	}
+	if kind == "description" && n.Body != "" {
+		// With history present, an unknown last-edit time must gate,
+		// rather than date current text by the PR's creation time.
+		at := n.LastEditedAt
+		c.versions = append(c.versions, version{Field: field, Rev: "current", At: parseTime(at), Text: n.Body})
 	}
 	return nil
 }
