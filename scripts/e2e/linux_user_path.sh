@@ -271,6 +271,13 @@ step "8c git works in a guest's own repository, as the exec identity (FEAT-6.114
 # not running. Git also refuses a repository owned by another user ("dubious
 # ownership"); a failure here shows it.
 GIT_BASE="${MGIT_E2E_GIT_BASE:-buildpack-deps@sha256:8ea58fbc817960cd62d512044956ff00cb94865e549eeec32c12139413262004}"
+# fetch-guard: `mgit sandbox base from` pulls an OCI image through the
+# product's own registry client (internal/sandboxd/guestbase/pull.go), which
+# already bounds a whole pull at 15 minutes -- clause 2, in Go. Wrapping the
+# CLI here would guard the wrong layer: a retry outside the client cannot
+# clear the half-written blob cache inside it. MGIT-145 carries that work.
+# This step composes exactly as a user does, so it pulls exactly as a user
+# does. Refs: MGIT-143, MGIT-145
 out="$(cd "$R" && mgit sandbox base from "$GIT_BASE" --json 2>&1)" || fail "guest git" "composing a base with git: $(first "$out")"
 gimg="$(printf '%s\n' "$out" | sed -n 's/.*"image_ref":"\([^"]*\)".*/\1/p' | head -1)"
 [ -n "$gimg" ] || fail "guest git" "composing a base with git produced no reference: $(first "$out")"
