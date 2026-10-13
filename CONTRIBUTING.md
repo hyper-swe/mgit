@@ -370,8 +370,10 @@ release tag as in step 2 below. The same steps also move a pin by hand:
 5. Name the old and new version of each action in the pull request. A
    pull request that only moves pinned actions to newer releases, with each
    SHA verified against its tag and CI green, merges on the reviewer's pass,
-   in `release.yml` too. Any other change to `release.yml` is a reserved
-   path: it waits for the owner's confirmation before it merges.
+   in every workflow except `release.yml`. A pin move in `release.yml` is
+   reserved and needs the owner's confirmation, because `release.yml` is the
+   signing and publishing pipeline. Any other change to `release.yml` is
+   reserved the same way.
 
 ## Submitting Changes
 
