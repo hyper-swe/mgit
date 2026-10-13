@@ -277,6 +277,9 @@ func report(w io.Writer, pr int, got *collected, hits []hit, cutoff time.Time) i
 	c := got.counts
 	fmt.Fprintf(w, "prtext: #%d — read %d text versions (title %d, description %d, comments %d, reviews %d, review comments %d, edit revisions %d)\n",
 		pr, len(got.versions), c["title"], c["description"], c["comments"], c["reviews"], c["review comments"], c["revisions"])
+	if got.botDescriptions > 0 {
+		fmt.Fprintf(w, "prtext: %d Dependabot description revisions excluded; current description checked\n", got.botDescriptions)
+	}
 	if got.deleted > 0 {
 		fmt.Fprintf(w, "prtext: %d revision deleted from the history — nothing left to read\n", got.deleted)
 	}
