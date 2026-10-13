@@ -24,8 +24,9 @@ func TestE2E_RollbackByCommitHash_CompletesPromptly(t *testing.T) {
 	bin := buildMgitBinary(t)
 	repoDir := t.TempDir()
 	gitCmd(t, repoDir, "init")
-	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "a.go"), []byte("package a\n"), 0o600))
 	mustMgit(t, bin, repoDir, "init")
+	// written after init, so the seed commit carries a change to roll back
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "a.go"), []byte("package a\n"), 0o600))
 	mustMgit(t, bin, repoDir, "add", "a.go")
 
 	out := mustMgit(t, bin, repoDir, "commit", "--task-id", "MGIT-1", "-m", "seed", "--json")

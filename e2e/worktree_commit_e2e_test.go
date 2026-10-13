@@ -20,7 +20,9 @@ func TestE2E_CommitFromWorktree_LandsOnBoundBranch(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600))
 	mustMgit(t, bin, repoDir, "init")
 	mustMgit(t, bin, repoDir, "add", "main.go")
-	mustMgit(t, bin, repoDir, "commit", "--task-id", "MGIT-1", "-m", "seed")
+	// main.go is already the base (init records the existing tree), so the
+	// seed commit carries no change of its own
+	mustMgit(t, bin, repoDir, "commit", "--allow-empty", "--task-id", "MGIT-1", "-m", "seed")
 
 	// Two worktrees on disjoint task branches.
 	wtA := filepath.Join(repoDir, "wt-a")
@@ -73,7 +75,7 @@ func TestE2E_Worktree_GuardsAgainstSharedHeadMutation(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600))
 	mustMgit(t, bin, repoDir, "init")
 	mustMgit(t, bin, repoDir, "add", "main.go")
-	mustMgit(t, bin, repoDir, "commit", "--task-id", "MGIT-1", "-m", "seed")
+	mustMgit(t, bin, repoDir, "commit", "--allow-empty", "--task-id", "MGIT-1", "-m", "seed") // main.go is already the base
 
 	wt := filepath.Join(repoDir, "wt")
 	mustMgit(t, bin, repoDir, "worktree", "add", "--task", "MGIT-2", wt)

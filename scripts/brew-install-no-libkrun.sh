@@ -173,9 +173,11 @@ mkdir -p "$CORE"
   git init -q .
   git config user.email mgit75@example.com
   git config user.name "MGIT-75 check"
-  echo hello > file.txt
   MGIT="$("$BREW" --prefix)/bin/mgit"
   "$MGIT" init
+  # Written AFTER init: a file that is there at init is the base (FEAT-6.116),
+  # so committing it would be an empty commit and be refused.
+  echo hello > file.txt
   # Stage before committing: MGIT-77 made `mgit commit` REFUSE an empty commit
   # rather than report success for work it never recorded, which turned this
   # smoke test red — it had been relying on the old implicit behavior. Staging

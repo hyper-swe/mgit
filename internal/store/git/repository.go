@@ -91,6 +91,12 @@ func Init(path string, clock func() time.Time) (*Repository, error) {
 		return nil, fmt.Errorf("create initial commit: %w", err)
 	}
 
+	// Record the files already in the directory as the base, so the first
+	// task's diff and patch carry only that task's changes. Refs: FEAT-6.116
+	if err := r.recordExistingTreeAsBase(); err != nil {
+		return nil, fmt.Errorf("record the existing tree as the base: %w", err)
+	}
+
 	return r, nil
 }
 
@@ -283,4 +289,55 @@ func (r *Repository) createInitialCommit() error {
 	}
 
 	return nil
+}
+
+// recordExistingTreeAsBase commits the project's current files (ignore rules
+// applied, .git and .mgit left out) on top of the empty initial commit, so
+// main starts at the tree the project already has. A directory with no files
+// keeps the empty base. Refs: FEAT-6.116
+func (r *Repository) recordExistingTreeAsBase() error {
+	rels, err := r.listWorkingFiles()
+	if err != nil {
+		return err
+	}
+	if len(rels) == 0 {
+		return nil
+	}
+	st := r.repo.Storer
+	entries := make(map[string]blobEntry, len(rels))
+	for _, rel := range rels {
+		content, mode, err := r.workingFileContent(rel)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", rel, err)
+		}
+		h, err := writeBlob(st, content)
+		if err != nil {
+			return err
+		}
+		entries[rel] = blobEntry{hash: h, mode: mode}
+	}
+	tree, err := writeNestedTree(st, entries)
+	if err != nil {
+		return err
+	}
+	head, err := r.currentRef()
+	if err != nil {
+		return err
+	}
+	commitHash, err := writeCommit(st, commitParams{
+		tree:    tree,
+		parents: []plumbing.Hash{head.Hash()},
+		// mgit's own housekeeping, shaped like its other sync commits so
+		// verify does not ask for an index entry it never has.
+		message: "[mgit-sync] base: the files already in the directory",
+		authorAt: object.Signature{
+			Name:  model.SyncAgentID,
+			Email: model.SyncAgentID + "@mgit",
+			When:  r.clock(),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("base commit: %w", err)
+	}
+	return advanceBranchRefCAS(st, head.Name(), commitHash, head.Hash())
 }

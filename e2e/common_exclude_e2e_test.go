@@ -119,8 +119,8 @@ func TestE2E_Commit_StaleLinkedGitdir(t *testing.T) {
 	gitCmd(t, root, "worktree", "add", "--detach", project, "HEAD")
 	writeProjectFile(t, root, ".git/info/exclude", "private.log\n")
 	mustMgit(t, bin, project, "init")
-	mustMgit(t, bin, project, "commit", "-a", "--task-id", "MGIT-295", "-m", "first")
-	pointer, err := os.ReadFile(filepath.Join(project, ".git")) //nolint:gosec // read-only native Git fixture pointer
+	mustMgit(t, bin, project, "commit", "--allow-empty", "--task-id", "MGIT-295", "-m", "first") // the checkout is already the base
+	pointer, err := os.ReadFile(filepath.Join(project, ".git"))                                  //nolint:gosec // read-only native Git fixture pointer
 	require.NoError(t, err)
 	target := strings.TrimSpace(strings.TrimPrefix(string(pointer), "gitdir:"))
 	repo, err := gitstore.Open(project, time.Now)
