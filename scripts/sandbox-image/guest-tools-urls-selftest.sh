@@ -11,7 +11,7 @@ bad() { echo "  FAIL: $*" >&2; fails=$((fails + 1)); }
 echo "== guest tools URLs self-test =="
 for arch in amd64 arm64; do
   out="$(bash "$here/fetch-guest-tools.sh" --print-urls "$arch" 2>&1)" || { bad "$arch: --print-urls failed: $out"; continue; }
-  n="$(printf '%s\n' "$out" | grep -c '^https://')"
+  n="$(printf '%s\n' "$out" | grep -c ' https://')"
   [ "$n" -eq 5 ] && ok "$arch: five archive URLs" || bad "$arch: expected 5 URLs, got $n"
   # one line per URL: "<tool> <sha256> <url>"
   printf '%s\n' "$out" | grep -q "^jre .*jdk-21.0.12.1%2B1/OpenJDK21U-jre_.*_linux_hotspot_21.0.12.1_1.tar.gz$" \
