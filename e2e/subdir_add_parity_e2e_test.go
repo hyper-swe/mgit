@@ -37,6 +37,10 @@ func parityTree(t *testing.T, bin string) string {
 	gitCmd(t, repo, "add", "-A")
 	gitCmd(t, repo, "commit", "-m", "seed")
 	mustMgit(t, bin, repo, "init")
+	// init wrote the agent files and recorded them in mgit's base, so git
+	// commits them too: both sides then start from the same tree.
+	gitCmd(t, repo, "add", "-A")
+	gitCmd(t, repo, "commit", "-m", "agent files")
 	mustMgit(t, bin, repo, "status") // the base absorbs git's committed tree
 	writeParityFile(t, repo, "pkg/a.go", "a2\n")
 	writeParityFile(t, repo, "pkg/sub/new.go", "n\n")

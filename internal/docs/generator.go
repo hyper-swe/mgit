@@ -224,13 +224,11 @@ the project root.
 
 ## Record work
 
-Record the starting state once, before the first task, so a task's patch holds
-only your change. Without that commit the first task's patch includes every
-file in the tree, and ` + "`mgit commit -a`" + ` also takes in the files ` + "`mgit init`" + `
-wrote: MGIT.md, CLAUDE.md and AGENTS.md.
+` + "`mgit init`" + ` recorded the files already in the directory, including MGIT.md,
+CLAUDE.md and AGENTS.md, as the starting state. A task's patch holds only your
+change.
 
 ` + "```bash" + `
-mgit commit -a --task-id=PROJ-0 -m "baseline"
 # ... edit files for the task ...
 mgit commit -a --task-id=PROJ-1 -m "what changed"
 mgit log --task-id=PROJ-1

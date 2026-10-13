@@ -90,8 +90,8 @@ func TestTheDocumentedWorkflowRunsOnAFreshInit(t *testing.T) {
 	patch, err := os.ReadFile(filepath.Join(src, "PROJ-1.patch")) //nolint:gosec // test fixture path
 	require.NoError(t, err)
 	assert.Contains(t, string(patch), "change.txt")
-	assert.NotContains(t, string(patch), "a.txt", "the baseline commit keeps pre-existing files out of the task patch")
-	assert.NotContains(t, string(patch), "MGIT.md", "the files init wrote ride in the baseline, not the task")
+	assert.NotContains(t, string(patch), "a.txt", "the base recorded by init keeps pre-existing files out of the task patch")
+	assert.NotContains(t, string(patch), "MGIT.md", "the files init wrote are in the base, not the task")
 
 	tgt := t.TempDir()
 	git(tgt, "init", "-q", "-b", "main")

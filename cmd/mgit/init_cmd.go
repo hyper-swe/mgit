@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,9 +33,40 @@ func initCmd() *cobra.Command {
 				}
 			}
 
+			// The agent instructions are mgit's own file plus pointer lines. They
+			// are written BEFORE the base is recorded, so they are part of the
+			// base and the first task's patch does not carry them. A failure
+			// here must not stop the repository from being initialized. A
+			// directory that is already initialized is left to Init to report.
+			var entryOut bytes.Buffer
+			var entryErr error
+			var undoEntry func()
+			madeDir := false
+			if _, statErr := os.Stat(filepath.Join(path, ".mgit")); !noAgentFiles && os.IsNotExist(statErr) {
+				// init --path may name a directory that does not exist yet;
+				// Init used to create it, and the files now come first.
+				if _, dirErr := os.Stat(path); os.IsNotExist(dirErr) {
+					if err := os.MkdirAll(path, 0o750); err != nil {
+						return fmt.Errorf("create %s: %w", path, err)
+					}
+					madeDir = true
+				}
+				undoEntry = snapshotAgentFiles(path)
+				entryErr = writeAgentEntry(path, &entryOut)
+			}
+
 			clock := func() time.Time { return time.Now().UTC() }
 			repo, err := gitstore.Init(path, clock)
 			if err != nil {
+				// take back what was written ahead of the base: files init
+				// created are removed, a file the project had is restored, and
+				// a directory init made is removed again if nothing is in it
+				if undoEntry != nil {
+					undoEntry()
+				}
+				if madeDir {
+					_ = os.Remove(path)
+				}
 				return fmt.Errorf("init: %w", err)
 			}
 			defer func() { _ = repo.Close() }()
@@ -59,12 +91,9 @@ func initCmd() *cobra.Command {
 
 			_, _ = fmt.Fprintf(os.Stdout, "Initialized mgit repository at %s\n", filepath.Join(path, ".mgit"))
 
-			// The agent instructions are mgit's own file plus pointer lines;
-			// a failure here must not undo an initialized repository.
-			if !noAgentFiles {
-				if err := writeAgentEntry(path, os.Stdout); err != nil {
-					_, _ = fmt.Fprintf(os.Stderr, "warning: could not write the agent instructions (%v)\n", err)
-				}
+			_, _ = os.Stdout.Write(entryOut.Bytes())
+			if entryErr != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "warning: could not write the agent instructions (%v)\n", entryErr)
 			}
 
 			// --link-mtix: check for mtix project directory and print linking note.

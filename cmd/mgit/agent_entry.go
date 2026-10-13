@@ -73,3 +73,54 @@ func addPointerLine(path, line string) error {
 	}
 	return nil
 }
+
+// snapshotAgentFiles remembers MGIT.md, CLAUDE.md and AGENTS.md as they are,
+// and returns a function that puts them back after a failed `mgit init`, which
+// writes them ahead of the base. The rule is that nothing that was there
+// before is ever removed: a path that did not exist is removed only if it is
+// still a regular file init could have made; a path that existed and whose
+// bytes were read (through a symlink, the target's) is rewritten to those bytes
+// if it changed; a path that
+// existed and could not be read (mode 000, a directory) is left alone, since
+// init wrote nothing in it.
+func snapshotAgentFiles(root string) func() {
+	type saved struct {
+		path    string
+		existed bool
+		read    bool
+		data    []byte
+		mode    os.FileMode
+	}
+	all := make([]saved, 0, 3)
+	for _, name := range []string{mgitDocFile, claudeDocName, agentsDocName} {
+		p := filepath.Join(root, name)
+		s := saved{path: p}
+		if _, err := os.Lstat(p); err == nil {
+			s.existed = true
+			// Stat and ReadFile follow a symlink: the bytes of the file the
+			// link points at are what a write through the link changes, so
+			// they are what is put back. A target that is a directory, is
+			// missing or cannot be read stays unread, and is left alone.
+			if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
+				if raw, err := os.ReadFile(p); err == nil { //nolint:gosec // path built from the repository root
+					s.read, s.data, s.mode = true, raw, st.Mode().Perm()
+				}
+			}
+		}
+		all = append(all, s)
+	}
+	return func() {
+		for _, s := range all {
+			switch {
+			case !s.existed:
+				if st, err := os.Lstat(s.path); err == nil && st.Mode().IsRegular() {
+					_ = os.Remove(s.path)
+				}
+			case s.read:
+				if cur, err := os.ReadFile(s.path); err != nil || string(cur) != string(s.data) { //nolint:gosec // path built from the repository root
+					_ = os.WriteFile(s.path, s.data, s.mode)
+				}
+			}
+		}
+	}
+}
