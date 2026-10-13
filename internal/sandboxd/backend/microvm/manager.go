@@ -98,7 +98,11 @@ type VMConfig struct {
 	// direct path) — the quarantine control is realized only when set.
 	// Refs: SEC-03, FR-17.3, FR-17.5
 	PrivateStorePath string
-	WorktreeTag      string // mount tag
+	// NoGuestRepo turns off the guest's own repository: by default the
+	// delivered files are also given to the guest as one base commit with no
+	// host history (FEAT-6.114.1).
+	NoGuestRepo bool
+	WorktreeTag string // mount tag
 	// AttachNIC is DERIVED (NetworkMode != none), not authoritative — it is a
 	// convenience for backends whose "no device" default is fail-CLOSED (vzf,
 	// firecracker). A backend whose default is fail-OPEN must ignore it and key
@@ -530,8 +534,15 @@ func vmConfig(id, stateDir string, opts model.SandboxLaunchOptions, images Image
 		VsockEnabled:     true,
 		BalloonEnabled:   true,
 		PublishPorts:     guestPublishPorts(opts.PublishPorts),
+		NoGuestRepo:      opts.NoGuestRepo,
 	}
 }
+
+// GuestRepo says whether the guest is given a repository of its own: the
+// delivered files as one base commit (FEAT-6.114.1). It is the default;
+// NoGuestRepo (--no-guest-repo) turns it off. Every backend asks this, so the
+// default is decided in one place.
+func (c VMConfig) GuestRepo() bool { return !c.NoGuestRepo }
 
 // guestPublishPorts projects the launch options' host->guest port mappings to
 // just the GUEST ports the guest must bridge (the host port is host-side

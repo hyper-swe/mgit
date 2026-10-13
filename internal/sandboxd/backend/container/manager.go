@@ -256,7 +256,7 @@ func (m *Manager) quarantine(id string, opts model.SandboxLaunchOptions) (stateD
 		return "", "", fmt.Errorf("bind private store: %w", bErr)
 	}
 	stageDir := filepath.Join(stateDir, stagingDirName)
-	if sErr := staging.Build(opts.WorktreePath, store.Dir, stageDir); sErr != nil {
+	if sErr := staging.BuildForGuest(opts.WorktreePath, store.Dir, stageDir, !opts.NoGuestRepo); sErr != nil {
 		_ = os.RemoveAll(stateDir)
 		return "", "", fmt.Errorf("stage worktree: %w", sErr)
 	}

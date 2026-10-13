@@ -674,3 +674,19 @@ useful. So the boundary is:
   pinned in `images.lock`.
 
 Refs: MGIT-44, MGIT-30, MGIT-61.15, MGIT-229, ADR-005, ADR-010, ADR-016, FR-17.15, FR-17.16
+
+## Git in the guest
+
+By default `mgit sandbox launch` gives the guest a repository of its own: the
+delivered files as one base commit (`base: the files this sandbox was given`),
+with a fixed identity and none of the host's history. It is made in process
+from the staged tree, so no host git binary, configuration, hook or
+environment variable takes part; if it cannot be made, the launch fails and
+says so. The guest's `.mgit` store is excluded from the base, and the
+repository is the guest's: host sync leaves it alone. `--no-guest-repo` turns
+it off, and the launch then prints how to make one in the guest if the
+worktree has git metadata. The guest image needs git to use the repository;
+the Linux user-path check (`scripts/e2e/linux_user_path.sh`, step 8c) composes
+a base that has git, launches on it, and runs `git rev-parse HEAD`, `git status`
+and `git diff` in a real guest as the exec identity. The release's recorded
+base (debian:12) has no git.

@@ -262,7 +262,7 @@ func GitMetadataNote(worktreePath, taskID string) string {
 	if _, err := os.Lstat(filepath.Join(worktreePath, ".git")); err != nil {
 		return ""
 	}
-	return "note: this worktree has git metadata (a .git file or directory). The sandbox does not carry it: " +
+	return "note: this worktree has git metadata (a .git file or directory) and --no-guest-repo is set. The sandbox does not carry it: " +
 		"the guest gets the files and a private mgit store, never the repository's history, so git commands in the guest find no repository.\n" +
 		"  If a command there needs one, create it in the guest, from the worktree directory:\n" +
 		"    mgit sandbox exec --task-id " + taskID + " -- sh -c 'git init -q && git add -A && git commit -qm base'\n" +

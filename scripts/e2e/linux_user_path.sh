@@ -259,6 +259,49 @@ echo "  after revoke the granted host is refused"
 (cd "$R" && mgit sandbox remove "$T2" --force >/dev/null 2>&1) || fail "granted egress" "remove failed"
 echo "  PASS"
 
+step "8c git works in a guest's own repository, as the exec identity (FEAT-6.114.1)"
+# By default the guest is given a repository of its own: the delivered files
+# as ONE base commit, none of the host's history. The release's recorded base
+# (debian:12) carries no git, so this step composes a second base from an image
+# that does (the SCM variant of the same distribution, pinned by digest so the
+# bytes do not move), launches a fresh sandbox on it and runs the three
+# commands an agent runs, as the identity `mgit run` uses. It runs LAST among
+# the guest steps, because composing registers that base for later launches.
+# A guest without git is a failure here: this step is not allowed to pass by
+# not running. Git also refuses a repository owned by another user ("dubious
+# ownership"); a failure here shows it.
+GIT_BASE="${MGIT_E2E_GIT_BASE:-buildpack-deps@sha256:8ea58fbc817960cd62d512044956ff00cb94865e549eeec32c12139413262004}"
+# fetch-guard: `mgit sandbox base from` pulls an OCI image through the
+# product's own registry client (internal/sandboxd/guestbase/pull.go), which
+# already bounds a whole pull at 15 minutes -- clause 2, in Go. Wrapping the
+# CLI here would guard the wrong layer: a retry outside the client cannot
+# clear the half-written blob cache inside it. MGIT-145 carries that work.
+# This step composes exactly as a user does, so it pulls exactly as a user
+# does. Refs: MGIT-143, MGIT-145
+out="$(cd "$R" && mgit sandbox base from "$GIT_BASE" --json 2>&1)" || fail "guest git" "composing a base with git: $(first "$out")"
+gimg="$(printf '%s\n' "$out" | sed -n 's/.*"image_ref":"\([^"]*\)".*/\1/p' | head -1)"
+[ -n "$gimg" ] || fail "guest git" "composing a base with git produced no reference: $(first "$out")"
+T3=UP-3
+P3="$W/work3"
+mkdir -p "$P3"
+printf 'v1\n' >"$P3/f.txt"
+out="$(cd "$R" && mgit sandbox launch --task-id "$T3" --worktree "$P3" --image "$gimg" 2>&1)" || fail "guest git" "launch: $(first "$out")"
+gg() { (cd "$P3" && timeout 300 mgit run -- /bin/sh -c "$1" 2>&1); }
+[ "$(gg 'command -v git >/dev/null 2>&1 && echo has-git || echo no-git' | tail -1)" = has-git ] ||
+	fail "guest git" "the base composed for this step has no git, so nothing was checked"
+head="$(gg 'git rev-parse HEAD' | tail -1)"
+printf '%s\n' "$head" | grep -Eqx '[0-9a-f]{40}' || fail "guest git" "git rev-parse HEAD said: $(first "$head" 3)"
+n="$(gg 'git rev-list --count HEAD' | tail -1)"
+[ "$n" = 1 ] || fail "guest git" "the guest repository has $n commits, not one"
+st="$(gg 'git status --porcelain')"
+[ -z "$st" ] || fail "guest git" "git status is not clean on a fresh launch: $(first "$st" 3)"
+gg 'echo edited >> f.txt' >/dev/null
+df="$(gg 'git diff --stat')"
+printf '%s\n' "$df" | grep -q 'f.txt' || fail "guest git" "git diff does not show an edit: $(first "$df" 3)"
+echo "  git rev-parse HEAD ($head), status and diff work in the guest as the exec identity; one base commit"
+(cd "$R" && mgit sandbox remove "$T3" --force >/dev/null 2>&1) || fail "guest git" "remove failed"
+echo "  PASS"
+
 step "9 remove"
 (cd "$R" && mgit sandbox remove "$TASK" --force >/dev/null 2>&1) || fail "remove" "remove failed"
 if (cd "$R" && mgit sandbox status "$TASK" >/dev/null 2>&1); then
