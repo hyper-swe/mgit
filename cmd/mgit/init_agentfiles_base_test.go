@@ -115,3 +115,49 @@ func TestAFailedInitLeavesTheAgentFilesAsItFoundThem(t *testing.T) {
 		assert.True(t, os.IsNotExist(statErr), "%s is removed again", f)
 	}
 }
+
+// failingInitDir is a directory in which init fails (a file it cannot read).
+func failingInitDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked.txt")
+	require.NoError(t, os.WriteFile(locked, []byte("x\n"), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o600) })
+	return dir
+}
+
+// The take-back never removes a path that was there before init: a CLAUDE.md
+// the user could not be read (mode 000) is left alone, because init wrote
+// nothing in it.
+func TestAFailedInitLeavesAnUnreadableInstructionFileAlone(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("an unreadable file stays readable to root")
+	}
+	dir := failingInitDir(t)
+	p := filepath.Join(dir, "CLAUDE.md")
+	require.NoError(t, os.WriteFile(p, []byte("private\n"), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(p, 0o600) })
+	t.Chdir(dir)
+	require.Error(t, runCLI(t, "init"))
+	st, err := os.Lstat(p)
+	require.NoError(t, err, "the user's CLAUDE.md survives a failed init")
+	assert.Equal(t, os.FileMode(0), st.Mode().Perm(), "and keeps its mode")
+}
+
+// So does an empty directory that happens to be named like an agent file.
+func TestAFailedInitLeavesADirectoryNamedLikeAnAgentFileAlone(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("an unreadable file stays readable to root")
+	}
+	dir := failingInitDir(t)
+	for _, n := range []string{"CLAUDE.md", "AGENTS.md"} {
+		require.NoError(t, os.Mkdir(filepath.Join(dir, n), 0o750))
+	}
+	t.Chdir(dir)
+	require.Error(t, runCLI(t, "init"))
+	for _, n := range []string{"CLAUDE.md", "AGENTS.md"} {
+		st, err := os.Lstat(filepath.Join(dir, n))
+		require.NoError(t, err, "the directory %s survives a failed init", n)
+		assert.True(t, st.IsDir())
+	}
+}
