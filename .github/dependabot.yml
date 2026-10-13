@@ -1,0 +1,20 @@
+# Keeps the pinned third-party actions current (MGIT-252).
+#
+# Every action in .github/workflows is pinned to a full commit SHA with its
+# release in a trailing "# vX.Y.Z" comment (MGIT-246). The github-actions
+# ecosystem reads that comment and proposes each newer upstream release,
+# moving the SHA and the comment together. All action bumps are grouped into
+# one weekly pull request, because this repository merges one pull request
+# per CI cycle and a pull request per action would queue behind each other.
+# Each bump's SHA is verified against its release tag before review
+# (CONTRIBUTING.md, "Workflow Actions Are Pinned").
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns:
+          - "*"
