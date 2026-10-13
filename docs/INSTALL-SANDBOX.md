@@ -686,6 +686,7 @@ says so. The guest's `.mgit` store is excluded from the base, and the
 repository is the guest's: host sync leaves it alone. `--no-guest-repo` turns
 it off, and the launch then prints how to make one in the guest if the
 worktree has git metadata. The guest image needs git to use the repository;
-the Linux user-path check (`scripts/e2e/linux_user_path.sh`, step 6b) runs
-`git rev-parse HEAD`, `git status` and `git diff` in a real guest as the exec
-identity, and says so when the composed base has no git.
+the Linux user-path check (`scripts/e2e/linux_user_path.sh`, step 8c) composes
+a base that has git, launches on it, and runs `git rev-parse HEAD`, `git status`
+and `git diff` in a real guest as the exec identity. The release's recorded
+base (debian:12) has no git.

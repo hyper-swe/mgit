@@ -31,7 +31,7 @@ func TestSync_TheGuestsOwnRepoIsLeftAlone(t *testing.T) {
 	// the guest commits something of its own
 	writeTree(t, f.guestTree, map[string]string{"guest-notes.txt": "mine"})
 	for _, args := range [][]string{{"add", "-A"}, {"-c", "user.name=g", "-c", "user.email=g@g", "commit", "-qm", "guest work"}} {
-		out, cerr := exec.Command("git", append([]string{"-C", f.guestTree}, args...)...).CombinedOutput()
+		out, cerr := exec.Command("git", append([]string{"-C", f.guestTree}, args...)...).CombinedOutput() //nolint:gosec // G204: git on PATH, test-only arguments
 		require.NoError(t, cerr, string(out))
 	}
 
@@ -45,7 +45,7 @@ func TestSync_TheGuestsOwnRepoIsLeftAlone(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"app.go"}, res.Updated)
 	assert.Empty(t, res.Deleted, "the guest's repo is not deleted by a sync")
-	out, gerr := exec.Command("git", "-C", f.guestTree, "log", "--format=%s").CombinedOutput()
+	out, gerr := exec.Command("git", "-C", f.guestTree, "log", "--format=%s").CombinedOutput() //nolint:gosec // G204: git on PATH, fixed arguments
 	require.NoError(t, gerr)
 	assert.Contains(t, string(out), "guest work", "the guest's commits survive a sync")
 }

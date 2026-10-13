@@ -36,7 +36,7 @@ func TestEveryDeliveryPathPassesTheLaunchsDecisionOn(t *testing.T) {
 		"../firecracker/hypervisor_linux.go": "cfg.PrivateStorePath, 0, cfg.GuestRepo())",
 		"../container/manager.go":            "staging.BuildForGuest(opts.WorktreePath, store.Dir, stageDir, !opts.NoGuestRepo)",
 	} {
-		raw, err := os.ReadFile(path)
+		raw, err := os.ReadFile(path) //nolint:gosec // G304: test-only; fixed sibling paths listed above
 		require.NoError(t, err, path)
 		assert.True(t, strings.Contains(string(raw), want), "%s must contain %q", path, want)
 	}

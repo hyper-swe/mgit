@@ -42,7 +42,9 @@ func TestE2E_TheLinuxUserPathRunsWithoutTestHooks(t *testing.T) {
 		// the loop's per-round deletion canary (MGIT-230.2)
 		"sandbox sync --task-id \"$TASK\" --dry-run", "[ -e canary-a.txt ] && echo present || echo gone",
 		// the loop's exec contract (MGIT-230.3)
-		"nohup sleep 120", "kill -0", "exit 7", "/proc/meminfo", "dmesg", "name=\"$(gx 'id -un')\""} {
+		"nohup sleep 120", "kill -0", "exit 7", "/proc/meminfo", "dmesg", "name=\"$(gx 'id -un')\"",
+		// git in the guest's own repository (FEAT-6.114.1)
+		"git rev-parse HEAD", "git status --porcelain", "git diff --stat"} {
 		assert.Contains(t, script, verb, "the user path includes %q", verb)
 	}
 }

@@ -45,17 +45,17 @@ func commitCount(t *testing.T, dir string) int {
 }
 
 // hostRepoWithHistory is a worktree with three commits whose subjects are
-// recognisable, so a leak is found by text.
+// recognizable, so a leak is found by text.
 func hostRepoWithHistory(t *testing.T) string {
 	t.Helper()
 	wt := t.TempDir()
 	_, err := git.PlainInit(wt, false)
 	require.NoError(t, err)
 	for i, subject := range []string{"HOST-HISTORY-ONE", "HOST-HISTORY-TWO", "HOST-HISTORY-THREE"} {
-		require.NoError(t, os.WriteFile(filepath.Join(wt, "f.txt"), []byte(strings.Repeat("x", i+1)+"\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(wt, "f.txt"), []byte(strings.Repeat("x", i+1)+"\n"), 0o600))
 		commitAll(t, wt, subject)
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(wt, "g.txt"), []byte("untracked work\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "g.txt"), []byte("untracked work\n"), 0o600))
 	return wt
 }
 
@@ -83,7 +83,7 @@ func TestTheGuestGetsAFreshRepoWithOneBaseCommit(t *testing.T) {
 		assert.False(t, strings.HasPrefix(n, ".git/"), n)
 	}
 	// git (not go-git) reads info/exclude, which keeps the store out of status
-	ex, err := os.ReadFile(filepath.Join(stage, ".git", "info", "exclude"))
+	ex, err := os.ReadFile(filepath.Join(stage, ".git", "info", "exclude")) //nolint:gosec // G304: test-only; a path under this test's own temp dir
 	require.NoError(t, err)
 	assert.Contains(t, string(ex), ".mgit/")
 }
@@ -99,14 +99,14 @@ func TestGitCommandsWorkOnTheDeliveredRepo(t *testing.T) {
 	stage := filepath.Join(t.TempDir(), "stage")
 	require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
 	run := func(args ...string) string {
-		out, rerr := exec.Command(gitBin, append([]string{"-C", stage}, args...)...).CombinedOutput()
+		out, rerr := exec.Command(gitBin, append([]string{"-C", stage}, args...)...).CombinedOutput() //nolint:gosec // G204: git found on PATH, test-only arguments
 		require.NoError(t, rerr, "git %v: %s", args, out)
 		return strings.TrimSpace(string(out))
 	}
 	assert.Regexp(t, `^[0-9a-f]{40}$`, run("rev-parse", "HEAD"))
 	assert.Empty(t, run("status", "--porcelain"))
 	run("diff", "--exit-code")
-	require.NoError(t, os.WriteFile(filepath.Join(stage, "f.txt"), []byte("changed\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(stage, "f.txt"), []byte("changed\n"), 0o600))
 	assert.Contains(t, run("diff", "--stat"), "f.txt")
 }
 
@@ -120,7 +120,7 @@ func TestTheGuestRepoCarriesNoHostHistory(t *testing.T) {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		raw, _ := os.ReadFile(p)
+		raw, _ := os.ReadFile(p) //nolint:gosec // G304: test-only; walking this test's own temp dir
 		all.Write(raw)
 		return nil
 	}))
@@ -139,7 +139,7 @@ func TestWithTheFlagOffTheGuestGetsNoRepo(t *testing.T) {
 
 func TestARepoIsMadeEvenWhenTheWorktreeHasNoGit(t *testing.T) {
 	wt := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o600))
 	stage := filepath.Join(t.TempDir(), "stage")
 	require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
 	assert.Equal(t, 1, commitCount(t, stage))
@@ -147,7 +147,7 @@ func TestARepoIsMadeEvenWhenTheWorktreeHasNoGit(t *testing.T) {
 
 func TestTheBaseCommitIsTheSameForTheSameFiles(t *testing.T) {
 	wt := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o600))
 	hash := func() string {
 		stage := filepath.Join(t.TempDir(), "stage")
 		require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
@@ -179,7 +179,7 @@ func TestTheHostsGitEnvironmentReachesNoOtherRepository(t *testing.T) {
 			t.Setenv(tc.variable, tc.value(other))
 
 			wt := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o600))
 			stage := filepath.Join(t.TempDir(), "stage")
 			require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
 
@@ -199,7 +199,7 @@ func snapshotDir(t *testing.T, dir string) map[string]string {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		raw, rerr := os.ReadFile(p)
+		raw, rerr := os.ReadFile(p) //nolint:gosec // G304: test-only; walking this test's own temp dir
 		require.NoError(t, rerr)
 		rel, _ := filepath.Rel(dir, p)
 		out[rel] = string(raw)
@@ -210,11 +210,11 @@ func snapshotDir(t *testing.T, dir string) map[string]string {
 
 func TestAnErrorBuildingTheRepoReachesTheCaller(t *testing.T) {
 	wt := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o600))
 	// a file where the repository's directory would go
 	stage := filepath.Join(t.TempDir(), "stage")
 	require.NoError(t, os.MkdirAll(stage, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(stage, ".git"), []byte("not a directory"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(stage, ".git"), []byte("not a directory"), 0o600))
 	err := BuildForGuest(wt, privateStoreWith(t), stage, true)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--no-guest-repo", "the error names the way out")
