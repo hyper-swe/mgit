@@ -85,8 +85,8 @@ jobs:
     name: Posture (daemon-less core loop + MCP)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -129,8 +129,8 @@ jobs:
       matrix:
         channel: [go-install, release-archive]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -146,7 +146,7 @@ jobs:
           test -x "$bin/mgit-sandboxd" || { echo "mgit-sandboxd not installed by go install"; exit 1; }
           echo "BINDIR=$bin" >> "$GITHUB_ENV"
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: matrix.channel == 'release-archive'
         with:
           name: linux-sandboxd-amd64
@@ -255,7 +255,7 @@ jobs:
           echo "apt bootstrap: all 3 attempts failed; the apt output above is the evidence"
           exit 1
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # goreleaser stamps {{.ShortCommit}} and {{.CommitDate}} from a full
           # clone; the daemon must be stamped from the same history.
@@ -269,7 +269,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache the pinned libkrunfw kernel tarball
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/mgit-libkrun
           key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}
@@ -307,13 +307,13 @@ jobs:
             --prefix="libkrun-$LIBKRUN_VERSION/" -o "$src/libkrun-$LIBKRUN_VERSION-source.tar.gz" HEAD
           ls -l "$src"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-sandboxd-${{ matrix.arch }}
           path: ${{ runner.temp }}/prebuilt/
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: matrix.arch == 'amd64' && github.ref_type == 'tag'
         with:
           name: linux-sources
@@ -328,11 +328,11 @@ jobs:
     name: macOS sandbox daemon (arm64, libkrun bundled)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # the same full history goreleaser stamps from
           fetch-depth: 0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -368,7 +368,7 @@ jobs:
       # install guide has a user do: the daemon must still resolve its own
       # libkrun, and libkrunfw must load. Refs: MGIT-119
       - name: Cache Homebrew downloads
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/Library/Caches/Homebrew/downloads
           key: brew-downloads-${{ runner.os }}-libkrun-v1-${{ github.run_id }}
@@ -379,7 +379,7 @@ jobs:
           bash scripts/ci/install-libkrun-brew.sh
           MGIT_VERIFY_KERNEL=1 bash scripts/release/verify-darwin-sandboxd.sh "$RUNNER_TEMP/prebuilt/darwin_arm64"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: darwin-sandboxd-arm64
           path: ${{ runner.temp }}/prebuilt/
@@ -412,11 +412,11 @@ jobs:
         # path. Refs: MGIT-230.1
         install: [archive, install-script]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # the same full history the linux-sandboxd job stamped from
           fetch-depth: 0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -434,7 +434,7 @@ jobs:
           [ -r /dev/kvm ] && [ -w /dev/kvm ] \
             || { echo "FATAL: /dev/kvm not usable — the user path cannot run"; exit 1; }
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-sandboxd-amd64
           path: ${{ runner.temp }}/prebuilt
@@ -525,8 +525,8 @@ jobs:
     name: Sandbox LIVE (Linux/KVM firecracker)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -867,7 +867,7 @@ jobs:
           echo "apt bootstrap: all 3 attempts failed; the apt output above is the evidence"
           exit 1
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build prerequisites (toolchains, guarded)
         # apt (the libkrun build toolchain incl. libclang-18 from focal-updates),
@@ -901,7 +901,7 @@ jobs:
       # network, so this can only make the run faster, never weaker.
       # Refs: MGIT-163, MGIT-147
       - name: Cache the pinned libkrunfw kernel tarball
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/mgit-libkrun
           key: libkrunfw-kernel-${{ hashFiles('scripts/sandbox-image/pins.env') }}
@@ -1047,8 +1047,8 @@ jobs:
     name: Container backend (identity + worktree write)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Assert installed Go version
