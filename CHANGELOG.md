@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   off; the launch note about git metadata is printed only then. The
   repository is made in process, so the host's git binary, configuration and
   environment play no part. If it cannot be made, the launch fails and says so.
+  Files the project's ignore rules hide, at the top level or below it, are
+  delivered to the guest but are not in the base commit, as in a host repository.
 
 - `mgit init` writes `MGIT.md`, which holds mgit's instructions for a coding
   agent, and adds one pointer line to `CLAUDE.md` (`@MGIT.md`) and to

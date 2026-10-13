@@ -219,3 +219,53 @@ func TestAnErrorBuildingTheRepoReachesTheCaller(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--no-guest-repo", "the error names the way out")
 }
+
+// baseFiles lists the files in the guest repository's base commit.
+func baseFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+	head, err := repo.Head()
+	require.NoError(t, err)
+	c, err := repo.CommitObject(head.Hash())
+	require.NoError(t, err)
+	tree, err := c.Tree()
+	require.NoError(t, err)
+	var out []string
+	require.NoError(t, tree.Files().ForEach(func(f *object.File) error { out = append(out, f.Name); return nil }))
+	return out
+}
+
+// A file the project's own ignore rules hide is not part of the guest's base,
+// at the top level or below it, as in a host repository. The file is still
+// delivered: it is on disk, only not in the base commit. Refs: FEAT-6.114.1.1
+func TestIgnoredFilesAreDeliveredButNotInTheBaseCommit(t *testing.T) {
+	wt := t.TempDir()
+	files := map[string]string{
+		".gitignore":      "*.log\nbuild/\n!keep.log\n",
+		"keep.txt":        "k\n",
+		"keep.log":        "negated, so tracked\n",
+		"debug.log":       "top-level ignored file\n",
+		"build/out.bin":   "ignored directory\n",
+		"sub/code.go":     "package sub\n",
+		"sub/app.log":     "nested ignored file\n",
+		"sub/.gitignore":  "local.txt\n",
+		"sub/local.txt":   "ignored by the nested rules\n",
+		"sub/tracked.txt": "t\n",
+	}
+	for rel, body := range files {
+		p := filepath.Join(wt, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o750))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+	}
+	stage := filepath.Join(t.TempDir(), "stage")
+	require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
+
+	assert.ElementsMatch(t,
+		[]string{".gitignore", "keep.txt", "keep.log", "sub/code.go", "sub/.gitignore", "sub/tracked.txt"},
+		baseFiles(t, stage), "the base holds what a host repository would track")
+	for _, rel := range []string{"debug.log", "build/out.bin", "sub/app.log", "sub/local.txt"} {
+		_, err := os.Stat(filepath.Join(stage, rel))
+		assert.NoError(t, err, "%s is still delivered to the guest", rel)
+	}
+}
