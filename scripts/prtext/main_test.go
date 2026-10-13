@@ -360,3 +360,65 @@ func TestJudge_APrivateAddressIsAHitWithoutNamingIt(t *testing.T) {
 		assert.NotContains(t, out.String(), part, "the report never names the address")
 	}
 }
+
+// A PRIVATE IPv6 ADDRESS IS A HIT TOO (MGIT-242.2): a unique-local
+// (fc00::/7) or link-local (fe80::/10) literal names a host on a private
+// network exactly as a private IPv4 one does, and is never named in the
+// output. The ranges' own names identify no host. The product assigns no
+// IPv6 guest network (its gateways serve IPv4 only, internal/guestboot/
+// network.go), so nothing IPv6 is exempt as the product's own. Near
+// misses: documentation and loopback addresses, clock times, hardware
+// addresses and C++ scope operators are not addresses in a private range.
+func TestJudge_APrivateIPv6AddressIsAHitWithoutNamingIt(t *testing.T) {
+	tests := []struct {
+		text string
+		hit  bool
+	}{
+		{"the box at fd12:3456:789a::1 answered", true},
+		{"link fe80::1c2b:3cff:fe4d:5e6f on the LAN", true},
+		{"ping6 fe80::1%en0", true},
+		{"FD00::15 in upper case", true},
+		{"inet6 fd00::15/64", true},
+		{"dns [fd00::2]:53", true},
+		{"fc00::/7, fd00::/8 and fe80::/10 are denied", false},
+		{"the fe80:: and fd00:: ranges", false},
+		{"2001:db8::1 is a documentation address", false},
+		{"::1 is loopback", false},
+		{"merged at 13:18:06Z", false},
+		{"mac 52:54:00:12:34:56", false},
+		{"std::string and a::b", false},
+		{"xfd00::1 is glued to a word", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.text, func(t *testing.T) {
+			hits := judge([]version{{Field: "description", Rev: "as written", At: cutoff, Text: tt.text}}, testLists(), cutoff)
+			assert.Equal(t, tt.hit, len(hits) == 1 && hits[0].Class == "address", "%v", hits)
+		})
+	}
+	var out bytes.Buffer
+	report(&out, 7, &collected{counts: map[string]int{}}, judge([]version{{Field: "title", Rev: "as opened", At: cutoff, Text: "fd12:3456:789a::1"}}, testLists(), cutoff), cutoff)
+	assert.Contains(t, out.String(), "private address in title as opened")
+	for _, part := range []string{"fd12", "3456", "789a"} {
+		assert.NotContains(t, out.String(), part, "the report never names the address")
+	}
+}
+
+// THE PRODUCT'S OWN FILE NAMES ARE NOT HITS. Pull requests here describe
+// the agent files mgit writes (CLAUDE.md, AGENTS.md, .claude/settings.json,
+// the Codex and Cursor hooks and rule); with the committed lists none of
+// them is a hit, so a list regenerated with a tool's name as a term fails
+// here before it fails every pull request that names a product file. The
+// control: the same judge, over the same lists, still finds a private
+// address. Refs: MGIT-242.2, MGIT-242.1
+func TestCommittedLists_TheProductsAgentFileNamesAreNotHits(t *testing.T) {
+	l, err := loadLists(filepath.Join("..", "..", termsFile), filepath.Join("..", "..", namesFile))
+	require.NoError(t, err)
+	text := "mgit writes CLAUDE.md, AGENTS.md, .claude/settings.json, .codex/hooks.json, " +
+		".cursor/hooks.json and .cursor/rules/mgit-sandbox.mdc into the worktree, and the " +
+		"CLAUDE.md block tells the agent to run commands through `mgit run`."
+	for _, h := range judge([]version{{Field: "description", Rev: "as written", At: cutoff, Text: text}}, l, cutoff) {
+		t.Errorf("%s: a product file name must not be a hit", h.label())
+	}
+	control := judge([]version{{Field: "description", Rev: "as written", At: cutoff, Text: text + " 10.20.30.40"}}, l, cutoff)
+	assert.Len(t, control, 1, "the judge over the committed lists still finds what it should")
+}
