@@ -75,14 +75,18 @@ func addPointerLine(path, line string) error {
 }
 
 // snapshotAgentFiles remembers MGIT.md, CLAUDE.md and AGENTS.md as they are,
-// and returns a function that puts them back: a file that was absent is
-// removed, one that existed gets its exact bytes and mode again. It is how
-// `mgit init`, which writes them ahead of the base, takes them back when init
-// then fails.
+// and returns a function that puts them back after a failed `mgit init`, which
+// writes them ahead of the base. The rule is that nothing that was there
+// before is ever removed: a path that did not exist is removed only if it is
+// still a regular file init could have made; a path that existed and whose
+// bytes were read is rewritten to those bytes if it changed; a path that
+// existed and could not be read (mode 000, a directory) is left alone, since
+// init wrote nothing in it.
 func snapshotAgentFiles(root string) func() {
 	type saved struct {
 		path    string
 		existed bool
+		read    bool
 		data    []byte
 		mode    os.FileMode
 	}
@@ -90,21 +94,27 @@ func snapshotAgentFiles(root string) func() {
 	for _, name := range []string{mgitDocFile, claudeDocName, agentsDocName} {
 		p := filepath.Join(root, name)
 		s := saved{path: p}
-		if st, err := os.Stat(p); err == nil {
-			if raw, err := os.ReadFile(p); err == nil { //nolint:gosec // path built from the repository root
-				s.existed, s.data, s.mode = true, raw, st.Mode().Perm()
+		if st, err := os.Lstat(p); err == nil {
+			s.existed = true
+			if st.Mode().IsRegular() {
+				if raw, err := os.ReadFile(p); err == nil { //nolint:gosec // path built from the repository root
+					s.read, s.data, s.mode = true, raw, st.Mode().Perm()
+				}
 			}
 		}
 		all = append(all, s)
 	}
 	return func() {
 		for _, s := range all {
-			if !s.existed {
-				_ = os.Remove(s.path)
-				continue
-			}
-			if cur, err := os.ReadFile(s.path); err != nil || string(cur) != string(s.data) { //nolint:gosec // path built from the repository root
-				_ = os.WriteFile(s.path, s.data, s.mode)
+			switch {
+			case !s.existed:
+				if st, err := os.Lstat(s.path); err == nil && st.Mode().IsRegular() {
+					_ = os.Remove(s.path)
+				}
+			case s.read:
+				if cur, err := os.ReadFile(s.path); err != nil || string(cur) != string(s.data) { //nolint:gosec // path built from the repository root
+					_ = os.WriteFile(s.path, s.data, s.mode)
+				}
 			}
 		}
 	}
