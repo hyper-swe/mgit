@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -64,8 +65,20 @@ func initGuestRepo(dir string) error {
 	if err != nil {
 		return err
 	}
+	// A path named to Add is added even when the project's ignore rules hide
+	// it (go-git applies them only while it walks a directory), so a
+	// top-level file such as debug.log is checked here against the same rules.
+	// The file stays delivered; it is only not in the base commit.
+	patterns, err := gitignore.ReadPatterns(wt.Filesystem, nil)
+	if err != nil {
+		return fmt.Errorf("read ignore rules: %w", err)
+	}
+	ignored := gitignore.NewMatcher(patterns)
 	for _, e := range entries {
 		if e.Name() == ".git" || e.Name() == GuestStoreName {
+			continue
+		}
+		if ignored.Match([]string{e.Name()}, e.IsDir()) {
 			continue
 		}
 		if err := wt.AddWithOptions(&git.AddOptions{Path: e.Name()}); err != nil {
