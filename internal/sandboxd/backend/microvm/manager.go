@@ -538,6 +538,12 @@ func vmConfig(id, stateDir string, opts model.SandboxLaunchOptions, images Image
 	}
 }
 
+// GuestRepo says whether the guest is given a repository of its own: the
+// delivered files as one base commit (FEAT-6.114.1). It is the default;
+// NoGuestRepo (--no-guest-repo) turns it off. Every backend asks this, so the
+// default is decided in one place.
+func (c VMConfig) GuestRepo() bool { return !c.NoGuestRepo }
+
 // guestPublishPorts projects the launch options' host->guest port mappings to
 // just the GUEST ports the guest must bridge (the host port is host-side
 // state the guest never learns — SEC-09 keeps the cmdline free of host

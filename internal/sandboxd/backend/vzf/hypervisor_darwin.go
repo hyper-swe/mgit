@@ -4,7 +4,6 @@ package vzf
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -196,7 +195,7 @@ func worktreeShare(cfg microvm.VMConfig) (vz.DirectorySharingDeviceConfiguration
 				model.ErrSandboxBackendUnavailable)
 		}
 		stagingDir := filepath.Join(cfg.StateDir, stagingDirName)
-		if err := staging.BuildForGuest(cfg.WorktreePath, cfg.PrivateStorePath, stagingDir, !cfg.NoGuestRepo); err != nil && !errors.Is(err, staging.ErrNoGit) {
+		if err := staging.BuildForGuest(cfg.WorktreePath, cfg.PrivateStorePath, stagingDir, cfg.GuestRepo()); err != nil {
 			return nil, fmt.Errorf("vz worktree quarantine: %w", err)
 		}
 		source = stagingDir

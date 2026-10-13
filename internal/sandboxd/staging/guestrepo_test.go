@@ -6,40 +6,54 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // FEAT-6.114.1: by default the guest is given a repository of its own: the
-// staged files as ONE base commit, none of the host's history. git status,
-// git diff and git rev-parse HEAD work there, and nothing of the host's
-// history is in the delivered tree.
+// staged files as ONE base commit, none of the host's history. It is made
+// in process (go-git), so nothing in the host's git environment reaches it,
+// and nothing of the host's history is in the delivered tree.
 
-func gitIn(t *testing.T, dir string, args ...string) string {
+func commitAll(t *testing.T, dir, subject string) {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
-		"GIT_AUTHOR_NAME=host", "GIT_AUTHOR_EMAIL=host@example.test",
-		"GIT_COMMITTER_NAME=host", "GIT_COMMITTER_EMAIL=host@example.test")
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git %v: %s", args, out)
-	return strings.TrimSpace(string(out))
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	require.NoError(t, wt.AddWithOptions(&git.AddOptions{All: true}))
+	sig := &object.Signature{Name: "host", Email: "host@example.test", When: time.Now()}
+	_, err = wt.Commit(subject, &git.CommitOptions{Author: sig, Committer: sig, AllowEmptyCommits: true})
+	require.NoError(t, err)
+}
+
+func commitCount(t *testing.T, dir string) int {
+	t.Helper()
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+	it, err := repo.Log(&git.LogOptions{All: true})
+	if err != nil { // no commits yet
+		return 0
+	}
+	n := 0
+	require.NoError(t, it.ForEach(func(*object.Commit) error { n++; return nil }))
+	return n
 }
 
 // hostRepoWithHistory is a worktree with three commits whose subjects are
 // recognisable, so a leak is found by text.
 func hostRepoWithHistory(t *testing.T) string {
 	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not installed")
-	}
 	wt := t.TempDir()
-	gitIn(t, wt, "init", "-q", "-b", "main")
+	_, err := git.PlainInit(wt, false)
+	require.NoError(t, err)
 	for i, subject := range []string{"HOST-HISTORY-ONE", "HOST-HISTORY-TWO", "HOST-HISTORY-THREE"} {
 		require.NoError(t, os.WriteFile(filepath.Join(wt, "f.txt"), []byte(strings.Repeat("x", i+1)+"\n"), 0o644))
-		gitIn(t, wt, "add", "-A")
-		gitIn(t, wt, "commit", "-q", "-m", subject)
+		commitAll(t, wt, subject)
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(wt, "g.txt"), []byte("untracked work\n"), 0o644))
 	return wt
@@ -50,18 +64,50 @@ func TestTheGuestGetsAFreshRepoWithOneBaseCommit(t *testing.T) {
 	stage := filepath.Join(t.TempDir(), "stage")
 	require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
 
-	assert.Equal(t, "1", gitIn(t, stage, "rev-list", "--count", "HEAD"), "exactly one commit")
-	assert.Regexp(t, `^[0-9a-f]{40}$`, gitIn(t, stage, "rev-parse", "HEAD"))
-	files := gitIn(t, stage, "ls-files")
-	assert.Contains(t, files, "f.txt")
-	assert.Contains(t, files, "g.txt", "the staged files, tracked or not on the host, are the base")
-	assert.NotContains(t, files, ".mgit", "the private store is not part of the base")
-	assert.Empty(t, gitIn(t, stage, "status", "--porcelain"), "the guest starts clean")
-	gitIn(t, stage, "diff", "--exit-code")
+	assert.Equal(t, 1, commitCount(t, stage), "exactly one commit")
+	repo, err := git.PlainOpen(stage)
+	require.NoError(t, err)
+	head, err := repo.Head()
+	require.NoError(t, err)
+	assert.Equal(t, "refs/heads/main", head.Name().String())
+	c, err := repo.CommitObject(head.Hash())
+	require.NoError(t, err)
+	files, err := c.Files()
+	require.NoError(t, err)
+	var names []string
+	require.NoError(t, files.ForEach(func(f *object.File) error { names = append(names, f.Name); return nil }))
+	assert.Contains(t, names, "f.txt")
+	assert.Contains(t, names, "g.txt", "the staged files, tracked or not on the host, are the base")
+	for _, n := range names {
+		assert.False(t, strings.HasPrefix(n, ".mgit"), "the private store is not part of the base: %s", n)
+		assert.False(t, strings.HasPrefix(n, ".git/"), n)
+	}
+	// git (not go-git) reads info/exclude, which keeps the store out of status
+	ex, err := os.ReadFile(filepath.Join(stage, ".git", "info", "exclude"))
+	require.NoError(t, err)
+	assert.Contains(t, string(ex), ".mgit/")
+}
 
-	// a change in the guest shows up
+// With a git binary at hand, the three commands an agent runs work on the
+// delivered tree and see an edit.
+func TestGitCommandsWorkOnTheDeliveredRepo(t *testing.T) {
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not installed: this test runs the real commands")
+	}
+	wt := hostRepoWithHistory(t)
+	stage := filepath.Join(t.TempDir(), "stage")
+	require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
+	run := func(args ...string) string {
+		out, rerr := exec.Command(gitBin, append([]string{"-C", stage}, args...)...).CombinedOutput()
+		require.NoError(t, rerr, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	assert.Regexp(t, `^[0-9a-f]{40}$`, run("rev-parse", "HEAD"))
+	assert.Empty(t, run("status", "--porcelain"))
+	run("diff", "--exit-code")
 	require.NoError(t, os.WriteFile(filepath.Join(stage, "f.txt"), []byte("changed\n"), 0o644))
-	assert.Contains(t, gitIn(t, stage, "diff", "--stat"), "f.txt")
+	assert.Contains(t, run("diff", "--stat"), "f.txt")
 }
 
 func TestTheGuestRepoCarriesNoHostHistory(t *testing.T) {
@@ -69,7 +115,6 @@ func TestTheGuestRepoCarriesNoHostHistory(t *testing.T) {
 	stage := filepath.Join(t.TempDir(), "stage")
 	require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
 
-	assert.NotContains(t, gitIn(t, stage, "log", "--format=%an %ae %s"), "HOST-HISTORY")
 	var all strings.Builder
 	require.NoError(t, filepath.WalkDir(filepath.Join(stage, ".git"), func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -82,7 +127,6 @@ func TestTheGuestRepoCarriesNoHostHistory(t *testing.T) {
 	for _, leak := range []string{"HOST-HISTORY", "host@example.test"} {
 		assert.NotContains(t, all.String(), leak, "nothing of the host's history is in the delivered repo")
 	}
-	assert.Equal(t, "1", gitIn(t, stage, "rev-list", "--all", "--count"))
 }
 
 func TestWithTheFlagOffTheGuestGetsNoRepo(t *testing.T) {
@@ -94,40 +138,84 @@ func TestWithTheFlagOffTheGuestGetsNoRepo(t *testing.T) {
 }
 
 func TestARepoIsMadeEvenWhenTheWorktreeHasNoGit(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not installed")
+	wt := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o644))
+	stage := filepath.Join(t.TempDir(), "stage")
+	require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
+	assert.Equal(t, 1, commitCount(t, stage))
+}
+
+func TestTheBaseCommitIsTheSameForTheSameFiles(t *testing.T) {
+	wt := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o644))
+	hash := func() string {
+		stage := filepath.Join(t.TempDir(), "stage")
+		require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
+		repo, err := git.PlainOpen(stage)
+		require.NoError(t, err)
+		h, err := repo.Head()
+		require.NoError(t, err)
+		return h.Hash().String()
 	}
-	wt := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o644))
-	stage := filepath.Join(t.TempDir(), "stage")
-	require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
-	assert.Equal(t, "1", gitIn(t, stage, "rev-list", "--count", "HEAD"))
+	assert.Equal(t, hash(), hash(), "a fixed identity and a fixed date")
 }
 
-// The host's git configuration, hooks and templates play no part: the base
-// commit is made the same way on every machine.
-func TestTheBaseCommitIgnoresHostGitConfigAndHooks(t *testing.T) {
-	wt := hostRepoWithHistory(t)
-	home := t.TempDir()
-	hooks := filepath.Join(home, "hooks")
-	require.NoError(t, os.MkdirAll(hooks, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(hooks, "pre-commit"), []byte("#!/bin/sh\nexit 1\n"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"),
-		[]byte("[core]\n\thooksPath = "+hooks+"\n[commit]\n\tgpgsign = true\n[user]\n\tname = leaked-name\n"), 0o644))
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", home)
-	stage := filepath.Join(t.TempDir(), "stage")
-	require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
-	assert.NotContains(t, gitIn(t, stage, "log", "--format=%an %cn"), "leaked-name")
+// The host's git environment reaches nothing: a launch made from a git hook
+// or a `git -C` wrapper has GIT_DIR, GIT_INDEX_FILE and GIT_OBJECT_DIRECTORY
+// set, pointing at a host repository. The staged tree's own repository is
+// made, and that repository is left exactly as it was.
+func TestTheHostsGitEnvironmentReachesNoOtherRepository(t *testing.T) {
+	for _, tc := range []struct {
+		variable string
+		value    func(other string) string
+	}{
+		{"GIT_DIR", func(o string) string { return filepath.Join(o, ".git") }},
+		{"GIT_INDEX_FILE", func(o string) string { return filepath.Join(o, ".git", "index") }},
+		{"GIT_OBJECT_DIRECTORY", func(o string) string { return filepath.Join(o, ".git", "objects") }},
+	} {
+		t.Run(tc.variable, func(t *testing.T) {
+			other := hostRepoWithHistory(t)
+			before := snapshotDir(t, filepath.Join(other, ".git"))
+			t.Setenv(tc.variable, tc.value(other))
+
+			wt := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o644))
+			stage := filepath.Join(t.TempDir(), "stage")
+			require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
+
+			assert.Equal(t, before, snapshotDir(t, filepath.Join(other, ".git")), "the other repository is untouched")
+			assert.Equal(t, 3, commitCount(t, other))
+			assert.Equal(t, 1, commitCount(t, stage), "the staged tree has its own base commit")
+		})
+	}
 }
 
-func TestAMissingGitIsSaidNotSilentlySkipped(t *testing.T) {
+// snapshotDir is every file under dir with its size and content hash input,
+// so any write, however small, shows.
+func snapshotDir(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	require.NoError(t, filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		raw, rerr := os.ReadFile(p)
+		require.NoError(t, rerr)
+		rel, _ := filepath.Rel(dir, p)
+		out[rel] = string(raw)
+		return nil
+	}))
+	return out
+}
+
+func TestAnErrorBuildingTheRepoReachesTheCaller(t *testing.T) {
 	wt := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o644))
-	t.Setenv("PATH", t.TempDir())
+	// a file where the repository's directory would go
 	stage := filepath.Join(t.TempDir(), "stage")
+	require.NoError(t, os.MkdirAll(stage, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(stage, ".git"), []byte("not a directory"), 0o644))
 	err := BuildForGuest(wt, privateStoreWith(t), stage, true)
-	require.ErrorIs(t, err, ErrNoGit)
-	_, serr := os.Lstat(filepath.Join(stage, "a.txt"))
-	assert.NoError(t, serr, "the files were still delivered")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--no-guest-repo", "the error names the way out")
 }

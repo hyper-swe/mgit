@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,4 +40,24 @@ func TestLaunchHasAFlagThatTurnsTheGuestRepoOff(t *testing.T) {
 	f := cmd.Flags().Lookup("no-guest-repo")
 	require.NotNil(t, f, "the flag exists")
 	assert.Equal(t, "false", f.DefValue, "the guest repo is on by default")
+}
+
+// The launch request carries the flag: on by default (the daemon is not
+// told to skip the repo), off with --no-guest-repo.
+func TestLaunchRequestCarriesTheGuestRepoChoice(t *testing.T) {
+	img := "img@sha256:" + strings.Repeat("a", 64)
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{nil, false},
+		{[]string{"--no-guest-repo"}, true},
+	} {
+		fc := &fakeSandboxClient{}
+		args := append([]string{"launch", "--task", "MGIT-2", "--worktree", "/w", "--image", img}, tc.args...)
+		_, err := runSandbox(okConnect(fc), args...)
+		require.NoError(t, err)
+		require.NotNil(t, fc.launched)
+		assert.Equal(t, tc.want, fc.launched.NoGuestRepo, "args %v", tc.args)
+	}
 }

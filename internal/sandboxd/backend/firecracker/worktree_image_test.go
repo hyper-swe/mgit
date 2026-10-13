@@ -237,3 +237,22 @@ func srcDirArg(args []string) string {
 	}
 	return ""
 }
+
+// FEAT-6.114.1: the image holds the guest's own repository when asked, and
+// not otherwise.
+func TestBuildWorktreeImageRepo_PacksTheGuestRepoOnlyWhenAsked(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		repo bool
+	}{{"on", true}, {"off", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			wt := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(wt, "main.go"), []byte("package main"), 0o600))
+			snap := &snapshotMkfs{}
+			img := filepath.Join(t.TempDir(), worktreeImageName)
+			require.NoError(t, buildWorktreeImageRepo(context.Background(), snap, wt, img, privateStoreWith(t), 64, tc.repo))
+			assert.Equal(t, tc.repo, snap.have[".git/HEAD"])
+			assert.True(t, snap.have["main.go"])
+		})
+	}
+}

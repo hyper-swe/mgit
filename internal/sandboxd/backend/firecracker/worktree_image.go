@@ -2,7 +2,6 @@ package firecracker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -96,7 +95,7 @@ func buildWorktreeImageRepo(ctx context.Context, runner mkfsRunner, worktreePath
 	stagingDir := ""
 	if privateStorePath != "" {
 		stagingDir = filepath.Join(filepath.Dir(imagePath), stagingDirName)
-		if err := staging.BuildForGuest(worktreePath, privateStorePath, stagingDir, guestRepo); err != nil && !errors.Is(err, staging.ErrNoGit) {
+		if err := staging.BuildForGuest(worktreePath, privateStorePath, stagingDir, guestRepo); err != nil {
 			_ = os.RemoveAll(stagingDir)
 			return fmt.Errorf("firecracker worktree image: stage: %w", err)
 		}

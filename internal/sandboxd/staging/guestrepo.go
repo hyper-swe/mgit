@@ -1,24 +1,26 @@
 package staging
 
 import (
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-)
+	"time"
 
-// ErrNoGit is returned by BuildForGuest when the guest repository was asked
-// for and the host has no git to make it with. The files were delivered; the
-// guest simply has no repository. Callers carry on. Refs: FEAT-6.114.1
-var ErrNoGit = errors.New("git is not installed on the host, so the guest was given no repository")
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
+)
 
 // BuildForGuest is Build, then, unless guestRepo is false, a repository of
 // the guest's own: the staged files as one base commit, with none of the
-// host's history. The base commit is made by git on the host, from the
-// STAGED tree (already free of the host's .git), under a fixed identity,
-// with the host's git configuration, templates and hooks out of the way.
-// The private .mgit store is excluded from it. Refs: FEAT-6.114.1, SEC-03
+// host's history. The repository is made with go-git, in process: no git
+// binary runs, so no host git configuration, hook, template or environment
+// variable (GIT_DIR, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY) can reach it, and
+// it cannot write to any repository but the staged tree's own. The base
+// commit has a fixed identity and a fixed date, so it is the same commit
+// for the same files. The private .mgit store is excluded from it.
+// An error is returned, never dropped; --no-guest-repo is the way to launch
+// without the repository. Refs: FEAT-6.114.1, SEC-03
 func BuildForGuest(worktreePath, privateStorePath, stagingDir string, guestRepo bool) error {
 	if err := Build(worktreePath, privateStorePath, stagingDir); err != nil {
 		return err
@@ -26,41 +28,55 @@ func BuildForGuest(worktreePath, privateStorePath, stagingDir string, guestRepo 
 	if !guestRepo {
 		return nil
 	}
-	return initGuestRepo(stagingDir)
+	if err := initGuestRepo(stagingDir); err != nil {
+		return fmt.Errorf("guest repository (launch with --no-guest-repo to skip it): %w", err)
+	}
+	return nil
 }
 
+// guestBaseCommitTime is the base commit's date: fixed, so the commit does
+// not change from one launch to the next.
+var guestBaseCommitTime = time.Unix(0, 0).UTC()
+
 func initGuestRepo(dir string) error {
-	git, err := exec.LookPath("git")
+	repo, err := git.PlainInitWithOptions(dir, &git.PlainInitOptions{
+		InitOptions: git.InitOptions{DefaultBranch: plumbing.NewBranchReferenceName("main")},
+	})
 	if err != nil {
-		return ErrNoGit
-	}
-	env := append(os.Environ(),
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_COUNT=0",
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_AUTHOR_NAME=mgit", "GIT_AUTHOR_EMAIL=mgit@localhost",
-		"GIT_COMMITTER_NAME=mgit", "GIT_COMMITTER_EMAIL=mgit@localhost")
-	run := func(args ...string) error {
-		cmd := exec.Command(git, append([]string{"-C", dir}, args...)...) //nolint:gosec // fixed git, manager-owned staging dir
-		cmd.Env = env
-		if out, rerr := cmd.CombinedOutput(); rerr != nil {
-			return fmt.Errorf("guest repository: git %s: %w: %s", args[0], rerr, out)
-		}
-		return nil
-	}
-	if err := run("init", "-q", "--template=", "-b", "main"); err != nil {
-		return err
+		return fmt.Errorf("init: %w", err)
 	}
 	// the private store is the guest's mgit store, not part of its files
 	exclude := filepath.Join(dir, ".git", "info", "exclude")
 	if err := os.MkdirAll(filepath.Dir(exclude), 0o750); err != nil {
-		return fmt.Errorf("guest repository: %w", err)
-	}
-	if err := os.WriteFile(exclude, []byte(GuestStoreName+"/\n"), 0o600); err != nil {
-		return fmt.Errorf("guest repository: %w", err)
-	}
-	if err := run("add", "-A"); err != nil {
 		return err
 	}
-	return run("-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
-		"commit", "-q", "--allow-empty", "--no-verify", "-m", "base: the files this sandbox was given")
+	if err := os.WriteFile(exclude, []byte(GuestStoreName+"/\n"), 0o600); err != nil {
+		return err
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		return err
+	}
+	// go-git does not read .git/info/exclude when it adds, so the private
+	// store is left out by naming what to add: every top-level entry but the
+	// repository itself and the store.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.Name() == ".git" || e.Name() == GuestStoreName {
+			continue
+		}
+		if err := wt.AddWithOptions(&git.AddOptions{Path: e.Name()}); err != nil {
+			return fmt.Errorf("add %s: %w", e.Name(), err)
+		}
+	}
+	sig := &object.Signature{Name: "mgit", Email: "mgit@localhost", When: guestBaseCommitTime}
+	if _, err := wt.Commit("base: the files this sandbox was given", &git.CommitOptions{
+		Author: sig, Committer: sig, AllowEmptyCommits: true,
+	}); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
