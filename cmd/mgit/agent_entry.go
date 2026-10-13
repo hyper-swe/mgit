@@ -73,3 +73,39 @@ func addPointerLine(path, line string) error {
 	}
 	return nil
 }
+
+// snapshotAgentFiles remembers MGIT.md, CLAUDE.md and AGENTS.md as they are,
+// and returns a function that puts them back: a file that was absent is
+// removed, one that existed gets its exact bytes and mode again. It is how
+// `mgit init`, which writes them ahead of the base, takes them back when init
+// then fails.
+func snapshotAgentFiles(root string) func() {
+	type saved struct {
+		path    string
+		existed bool
+		data    []byte
+		mode    os.FileMode
+	}
+	all := make([]saved, 0, 3)
+	for _, name := range []string{mgitDocFile, claudeDocName, agentsDocName} {
+		p := filepath.Join(root, name)
+		s := saved{path: p}
+		if st, err := os.Stat(p); err == nil {
+			if raw, err := os.ReadFile(p); err == nil { //nolint:gosec // path built from the repository root
+				s.existed, s.data, s.mode = true, raw, st.Mode().Perm()
+			}
+		}
+		all = append(all, s)
+	}
+	return func() {
+		for _, s := range all {
+			if !s.existed {
+				_ = os.Remove(s.path)
+				continue
+			}
+			if cur, err := os.ReadFile(s.path); err != nil || string(cur) != string(s.data) { //nolint:gosec // path built from the repository root
+				_ = os.WriteFile(s.path, s.data, s.mode)
+			}
+		}
+	}
+}
