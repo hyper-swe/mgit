@@ -14,7 +14,7 @@ import (
 func renderGuestFailure(err error) (guestFailure, string) {
 	f := classifyGuestFailure(err, entitlementUnknown)
 	var b bytes.Buffer
-	writeGuestFailure(&b, &model.SandboxInfo{TaskID: "REG-2"}, f)
+	writeGuestFailure(&b, &model.SandboxInfo{TaskID: "REG-2", MemoryMB: 2048, CPUs: 2, WorktreePath: "/w"}, f)
 	return f, b.String()
 }
 
