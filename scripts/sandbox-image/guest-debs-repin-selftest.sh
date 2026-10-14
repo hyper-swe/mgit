@@ -25,7 +25,9 @@ publish() {
   local dir="$1" src="$2" suite="$3" sub="$4"
   cp "$src" "$dir/$sub/Packages"; xz -k -f "$dir/$sub/Packages"; rm -- "$dir/$sub/Packages"
   local f="$dir/$sub/Packages.xz"
-  { echo "Suite: $suite"; echo "SHA256:"; echo " $(sha_of "$f") $(wc -c < "$f" | tr -d ' ') $sub/Packages.xz"; } > "$dir/InRelease"
+  { echo "-----BEGIN PGP SIGNED MESSAGE-----"; echo "Hash: SHA512"; echo
+    echo "Suite: $suite"; echo "SHA256:"; echo " $(sha_of "$f") $(wc -c < "$f" | tr -d ' ') $sub/Packages.xz"
+    echo "-----BEGIN PGP SIGNATURE-----"; echo; echo "stub"; echo "-----END PGP SIGNATURE-----"; } > "$dir/InRelease"
 }
 
 cat > "$W/main.idx" <<'IDX'
@@ -75,7 +77,16 @@ echo fake-keyring > "$W/keyring.gpg"
 publish "$M/archive/debian/$MAIN_TS/dists/bookworm" "$W/main.idx" bookworm main/binary-arm64
 publish "$M/archive/debian-security/$SEC_TS/dists/bookworm-security" "$W/sec.idx" bookworm-security main/binary-arm64
 
-printf '#!/bin/sh\nexit 0\n' > "$W/bin/gpgv-ok"; printf '#!/bin/sh\necho BAD signature >&2\nexit 1\n' > "$W/bin/gpgv-bad"
+# the stub honours --output like gpgv: it writes only the text between the signed-message header and the signature
+cat > "$W/bin/gpgv-ok" <<'STUB'
+#!/bin/sh
+out=""; prev=""; last=""
+for a in "$@"; do [ "$prev" = "--output" ] && out="$a"; prev="$a"; last="$a"; done
+[ -n "$out" ] && awk '/^-----BEGIN PGP SIGNED MESSAGE-----/{h=1;next} h==1&&/^$/{h=2;next} /^-----BEGIN PGP SIGNATURE-----/{exit} h==2{print}' "$last" > "$out"
+exit 0
+STUB
+printf '#!/bin/sh\necho BAD signature >&2\nexit 1\n' > "$W/bin/gpgv-bad"
+:;
 chmod +x "$W/bin/gpgv-ok" "$W/bin/gpgv-bad"
 
 run() { # run <gpgv command> <out dir>
@@ -107,6 +118,22 @@ out="$(run "$W/no-such-gpgv" "$W/out3" 2>&1)"; rc=$?
 printf 'tampered' >> "$M/archive/debian-security/$SEC_TS/dists/bookworm-security/main/binary-arm64/Packages.xz"
 out="$(run "$W/bin/gpgv-ok" "$W/out4" 2>&1)" && bad "a tampered index passed" || ok "a tampered index fails the hash check"
 [ ! -e "$W/out4/guest-debs-arm64.lock" ] && ok "a tampered index writes no lock" || bad "a lock was written after a tampered index"
+
+
+# an unsigned SHA256 block placed above the signed armor must not be trusted: rebuild the mirror, then forge
+SECD="$M/archive/debian-security/$SEC_TS/dists/bookworm-security"
+publish "$SECD" "$W/sec.idx" bookworm-security main/binary-arm64
+# the forged index is valid xz, so only the signature handling can refuse it
+{ cat "$W/sec.idx"; printf '\nPackage: evil\nVersion: 1\nArchitecture: arm64\n'; } | xz -c > "$SECD/main/binary-arm64/Packages.xz"
+{ echo "SHA256:"; echo " $(sha_of "$SECD/main/binary-arm64/Packages.xz") $(wc -c < "$SECD/main/binary-arm64/Packages.xz" | tr -d ' ') main/binary-arm64/Packages.xz"; cat "$SECD/InRelease"; } > "$SECD/InRelease.new"
+mv "$SECD/InRelease.new" "$SECD/InRelease"
+out="$(run "$W/bin/gpgv-ok" "$W/out5" 2>&1)" && bad "an unsigned hash block above the signed text was trusted" || ok "an unsigned hash block above the signed text is refused"
+[ ! -e "$W/out5/guest-debs-arm64.lock" ] && ok "the forged prefix writes no lock" || bad "a lock was written after a forged prefix"
+
+# a signed Release for another suite is refused
+publish "$SECD" "$W/sec.idx" bookworm main/binary-arm64
+out="$(run "$W/bin/gpgv-ok" "$W/out6" 2>&1)" && bad "a Release for the wrong suite was accepted" || ok "a Release naming another suite is refused"
+[ ! -e "$W/out6/guest-debs-arm64.lock" ] && ok "the wrong suite writes no lock" || bad "a lock was written for the wrong suite"
 
 [ "$fails" -eq 0 ] && { echo "all checks passed"; exit 0; }
 echo "$fails failure(s)" >&2
