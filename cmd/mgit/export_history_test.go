@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -62,4 +63,43 @@ func TestExportFormatJSON_StaysTheBareCommitArray(t *testing.T) {
 	var rows []map[string]any
 	require.NoError(t, json.Unmarshal([]byte(stdout), &rows))
 	assert.NotContains(t, rows[0], "schema_version")
+}
+
+// TestExportFormatHistory_ARollbackReasonIsInTheRevertStepOnly drives a real
+// rollback with a fake secret as its reason. The reason is written into the
+// revert commit's message, and that commit is a step, so the export carries it
+// there, as docs/history-export.md says; it must not also appear in an audit
+// record's details. The earlier secret check built its audit entry by hand and
+// so missed the step message. Refs: MGIT-297
+func TestExportFormatHistory_ARollbackReasonIsInTheRevertStepOnly(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0) // the package's cwd is not stable across tests
+	docText, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "..", "..", "docs", "history-export.md"))
+	require.NoError(t, err)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, runCLI(t, "init", "--no-agent-files"))
+	const taskID, secret = "EXP-ROLL", "token=FAKE-SECRET-123"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o600))
+	require.NoError(t, runCLI(t, "commit", "-a", "--task-id", taskID, "-m", "add a"))
+	require.NoError(t, runCLI(t, "rollback", "--task-id", taskID, "--reason", secret))
+
+	stdout, stderr, err := runCLICap(t, "export", "--task-id", taskID, "--format", "history")
+	require.NoError(t, err, stderr)
+	doc, err := historyexport.Parse([]byte(stdout))
+	require.NoError(t, err)
+
+	inSteps := 0
+	for _, s := range doc.Steps {
+		if strings.Contains(s.Message, secret) {
+			inSteps++
+		}
+	}
+	assert.Equal(t, 1, inSteps, "the reason is in exactly one step message, the revert step")
+	for _, a := range doc.Audit {
+		assert.NotContains(t, a.Details, secret, "audit details must not repeat the reason")
+	}
+	assert.Equal(t, 1, strings.Count(stdout, secret), "the reason appears once in the whole document")
+
+	assert.Contains(t, string(docText), "a secret typed into a message or\na `--reason` is in the export",
+		"the document must say that step messages, a rollback reason included, are exported")
 }

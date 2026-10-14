@@ -48,7 +48,7 @@ Step
 | `created_at` | string | When the step was recorded, UTC, RFC 3339. |
 | `sandbox_id` | string, optional | The sandbox the step came from. Absent for a step recorded outside a sandbox. |
 | `commit_type` | string, optional | `normal`, `rollback`, `squash`, `merge` or `system`. |
-| `message` | string, optional | The commit message. |
+| `message` | string, optional | The commit message as recorded. A rollback's revert step is a step like any other, and its message carries the text given to `--reason`. |
 | `files` | array of file | The paths the step changed relative to its parent. `[]` when none. |
 
 File
@@ -71,10 +71,19 @@ Audit record
 | `commit_id` | string, optional | The commit the operation produced or acted on. |
 | `details` | string, optional | Present only for `SQUASH`, whose text mgit writes itself. |
 
-## What it leaves out
+## What it carries and what it leaves out
 
-The document is built from a fixed field list, so nothing is added by accident. It does
-not carry commit metadata, signatures, session ids, file contents or hunks, absolute host
-paths, credentials, or the free text of audit details other than the squash line. In
-particular a rollback reason, which a person types, is not exported. A test checks that
-none of these appear.
+The document is built from a fixed field list, so nothing is added by accident.
+
+It does carry every step's `message`. That includes the revert step a rollback records,
+whose message holds the rollback reason as typed, so **a secret typed into a message or
+a `--reason` is in the export**. The same text is already shown by `mgit log`, written
+into the audit log, and included by `mgit squash --to-git` in the patch's commit message.
+Treat the export like those: do not put credentials in a commit message or a reason.
+
+It does not carry commit metadata, signatures, session ids, file contents or hunks,
+absolute host paths, or the `details` of an audit record other than the squash line.
+`details` is absent for a rollback on purpose, so a reason is not repeated there, but the
+reason is still present in the revert step's `message`. Tests check that metadata,
+signature and session id are absent, and that a reason given to a real rollback appears
+in a step message and nowhere else in the document.

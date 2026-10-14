@@ -6,8 +6,9 @@
 // The document is a PROJECTION with a fixed field list, not a dump of mgit's
 // internal records: a field added to an internal type does not appear here
 // until it is added on purpose. Left out by design: commit metadata, signatures
-// and session ids, file contents and hunks, absolute host paths, and the free
-// text of audit details other than mgit's own squash line.
+// and session ids, file contents and hunks, absolute host paths, and the audit
+// details other than mgit's own squash line. Step messages ARE carried as
+// recorded, so a rollback's reason appears in its revert step's message.
 //
 // Refs: MGIT-297
 package historyexport
@@ -106,7 +107,8 @@ func FromRecord(rec index.CommitRecord, c *model.Commit) Step {
 
 // FromAudit builds an AuditRecord. Details is kept only for the operation whose
 // text mgit generates itself (squash); other details can carry user-supplied
-// text, such as a rollback reason, and are withheld.
+// text, such as a rollback reason, and are not repeated here (the reason is
+// still in the revert step's message).
 func FromAudit(e service.AuditEntry) AuditRecord {
 	r := AuditRecord{Timestamp: e.Timestamp, Operation: string(e.Operation), AgentID: e.AgentID, CommitID: e.CommitID}
 	if e.Operation == service.AuditSquash {
