@@ -15,7 +15,7 @@ echo "== guest base plan self-test =="
 for arch in amd64 arm64; do
   out="$(bash "$here/build-guest-base.sh" --print-plan "$arch" 2>&1)" || { bad "$arch: --print-plan failed: $out"; continue; }
   want="BUILDER_$(echo "$arch" | tr a-z A-Z)"
-  digest="${!want}"
+  digest="${!want#*@}"
   printf '%s\n' "$out" | grep -q "^base $digest$" && ok "$arch: base is the pinned digest" || bad "$arch: base is not $digest"
   for t in go jre tlc golangci-lint node; do
     printf '%s\n' "$out" | grep -q "^tool $t " && ok "$arch: carries $t" || bad "$arch: missing $t"
