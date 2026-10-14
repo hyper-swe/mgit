@@ -233,6 +233,64 @@ assert_contains "$out" "restoring preconditions" "3b: the restore is visible in 
 assert_contains "$out" "succeeded on attempt 3/3" "3b: and the run reports that it was not clean"
 
 # ---------------------------------------------------------------------------
+# CLAUSE 4: a finished guard leaves nothing behind that holds the caller's pipe.
+#
+# The timeout watchdog is a `sleep <secs>` in a background group. When the
+# fetch finished first the guard killed the group's subshell but not its sleep,
+# which kept the caller's stdout open, so a caller that captured the guard's
+# output with $(...) blocked until the full timeout (900s in the re-pin script)
+# and every call left a sleep behind. Refs: MGIT-299
+# ---------------------------------------------------------------------------
+echo
+echo "-- clause 4: a captured guard call returns at once and leaves no watchdog"
+done_flag="$WORK/clause4.done"
+secs=$((900 + $$ % 97)) # a value no other process in this run uses
+(
+	captured="$("$GUARD" -t "$secs" -n 1 -c none:'nothing to restore' -- bash -c 'sleep 1; echo fetched' 2>&1)"
+	echo "$captured" >/dev/null
+	: >"$done_flag"
+) &
+waiter=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+	[ -e "$done_flag" ] && break
+	sleep 1
+done
+if [ -e "$done_flag" ]; then
+	ok "a \$(...) capture of a finished guard call returned within 10s"
+else
+	bad "a \$(...) capture of a finished guard call was still blocked after 10s (watchdog holds the pipe)"
+fi
+left="$(ps -axo pid=,command= | awk -v n="sleep $secs" '$2" "$3==n {print $1}')"
+if [ -z "$left" ]; then
+	ok "no watchdog sleep outlives the guard"
+else
+	bad "a watchdog 'sleep $secs' outlived the guard (pids: $(echo $left))"
+	# shellcheck disable=SC2086
+	kill $left 2>/dev/null || true
+fi
+kill "$waiter" 2>/dev/null || true
+wait "$waiter" 2>/dev/null || true
+
+# Instant calls race the watchdog's start-up: the guard's TERM can arrive after
+# the sleep exists but before the watchdog could end it. Thirty of them, none
+# may leave a sleep behind. Refs: MGIT-299
+echo
+echo "-- clause 4b: thirty instant calls leave no watchdog sleep behind"
+secs2=$((1000 + $$ % 89))
+for _ in $(seq 1 30); do
+	"$GUARD" -t "$secs2" -n 1 -c none:'nothing to restore' -- true >/dev/null 2>&1
+done
+sleep 1
+left2="$(ps -axo pid=,command= | awk -v n="sleep $secs2" '$2" "$3==n {print $1}')"
+if [ -z "$left2" ]; then
+	ok "no watchdog sleep remains after 30 instant guard calls"
+else
+	bad "$(echo "$left2" | wc -l | tr -d ' ') of 30 instant guard calls left a watchdog 'sleep $secs2' behind"
+	# shellcheck disable=SC2086
+	kill $left2 2>/dev/null || true
+fi
+
+# ---------------------------------------------------------------------------
 # THE INVENTORY TRIPWIRE must actually catch a bare fetch.
 #
 # scripts/ci/fetch-inventory.sh is what turns "every fetch is guarded" from a
