@@ -20,6 +20,16 @@ out="$(python3 "$chk" base --requires "$fx/requires-stale.txt" --status "$fx/bas
 printf '%s\n' "$out" | grep -q 'perl-base.*5.36.0-7+deb12u2.*5.36.0-7+deb12u3' && ok "the failure names perl-base and both versions" || bad "the failure does not name perl-base and both versions: $out"
 python3 "$chk" base --requires "$fx/requires-match.txt" --status "$fx/base-status" >/dev/null 2>&1 && ok "a matching perl-base passes" || bad "a matching perl-base failed"
 
+# Debian version order: tilde sorts before anything, an epoch beats the rest
+python3 - "$chk" <<'PY' && ok "version comparison follows Debian order" || bad "version comparison is wrong"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("chk", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+c = m.compare
+assert c("1.0~rc1", "1.0") < 0 and c("1.0", "1.0~rc1") > 0
+assert c("1:0.9", "2.0") > 0 and c("1.0-1", "1.0-1") == 0
+assert c("3.0.21-1~deb12u1", "3.0.20-1~deb12u2") > 0 and c("1.10", "1.9") > 0
+assert c("5.36.0-7+deb12u3", "5.36.0-7+deb12u2") > 0 and c("2.36-9+deb12u13", "2.36-9+deb12u9") > 0
+PY
 for arch in amd64 arm64; do
   [ -s "$here/guest-debs-$arch.requires" ] && grep -q '^perl-base ' "$here/guest-debs-$arch.requires" \
     && ok "$arch: the committed requires file pins perl-base" || bad "$arch: no committed requires file with perl-base"

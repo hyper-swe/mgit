@@ -77,6 +77,7 @@ jobs:
           bash scripts/sandbox-image/guest-tools-selftest.sh
           bash scripts/sandbox-image/guest-tools-urls-selftest.sh
           bash scripts/sandbox-image/guest-base-selftest.sh
+          bash scripts/sandbox-image/guest-debs-check-selftest.sh
 
       # Every build tool and action on a reproducible path is pinned, or its
       # float is declared at the site with a reason. The self-test proves the

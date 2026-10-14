@@ -1,0 +1,2 @@
+# <package> <exact version> required of the base image by the pinned packages
+perl-base 5.36.0-7+deb12u3
