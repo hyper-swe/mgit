@@ -46,6 +46,14 @@ func resolveSandboxPaths(repoRoot string) (sandboxPaths, error) {
 	if err := checkSocketPathFits(filepath.Join(runtimeDir, "d.sock")); err != nil {
 		return sandboxPaths{}, err
 	}
+	// In the shared fallback the per-user dir is checked (or created) BEFORE
+	// anything is made inside it: MkdirAll on a path through a planted symlink
+	// would create the key dir in the symlink's target before the refusal.
+	if runtimeBase() == shortRuntimeBase {
+		if err := ensureOwnerOnlyDir(filepath.Dir(runtimeDir)); err != nil {
+			return sandboxPaths{}, err
+		}
+	}
 	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
 		return sandboxPaths{}, fmt.Errorf("create sandbox runtime dir: %w", err)
 	}
@@ -85,10 +93,86 @@ func checkSocketPathFits(socket string) error {
 // runtimeBase is the short base for ephemeral sandbox runtime state:
 // XDG_RUNTIME_DIR when set (per-user, tmpfs), else the system temp dir.
 func runtimeBase() string {
+	base := configuredRuntimeBase()
+	// The sandbox's own sockets live below the base: <base>/mgit-<uid>/<12 hex>/w/
+	// <8-char id>/<name>. A base too long for the longest of them would leave a
+	// guest that can never start, and the user controls neither the id nor the
+	// key, only the base (a TMPDIR override, a test harness, a CI wrapper). So a
+	// base that cannot hold them is replaced by a short fixed one. Refs: MGIT-279
+	if len(filepath.Clean(base))+sandboxSocketTailLen() > maxSocketPathBytes {
+		return shortRuntimeBase
+	}
+	return base
+}
+
+// configuredRuntimeBase is the base the environment names: XDG_RUNTIME_DIR, or
+// the temp dir.
+func configuredRuntimeBase() string {
 	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
 		return d
 	}
 	return os.TempDir()
+}
+
+// hostRuntimeBases lists every base this user's daemons can be under: the
+// configured one, and the short fixed one when it holds a per-user dir that is
+// really this user's (a record read from a directory someone else made would be
+// a squatter's). Daemons started under a long TMPDIR live in the short one, so
+// a listing that looked only at the configured base would miss them. Refs: MGIT-279
+func hostRuntimeBases() []string {
+	bases := []string{configuredRuntimeBase()}
+	if filepath.Clean(shortRuntimeBase) == filepath.Clean(bases[0]) {
+		return bases
+	}
+	dir := filepath.Join(shortRuntimeBase, fmt.Sprintf("mgit-%d", os.Getuid()))
+	if fi, err := os.Lstat(dir); err == nil && fi.IsDir() && fi.Mode()&os.ModeSymlink == 0 {
+		if ownedByUser(fi) {
+			bases = append(bases, shortRuntimeBase)
+		}
+	}
+	return bases
+}
+
+// shortRuntimeBase is the fixed fallback for a base too long to hold the
+// per-sandbox sockets. It is a variable so a test can point it at a scratch dir.
+// The per-user dir below it is created owner-only and checked on every use
+// (ensureOwnerOnlyDir), because /tmp is shared. Refs: MGIT-279
+var shortRuntimeBase = "/tmp"
+
+// sandboxSocketTailLen is the longest part of a sandbox socket path below the
+// base: /mgit-<uid>/<12 hex>/w/<8-char id>/<longest socket name>, where the
+// longest name is a vsock port socket ("v65535.sock"). Refs: MGIT-279
+func sandboxSocketTailLen() int {
+	const keyLen, idLen, longestName = 12, 8, len("v65535.sock")
+	return len(fmt.Sprintf("/mgit-%d/", os.Getuid())) + keyLen + len("/w/") + idLen + len("/") + longestName
+}
+
+// ensureOwnerOnlyDir makes dir a directory this user owns with mode 0700 and
+// refuses a symlink or another user's directory there, so a squatter in a
+// shared directory cannot interpose on the sandbox's sockets. Refs: MGIT-279
+func ensureOwnerOnlyDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", dir, err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink; refusing to place sandbox sockets under it", dir)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	if !ownedByUser(fi) {
+		return fmt.Errorf("%s is not owned by this user; refusing to place sandbox sockets under it", dir)
+	}
+	if fi.Mode().Perm() != 0o700 {
+		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // a directory needs its x bit; 0700 is owner-only
+			return fmt.Errorf("make %s owner-only: %w", dir, err)
+		}
+	}
+	return nil
 }
 
 // sandboxRepoRoot resolves the repo root that OWNS the sandbox daemon for a

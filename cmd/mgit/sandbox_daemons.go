@@ -76,10 +76,14 @@ func rootPath(p string) string {
 // listHostDaemons reads every daemon record under this user's runtime base
 // and judges each one. Refs: MGIT-191
 func listHostDaemons(_ context.Context) ([]daemonrec.Listed, error) {
-	base := filepath.Join(runtimeBase(), fmt.Sprintf("mgit-%d", os.Getuid()))
-	recs, problems, err := daemonrec.List(base)
-	if err != nil {
-		return nil, err
+	var recs []daemonrec.Record
+	var problems []string
+	for _, b := range hostRuntimeBases() {
+		r, p, err := daemonrec.List(filepath.Join(b, fmt.Sprintf("mgit-%d", os.Getuid())))
+		if err != nil {
+			return nil, err
+		}
+		recs, problems = append(recs, r...), append(problems, p...)
 	}
 	if len(problems) > 0 {
 		return nil, fmt.Errorf("%d daemon record(s) could not be read, starting with: %s", len(problems), problems[0])
