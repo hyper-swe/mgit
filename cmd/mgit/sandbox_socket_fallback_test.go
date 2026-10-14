@@ -108,11 +108,29 @@ func TestResolveSandboxPaths_TheFallbackDirIsOwnerOnlyAndNotASymlink(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm(), "the per-user dir is tightened to owner-only")
 
-	require.NoError(t, os.Remove(filepath.Join(mine, "w"))) // may not exist; ignore
 	other := t.TempDir()
 	require.NoError(t, os.Rename(mine, mine+".old"))
 	require.NoError(t, os.Symlink(other, mine))
 	_, err = resolveSandboxPaths(repo)
 	require.Error(t, err, "a symlink where the per-user dir belongs is refused")
 	assert.Contains(t, err.Error(), "symlink")
+}
+
+// Daemons started under a long TMPDIR live in the short fixed dir, so the host
+// listing must look there as well, but only at a per-user dir that is really
+// this user's. Refs: MGIT-279
+func TestHostRuntimeBases_IncludeTheShortDirOnlyWhenItIsOurs(t *testing.T) {
+	short := shortBaseFor(t)
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("TMPDIR", longTmpdir(t, 120))
+	mine := filepath.Join(short, fmt.Sprintf("mgit-%d", os.Getuid()))
+
+	assert.Equal(t, []string{configuredRuntimeBase()}, hostRuntimeBases(), "no per-user dir yet, nothing to look at")
+
+	require.NoError(t, os.Mkdir(mine, 0o700))
+	assert.Equal(t, []string{configuredRuntimeBase(), short}, hostRuntimeBases())
+
+	require.NoError(t, os.Remove(mine))
+	require.NoError(t, os.Symlink(t.TempDir(), mine))
+	assert.Equal(t, []string{configuredRuntimeBase()}, hostRuntimeBases(), "a symlink is not trusted")
 }
