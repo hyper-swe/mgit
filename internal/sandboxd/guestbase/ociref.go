@@ -105,6 +105,12 @@ func ParseRef(in string) (Ref, error) {
 		remainder = rest
 	}
 
+	// Docker Hub uses a separate registry API host. Normalize before
+	// applying the library namespace to single-name repositories.
+	if ref.Registry == "docker.io" {
+		ref.Registry = defaultRegistry
+	}
+
 	// Only now is a colon unambiguously a tag separator: any registry port
 	// was consumed above.
 	if repo, tag, ok := strings.Cut(remainder, ":"); ok {
