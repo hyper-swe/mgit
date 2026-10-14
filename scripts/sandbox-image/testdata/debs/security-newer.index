@@ -1,0 +1,7 @@
+Package: libssl3
+Version: 3.0.21-1~deb12u1
+Architecture: arm64
+
+Package: unrelated
+Version: 9.9
+Architecture: arm64

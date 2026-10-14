@@ -1,0 +1,7 @@
+Package: libssl3
+Version: 3.0.20-1~deb12u2
+Architecture: arm64
+
+Package: make
+Version: 4.3-4.1
+Architecture: arm64

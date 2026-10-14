@@ -1,0 +1,9 @@
+Package: perl-base
+Status: install ok installed
+Version: 5.36.0-7+deb12u3
+Architecture: arm64
+
+Package: libc6
+Status: install ok installed
+Version: 2.36-9+deb12u13
+Architecture: arm64
