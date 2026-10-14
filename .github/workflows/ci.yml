@@ -81,6 +81,17 @@ jobs:
           bash scripts/sandbox-image/guest-debs-repin-selftest.sh
           bash scripts/sandbox-image/guest-debs-gpg-selftest.sh --require
 
+      # The Homebrew tap rewrites only the version and sha256 lines of its
+      # formula, so the rest of it drifts from brew/mgit.rb unless something
+      # compares them. The self-test is offline; the live check skips loudly
+      # (exit 0, NOT CHECKED) when the tap cannot be fetched, so a network blip
+      # does not turn CI red, and the release checklist runs it with --require
+      # before a tag. Refs: MGIT-67
+      - name: Tap formula — the check's own refusals, then the live tap
+        run: |
+          bash scripts/ci/check-tap-formula-selftest.sh
+          bash scripts/ci/check-tap-formula.sh
+
       # Every build tool and action on a reproducible path is pinned, or its
       # float is declared at the site with a reason. The self-test proves the
       # check refuses each floating shape before its pass means anything.
