@@ -271,6 +271,25 @@ fi
 kill "$waiter" 2>/dev/null || true
 wait "$waiter" 2>/dev/null || true
 
+# Instant calls race the watchdog's start-up: the guard's TERM can arrive after
+# the sleep exists but before the watchdog could end it. Thirty of them, none
+# may leave a sleep behind. Refs: MGIT-299
+echo
+echo "-- clause 4b: thirty instant calls leave no watchdog sleep behind"
+secs2=$((1000 + $$ % 89))
+for _ in $(seq 1 30); do
+	"$GUARD" -t "$secs2" -n 1 -c none:'nothing to restore' -- true >/dev/null 2>&1
+done
+sleep 1
+left2="$(ps -axo pid=,command= | awk -v n="sleep $secs2" '$2" "$3==n {print $1}')"
+if [ -z "$left2" ]; then
+	ok "no watchdog sleep remains after 30 instant guard calls"
+else
+	bad "$(echo "$left2" | wc -l | tr -d ' ') of 30 instant guard calls left a watchdog 'sleep $secs2' behind"
+	# shellcheck disable=SC2086
+	kill $left2 2>/dev/null || true
+fi
+
 # ---------------------------------------------------------------------------
 # THE INVENTORY TRIPWIRE must actually catch a bare fetch.
 #
