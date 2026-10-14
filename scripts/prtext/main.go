@@ -2,7 +2,9 @@
 // repository is public, and a pull request's title, description, comments
 // and reviews, and every earlier revision of each (an edit leaves the old
 // text readable in the history), can carry words that must not appear on a
-// public surface. The check reads all of it through the GraphQL API and
+// public surface. Historical description revisions written by Dependabot
+// are excluded; the current description and human edits remain checked.
+// The check reads the text through the GraphQL API and
 // compares SHA-256 digests of normalized candidates against two committed
 // lists, so no listed word is ever written here in clear:
 //

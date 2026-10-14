@@ -27,16 +27,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   off; the launch note about git metadata is printed only then. The
   repository is made in process, so the host's git binary, configuration and
   environment play no part. If it cannot be made, the launch fails and says so.
+  Files the project's ignore rules hide, at the top level or below it, are
+  delivered to the guest but are not in the base commit, as in a host repository.
 
 - `mgit init` writes `MGIT.md`, which holds mgit's instructions for a coding
   agent, and adds one pointer line to `CLAUDE.md` (`@MGIT.md`) and to
   `AGENTS.md` (one sentence). It adds no pointer when `HYPERSWE.md` exists,
   since that file links `MGIT.md` itself, and it never removes a pointer line
   you placed. `mgit init --no-agent-files` skips all three files.
-- The three files are new and untracked, so `mgit commit -a` takes them into
-  the first task commit and into that task's `--to-git` patch. Record the
-  starting state once with a baseline commit, as `MGIT.md` shows, to keep them
-  out of a task's patch.
+- The three files are written before the starting state is recorded, so they
+  are part of it: the first task's commit and its `--to-git` patch carry only
+  that task's change, and no baseline commit is needed. `MGIT.md` no longer
+  asks for one.
+  If `mgit init` then fails, the files it wrote are taken back: ones it created
+  are removed, a `CLAUDE.md` or `AGENTS.md` you had is restored byte for byte
+  (for a symlink, the file it points at), and a directory it created for
+  `--path` is removed if nothing is in it. A path that was there is never removed.
 - The agent guides that `mgit docs` generates (`AGENTS.md`, `CLAUDE.md`,
   `WORKFLOWS.md`) now show `mgit commit -a`; without `-a` or `mgit add` a
   commit records nothing, and the `mgit squash` after it fails with "task not

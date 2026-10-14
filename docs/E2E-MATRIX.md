@@ -126,6 +126,7 @@ on whatever an e2e script happens to exercise, which for several is nothing:
 
 | Capability / claim | Proof | Where |
 |---|---|---|
+| PR public-text verdict: corrected dependency-update description, human history on a bot-authored PR, and current description | real CLI with disposable API transport | `scripts/prtext/body_history_cli_test.go:TestCLI_DescriptionHistory`; builds and invokes `prtext`, asserts exit status and non-disclosing output |
 | `show`, `config` (get/set/list/delete), `export`, `gc`, `import`, `docs generate`, `merge` (as a standalone CLI command, distinct from the library call `squash --to-main` makes) | unit | package tests only — **none of these commands is invoked in any `scripts/e2e/*` script** |
 | `mgit worktree prune` | unit | service-layer unit tests exist (`service_operations_test.go`); as of 2026-07-29 a cmd-level test also exists (`cmd/mgit/worktree_prune_test.go`, covering dry-run/removal/no-stale-worktrees against a real repo). Still no e2e — not named in `scripts/e2e/core_loop.sh`'s worktree add/list/remove sequence, which remains the fourth subcommand it's missing |
 | `mgit version` / `mgit --version` (MGIT-40 build-info resolution: ldflags vs. `debug.ReadBuildInfo` fallback) | unit | version_test.go; used only for diagnostic printing in `lib.sh`, never asserted on as a behavioral claim in any e2e script. Not mentioned anywhere in the previous matrix |
