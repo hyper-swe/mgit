@@ -189,6 +189,17 @@ composed from anything else.
    `.goreleaser.yaml`'s `release.header` (the actual release-notes text) if
    it isn't there yet — that file is out of scope for this checklist edit,
    but the notes it produces are user-facing and easy to forget.
+1b. **Pre-tag gate: the tap formula body.** Run
+   `bash scripts/ci/check-tap-formula.sh --require` and tag nothing while it
+   exits non-zero. It fetches the live `Formula/mgit.rb` from
+   `hyper-swe/homebrew-tap` and compares everything except the `version` and
+   four `sha256` lines (which the tap's own workflow rewrites) with
+   `brew/mgit.rb`. Exit 1 prints the diff and the remedy (copy the body over,
+   below). Exit 3 means the tap could not be fetched, so the formula was NOT
+   CHECKED; that is a failure for a tag, never a pass. Without `--require` an
+   unfetchable tap prints SKIPPED and exits 0, which is for CI that must not go
+   red on a network blip. The decision to detect rather than generate the tap
+   body, and why, is recorded in the script's header.
 2. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. This triggers
    `release.yml` (preflight → e2e gate → macOS release build+sign → GoReleaser).
 3. **Homebrew tap: version + checksums are automatic; the formula body is
@@ -216,7 +227,8 @@ composed from anything else.
               <(grep -v 'sha256\|version "' brew/mgit.rb)
          ```
          An empty diff means no manual sync is needed for this release. It
-         was empty on 2026-08-10.
+         was empty on 2026-08-10. `scripts/ci/check-tap-formula.sh` now does
+         this comparison (step 1b).
          - The formerly-missing `libexec.install "guest"` (MGIT-65) is
            present in the live formula, so a `brew install`-ed mgit CAN
            compose a guest base.
