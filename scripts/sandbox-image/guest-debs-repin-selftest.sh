@@ -89,7 +89,7 @@ out="$(run "$W/bin/gpgv-ok" "$W/out1" 2>&1)" || bad "re-pin failed on a good mir
 lock="$W/out1/guest-debs-arm64.lock"
 if [ -f "$lock" ]; then
   grep -q '^libssl3 3.0.21-1~deb12u1 4444' "$lock" && ok "the newer security libssl3 is pinned over main's" || bad "libssl3 is not the security version"
-  grep -q "^libssl3 .* file://$M/archive/debian-security/$SEC_TS/pool/updates/main/o/openssl/" "$lock" && ok "the security package's URL is under the security snapshot" || bad "wrong URL for the security package"
+  grep -q "^libssl3 .* file://$M/archive/debian-security/$SEC_TS/pool/updates/main/o/openssl/" "$lock" && ok "the security package's URL is under the security snapshot" || bad "wrong URL for the security package: $(grep '^libssl3' "$lock")"
   grep -q "^make 4.3-4.1 1111.* file://$M/archive/debian/$MAIN_TS/pool/main/m/" "$lock" && ok "a main package's URL is under the main snapshot" || bad "wrong URL for make"
   grep -q "$MAIN_TS" "$lock" && grep -q "$SEC_TS" "$lock" && ok "the lock header records both snapshot timestamps" || bad "snapshot timestamps not recorded"
   grep -q '^perl-base 5.36.0-7+deb12u3$' "$W/out1/guest-debs-arm64.requires" && ok "the requires file pins perl-base" || bad "no perl-base requirement"

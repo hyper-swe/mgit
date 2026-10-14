@@ -66,6 +66,26 @@ firecracker-ci and sha256-verified) and builds the reproducible rootfs. The
 firecracker kernel is vendored (not built by us) — a reproducible-by-us
 firecracker kernel is a follow-up; its sha256 pin is the integrity anchor.
 
+## Re-pinning the guest .deb lock (git and make)
+
+`guest-debs-<arch>.lock` pins the Debian packages that give the glibc guest base `git` and
+`make`. A pin goes stale when the security archive publishes a newer version of a pinned
+package, or when the base image's own `perl-base` moves (the pinned `perl` requires that
+exact version). Re-pin at least monthly, and whenever `guest-debs-check.py` fails or the
+`BUILDER_*` base digest in `pins.env` changes:
+
+```
+repin-guest-debs.sh --arch arm64 --main-snapshot <TS> --security-snapshot <TS> \
+    --base-status <dpkg status of the composed base> --keyring <debian-archive-keyring.gpg> \
+    --out-dir scripts/sandbox-image
+```
+
+It verifies each Release file's signature with `gpgv` and each index's hash before reading
+it, takes the higher version from bookworm and bookworm-security, and rewrites the lock and
+the `.requires` file together. Run it for both architectures, then
+`guest-debs-check.py security --lock <lock> --index <security Packages>` and
+`guest-debs-check.py base --requires <requires> --status <base status>` must pass.
+
 ## Publish (all platforms)
 
 `publish.sh` builds every platform's bundle into one directory — a combined

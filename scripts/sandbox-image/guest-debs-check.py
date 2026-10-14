@@ -65,7 +65,7 @@ def stanzas(text):
     for blk in text.split("\n\n"):
         d, key = {}, None
         for line in blk.split("\n"):
-            if line[:1] in " \t" and key:
+            if line and line[0] in " \t" and key:
                 d[key] += "\n" + line
             elif ":" in line:
                 key, v = line.split(":", 1)

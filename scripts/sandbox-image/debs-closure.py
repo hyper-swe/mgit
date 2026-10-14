@@ -17,7 +17,7 @@ def stanzas(text):
     for blk in text.split('\n\n'):
         d, key = {}, None
         for line in blk.split('\n'):
-            if line[:1] in ' \t' and key: d[key] += '\n' + line
+            if line and line[0] in ' \t' and key: d[key] += '\n' + line
             elif ':' in line:
                 key, v = line.split(':', 1); d[key] = v.strip()
         if 'Package' in d: yield d
@@ -30,7 +30,10 @@ for d in stanzas(open(status_path).read()):
 inst |= provided
 pk = {}
 prov = {}
-for d in stanzas(lzma.open(pk_path, 'rt').read()):
+_raw = open(pk_path, 'rb').read()
+if _raw[:6] == b'\xfd7zXZ\x00':
+    _raw = lzma.decompress(_raw)
+for d in stanzas(_raw.decode()):
     pk[d['Package']] = d
     for p in d.get('Provides', '').split(','):
         if p.strip(): prov.setdefault(p.strip().split()[0], d['Package'])
@@ -59,7 +62,7 @@ while queue:
         queue.append(alts[0])
 for n in ([] if lock_only else sorted(need)):
     d = need[n]
-    print(json.dumps({'package': n, 'version': d['Version'], 'file': d['Filename'], 'sha256': d['SHA256'], 'size': int(d['Size'])}))
+    print(json.dumps({'package': n, 'version': d['Version'], 'file': d['Filename'], 'sha256': d['SHA256'], 'size': int(d['Size']), 'origin': d.get('X-Origin', 'main')}))
 
 if req_out:
     # exact-version dependencies the pinned packages place on packages the base
