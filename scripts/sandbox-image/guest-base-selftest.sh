@@ -28,6 +28,9 @@ for arch in amd64 arm64; do
   done
   nd="$(printf '%s\n' "$out" | grep -c '^deb ')"
   [ "$nd" -ge 20 ] && ok "$arch: $nd pinned .deb files" || bad "$arch: only $nd pinned .deb files"
+  # a lock for the other architecture must not pass: every file is this arch or arch-independent
+  wrong="$(printf '%s\n' "$out" | grep '^deb ' | grep -Evc "_(${arch}|all)\.deb$")"
+  [ "$wrong" -eq 0 ] && ok "$arch: every .deb is ${arch} or all" || bad "$arch: $wrong .deb file(s) are for another architecture"
   printf '%s\n' "$out" | grep -q '^fetch guard-fetch.sh .*-c ' && ok "$arch: fetched under the guard" || bad "$arch: not under the guard"
   printf '%s\n' "$out" | grep -q '^max-mib 1229$' && ok "$arch: size cap 1229 MiB (1.2 GiB)" || bad "$arch: no 1229 MiB cap"
   printf '%s\n' "$out" | grep -q '^network none$' && ok "$arch: no run-time network" || bad "$arch: network not none"
