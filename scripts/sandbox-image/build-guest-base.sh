@@ -32,6 +32,9 @@ if [ "$print" -eq 1 ]; then
 	bash "$HERE/fetch-guest-tools.sh" --print-urls "$ARCH" | while read -r tool sum url; do
 		echo "tool $tool $sum $url"
 	done
+	grep -v '^#' "$HERE/guest-debs-$ARCH.lock" | while read -r pkg ver sum url; do
+		echo "deb $pkg $ver $sum $url"
+	done
 	echo "max-mib $MAX_MIB"
 	echo "network none"
 	exit 0
