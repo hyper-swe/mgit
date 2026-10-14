@@ -48,11 +48,8 @@ fetch_index() { # fetch_index <name> <archive dir> <suite> <snapshot>
 	local name="$1" dir="$2" suite="$3" ts="$4"
 	local url="$BASE_URL/archive/$dir/$ts/dists/$suite"
 	curl -fsSL -o "$WORK/$name.InRelease" "$url/InRelease"
-	"$GPGV" --keyring "$KEYRING" "$WORK/$name.InRelease" >/dev/null 2>"$WORK/$name.gpgv" \
-		|| { echo "repin-guest-debs: the $suite Release signature did not verify: $(cat "$WORK/$name.gpgv")" >&2; exit 1; }
 	curl -fsSL -o "$WORK/$name.xz" "$url/main/binary-$ARCH/Packages.xz"
-	python3 "$HERE/debs-index.py" verify --inrelease "$WORK/$name.InRelease" \
-		--path "main/binary-$ARCH/Packages.xz" --file "$WORK/$name.xz"
+	GPGV="$GPGV" bash "$HERE/verify-release.sh" "$KEYRING" "$WORK/$name.InRelease" "$suite" "main/binary-$ARCH/Packages.xz" "$WORK/$name.xz" "$WORK" "$name" || exit 1
 	xz -dc "$WORK/$name.xz" > "$WORK/$name.idx"
 }
 fetch_index main debian bookworm "$MTS"

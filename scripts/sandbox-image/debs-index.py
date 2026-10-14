@@ -22,10 +22,36 @@ chk = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(chk)
 
 
-def verify(inrelease, path, file):
+def signed_text(raw):
+    """The text a clearsigned InRelease signs, or None. The file must be exactly one signed block:
+    nothing before the header, nothing after the signature, one header, one signature."""
+    text = open(raw, errors="replace").read()
+    head, sig, end = "-----BEGIN PGP SIGNED MESSAGE-----", "-----BEGIN PGP SIGNATURE-----", "-----END PGP SIGNATURE-----"
+    lines = text.rstrip("\n").split("\n")
+    if not lines or lines[0] != head or lines[-1] != end or lines.count(head) != 1 or lines.count(sig) != 1:
+        return None
+    try:
+        start = lines.index("", 1) + 1  # the blank line ends the armor headers (Hash:)
+    except ValueError:
+        return None
+    body = lines[start:lines.index(sig)]
+    return [l[2:] if l.startswith("- ") else l for l in body]  # undo dash-escaping
+
+
+def verify(inrelease, path, file, suite=None):
+    """inrelease is the raw clearsigned file the signature check passed; only its signed text is read."""
+    body = signed_text(inrelease)
+    if body is None:
+        print("the InRelease is not exactly one signed block", file=sys.stderr)
+        return 1
+    if suite is not None:
+        names = {l.split(":", 1)[1].strip() for l in body if l.startswith(("Suite:", "Codename:"))}
+        if suite not in names:
+            print(f"the Release names {sorted(names)}, not {suite}", file=sys.stderr)
+            return 1
     want = None
     in_sha = False
-    for line in open(inrelease, errors="replace"):
+    for line in body:
         if line.startswith("SHA256:"):
             in_sha = True
             continue
@@ -92,6 +118,7 @@ def main():
     v.add_argument("--inrelease", required=True)
     v.add_argument("--path", required=True)
     v.add_argument("--file", required=True)
+    v.add_argument("--suite")
     m = sub.add_parser("merge")
     m.add_argument("--main", required=True)
     m.add_argument("--security", required=True)
@@ -105,7 +132,7 @@ def main():
     l.add_argument("--out", required=True)
     a = ap.parse_args()
     if a.cmd == "verify":
-        return verify(a.inrelease, a.path, a.file)
+        return verify(a.inrelease, a.path, a.file, a.suite)
     if a.cmd == "merge":
         return merge(a.main, a.security, a.out)
     return lock(a.jsonl, a.base_url, a.main_snapshot, a.security_snapshot, a.arch, a.out)

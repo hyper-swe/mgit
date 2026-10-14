@@ -77,14 +77,8 @@ echo fake-keyring > "$W/keyring.gpg"
 publish "$M/archive/debian/$MAIN_TS/dists/bookworm" "$W/main.idx" bookworm main/binary-arm64
 publish "$M/archive/debian-security/$SEC_TS/dists/bookworm-security" "$W/sec.idx" bookworm-security main/binary-arm64
 
-# the stub honours --output like gpgv: it writes only the text between the signed-message header and the signature
-cat > "$W/bin/gpgv-ok" <<'STUB'
-#!/bin/sh
-out=""; prev=""; last=""
-for a in "$@"; do [ "$prev" = "--output" ] && out="$a"; prev="$a"; last="$a"; done
-[ -n "$out" ] && awk '/^-----BEGIN PGP SIGNED MESSAGE-----/{h=1;next} h==1&&/^$/{h=2;next} /^-----BEGIN PGP SIGNATURE-----/{exit} h==2{print}' "$last" > "$out"
-exit 0
-STUB
+# the stub reports a valid signature the way gpgv --status-fd does
+printf '#!/bin/sh\necho "[GNUPG:] VALIDSIG 0000 2026-10-14 0 4 0 22 8 01 0000"\nexit 0\n' > "$W/bin/gpgv-ok"
 printf '#!/bin/sh\necho BAD signature >&2\nexit 1\n' > "$W/bin/gpgv-bad"
 :;
 chmod +x "$W/bin/gpgv-ok" "$W/bin/gpgv-bad"

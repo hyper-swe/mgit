@@ -80,8 +80,11 @@ repin-guest-debs.sh --arch arm64 --main-snapshot <TS> --security-snapshot <TS> \
     --out-dir scripts/sandbox-image
 ```
 
-It verifies each Release file's signature with `gpgv` and each index's hash before reading
-it, takes the higher version from bookworm and bookworm-security, and rewrites the lock and
+It verifies each Release file's signature with `gpgv` (a `VALIDSIG` status line is required),
+reads only the text between the signed-message header and the signature, refuses a file that is
+not exactly one signed block or that names another suite, and checks each index's hash against
+that signed text before reading the index (`verify-release.sh`; the keyring is the trust anchor,
+so any key in it is accepted). It takes the higher version from bookworm and bookworm-security, and rewrites the lock and
 the `.requires` file together. Run it for both architectures, then
 `guest-debs-check.py security --lock <lock> --index <security Packages>` and
 `guest-debs-check.py base --requires <requires> --status <base status>` must pass.
