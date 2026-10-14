@@ -47,8 +47,12 @@ trap cleanup EXIT
 fetch_index() { # fetch_index <name> <archive dir> <suite> <snapshot>
 	local name="$1" dir="$2" suite="$3" ts="$4"
 	local url="$BASE_URL/archive/$dir/$ts/dists/$suite"
-	curl -fsSL -o "$WORK/$name.InRelease" "$url/InRelease"
-	curl -fsSL -o "$WORK/$name.xz" "$url/main/binary-$ARCH/Packages.xz"
+	# the guard's output goes to a file: its watchdog outlives it and would hold a caller's pipe open
+	# a truncated file is removed before the next attempt, so a retry never re-reads corrupt bytes
+	"$HERE/../ci/guard-fetch.sh" -t 900 -c "rm -f '$WORK/$name.InRelease'" -n 3 -- \
+		curl -fsSL -o "$WORK/$name.InRelease" "$url/InRelease" >"$WORK/fetch.log" 2>&1 || { cat "$WORK/fetch.log" >&2; exit 1; }
+	"$HERE/../ci/guard-fetch.sh" -t 900 -c "rm -f '$WORK/$name.xz'" -n 3 -- \
+		curl -fsSL -o "$WORK/$name.xz" "$url/main/binary-$ARCH/Packages.xz" >"$WORK/fetch.log" 2>&1 || { cat "$WORK/fetch.log" >&2; exit 1; }
 	GPGV="$GPGV" bash "$HERE/verify-release.sh" "$KEYRING" "$WORK/$name.InRelease" "$suite" "main/binary-$ARCH/Packages.xz" "$WORK/$name.xz" "$WORK" "$name" || exit 1
 	xz -dc "$WORK/$name.xz" > "$WORK/$name.idx"
 }
