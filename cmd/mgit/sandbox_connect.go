@@ -126,7 +126,7 @@ func hostRuntimeBases() []string {
 	}
 	dir := filepath.Join(shortRuntimeBase, fmt.Sprintf("mgit-%d", os.Getuid()))
 	if fi, err := os.Lstat(dir); err == nil && fi.IsDir() && fi.Mode()&os.ModeSymlink == 0 {
-		if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) == os.Getuid() {
+		if ownedByUser(fi) {
 			bases = append(bases, shortRuntimeBase)
 		}
 	}
@@ -164,8 +164,7 @@ func ensureOwnerOnlyDir(dir string) error {
 	if !fi.IsDir() {
 		return fmt.Errorf("%s is not a directory", dir)
 	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok || int(st.Uid) != os.Getuid() {
+	if !ownedByUser(fi) {
 		return fmt.Errorf("%s is not owned by this user; refusing to place sandbox sockets under it", dir)
 	}
 	if fi.Mode().Perm() != 0o700 {
