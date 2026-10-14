@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -115,5 +116,23 @@ func TestMarshal_IsDeterministicAndEmptyListsAreArrays(t *testing.T) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(a, &m); err != nil || string(m["steps"]) != "[]" || string(m["audit"]) != "[]" {
 		t.Fatalf("empty steps and audit must be [], got %s", a)
+	}
+}
+
+// TestDocument_EveryFieldIsDocumented keeps docs/history-export.md and the
+// types from drifting: each JSON field name must appear in the document.
+func TestDocument_EveryFieldIsDocumented(t *testing.T) {
+	doc, err := os.ReadFile("../../docs/history-export.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []any{Document{}, Step{}, File{}, AuditRecord{}} {
+		rt := reflect.TypeOf(v)
+		for i := 0; i < rt.NumField(); i++ {
+			name := strings.Split(rt.Field(i).Tag.Get("json"), ",")[0]
+			if !strings.Contains(string(doc), "| `"+name+"` |") {
+				t.Errorf("%s.%s (%q) is not in a table row of docs/history-export.md", rt.Name(), rt.Field(i).Name, name)
+			}
+		}
 	}
 }
