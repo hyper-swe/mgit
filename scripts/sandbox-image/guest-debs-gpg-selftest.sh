@@ -42,6 +42,7 @@ sign other@example.org "$W/other.InRelease"
 printf 'fake packages' > "$W/Packages.xz"   # the genuine file again: only the key can refuse this one
 check "$W/other.InRelease" >/dev/null 2>&1 && bad "a signature by another key passed" || ok "a signature by another key fails"
 
+printf 'forged' > "$W/Packages.xz"   # matches ONLY the prepended unsigned block, so a parse that reads it passes this file
 { printf 'SHA256:\n %s 6 main/binary-arm64/Packages.xz\n' "$fsum"; cat "$W/good.InRelease"; } > "$W/prefixed.InRelease"
 check "$W/prefixed.InRelease" >/dev/null 2>&1 && bad "an unsigned block above a signed Release passed" || ok "an unsigned block above a signed Release fails"
 
