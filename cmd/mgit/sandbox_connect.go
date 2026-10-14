@@ -46,13 +46,16 @@ func resolveSandboxPaths(repoRoot string) (sandboxPaths, error) {
 	if err := checkSocketPathFits(filepath.Join(runtimeDir, "d.sock")); err != nil {
 		return sandboxPaths{}, err
 	}
-	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
-		return sandboxPaths{}, fmt.Errorf("create sandbox runtime dir: %w", err)
-	}
+	// In the shared fallback the per-user dir is checked (or created) BEFORE
+	// anything is made inside it: MkdirAll on a path through a planted symlink
+	// would create the key dir in the symlink's target before the refusal.
 	if runtimeBase() == shortRuntimeBase {
 		if err := ensureOwnerOnlyDir(filepath.Dir(runtimeDir)); err != nil {
 			return sandboxPaths{}, err
 		}
+	}
+	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
+		return sandboxPaths{}, fmt.Errorf("create sandbox runtime dir: %w", err)
 	}
 	return sandboxPaths{
 		socket:    filepath.Join(runtimeDir, "d.sock"),
@@ -166,7 +169,7 @@ func ensureOwnerOnlyDir(dir string) error {
 		return fmt.Errorf("%s is not owned by this user; refusing to place sandbox sockets under it", dir)
 	}
 	if fi.Mode().Perm() != 0o700 {
-		if err := os.Chmod(dir, 0o700); err != nil {
+		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // a directory needs its x bit; 0700 is owner-only
 			return fmt.Errorf("make %s owner-only: %w", dir, err)
 		}
 	}

@@ -22,21 +22,7 @@ func shortBaseFor(t *testing.T) string {
 	shortRuntimeBase = root
 	t.Cleanup(func() {
 		shortRuntimeBase = old
-		// a scratch tree this test made: files first, then the empty dirs
-		_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-			if err == nil && !d.IsDir() {
-				_ = os.Remove(p)
-			}
-			return nil
-		})
-		for i := 0; i < 6; i++ {
-			_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-				if err == nil && d.IsDir() {
-					_ = os.Remove(p) // only succeeds on an empty dir
-				}
-				return nil
-			})
-		}
+		_ = os.RemoveAll(root) // a scratch dir this test made under /tmp
 	})
 	return root
 }
@@ -100,8 +86,8 @@ func TestResolveSandboxPaths_TheFallbackDirIsOwnerOnlyAndNotASymlink(t *testing.
 	t.Setenv("TMPDIR", longTmpdir(t, 120))
 	mine := filepath.Join(short, fmt.Sprintf("mgit-%d", os.Getuid()))
 
-	require.NoError(t, os.Mkdir(mine, 0o755)) // ours, but open to others
-	require.NoError(t, os.Chmod(mine, 0o755))
+	require.NoError(t, os.Mkdir(mine, 0o700))
+	require.NoError(t, os.Chmod(mine, 0o755)) //nolint:gosec // deliberately open, to prove it is tightened
 	_, err := resolveSandboxPaths(repo)
 	require.NoError(t, err)
 	fi, err := os.Stat(mine)
@@ -114,6 +100,9 @@ func TestResolveSandboxPaths_TheFallbackDirIsOwnerOnlyAndNotASymlink(t *testing.
 	_, err = resolveSandboxPaths(repo)
 	require.Error(t, err, "a symlink where the per-user dir belongs is refused")
 	assert.Contains(t, err.Error(), "symlink")
+	left, rerr := os.ReadDir(other)
+	require.NoError(t, rerr)
+	assert.Empty(t, left, "nothing was created in the symlink's target before the refusal")
 }
 
 // Daemons started under a long TMPDIR live in the short fixed dir, so the host
