@@ -70,3 +70,26 @@ func TestKrunVM_Start_ChildDiesWithNoKVMDevice_SaysSo(t *testing.T) {
 		}
 	}
 }
+
+// A child that reported its own error and was then killed by mgit must not be
+// blamed on a signal: the status reaped after mgit's SIGKILL is mgit's.
+func TestKrunVM_Start_ReportedErrorThenOurKill_NamesNoSignal(t *testing.T) {
+	child := newFakeChild(`{"ok":false,"error":"krun_add_net_unixgram: -22"}` + "\n")
+	child.exitCode = -1
+	child.waitErr = abortedExit(t) // what Wait returns after Process.Kill
+	spawner := &fakeSpawner{next: func() *fakeChild { return child }}
+	h := testHypervisor(t, spawner)
+	h.kvmProbe = func() error { return nil }
+
+	vm, err := h.CreateVM(vmCfg(t, model.NetworkModeNone))
+	if err != nil {
+		t.Fatalf("CreateVM: %v", err)
+	}
+	err = vm.Start(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "krun_add_net_unixgram") {
+		t.Fatalf("Start = %v, want the child's own error", err)
+	}
+	if strings.Contains(err.Error(), "ended with") {
+		t.Errorf("Start error = %q, must not name a signal mgit itself sent", err)
+	}
+}

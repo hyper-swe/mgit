@@ -283,6 +283,9 @@ func (v *krunVM) Start(ctx context.Context) error {
 		}
 		// Name the cause first: the console tail alone lost the VMM's own
 		// words (an abort by signal, a host with no KVM device). Refs: MGIT-302
+		if !errors.Is(err, errChildExitedEarly) {
+			waitErr = nil // reaped after mgit's own kill: not the VMM's cause
+		}
 		cause := bootFailureCause(v.kvmError(), waitErr)
 		if cause != "" {
 			cause += "; "
@@ -336,6 +339,12 @@ func bootFailureCause(kvmErr, waitErr error) string {
 // startTimeout — whichever comes first. The decode goroutine is not orphaned:
 // every abandonment path in Start kills and reaps the child, which closes the
 // pipe and unblocks it.
+// errChildExitedEarly is the handshake pipe closing before the child reported:
+// the child ended on its own, so its exit status is its own. Any other failure
+// (a reported error, a timeout, a canceled ctx) leaves the child alive for
+// mgit to kill, and a status reaped after that kill is mgit's, not the VMM's.
+var errChildExitedEarly = errors.New("vm child exited before reporting (see its console log)")
+
 func readHandshake(ctx context.Context, dec *json.Decoder) (childHandshake, error) {
 	ctx, cancel := context.WithTimeout(ctx, startTimeout)
 	defer cancel()
@@ -349,7 +358,7 @@ func readHandshake(ctx context.Context, dec *json.Decoder) (childHandshake, erro
 		var hs childHandshake
 		err := dec.Decode(&hs)
 		if errors.Is(err, io.EOF) {
-			err = errors.New("vm child exited before reporting (see its console log)")
+			err = errChildExitedEarly
 		}
 		ch <- result{hs, err}
 	}()
