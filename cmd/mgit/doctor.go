@@ -204,6 +204,7 @@ func doctorChecks(app *App, connect connectFunc, listDaemons hostDaemonLister) [
 		doctor.BaseBootsCheck{VMM: vmm, Inspect: inspectBaseShape},
 		doctor.HostDaemonsCheck{List: listDaemons},
 		doctor.DuplicateDaemonsCheck{List: listDaemons},
+		doctor.KVMDeviceCheck{GOOS: runtime.GOOS},
 	}
 }
 
