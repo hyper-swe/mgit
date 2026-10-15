@@ -50,3 +50,32 @@ func TestWorktreeService_Add_TheTaskBranchNameStillWorks(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "task/MGIT-12.9", wt.Branch)
 }
+
+// The refusal must name a command that works: mgit can only create a task's
+// own branch, so "create X first" is advice nobody can follow. Refs: MGIT-127
+func TestWorktreeService_Add_TheRefusalNamesTheCommandsThatWork(t *testing.T) {
+	env := setupTestEnv(t)
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, fixedClock())
+
+	_, err := wtSvc.Add(context.Background(), model.WorktreeAddOptions{
+		Path: filepath.Join(t.TempDir(), "wt"), TaskID: "MGIT-12.7", Branch: "feature/custom",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rerun without --branch")
+	assert.Contains(t, err.Error(), "--branch task/MGIT-12.7")
+	assert.NotContains(t, err.Error(), "create \"feature/custom\" first", "mgit cannot create that branch, so it must not be suggested")
+}
+
+// An EXISTING branch under any name is still accepted: the refusal is only for
+// a name that does not exist and cannot be created. Refs: MGIT-127
+func TestWorktreeService_Add_AnExistingNonTaskBranchIsStillAccepted(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+	_, err := env.branch.GetBranch(ctx, "main")
+	require.NoError(t, err, "the fixture's main branch exists and is not a task branch")
+	wtSvc := NewWorktreeService(env.idx, env.branch, env.wt, fixedClock())
+
+	wt, err := wtSvc.Add(ctx, model.WorktreeAddOptions{Path: filepath.Join(t.TempDir(), "wt"), TaskID: "MGIT-12.10", Branch: "main"})
+	require.NoError(t, err)
+	assert.Equal(t, "main", wt.Branch)
+}
