@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -93,8 +94,11 @@ func (s *Store) GetWorktree(ctx context.Context, path string) (*model.WorktreeIn
 		return tx.QueryRowContext(ctx, querySQL, path).Scan(
 			&wt.Path, &wt.Branch, &wt.TaskID, &wt.AgentID, &createdAt, &wt.ForkBase)
 	})
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", model.ErrWorktreeNotFound, path)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query worktree %s: %w", path, err)
 	}
 
 	if t, parseErr := time.Parse(time.RFC3339, createdAt); parseErr == nil {
@@ -119,8 +123,11 @@ func (s *Store) GetWorktreeByTask(ctx context.Context, taskID string) (*model.Wo
 		return tx.QueryRowContext(ctx, querySQL, taskID).Scan(
 			&wt.Path, &wt.Branch, &wt.TaskID, &wt.AgentID, &createdAt, &wt.ForkBase)
 	})
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: task %s", model.ErrWorktreeNotFound, taskID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query worktree for task %s: %w", taskID, err)
 	}
 	if t, parseErr := time.Parse(time.RFC3339, createdAt); parseErr == nil {
 		wt.CreatedAt = t
