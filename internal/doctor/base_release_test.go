@@ -112,3 +112,32 @@ func TestBaseReleaseCheck_ABaseComposedBeforeIndexPinning_IsNotComparableNotDiff
 	unknown := BaseIdentity{Running: "0.6.8", SourceRef: relName + "@" + movedD, BaseDigest: baseD, ReleaseRef: relName + "@" + relDig}
 	assert.Equal(t, StatusNotChecked, BaseReleaseCheck{Inspect: func() (BaseIdentity, error) { return unknown, nil }}.Run(context.Background()).Status)
 }
+
+// THE DIFF ROW'S REMEDY MUST NOT STEER A REPOSITORY OFF ITS OWN IMAGE. The
+// no-reference recompose switches a repository to the release's tested image;
+// a repository whose base carries its own toolchain (a Go image) then loses it
+// and sandboxed setup fails with "go: not found". The remedy names the
+// repository's own recorded source first and warns what the no-reference form
+// does. Refs: MGIT-300
+func TestBaseReleaseCheck_RemedyNamesTheRecordedSourceAndWarnsAboutTheNoReferenceForm(t *testing.T) {
+	own := otherN + "@" + otherD
+	run := func(id BaseIdentity) Result {
+		return BaseReleaseCheck{Inspect: func() (BaseIdentity, error) { return id, nil }}.Run(context.Background())
+	}
+
+	t.Run("an_image_base_is_recomposed_from_its_own_recorded_source", func(t *testing.T) {
+		got := run(BaseIdentity{Composed: "0.7.3", SourceRef: own, BaseDigest: baseD, ReleaseRef: relName + "@" + relDig})
+		assert.Equal(t, StatusDiffers, got.Status)
+		assert.Contains(t, got.Remedy, "mgit sandbox base from "+own, "the safe action is the repository's own recorded source")
+		assert.Contains(t, got.Remedy, "switches", "the no-reference form is named for what it does")
+		assert.Contains(t, got.Remedy, "toolchain", "and what it can cost")
+		assert.NotContains(t, got.Remedy, "base from` (no reference), or keep", "the no-reference form is no longer offered as the first remedy")
+	})
+
+	t.Run("a_directory_base_has_no_recorded_source_and_the_warning_still_stands", func(t *testing.T) {
+		got := run(BaseIdentity{Composed: "0.7.3", BaseDigest: baseD, ReleaseRef: relName + "@" + relDig})
+		assert.Equal(t, StatusDiffers, got.Status)
+		assert.Contains(t, got.Remedy, "toolchain")
+		assert.Contains(t, got.Remedy, "knowingly")
+	})
+}
