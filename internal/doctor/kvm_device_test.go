@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"errors"
+	"github.com/hyper-swe/mgit/internal/model"
 	"io/fs"
 	"os"
 	"testing"
@@ -50,7 +51,7 @@ func TestKVMDeviceCheck_Verdicts(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := KVMDeviceCheck{Open: tt.open, GOOS: "linux"}.Run(context.Background())
+			r := KVMDeviceCheck{Open: tt.open, GOOS: "linux", VMM: libkrunVMM}.Run(context.Background())
 			assert.Equal(t, "host/kvm", r.Name)
 			assert.Equal(t, "MGIT-301", r.Incident)
 			assert.Equal(t, tt.wantStatus, r.Status, "summary: %s", r.Summary)
@@ -79,7 +80,42 @@ func TestOpenKVMDevice_OpensReadWriteAndReportsAbsence(t *testing.T) {
 // Off Linux the row says it does not apply; it is never an ok over an
 // unchecked device.
 func TestKVMDeviceCheck_OffLinuxIsNotCheckedNeverOk(t *testing.T) {
-	r := KVMDeviceCheck{GOOS: "darwin", Open: func(string) error { t.Fatal("must not probe"); return nil }}.Run(context.Background())
+	r := KVMDeviceCheck{GOOS: "darwin", VMM: libkrunVMM, Open: func(string) error { t.Fatal("must not probe"); return nil }}.Run(context.Background())
 	assert.Equal(t, StatusNotChecked, r.Status)
 	assert.NotEmpty(t, r.Reason)
+}
+
+func libkrunVMM(context.Context) (DaemonVMM, error) {
+	return DaemonVMM{Report: model.VMMReport{VMM: model.BackendLibkrun}}, nil
+}
+
+// The device is this host's requirement only when its sandbox daemon links a
+// VMM that opens it. With no daemon, or the container backend, a host without
+// KVM is not broken and doctor must not exit 1 over it. Refs: MGIT-301
+func TestKVMDeviceCheck_OnlyBackendsThatOpenKVMDecide(t *testing.T) {
+	absent := func(p string) error { return &fs.PathError{Op: "open", Path: p, Err: fs.ErrNotExist} }
+	tests := []struct {
+		name string
+		vmm  func(context.Context) (DaemonVMM, error)
+		want Status
+	}{
+		{"no_daemon_is_not_checked", func(context.Context) (DaemonVMM, error) { return DaemonVMM{}, errors.New("no sandbox daemon binary") }, StatusNotChecked},
+		{"container_backend_is_not_checked", func(context.Context) (DaemonVMM, error) {
+			return DaemonVMM{Report: model.VMMReport{VMM: model.BackendContainer}}, nil
+		}, StatusNotChecked},
+		{"libkrun_decides", libkrunVMM, StatusFailed},
+		{"firecracker_decides", func(context.Context) (DaemonVMM, error) {
+			return DaemonVMM{Report: model.VMMReport{VMM: model.BackendKVM}}, nil
+		}, StatusFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := KVMDeviceCheck{GOOS: "linux", Open: absent, VMM: tt.vmm}.Run(context.Background())
+			assert.Equal(t, tt.want, r.Status, "summary: %s", r.Summary)
+			if tt.want == StatusNotChecked {
+				assert.NotEmpty(t, r.Reason)
+				assert.False(t, Failed([]Result{r}), "a row that does not apply must not flip doctor's exit code")
+			}
+		})
+	}
 }

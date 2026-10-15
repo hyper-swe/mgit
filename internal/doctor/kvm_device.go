@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+
+	"github.com/hyper-swe/mgit/internal/model"
 )
 
 // kvmDevice is the device a Linux VMM opens to run a guest.
@@ -21,18 +23,34 @@ type KVMDeviceCheck struct {
 	// GOOS is the host's OS: only Linux backends open /dev/kvm, so elsewhere
 	// the row says it does not apply rather than passing.
 	GOOS string
+	// VMM reports which VMM this host's sandbox daemon links. Only libkrun and
+	// firecracker open /dev/kvm: with no daemon, or the container backend, the
+	// device is not this host's requirement and the row reads not-checked.
+	VMM func(ctx context.Context) (DaemonVMM, error)
 }
 
 // Name implements Check.
 func (KVMDeviceCheck) Name() string { return "host/kvm" }
 
 // Run implements Check.
-func (c KVMDeviceCheck) Run(context.Context) Result {
+func (c KVMDeviceCheck) Run(ctx context.Context) Result {
 	r := Result{Name: c.Name(), Incident: "MGIT-301"}
 	if c.GOOS != "linux" {
 		r.Status = StatusNotChecked
 		r.Reason = "only the Linux backends use " + kvmDevice
 		r.Summary = "the KVM device is not needed on " + c.GOOS
+		return r
+	}
+	v, verr := c.VMM(ctx)
+	if verr != nil {
+		r.Status, r.Reason = StatusNotChecked, verr.Error()
+		r.Summary = "could not tell which VMM this host's sandbox daemon links, so whether it needs " + kvmDevice + " is unknown"
+		return r
+	}
+	if v.Report.VMM != model.BackendLibkrun && v.Report.VMM != model.BackendKVM {
+		r.Status = StatusNotChecked
+		r.Reason = fmt.Sprintf("the sandbox daemon links %s, which does not open %s", orUnnamed(v.Report.VMM), kvmDevice)
+		r.Summary = "the KVM device is not needed by this host's sandbox backend"
 		return r
 	}
 	open := c.Open

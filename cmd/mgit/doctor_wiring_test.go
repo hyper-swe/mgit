@@ -26,11 +26,6 @@ import (
 // every other piece of the production wiring in place.
 func runDoctor(t *testing.T, connect connectFunc, args ...string) (string, error) {
 	t.Helper()
-	// The host/kvm row would fail on any machine without KVM (a CI runner);
-	// these tests are about the wiring, not the machine. Refs: MGIT-301
-	prev := kvmOpen
-	kvmOpen = func(string) error { return nil }
-	t.Cleanup(func() { kvmOpen = prev })
 	root := rootCmd()
 	for _, c := range root.Commands() {
 		if c.Name() == "doctor" {
