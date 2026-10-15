@@ -38,7 +38,7 @@ func TestGetWorktree_ACancelledContextIsNotReportedAsNotFound(t *testing.T) {
 
 	_, err := store.GetWorktreeByTask(ctx, "MGIT-1")
 	require.Error(t, err)
-	assert.False(t, errors.Is(err, model.ErrWorktreeNotFound), "a cancelled read must not read as 'no worktree': %v", err)
+	assert.False(t, errors.Is(err, model.ErrWorktreeNotFound), "a canceled read must not read as 'no worktree': %v", err)
 	assert.True(t, errors.Is(err, context.Canceled), "the cause must stay recoverable with errors.Is: %v", err)
 }
 
