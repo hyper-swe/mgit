@@ -28,16 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unstages the files under that directory. Every refused entry is named.
 - `mgit work <path> --branch <name>` for a branch that does not exist is now
   refused before anything is created. It used to fail late and leave an
-  orphan `task/<id>` branch behind.
+  orphan `task/<id>` branch behind (MGIT-127).
 - A commit made from inside a task worktree records the agent the worktree is
-  bound to (`mgit work --agent-id`), not the default `cli`.
+  bound to (`mgit work --agent-id`), not the default `cli` (MGIT-117).
 - A failing worktree lookup (a closed index store, a canceled request) is
-  reported as that failure, not as "not found" for a worktree that exists.
+  reported as that failure, not as "not found" for a worktree that exists
+  (MGIT-116).
 - A sandbox with a network allowlist now starts when `TMPDIR` is long. The
   per-sandbox sockets used to exceed the operating system's socket path limit
-  for a runtime directory of 62 bytes or more.
+  for a runtime directory of 62 bytes or more (MGIT-279).
 - A launch that fails before any guest exists reports only its own cause; it
-  no longer adds advice about guest memory.
+  no longer adds advice about guest memory (MGIT-108).
 - Image sources written as `docker.io/...` resolve to the registry that
   serves them, and a registry response that is not an image manifest is
   reported with the serving host and HTTP status instead of as a digest
@@ -45,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On the libkrun backend, a published port outside 1-65535 is an invalid
   request that names the port, and a failure to clear, bind or restrict the
   control socket is reported as that I/O fault; neither reads as "no sandbox
-  backend available" any more.
+  backend available" any more (MGIT-232.1).
 - `mgit sandbox launch` on a Git worktree or clone no longer leaves a
   `.git` pointer file in the guest that made Git fail with "not a git
   repository"; the launch says what Git the guest gets. Usage lines for the
