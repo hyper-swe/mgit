@@ -141,3 +141,16 @@ func TestBaseReleaseCheck_RemedyNamesTheRecordedSourceAndWarnsAboutTheNoReferenc
 		assert.Contains(t, got.Remedy, "knowingly")
 	})
 }
+
+// The pre-0.6.8 not-comparable row asks for a recompose too; it must name the
+// repository's own recorded source, never the bare no-reference command.
+// Refs: MGIT-300
+func TestBaseReleaseCheck_PreIndexPinRowSteersToTheRecordedSource(t *testing.T) {
+	own := otherN + "@" + otherD
+	got := BaseReleaseCheck{Inspect: func() (BaseIdentity, error) {
+		return BaseIdentity{Composed: "0.6.5", SourceRef: own, BaseDigest: baseD, ReleaseRef: relName + "@" + relDig}, nil
+	}}.Run(context.Background())
+	assert.Equal(t, StatusNotChecked, got.Status)
+	assert.Contains(t, got.Summary, "mgit sandbox base from "+own)
+	assert.NotContains(t, got.Summary, "`mgit sandbox base from` to compare", "the bare command is the no-reference form")
+}

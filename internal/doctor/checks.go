@@ -193,7 +193,7 @@ func (c BaseReleaseCheck) Run(context.Context) Result {
 			"the release record pins the image index", composedOrUnrecorded(id.Composed))
 		r.Summary = fmt.Sprintf("the guest base (composed by mgit %s from %s@%s) cannot be compared with the base this "+
 			"release was smoke-tested with (%s@%s): composes before 0.6.8 recorded the platform manifest, not the image "+
-			"index — recompose with `mgit sandbox base from` to compare", composedOrUnrecorded(id.Composed), srcTag, srcDigest, relTag, relDigest)
+			"index — %s to compare", composedOrUnrecorded(id.Composed), srcTag, srcDigest, relTag, relDigest, recomposeToCompare(id))
 	case srcTag == relTag:
 		r.Status, r.Remedy = StatusDiffers, remedy
 		r.Summary = fmt.Sprintf("the guest base was composed from %s@%s but this release was smoke-tested with "+
@@ -495,4 +495,14 @@ func resolvedRoot(p string) string {
 		return resolved
 	}
 	return p
+}
+
+// recomposeToCompare is the pre-0.6.8 row's way forward: the repository's own
+// recorded source when there is one, so the row never steers a repository onto
+// the no-reference form, which switches it to the release's image. Refs: MGIT-300
+func recomposeToCompare(id BaseIdentity) string {
+	if id.SourceRef != "" {
+		return "recompose from its own recorded source with `mgit sandbox base from " + id.SourceRef + "`"
+	}
+	return "recompose with `mgit sandbox base from <image>`"
 }
