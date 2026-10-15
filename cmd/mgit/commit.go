@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/service"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // commitCmd implements mgit commit. Refs: FR-8.3, MGIT-4.1.2, MGIT-77, MGIT-105
@@ -114,9 +116,6 @@ func commitCmd() *cobra.Command {
 	return cmd
 }
 
-// printCommitDryRun reports what --dry-run would have recorded, including the
-// resolved message — so a message read from a file can be inspected before it
-// is committed. Refs: FR-8.3, MGIT-105
 // resolveCommitAgentID picks the agent a commit is recorded under. An explicit
 // --agent-id wins. Otherwise a commit from inside a task-bound worktree takes the
 // agent that worktree is bound to, the way it takes the worktree's task; with no
@@ -128,7 +127,7 @@ func resolveCommitAgentID(ctx context.Context, app *App, explicit bool, flagValu
 	if explicit || app.BoundTask == "" {
 		return flagValue, nil
 	}
-	wt, err := app.Index.GetWorktreeByTask(ctx, app.BoundTask)
+	wt, err := service.NewWorktreeService(app.Index, app.Branch, gitstore.NewWorktreeStore(app.Repo), func() time.Time { return time.Now().UTC() }).ByTask(ctx, app.BoundTask)
 	switch {
 	case err == nil && wt.AgentID != "":
 		return wt.AgentID, nil
@@ -139,6 +138,9 @@ func resolveCommitAgentID(ctx context.Context, app *App, explicit bool, flagValu
 	}
 }
 
+// printCommitDryRun reports what --dry-run would have recorded, including the
+// resolved message — so a message read from a file can be inspected before it
+// is committed. Refs: FR-8.3, MGIT-105
 func printCommitDryRun(taskID, agentID, message string, stageAll, allowEmpty bool) {
 	_, _ = fmt.Fprintf(os.Stdout,
 		"[dry-run] Would commit: task=%s agent=%s message=%q all=%v allow-empty=%v\n",
