@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `mgit diff` accepts a unique abbreviated commit id (four hexadecimal digits
+  or more) for either side, as `git diff` does; an unknown or ambiguous id is
+  still refused, and says which.
+- `mgit commit -m` given more than once keeps every message as its own
+  paragraph, in order, joined by a blank line. A single message is recorded
+  byte for byte, as before.
+- A repository made with `git clone --shared` (objects borrowed from another
+  repository through an absolute alternates path) is now read correctly; the
+  borrowed objects are looked up only after a local miss, and mgit changes
+  nothing in the Git repository.
+- Inside a linked Git worktree, the repository's shared `info/exclude` rules
+  are honored, so files Git already ignores no longer enter a task's first
+  captured state.
+- The directory-recovery hints printed when `mgit add` or `mgit restore
+  --staged` refuse a directory entry are now safe to paste: a path that
+  starts with a dash gets a relative prefix, and the restore hint says it also
+  unstages the files under that directory. Every refused entry is named.
+- `mgit work <path> --branch <name>` for a branch that does not exist is now
+  refused before anything is created. It used to fail late and leave an
+  orphan `task/<id>` branch behind.
+- A commit made from inside a task worktree records the agent the worktree is
+  bound to (`mgit work --agent-id`), not the default `cli`.
+- A failing worktree lookup (a closed index store, a canceled request) is
+  reported as that failure, not as "not found" for a worktree that exists.
+- A sandbox with a network allowlist now starts when `TMPDIR` is long. The
+  per-sandbox sockets used to exceed the operating system's socket path limit
+  for a runtime directory of 62 bytes or more.
+- A launch that fails before any guest exists reports only its own cause; it
+  no longer adds advice about guest memory.
+- Image sources written as `docker.io/...` resolve to the registry that
+  serves them, and a registry response that is not an image manifest is
+  reported with the serving host and HTTP status instead of as a digest
+  mismatch.
+- On the libkrun backend, a published port outside 1-65535 is an invalid
+  request that names the port, and a failure to clear, bind or restrict the
+  control socket is reported as that I/O fault; neither reads as "no sandbox
+  backend available" any more.
+- `mgit sandbox launch` on a Git worktree or clone no longer leaves a
+  `.git` pointer file in the guest that made Git fail with "not a git
+  repository"; the launch says what Git the guest gets. Usage lines for the
+  sandbox verbs show `--task-id`, the documented flag, instead of the hidden
+  `--task` alias.
 - `mgit init` in a directory that already has files now records those files
   (ignore rules applied; `.git` and `.mgit` left out) as the base. Before, the
   store started empty, so the first task's `--to-git` patch carried every
@@ -47,6 +89,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WORKFLOWS.md`) now show `mgit commit -a`; without `-a` or `mgit add` a
   commit records nothing, and the `mgit squash` after it fails with "task not
   found".
+
+### Release engineering
+
+- The guest verification tools (Go, a Java runtime, the model checker,
+  linters, Node) are pinned by publisher checksum and fetched by release and
+  asset name; `build-guest-base.sh --print-plan` prints the plan for the
+  glibc guest base (the Debian slim image by digest, with pinned `git` and
+  `make`), and `repin-guest-debs.sh` re-pins those packages from signed
+  bookworm and bookworm-security indexes, with a check that fails on a newer
+  security version or a perl-base mismatch. The pinned package locks are not
+  re-pinned in this release.
+- The pull request text check is judged by the base branch's copy of its
+  tool, reads private IPv6 literals, and keeps checking human edit history
+  while skipping only automatic dependency-update description revisions.
+- CI: the pinned actions move to their current major versions and are
+  proposed weekly for update, and the macOS libkrun job lints the files only
+  it builds.
+- Release checks: the Homebrew formula is compared with `brew/mgit.rb` before a
+  tag (a missing `version` or `sha256` line counts as drift), the fetch
+  guard's timeout watchdog no longer outlives it, and the build stand-in's
+  post-copy check and the bundle verifier's negative control each have a test
+  that fails when the check is removed.
+- Tests: `cmd/mgit` tests cannot reach the developer's repository or guest-base
+  cache (asserted); the sandbox host root from a linked worktree is pinned;
+  a reviewer checklist for tests that assert their environment is added to
+  the docs.
 
 ## [0.7.3] - 2026-10-11
 
