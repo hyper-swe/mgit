@@ -343,6 +343,15 @@ func (s *WorktreeService) resolveBaseCommit(ctx context.Context, baseRef string)
 	return "", fmt.Errorf("resolve --base %q: not a known mgit commit, branch, or HEAD", baseRef)
 }
 
+// ByTask returns the worktree bound to a task. It is the route for callers
+// (the CLI) that need the worktree's registered facts, such as the agent it was
+// made for, without reaching into the index store. ErrWorktreeNotFound means no
+// worktree is bound to the task; any other failure is returned as itself
+// (MGIT-116). Refs: MGIT-117, FR-16
+func (s *WorktreeService) ByTask(ctx context.Context, taskID string) (*model.WorktreeInfo, error) {
+	return s.indexStore.GetWorktreeByTask(ctx, taskID)
+}
+
 // List returns every registered worktree, each marked Prunable when its
 // directory no longer exists. Refs: FR-16, MGIT-194
 func (s *WorktreeService) List(ctx context.Context) ([]model.WorktreeInfo, error) {

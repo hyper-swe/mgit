@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/service"
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // commitCmd implements mgit commit. Refs: FR-8.3, MGIT-4.1.2, MGIT-77, MGIT-105
@@ -60,6 +62,11 @@ func commitCmd() *cobra.Command {
 
 			ctx := context.Background()
 
+			agentID, err = resolveCommitAgentID(ctx, app, cmd.Flags().Changed("agent-id"), agentID)
+			if err != nil {
+				return err
+			}
+
 			// --dry-run: validate inputs but do not create the commit.
 			if dryRun {
 				printCommitDryRun(taskID, agentID, message, stageAll, allowEmpty)
@@ -107,6 +114,28 @@ func commitCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&allowLarge, "allow-large", false,
 		"With -a, stage files over the limits.max_staged_file_mb size limit")
 	return cmd
+}
+
+// resolveCommitAgentID picks the agent a commit is recorded under. An explicit
+// --agent-id wins. Otherwise a commit from inside a task-bound worktree takes the
+// agent that worktree is bound to, the way it takes the worktree's task; with no
+// worktree, or a worktree made without an agent, nothing better is known and the
+// flag's default ("cli") stands. A failure to read the worktree is returned, not
+// swallowed into the default: attributing a commit to the wrong agent silently is
+// the thing this exists to stop. Refs: MGIT-117, MGIT-116
+func resolveCommitAgentID(ctx context.Context, app *App, explicit bool, flagValue string) (string, error) {
+	if explicit || app.BoundTask == "" {
+		return flagValue, nil
+	}
+	wt, err := service.NewWorktreeService(app.Index, app.Branch, gitstore.NewWorktreeStore(app.Repo), func() time.Time { return time.Now().UTC() }).ByTask(ctx, app.BoundTask)
+	switch {
+	case err == nil && wt.AgentID != "":
+		return wt.AgentID, nil
+	case err == nil, errors.Is(err, model.ErrWorktreeNotFound):
+		return flagValue, nil
+	default:
+		return "", fmt.Errorf("resolve the worktree's agent: %w", err)
+	}
 }
 
 // printCommitDryRun reports what --dry-run would have recorded, including the

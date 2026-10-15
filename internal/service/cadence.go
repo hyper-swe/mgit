@@ -43,12 +43,10 @@ func (s *CommitService) TaskCadence(ctx context.Context, taskID string) (*model.
 		// Not an error: the task was committed without `mgit work`, so the
 		// denominator is genuinely absent and the classifier will say so.
 	default:
-		// Defensive today: GetWorktreeByTask currently reports EVERY failure,
-		// including a store-level one, as ErrWorktreeNotFound, so a broken
-		// index degrades to "no denominator" rather than reaching here. That
-		// degradation is the humble direction (it refuses to label), but the
-		// masking is a store wart — see MGIT-116. This branch is what should
-		// happen once the store distinguishes the two.
+		// A store-level failure (a closed index, a canceled read) reaches here
+		// and is returned as an error. GetWorktreeByTask reports ErrWorktreeNotFound
+		// only for a missing row (MGIT-116), so a broken index is no longer read
+		// as "no denominator".
 		return nil, fmt.Errorf("task cadence %s: worktree: %w", taskID, err)
 	}
 
