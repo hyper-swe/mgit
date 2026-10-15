@@ -158,6 +158,11 @@ func (b *doctorBinding) resolve(ctx context.Context) (string, error) {
 	return b.task, b.err
 }
 
+// kvmOpen opens the KVM device for the host/kvm row; nil opens the real
+// /dev/kvm. A test sets it so the doctor tests do not depend on the machine
+// running them having KVM. Refs: MGIT-301
+var kvmOpen func(path string) error
+
 // doctorChecks assembles the checks with their real probes.
 func doctorChecks(app *App, connect connectFunc, listDaemons hostDaemonLister) []doctor.Check {
 	binding := &doctorBinding{app: app, connect: connect}
@@ -204,7 +209,7 @@ func doctorChecks(app *App, connect connectFunc, listDaemons hostDaemonLister) [
 		doctor.BaseBootsCheck{VMM: vmm, Inspect: inspectBaseShape},
 		doctor.HostDaemonsCheck{List: listDaemons},
 		doctor.DuplicateDaemonsCheck{List: listDaemons},
-		doctor.KVMDeviceCheck{GOOS: runtime.GOOS},
+		doctor.KVMDeviceCheck{GOOS: runtime.GOOS, Open: kvmOpen},
 	}
 }
 
