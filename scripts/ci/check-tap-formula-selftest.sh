@@ -49,6 +49,23 @@ sed 's/aaaaaaaa/bbbbbbbb/' "$WORK/synced.rb" > "$WORK/sums.rb"
 run "$WORK/sums.rb"
 [ "$rc" -eq 0 ] && ok "changed checksums alone are not drift" || bad "checksum-only change flagged: $out"
 
+# a tap that lost a checksum line, or a version line, is drift: the ignore rule
+# hides the VALUES the tap rewrites, not the lines themselves
+for what in 'sha256' 'version'; do
+	python3 - "$WORK/synced.rb" "$WORK/lost-$what.rb" "$what" <<'PY'
+import sys, re
+lines = open(sys.argv[1]).read().split("\n")
+pat = re.compile(r'^\s*' + sys.argv[3] + r' "')
+for i, l in enumerate(lines):
+    if pat.match(l):
+        del lines[i]
+        break
+open(sys.argv[2], "w").write("\n".join(lines))
+PY
+	run "$WORK/lost-$what.rb"
+	[ "$rc" -eq 1 ] && ok "a tap that lost a $what line fails" || bad "a missing $what line was hidden (rc=$rc): $out"
+done
+
 # an unfetchable tap skips loudly, and only --require makes it fatal
 run "$WORK/does-not-exist.rb"
 [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q 'SKIPPED' && ok "an unfetchable tap SKIPS loudly with exit 0" || bad "unfetchable tap: rc=$rc out=$out"
