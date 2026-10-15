@@ -132,7 +132,8 @@ from source, with the pinned versions, is `scripts/sandbox-image/build-libkrun.s
 
 ## Platform prerequisites
 
-- **Linux:** `/dev/kvm` present and read-writable by your user, and glibc
+- **Linux:** `/dev/kvm` present and read-writable by your user (`mgit doctor`'s
+  `host/kvm` row opens it and says plainly when it is absent or refused), and glibc
   2.31 or newer (Ubuntu 20.04, Debian 11 and later). Nothing else: the release
   archive carries libkrun and libkrunfw in `lib/` beside `mgit-sandboxd`, and
   the daemon finds them there by itself (no `LD_LIBRARY_PATH`, no package to
