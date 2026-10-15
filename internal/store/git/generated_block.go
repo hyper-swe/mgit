@@ -2,41 +2,108 @@ package git
 
 import "bytes"
 
-// The block mgit writes into a generated file is delimited by a begin line and
-// an end line, in whatever comment syntax the file uses (<!-- -->, #). The same
-// two phrases are written by internal/agentadapter; a test pins them together.
-// Refs: MGIT-126, MGIT-11.11.2
+// A block mgit (or a tool that shares its convention) writes into a generated
+// file is delimited by a begin marker and an end marker, in whatever comment
+// syntax the file uses (<!-- -->, #). The label after BEGIN is free text, so
+// a COMPLETE span is the definition: BEGIN mgit-sandbox ... END mgit-sandbox.
+// A begin marker with no end is not a span and is left alone. A test pins the
+// phrases to what internal/agentadapter writes. Refs: MGIT-126, MGIT-11.11.2
 const (
-	generatedBlockBegin = "BEGIN mgit-sandbox (generated; do not edit)"
+	generatedBlockBegin = "BEGIN mgit-sandbox"
 	generatedBlockEnd   = "END mgit-sandbox"
 )
 
-// StripGeneratedBlock returns content without mgit's generated block: the begin
-// line through the end line, inclusive, and the one blank line that separated the
-// block from the text above it. Content with no complete block is returned
-// unchanged, as is content with a begin line and no end line, so a damaged
-// block is never half-removed. Refs: MGIT-126
+// StripGeneratedBlock returns content without every complete mgit-sandbox
+// span. Everything else is kept byte for byte: text on the begin line before
+// the comment opener, text on the end line after the closer, and line endings
+// (LF or CRLF). When the span began at the start of a line and nothing follows
+// it on its last line, the whole lines go; when the block was the last thing in
+// the file, the one blank line that set it apart from the text above goes too.
+// Refs: MGIT-126
 func StripGeneratedBlock(content []byte) []byte {
-	lines := bytes.SplitAfter(content, []byte("\n"))
-	begin, end := -1, -1
-	for i, l := range lines {
-		switch {
-		case begin < 0 && bytes.Contains(l, []byte(generatedBlockBegin)):
-			begin = i
-		case begin >= 0 && bytes.Contains(l, []byte(generatedBlockEnd)):
-			end = i
+	out := content
+	for {
+		next, changed := stripFirstSpan(out)
+		if !changed {
+			return out
 		}
-		if end >= 0 {
-			break
+		out = next
+	}
+}
+
+func stripFirstSpan(c []byte) ([]byte, bool) {
+	b := bytes.Index(c, []byte(generatedBlockBegin))
+	if b < 0 {
+		return c, false
+	}
+	e := bytes.Index(c[b:], []byte(generatedBlockEnd))
+	if e < 0 {
+		return c, false // unterminated: never half-removed
+	}
+	e += b
+
+	// Span start: the comment opener just before BEGIN, on the same line.
+	lineStart := bytes.LastIndexByte(c[:b], '\n') + 1
+	start := b
+	pre := bytes.TrimRight(c[lineStart:b], " \t")
+	closer := ""
+	switch {
+	case bytes.HasSuffix(pre, []byte("<!--")):
+		start = lineStart + len(pre) - len("<!--")
+		closer = "-->"
+	case bytes.HasSuffix(pre, []byte("#")):
+		start = lineStart + len(pre) - 1
+	}
+
+	// Span end: past END and, for <!-- ... -->, past the closer.
+	end := e + len(generatedBlockEnd)
+	if closer != "" {
+		rest := end
+		for rest < len(c) && (c[rest] == ' ' || c[rest] == '\t') {
+			rest++
+		}
+		if bytes.HasPrefix(c[rest:], []byte(closer)) {
+			end = rest + len(closer)
 		}
 	}
-	if begin < 0 || end < 0 {
-		return content
+
+	head := c[:start]
+	tail := c[end:]
+	startsLine := len(bytes.TrimLeft(c[lineStart:start], " \t")) == 0
+	lineEnd := bytes.IndexByte(tail, '\n')
+	var restOfLine []byte
+	if lineEnd < 0 {
+		restOfLine = tail
+	} else {
+		restOfLine = tail[:lineEnd]
 	}
-	head := bytes.Join(lines[:begin], nil)
-	tail := bytes.Join(lines[end+1:], nil)
-	if len(tail) == 0 && bytes.HasSuffix(head, []byte("\n\n")) {
-		head = head[:len(head)-1] // the blank line that set the block apart
+	endsLine := len(bytes.TrimSpace(restOfLine)) == 0
+
+	if startsLine && endsLine {
+		// Whole lines: drop from the start of the begin line through the end
+		// of the end line, line terminator included.
+		head = c[:lineStart]
+		if lineEnd < 0 {
+			tail = nil
+		} else {
+			tail = tail[lineEnd+1:]
+		}
+		if len(tail) == 0 {
+			head = trimOneBlankLine(head)
+		}
 	}
-	return append(append([]byte{}, head...), tail...)
+	return append(append([]byte{}, head...), tail...), true
+}
+
+// trimOneBlankLine removes the final line terminator when the text ends in a
+// blank line (LF or CRLF), so a block that was appended after a blank line
+// leaves the text above it as it was.
+func trimOneBlankLine(h []byte) []byte {
+	switch {
+	case bytes.HasSuffix(h, []byte("\r\n\r\n")):
+		return h[:len(h)-2]
+	case bytes.HasSuffix(h, []byte("\n\n")):
+		return h[:len(h)-1]
+	}
+	return h
 }
