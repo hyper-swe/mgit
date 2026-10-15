@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "task_id": "MGIT-1",
+  "steps": [
+    {
+      "position": 1,
+      "commit_id": "c1",
+      "content_hash": "h1",
+      "agent_id": "agent-a",
+      "created_at": "2026-10-01T10:00:00Z",
+      "sandbox_id": "sbx-1",
+      "commit_type": "normal",
+      "message": "[MGIT:MGIT-1] add a.txt",
+      "files": [
+        {
+          "path": "a.txt",
+          "operation": "added",
+          "new_hash": "n1"
+        }
+      ]
+    },
+    {
+      "position": 2,
+      "commit_id": "c2",
+      "content_hash": "h2",
+      "parent_id": "c1",
+      "agent_id": "agent-a",
+      "created_at": "2026-10-01T10:05:00Z",
+      "commit_type": "normal",
+      "message": "[MGIT:MGIT-1] edit a.txt",
+      "files": [
+        {
+          "path": "a.txt",
+          "operation": "modified",
+          "old_hash": "n1",
+          "new_hash": "n2"
+        }
+      ]
+    }
+  ],
+  "audit": [
+    {
+      "timestamp": "2026-10-01T10:00:00Z",
+      "operation": "CREATE_COMMIT",
+      "agent_id": "agent-a",
+      "commit_id": "c1"
+    },
+    {
+      "timestamp": "2026-10-01T11:00:00Z",
+      "operation": "SQUASH",
+      "agent_id": "agent-a",
+      "commit_id": "c3",
+      "details": "squashed 2 commits"
+    },
+    {
+      "timestamp": "2026-10-01T12:00:00Z",
+      "operation": "ROLLBACK",
+      "agent_id": "agent-a",
+      "commit_id": "c4"
+    }
+  ]
+}
