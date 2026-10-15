@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -70,6 +73,10 @@ type Hypervisor struct {
 	exePath string
 	spawn   spawnFunc
 	logger  *slog.Logger
+	// kvmProbe reports whether this host's KVM device can be opened; nil
+	// opens the real /dev/kvm on Linux and reports nil elsewhere. A failed boot
+	// reads it to name the cause. Refs: MGIT-302
+	kvmProbe func() error
 }
 
 // NewHypervisor returns the libkrun Hypervisor. It resolves the daemon's own
@@ -149,6 +156,7 @@ func (h *Hypervisor) CreateVM(cfg microvm.VMConfig) (microvm.VM, error) {
 		spawn:       h.spawn,
 		logger:      h.logger,
 		consolePath: filepath.Join(cfg.StateDir, consoleLogName),
+		kvmProbe:    h.kvmProbe,
 	}, nil
 }
 
@@ -240,6 +248,7 @@ type krunVM struct {
 	spawn       spawnFunc
 	logger      *slog.Logger
 	consolePath string
+	kvmProbe    func() error
 
 	mu       sync.Mutex
 	child    childProcess
@@ -267,13 +276,19 @@ func (v *krunVM) Start(ctx context.Context) error {
 	hs, err := readHandshake(ctx, dec)
 	if err != nil || !hs.OK {
 		_ = child.Kill()
-		code, _ := child.Wait()
+		code, waitErr := child.Wait()
 		reason := err
 		if err == nil {
 			reason = errors.New(hs.Error)
 		}
-		return fmt.Errorf("libkrun vm failed to configure (child exit %d, console: %s): %w",
-			code, v.consolePath, reason)
+		// Name the cause first: the console tail alone lost the VMM's own
+		// words (an abort by signal, a host with no KVM device). Refs: MGIT-302
+		cause := bootFailureCause(v.kvmError(), waitErr)
+		if cause != "" {
+			cause += "; "
+		}
+		return fmt.Errorf("libkrun vm failed to configure: %schild exit %d, console: %s: %w",
+			cause, code, v.consolePath, reason)
 	}
 
 	done := make(chan struct{})
@@ -282,6 +297,39 @@ func (v *krunVM) Start(ctx context.Context) error {
 	v.mu.Unlock()
 	go v.watch(child, dec, done)
 	return nil
+}
+
+// kvmError reports why this host's KVM device cannot be opened, or nil.
+func (v *krunVM) kvmError() error {
+	if v.kvmProbe != nil {
+		return v.kvmProbe()
+	}
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	f, err := os.OpenFile(kvmDevice, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// kvmDevice is the device a Linux VMM opens to run a guest.
+const kvmDevice = "/dev/kvm"
+
+// bootFailureCause names, in plain words, why a VM child died before its
+// handshake: a host with no KVM device, or the signal or status the child was
+// reaped with. It returns "" when neither is known, never a guess. Refs: MGIT-302
+func bootFailureCause(kvmErr, waitErr error) string {
+	var parts []string
+	if errors.Is(kvmErr, fs.ErrNotExist) {
+		parts = append(parts, "no KVM device: "+kvmDevice+" does not exist, so no guest can boot on this host")
+	}
+	var exitErr *exec.ExitError
+	if errors.As(waitErr, &exitErr) {
+		parts = append(parts, "the VMM process ended with "+exitErr.Error())
+	}
+	return strings.Join(parts, "; ")
 }
 
 // readHandshake reads one handshake line, bounded by the caller's ctx and by

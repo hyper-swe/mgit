@@ -55,6 +55,7 @@ type fakeChild struct {
 	signals  []os.Signal
 	killed   bool
 	exitCode int
+	waitErr  error // what Wait reports besides the code (an *exec.ExitError for a signal)
 	exitOnce sync.Once
 	exited   chan struct{}
 	// dieOnTerm makes SIGTERM end the process (a cooperative child); false
@@ -91,7 +92,7 @@ func (c *fakeChild) exit() { c.exitOnce.Do(func() { close(c.exited) }) }
 
 func (c *fakeChild) Wait() (int, error) {
 	<-c.exited
-	return c.exitCode, nil
+	return c.exitCode, c.waitErr
 }
 
 func (c *fakeChild) wasKilled() bool {
