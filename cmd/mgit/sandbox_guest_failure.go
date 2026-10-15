@@ -89,6 +89,12 @@ const (
 	// A determined cause, so it must never reach the cannot-identify footer.
 	// Refs: MGIT-233
 	phaseBaseUnbootable
+	// phaseNotLaunched: the launch itself failed before any guest existed — the
+	// image could not be resolved (trust root, store, registry), or no backend
+	// is available. Nothing was capped and nothing ran, so the memory advice is
+	// false and its remedy cannot work. The error above names the cause; this
+	// phase only says what it is not. Refs: MGIT-108, MGIT-118
+	phaseNotLaunched
 )
 
 // vmStartMarkers are console-log markers that appear ONLY when the VMM itself
@@ -153,6 +159,14 @@ func classifyGuestFailure(err error, ent entitlementState) guestFailure {
 	case isBaseUnbootable(err):
 		return guestFailure{phase: phaseBaseUnbootable}
 	}
+	// A launch step that failed before a guest existed is decided by WHICH step
+	// failed, ahead of the lost-guest markers: the image store's own errors can
+	// carry "connection refused" or "EOF" (an unreachable registry, a cut
+	// download) and those words would otherwise read as a guest that was lost.
+	// A VMM start failure is not this phase: it has its own evidence below.
+	if vmStartFailure(err.Error()) == "" && isPreLaunchFailure(err) {
+		return guestFailure{phase: phaseNotLaunched}
+	}
 	if detail := vmStartFailure(err.Error()); detail != "" {
 		return guestFailure{phase: phaseNeverStarted, startDetail: detail, entitlement: ent}
 	}
@@ -163,6 +177,31 @@ func classifyGuestFailure(err error, ent entitlementState) guestFailure {
 		return guestFailure{phase: phaseLostServing}
 	}
 	return guestFailure{phase: phaseUnidentified}
+}
+
+// preLaunchMarkers are the texts of launch steps that run before any guest
+// exists: the backend's image resolution (microvm.Manager.Launch wraps it as
+// `<backend> launch: resolve image "<ref>": <cause>`) and the absence of a
+// backend. Refs: MGIT-108
+var preLaunchMarkers = []string{`launch: resolve image "`}
+
+// isPreLaunchFailure reports whether the failure came from a launch step that
+// precedes the guest. Matched by text as well as by errors.Is, for the reason
+// given on classifyGuestFailure. Refs: MGIT-108
+func isPreLaunchFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, model.ErrSandboxBackendUnavailable) ||
+		strings.Contains(err.Error(), model.ErrSandboxBackendUnavailable.Error()) {
+		return true
+	}
+	for _, m := range preLaunchMarkers {
+		if strings.Contains(err.Error(), m) {
+			return true
+		}
+	}
+	return false
 }
 
 // emptyKernelPathRefusal is how a daemon from before the launch-time check
@@ -344,6 +383,8 @@ func writeGuestFailure(w io.Writer, info *model.SandboxInfo, f guestFailure) {
 		writeLayoutRefused(w, info)
 	case phaseBaseUnbootable:
 		writeBaseUnbootable(w, info)
+	case phaseNotLaunched:
+		writeNotLaunched(w, info)
 	case phaseNeverStarted:
 		writeStartFailure(w, info, f)
 	case phaseLostServing:
@@ -354,6 +395,17 @@ func writeGuestFailure(w io.Writer, info *model.SandboxInfo, f guestFailure) {
 		// A phase added without a renderer lands here, and lands honestly.
 		writeUnidentified(w, info)
 	}
+}
+
+// writeNotLaunched reports a launch that failed before any guest existed. The
+// cause is in the error printed above; this adds only what that error cannot
+// say, so an agent does not go resizing a sandbox that never started.
+// Refs: MGIT-108
+func writeNotLaunched(w io.Writer, info *model.SandboxInfo) {
+	_, _ = fmt.Fprintf(w, "\nmgit: the sandbox%s could not be launched, so no guest was started and no command "+
+		"ran — the cause is the error above, and it is not a memory or CPU limit of this sandbox.\n", taskSuffix(info))
+	_, _ = fmt.Fprint(w, "Fix the cause named above and retry the command unchanged; resizing the sandbox "+
+		"cannot help.\n")
 }
 
 // writeAdmissionRefused reports a launch the host refused for want of
