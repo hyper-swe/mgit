@@ -97,12 +97,10 @@ func TestSquash_ToGit(t *testing.T) {
 	ctx := context.Background()
 	taskID := "MGIT-4.2.2"
 
-	for i := 0; i < 3; i++ {
-		_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
-			AllowEmpty: true,
-			TaskID:     taskID, AgentID: "squash-test", Message: "change",
-		})
-		require.NoError(t, err)
+	// Real content, so the patch carries a real diff hunk and not only the
+	// mbox header: a header-only patch is what MGIT-112 shipped.
+	for _, content := range []string{"first line\n", "first line\nsecond line\n", "first line\nsecond line\nthird line\n"} {
+		stageFileCommit(t, env, taskID, "feature.txt", content)
 	}
 
 	squashed, err := env.squash.SquashTask(ctx, service.SquashRequest{
@@ -111,7 +109,8 @@ func TestSquash_ToGit(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	patch := env.squash.ExportToGitPatch(squashed)
+	patch, err := env.squash.GitFormatPatch(ctx, squashed)
+	require.NoError(t, err)
 	require.NotEmpty(t, patch)
 
 	// Standard git format-patch markers must be present.
@@ -126,6 +125,13 @@ func TestSquash_ToGit(t *testing.T) {
 	assert.Contains(t, patch, "-- \nmgit\n",
 		"patch must end with the format-patch signature trailer")
 
+	// A real diff hunk with the task's net content, not only the header.
+	assert.Contains(t, patch, "diff --git a/feature.txt b/feature.txt")
+	assert.Contains(t, patch, "--- /dev/null", "an added file diffs against /dev/null")
+	assert.Contains(t, patch, "+first line\n+second line\n+third line")
+
 	// Empty input returns empty output (defensive contract).
-	assert.Empty(t, env.squash.ExportToGitPatch(nil))
+	empty, err := env.squash.GitFormatPatch(ctx, nil)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
 }

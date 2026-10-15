@@ -132,7 +132,8 @@ from source, with the pinned versions, is `scripts/sandbox-image/build-libkrun.s
 
 ## Platform prerequisites
 
-- **Linux:** `/dev/kvm` present and read-writable by your user, and glibc
+- **Linux:** `/dev/kvm` present and read-writable by your user (`mgit doctor`'s
+  `host/kvm` row opens it and says plainly when it is absent or refused), and glibc
   2.31 or newer (Ubuntu 20.04, Debian 11 and later). Nothing else: the release
   archive carries libkrun and libkrunfw in `lib/` beside `mgit-sandboxd`, and
   the daemon finds them there by itself (no `LD_LIBRARY_PATH`, no package to
@@ -511,7 +512,7 @@ record and states a mismatch as a **difference**, never as ok:
 ```
 ok    base/release  — the guest base is the image this release was smoke-tested with: registry-1.docker.io/library/debian:12@sha256:9a2b…
 DIFF  base/release  — the guest base was composed from registry-1.docker.io/library/golang:1.26-bookworm@sha256:37a6… but this release was smoke-tested with registry-1.docker.io/library/debian:12@sha256:9a2b… — a different image, so the guest userspace is not the one this release was tested with
-      remedy: recompose from the release's base with `mgit sandbox base from` (no reference), or keep this image knowingly — this row then stays a stated difference
+      remedy: recompose from this repository's own recorded source with `mgit sandbox base from registry-1.docker.io/library/golang:1.26-bookworm@sha256:37a6…`; the no-reference form `mgit sandbox base from` switches this repository to the release's tested image, which may lack the toolchain this repository's image carries. Or keep this image knowingly — this row then stays a stated difference
 ```
 
 A `DIFF` is neither a pass nor a failure of the exit code: it is a stated

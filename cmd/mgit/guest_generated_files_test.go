@@ -86,12 +86,21 @@ func TestGuest_AGeneratedFileStagedByNameStillLands(t *testing.T) {
 	guestTree := deliverWorktreeToGuest(t, hostRepo, worktree, taskID)
 	t.Setenv(guestModeEnv, "1")
 	t.Chdir(guestTree)
+	// A real edit to the project's own text, beside mgit's block. Since MGIT-126
+	// the committed file carries the edit and not the block, so naming the file
+	// without editing it records nothing.
+	agents := filepath.Join(guestTree, "AGENTS.md")
+	have, err := os.ReadFile(agents) //nolint:gosec // test fixture path under a temp dir
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(agents, append([]byte("A real project directive.\n\n"), have...), 0o600)) //nolint:gosec // test fixture path under a temp dir
 	require.NoError(t, runCLI(t, "add", "AGENTS.md"))
 	require.NoError(t, runCLI(t, "commit", "-m", "keep the agents file", "--task-id", taskID))
 
 	patch, _, err := runCLICap(t, "squash", "--task-id", taskID, "--to-git")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"AGENTS.md"}, patchFiles(patch), "a file staged by name lands, and only it")
+	assert.Contains(t, patch, "A real project directive.", "the edit lands")
+	assert.NotContains(t, patch, "BEGIN mgit-sandbox", "mgit's generated block does not (MGIT-126)")
 }
 
 // scaffoldLikeWorkSandbox writes the agent files `mgit work --sandbox` writes
