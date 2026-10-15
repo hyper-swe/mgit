@@ -198,6 +198,15 @@ func (s *WorktreeService) resolveForkBase(ctx context.Context, opts model.Worktr
 	if existing, err := s.branch.GetBranch(ctx, branchName); err == nil {
 		return s.existingForkBase(ctx, opts, branchName, existing.HeadCommit)
 	}
+	// A branch that does not exist can only be created under the task's own
+	// name: the branch service always names it task/<id>. Creating that and then
+	// registering the worktree under the requested name left an orphan branch
+	// and a failed materialize, so a different name is refused up front, before
+	// anything exists. Refs: MGIT-127
+	if want := model.TaskBranchName(opts.TaskID); branchName != want {
+		return "", fmt.Errorf("%w: branch %q does not exist, and mgit creates a task's branch only as %q; "+
+			"create %q first, or omit --branch", model.ErrBranchNotFound, branchName, want, branchName)
+	}
 	if opts.Base != "" {
 		return s.createBranchAtBase(ctx, opts.TaskID, opts.Base)
 	}
