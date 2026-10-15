@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Staging a generated file by name (for example `mgit add CLAUDE.md`, which
+  the guide mgit appends to a worktree's `CLAUDE.md` tells an agent to do for
+  a real edit) now commits the file without mgit's generated
+  `BEGIN mgit-sandbox ... END mgit-sandbox` block; the working copy keeps the
+  block. A file that is nothing but the block is committed as it is, a begin
+  line with no end line is never half-removed, and text sharing a line with a
+  marker is kept byte for byte (MGIT-126).
+- `mgit doctor`'s base/release difference row now points a repository back at
+  its own recorded source (`mgit sandbox base from <source>`) and says that
+  the no-reference form switches it to the release's tested image, which may
+  lack the toolchain the repository's image carries. The row for a base
+  composed before 0.6.8 names the recorded source too (MGIT-300).
+- `mgit doctor` has a `host/kvm` row on Linux: when the sandbox daemon links
+  libkrun or firecracker and `/dev/kvm` is absent, refused or cannot be
+  opened, the row fails with the plain cause and a remedy. With no daemon, or
+  the container backend, it reads not-checked and does not fail doctor. Off
+  Linux it reads not-checked (MGIT-301).
+- A libkrun boot that fails before its VM reports now says "no KVM device"
+  outright when `/dev/kvm` is absent (Linux), and names the signal or status
+  the VMM process ended with; a status reaped after mgit's own kill is not
+  named as the cause (MGIT-302).
 - `mgit diff` accepts a unique abbreviated commit id (four hexadecimal digits
   or more) for either side, as `git diff` does; an unknown or ambiguous id is
   still refused, and says which.
@@ -108,10 +129,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proposed weekly for update, and the macOS libkrun job lints the files only
   it builds.
 - Release checks: the Homebrew formula is compared with `brew/mgit.rb` before a
-  tag (a missing `version` or `sha256` line counts as drift), the fetch
+  tag (a missing `version` or `sha256` line counts as drift) and now also on
+  every CI run (an unreachable tap skips loudly instead of failing), the fetch
   guard's timeout watchdog no longer outlives it, and the build stand-in's
   post-copy check and the bundle verifier's negative control each have a test
   that fails when the check is removed.
+- The deleted metadata-based patch renderer (`ExportToGitPatch`) had no caller
+  and could emit an empty patch that applied to nothing; exports use only the
+  real tree diff, and a guard test keeps it deleted (MGIT-114).
 - Tests: `cmd/mgit` tests cannot reach the developer's repository or guest-base
   cache (asserted); the sandbox host root from a linked worktree is pinned;
   a reviewer checklist for tests that assert their environment is added to
