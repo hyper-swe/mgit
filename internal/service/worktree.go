@@ -204,8 +204,8 @@ func (s *WorktreeService) resolveForkBase(ctx context.Context, opts model.Worktr
 	// and a failed materialize, so a different name is refused up front, before
 	// anything exists. Refs: MGIT-127
 	if want := model.TaskBranchName(opts.TaskID); branchName != want {
-		return "", fmt.Errorf("%w: branch %q does not exist, and mgit creates a task's branch only as %q; "+
-			"create %q first, or omit --branch", model.ErrBranchNotFound, branchName, want, branchName)
+		return "", fmt.Errorf("%w: branch %q does not exist, and mgit can create a task's branch only as %q; "+
+			"rerun without --branch, or with --branch %s", model.ErrBranchNotFound, branchName, want, want)
 	}
 	if opts.Base != "" {
 		return s.createBranchAtBase(ctx, opts.TaskID, opts.Base)

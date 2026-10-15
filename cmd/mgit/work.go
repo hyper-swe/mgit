@@ -119,7 +119,7 @@ func newWorkCmd(run func(ctx context.Context, app *App, opts workOptions) error)
 func bindWorkFlags(cmd *cobra.Command, opts *workOptions) {
 	bindTaskIDFlag(cmd, &opts.TaskID, "task ID to bind the worktree to (required)")
 	cmd.Flags().StringVar(&opts.AgentID, "agent-id", "", "agent ID recorded with the worktree")
-	cmd.Flags().StringVar(&opts.Branch, "branch", "", "branch name (default: task/<task-id>)")
+	cmd.Flags().StringVar(&opts.Branch, "branch", "", "an existing branch to bind, or task/<task-id> (the default; the only branch mgit creates)")
 	cmd.Flags().StringVar(&opts.Base, "base", "", "pin the task's fork-base to an explicit commit/ref (default: git's committed tree)")
 	cmd.Flags().BoolVar(&opts.IncludeUncommitted, "include-uncommitted", false,
 		"also capture this checkout's uncommitted and untracked files into a NEW task's base (each is named)")

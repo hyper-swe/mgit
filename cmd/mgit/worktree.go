@@ -65,7 +65,7 @@ func worktreeCmd() *cobra.Command {
 	}
 	bindTaskIDFlag(addCmd, &wtTaskID, "Task ID to bind (required)")
 	addCmd.Flags().StringVar(&wtAgentID, "agent-id", "", "Agent ID")
-	addCmd.Flags().StringVar(&wtBranch, "branch", "", "Branch name (default: task/<task-id>)")
+	addCmd.Flags().StringVar(&wtBranch, "branch", "", "An existing branch to bind, or task/<task-id> (the default; the only branch mgit creates)")
 	addCmd.Flags().BoolVar(&wtIncludeUncommitted, "include-uncommitted", false,
 		"also capture this checkout's uncommitted and untracked files into a NEW task's base (each is named)")
 
