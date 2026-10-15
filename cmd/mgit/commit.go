@@ -60,6 +60,11 @@ func commitCmd() *cobra.Command {
 
 			ctx := context.Background()
 
+			agentID, err = resolveCommitAgentID(ctx, app, cmd.Flags().Changed("agent-id"), agentID)
+			if err != nil {
+				return err
+			}
+
 			// --dry-run: validate inputs but do not create the commit.
 			if dryRun {
 				printCommitDryRun(taskID, agentID, message, stageAll, allowEmpty)
@@ -112,6 +117,28 @@ func commitCmd() *cobra.Command {
 // printCommitDryRun reports what --dry-run would have recorded, including the
 // resolved message — so a message read from a file can be inspected before it
 // is committed. Refs: FR-8.3, MGIT-105
+// resolveCommitAgentID picks the agent a commit is recorded under. An explicit
+// --agent-id wins. Otherwise a commit from inside a task-bound worktree takes the
+// agent that worktree is bound to, the way it takes the worktree's task; with no
+// worktree, or a worktree made without an agent, nothing better is known and the
+// flag's default ("cli") stands. A failure to read the worktree is returned, not
+// swallowed into the default: attributing a commit to the wrong agent silently is
+// the thing this exists to stop. Refs: MGIT-117, MGIT-116
+func resolveCommitAgentID(ctx context.Context, app *App, explicit bool, flagValue string) (string, error) {
+	if explicit || app.BoundTask == "" {
+		return flagValue, nil
+	}
+	wt, err := app.Index.GetWorktreeByTask(ctx, app.BoundTask)
+	switch {
+	case err == nil && wt.AgentID != "":
+		return wt.AgentID, nil
+	case err == nil, errors.Is(err, model.ErrWorktreeNotFound):
+		return flagValue, nil
+	default:
+		return "", fmt.Errorf("resolve the worktree's agent: %w", err)
+	}
+}
+
 func printCommitDryRun(taskID, agentID, message string, stageAll, allowEmpty bool) {
 	_, _ = fmt.Fprintf(os.Stdout,
 		"[dry-run] Would commit: task=%s agent=%s message=%q all=%v allow-empty=%v\n",

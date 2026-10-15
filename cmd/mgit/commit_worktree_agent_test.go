@@ -46,6 +46,7 @@ func TestCommit_InAWorktreeRecordsTheWorktreesAgent(t *testing.T) {
 	t.Chdir(repo)
 	assert.Equal(t, []string{"agent-7", "someone-else"}, recordedAgents(t, "AG-1"))
 
+	t.Chdir(wt) // the task's commits are on the worktree's branch
 	out, errOut, err := runCLICap(t, "log", "--author", "agent-7", "--json")
 	require.NoError(t, err, errOut)
 	assert.Contains(t, out, "inherits the worktree's agent", "log --author must return the inherited commit")
