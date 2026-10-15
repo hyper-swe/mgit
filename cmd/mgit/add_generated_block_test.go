@@ -32,11 +32,11 @@ func TestAddByName_AGeneratedBlockIsNotCommitted(t *testing.T) {
 	require.NoError(t, runCLI(t, "work", "--task-id", "GEN-1", wt))
 	t.Chdir(wt)
 
-	have, err := os.ReadFile(filepath.Join(wt, "CLAUDE.md"))
+	have, err := os.ReadFile(filepath.Join(wt, "CLAUDE.md")) //nolint:gosec // test fixture path under a temp dir
 	require.NoError(t, err)
 	require.Contains(t, string(have), "BEGIN mgit-sandbox", "the worktree's CLAUDE.md carries the generated block")
 	edited := strings.Replace(string(have), "rule one", "rule one\nrule two (a real edit)", 1)
-	require.NoError(t, os.WriteFile(filepath.Join(wt, "CLAUDE.md"), []byte(edited), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "CLAUDE.md"), []byte(edited), 0o600)) //nolint:gosec // test fixture path under a temp dir
 
 	require.NoError(t, runCLI(t, "add", "CLAUDE.md"))
 	out, errOut, err := runCLICap(t, "commit", "--task-id", "GEN-1", "-m", "edit the directive", "--json")
@@ -55,7 +55,7 @@ func TestAddByName_AGeneratedBlockIsNotCommitted(t *testing.T) {
 	assert.Equal(t, "# Project\n\nrule one\nrule two (a real edit)\n", string(committed),
 		"exactly the user's content: the edit, the rest of the file, and no stray blank line where the block was")
 
-	after, err := os.ReadFile(filepath.Join(wt, "CLAUDE.md"))
+	after, err := os.ReadFile(filepath.Join(wt, "CLAUDE.md")) //nolint:gosec // test fixture path under a temp dir
 	require.NoError(t, err)
 	assert.Contains(t, string(after), "BEGIN mgit-sandbox", "the working copy keeps the block")
 }
