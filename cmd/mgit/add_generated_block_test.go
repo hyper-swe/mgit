@@ -59,3 +59,35 @@ func TestAddByName_AGeneratedBlockIsNotCommitted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(after), "BEGIN mgit-sandbox", "the working copy keeps the block")
 }
+
+// A generated file that is NOTHING BUT the block has no project text to keep.
+// Naming it means mgit's file is meant to land (MGIT-80), so it is committed
+// as it is, block included. An always-strip implementation would record an empty
+// file and must fail this test. Refs: MGIT-126, MGIT-80
+func TestAddByName_AWhollyGeneratedFileIsCommittedAsItIs(t *testing.T) {
+	repo := t.TempDir()
+	t.Chdir(repo)
+	require.NoError(t, runCLI(t, "init", "--no-agent-files"))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "seed.txt"), []byte("seed\n"), 0o600))
+	require.NoError(t, runCLI(t, "commit", "-a", "--task-id", "BASE-2", "-m", "seed"))
+
+	wt := filepath.Join(t.TempDir(), "wt")
+	require.NoError(t, runCLI(t, "work", "--task-id", "GEN-2", wt))
+	t.Chdir(wt)
+	only := "<!-- BEGIN mgit-sandbox (generated; do not edit) -->\nscaffolding\n<!-- END mgit-sandbox -->\n"
+	require.NoError(t, os.WriteFile(filepath.Join(wt, "NOTES.md"), []byte(only), 0o600))
+	require.NoError(t, gitstore.RecordGeneratedPaths(wt, []string{"NOTES.md"}))
+
+	require.NoError(t, runCLI(t, "add", "NOTES.md"))
+	out, errOut, err := runCLICap(t, "commit", "--task-id", "GEN-2", "-m", "land the generated file", "--json")
+	require.NoError(t, err, errOut)
+	var c struct {
+		CommitID string `json:"commit_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &c))
+
+	store, _ := openStore(t, repo)
+	committed, err := gitstore.NewCommitStore(store).GetFileFromCommit(context.Background(), c.CommitID, "NOTES.md")
+	require.NoError(t, err)
+	assert.Equal(t, only, string(committed), "a wholly generated file lands unchanged")
+}

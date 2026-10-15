@@ -22,6 +22,18 @@ func TestStripGeneratedBlock(t *testing.T) {
 		{"no block is unchanged", "# P\n\nrule\n", "# P\n\nrule\n"},
 		{"begin without end is never half-removed", "x\n<!-- BEGIN mgit-sandbox (generated; do not edit) -->\nrest\n", "x\n<!-- BEGIN mgit-sandbox (generated; do not edit) -->\nrest\n"},
 		{"only the block leaves nothing", block, ""},
+		{"text after the end marker on its line is kept byte for byte",
+			"head\n<!-- BEGIN mgit-sandbox (generated; do not edit) -->\nx\n<!-- END mgit-sandbox --> tail\nmore\n", "head\n tail\nmore\n"},
+		{"text before the begin marker on its line is kept",
+			"keep <!-- BEGIN mgit-sandbox (generated; do not edit) -->\nx\n<!-- END mgit-sandbox -->\nrest\n", "keep \nrest\n"},
+		{"CRLF drops the separator line exactly as LF does",
+			"# P\r\n\r\nrule\r\n\r\n<!-- BEGIN mgit-sandbox (generated; do not edit) -->\r\nx\r\n<!-- END mgit-sandbox -->\r\n", "# P\r\n\r\nrule\r\n"},
+		{"any label: a complete mgit-sandbox span is generated",
+			"user\n\n<!-- BEGIN mgit-sandbox (posture asserted by hyperswe: audit-only) -->\nx\n<!-- END mgit-sandbox -->\n", "user\n"},
+		{"every complete span is removed",
+			"a\n<!-- BEGIN mgit-sandbox (one) -->\nx\n<!-- END mgit-sandbox -->\nb\n<!-- BEGIN mgit-sandbox (two) -->\ny\n<!-- END mgit-sandbox -->\nc\n", "a\nb\nc\n"},
+		{"an unterminated label is left alone",
+			"x\n<!-- BEGIN mgit-sandbox (posture asserted by hyperswe: audit-only) -->\nrest\n", "x\n<!-- BEGIN mgit-sandbox (posture asserted by hyperswe: audit-only) -->\nrest\n"},
 		{"empty", "", ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
