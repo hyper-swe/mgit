@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.4] - 2026-10-17
+## [0.7.5] - 2026-10-17
+
+Version 0.7.4 was tagged but never released: its release run stopped before publishing, so there are no 0.7.4 binaries. Everything that was in 0.7.4 is in this release, and the tag `v0.7.4` stays where it is.
 
 `linux_arm64` is build-verified and not boot-verified: it is built and
 load-checked, but no hosted CI runner offers KVM on arm64.
