@@ -107,11 +107,6 @@ jobs:
       - name: Assert installed Go version
         run: bash scripts/ci/assert-go-version.sh
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        with:
-          cosign-release: v2.4.1
-
       # goreleaser's before-hook tests link this runner's libkrun and run
       # `make check-libkrun-net` against it; the darwin daemon that ships
       # carries its own (e2e.yml's darwin-sandboxd job, MGIT-259). Both
@@ -150,6 +145,20 @@ jobs:
           name: linux-sources
           path: dist-sources
 
+      # The GoReleaser action checks the sha256 of the GoReleaser it downloads and
+      # stops on a mismatch; it checks the download's signature too only when a
+      # `cosign` is on the PATH. The cosign we install (v2.4.1) cannot read that
+      # signature bundle, so it is installed AFTER GoReleaser, and this step
+      # makes "no cosign yet" a checked fact rather than an assumption: any
+      # cosign found here fails the job. If the action cannot download
+      # checksums.txt it only warns and skips the sha256 check. Refs: MGIT-311
+      - name: Assert no cosign is on PATH before GoReleaser
+        run: |
+          if found="$(command -v cosign)"; then
+            echo "::error::cosign is on PATH at $found; the GoReleaser action would run its signature check with it"
+            exit 1
+          fi
+
       # goreleaser CGO-builds + entitlement-signs the darwin daemon (post
       # hook in .goreleaser.yaml) and cross-builds the rest.
       - name: Run GoReleaser
@@ -166,6 +175,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MGIT_LINUX_PREBUILT: ${{ github.workspace }}/dist-prebuilt
           MGIT_DARWIN_PREBUILT: ${{ github.workspace }}/dist-prebuilt
+
+      # After GoReleaser on purpose (see the guard above). Refs: MGIT-311
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.4.1
 
       - name: Sign checksums
         run: cosign sign-blob --yes --bundle checksums.txt.bundle dist/checksums.txt
