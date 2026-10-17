@@ -90,6 +90,20 @@ load-checked, but no hosted CI runner offers KVM on arm64.
 
 ### Changed
 
+- The base image this release records as its tested guest base moved: `debian:12`
+  now resolves to `sha256:2c037a04925515fdd6ea85ea14a682d0e79931f5e9f5d07b6dbfc6ba12f9e858`,
+  where it was `sha256:f37a335e82bca302e955fa39f9dfe28f1be618f016f8a2b56318e5a5111afc26`,
+  the first change to the record since it was introduced. After you upgrade,
+  `mgit doctor` can show a stated difference in its base/release row for a
+  repository whose guest base was composed from the earlier image. Nothing
+  breaks: the base you have keeps working. To match the release, run
+  `mgit sandbox base from` with no reference, but only if the release's image
+  has what your repository needs, because it switches the repository to that
+  image and may drop a toolchain your own image carried. A repository with its
+  own recorded source can instead recompose from it with
+  `mgit sandbox base from <source>`, or keep its base as it is, in which case
+  the row stays a stated difference. The container end-to-end check pins the
+  same digest (MGIT-305).
 - `mgit sandbox launch` now gives the guest a repository of its own: the
   delivered files as a single base commit, with none of the host's history.
   `git status`, `git diff` and `git rev-parse HEAD` work in the guest, and the
