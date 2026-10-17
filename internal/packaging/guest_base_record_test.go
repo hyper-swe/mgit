@@ -2,6 +2,7 @@ package packaging
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -62,4 +63,22 @@ func TestGuestBase_ThePinScriptAndThePreflightConditionExist(t *testing.T) {
 	checklist := readRepoFile(t, filepath.Join("docs", "release", "RELEASE-CHECKLIST.md"))
 	assert.Contains(t, checklist, "MGIT=build/mgit scripts/ci/release-preflight.sh", "the checklist names the built binary for the preflight")
 	assert.Contains(t, checklist, "MGIT=build/mgit scripts/release/pin-guest-base.sh", "and for the pin script")
+}
+
+// THE CONTAINER LEG PINS THE SAME IMAGE THE RECORD NAMES. The container e2e
+// cannot compose the embedded record, so the workflow carries the digest
+// itself; when the record moves and the workflow does not, the release is
+// smoke-tested on one image and vouches for another. Refs: MGIT-305, MGIT-219
+func TestGuestBase_TheContainerLegPinsTheDigestTheRecordNames(t *testing.T) {
+	rec := readRepoFile(t, filepath.Join("internal", "sandboxd", "guestbase", "release-base.json"))
+	want := regexp.MustCompile(`sha256:[0-9a-f]{64}`).FindString(rec)
+	if !assert.NotEmpty(t, want, "the record carries a digest") {
+		return
+	}
+	wf := readRepoFile(t, filepath.Join(".github", "workflows", "e2e.yml"))
+	m := regexp.MustCompile(`MGIT_E2E_CONTAINER_IMAGE: \S+@(sha256:[0-9a-f]{64})`).FindStringSubmatch(wf)
+	if !assert.NotNil(t, m, "the container leg pins its image by digest") {
+		return
+	}
+	assert.Equal(t, want, m[1], "the container leg and release-base.json must move together")
 }
