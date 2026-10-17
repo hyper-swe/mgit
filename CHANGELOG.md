@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.4] - 2026-10-18
+## [0.7.4] - 2026-10-17
 
 `linux_arm64` is build-verified and not boot-verified: it is built and
 load-checked, but no hosted CI runner offers KVM on arm64.
