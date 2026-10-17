@@ -298,7 +298,7 @@ func findThirdPartyDependsOn(formula string) string {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
-		if m := thirdPartyDependsOnRe.FindStringSubmatch(line); m != nil && m[1] != ownTap {
+		if m := thirdPartyDependsOnRe.FindStringSubmatch(line); len(m) == 2 && m[1] != ownTap {
 			return m[0]
 		}
 	}
@@ -486,7 +486,7 @@ func TestCIWorkflow_ProvesTheBrewInstallOnALibkrunFreeRunner(t *testing.T) {
 	// The formula now depends on libkrunfw from hyper-swe/tap. The check takes
 	// the one documented setup step, and only that: it proves libkrunfw was
 	// absent, trusts the tap, and proves libkrunfw arrived. Refs: MGIT-306
-	if !strings.Contains(script, "brew list --versions libkrunfw") {
+	if _, found := findInCode(script, `"$BREW" list --versions libkrunfw`); !found {
 		t.Error("the check must prove libkrunfw is absent before the install")
 	}
 	if _, found := findInCode(script, `"$BREW" trust hyper-swe/tap`); !found {

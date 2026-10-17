@@ -5,6 +5,7 @@
 #   <dir>/mgit-sandboxd, with libkrun.1.dylib in <dir>/lib (the extracted
 #   archive) or <dir>/../lib/mgit (install.sh, Homebrew).
 # MGIT_VERIFY_KERNEL=1 also requires libkrunfw to load, with no problem named.
+# An archive layout (<dir>/lib) that carries libkrunfw is refused.
 # Refs: MGIT-259, MGIT-225
 set -euo pipefail
 
@@ -16,6 +17,15 @@ pass() { echo "  ok    $*"; }
 
 [ -x "$daemon" ] || fail "$daemon is missing or not executable"
 libdir="$dir/lib"
+# mgit's own archive never carries libkrunfw: it comes from hyper-swe/tap or
+# install.sh's opt-in download, under its own licenses. Checked on the archive
+# layout only, because an installed lib/mgit holds the opt-in copy on purpose.
+# Refs: MGIT-306
+if [ -d "$libdir" ]; then
+	for f in "$libdir"/libkrunfw*; do
+		if [ -e "$f" ]; then fail "$libdir carries libkrunfw ($(basename "$f")); mgit's archive must never include it"; fi
+	done
+fi
 [ -d "$libdir" ] || libdir="$(cd "$dir/.." && pwd)/lib/mgit"
 krun="$libdir/libkrun.1.dylib"
 [ -f "$krun" ] || fail "no libkrun.1.dylib in $dir/lib or $libdir"

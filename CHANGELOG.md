@@ -14,6 +14,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The guest archive checksums match the Go publisher's Linux amd64 and
   arm64 archives. Vulnerability checks remain enabled without exclusions.
 
+### Changed
+
+- On Apple silicon macOS, the Homebrew formula depends on
+  `hyper-swe/tap/libkrunfw`, the sandbox's guest kernel library, from mgit's
+  own tap. Run `brew trust hyper-swe/tap` once, then `brew install
+  hyper-swe/tap/mgit`. mgit no longer sends you to the libkrun/krun tap, and
+  `mgit doctor` and the sandbox's failure messages name the new steps. mgit's
+  archive does not carry libkrunfw (MGIT-306).
+- `install.sh` sets up libkrunfw on Apple silicon macOS only when you run it
+  with `MGIT_SANDBOX=1`: it names libkrunfw's licenses
+  (LGPL-2.1-only AND GPL-2.0-only) and source, asks before downloading it as
+  a separate file, checks it against that download's `checksums.txt`, and
+  installs it beside libkrun with its license texts and source offer. It has
+  no default download location yet, so the step stops and says so unless you
+  set `MGIT_LIBKRUNFW_BASE` (MGIT-306).
+- The sandbox daemon looks for libkrunfw in its own library directory
+  (`lib/` beside it, or `<prefix>/lib/mgit`) before the Homebrew prefix and
+  the system directories (MGIT-306).
+
 ## [0.7.5] - 2026-10-17
 
 Version 0.7.4 was tagged but never released: its release run stopped before publishing, so there are no 0.7.4 binaries. Everything that was in 0.7.4 is in this release, and the tag `v0.7.4` stays where it is.

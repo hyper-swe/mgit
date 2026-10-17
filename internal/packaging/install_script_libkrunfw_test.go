@@ -21,7 +21,7 @@ import (
 // The macOS sandbox needs libkrunfw, a library that carries a Linux kernel
 // under LGPL-2.1-only and GPL-2.0-only. mgit's macOS archive does not carry
 // it. install.sh fetches it on its own only when the user enables the sandbox
-// (MGIT_SANDBOX=1) and accepts a prompt that names the licences and the
+// (MGIT_SANDBOX=1) and accepts a prompt that names the licenses and the
 // source, verifies its checksum, and installs it beside libkrun in
 // <prefix>/lib/mgit with its notices. Refs: MGIT-306
 
@@ -116,9 +116,9 @@ func TestInstallScript_MacOS_SandboxEnabledAndAccepted_InstallsLibkrunfwBesideLi
 	// The notice comes BEFORE the download, and names what the user accepts.
 	notice := strings.Index(out, "LGPL-2.1-only AND GPL-2.0-only")
 	fetch := strings.Index(out, "downloading libkrunfw")
-	require.NotEqual(t, -1, notice, "the licences must be named:\n%s", out)
+	require.NotEqual(t, -1, notice, "the licenses must be named:\n%s", out)
 	require.NotEqual(t, -1, fetch, "the download must be announced:\n%s", out)
-	assert.Less(t, notice, fetch, "the licence notice must come before the download")
+	assert.Less(t, notice, fetch, "the license notice must come before the download")
 	for _, want := range []string{
 		"libkrunfw " + libkrunfwTestVersion,
 		"https://github.com/containers/libkrunfw/releases/tag/v" + libkrunfwTestVersion,
@@ -166,7 +166,7 @@ func TestInstallScript_MacOS_LibkrunfwMissingANotice_InstallsNoLibkrunfw(t *test
 	require.Error(t, err, "%s", out)
 	assert.Contains(t, out, "SOURCE-OFFER.txt")
 	assert.NoFileExists(t, filepath.Join(prefix, "lib", "mgit", "libkrunfw.5.dylib"),
-		"the library never ships without its licence texts and source offer")
+		"the library never ships without its license texts and source offer")
 }
 
 // Where the download is hosted is not decided yet, so the installer has no
