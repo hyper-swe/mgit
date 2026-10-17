@@ -84,8 +84,10 @@ func vmmRemedy(vmm, goos string) string {
 	case vmm == model.BackendLibkrun && goos == "darwin":
 		return "The macOS release ships libkrun in lib/ beside mgit-sandboxd (install.sh and Homebrew put " +
 			"it in <prefix>/lib/mgit); if it is missing, reinstall from the release archive. libkrunfw, the " +
-			"guest kernel library, comes from Homebrew (it ships as a dependency of the libkrun formula): " +
-			"`brew tap libkrun/krun && brew trust libkrun/krun && brew install libkrun`; " +
+			"guest kernel library, is not in the archive: it comes from mgit's own Homebrew tap. Trust the " +
+			"tap, then upgrade mgit, which installs libkrunfw with it: " +
+			"`brew trust hyper-swe/tap && brew upgrade hyper-swe/tap/mgit` (if mgit is already current: " +
+			"`brew install hyper-swe/tap/libkrunfw`). With install.sh, run it again with MGIT_SANDBOX=1; " +
 			"details: docs/INSTALL-SANDBOX.md"
 	case vmm == model.BackendLibkrun:
 		return "The Linux release ships libkrun and libkrunfw in lib/ beside mgit-sandboxd " +

@@ -21,6 +21,14 @@
 #                       from (default: the GitHub release for MGIT_VERSION) — a
 #                       mirror or an air-gapped copy (file://…). The checksum is
 #                       verified against what was fetched either way.
+#   MGIT_SANDBOX        1 to set up the microVM sandbox's one external library,
+#                       libkrunfw, on Apple silicon macOS (see below). Off by
+#                       default: nothing beyond mgit's own archive is fetched.
+#   MGIT_LIBKRUNFW_ACCEPT
+#                       yes or no: the answer to the libkrunfw license question,
+#                       for a run with no terminal to ask on.
+#   MGIT_LIBKRUNFW_BASE where libkrunfw's tarball and its checksums.txt are
+#                       fetched from (a URL, or file://… for an offline copy).
 #
 # Layout, matching what mgit itself looks for (cmd/mgit/sandbox_base.go):
 #   $PREFIX/bin/mgit                    the CLI
@@ -35,6 +43,10 @@
 #       Refs: MGIT-230.1, MGIT-259
 #   $PREFIX/share/mgit/THIRD_PARTY/
 #       their license texts and the note naming their published source.
+#   $PREFIX/lib/mgit/libkrunfw.5.dylib, $PREFIX/share/mgit/THIRD_PARTY/libkrunfw/
+#       macOS only, and only with MGIT_SANDBOX=1: libkrunfw, a SEPARATE download
+#       that is never part of mgit's archive, with its license texts, notice and
+#       source offer. The daemon looks for it beside libkrun. Refs: MGIT-306
 set -eu
 
 REPO="hyper-swe/mgit"
@@ -99,15 +111,24 @@ say "==> downloading $archive"
 fetch "$base_url/$archive" "$tmp/$archive" || die "no archive $archive in release $version"
 fetch "$base_url/checksums.txt" "$tmp/checksums.txt" || die "release $version publishes no checksums.txt"
 
-want="$(sed -n "s/^\([0-9a-f]\{64\}\)[[:space:]][[:space:]]*$archive\$/\1/p" "$tmp/checksums.txt" | head -1)"
+# listed_sha256 <checksums.txt> <file name>: the digest the list names for it.
+listed_sha256() {
+	sed -n "s/^\([0-9a-f]\{64\}\)[[:space:]][[:space:]]*$2\$/\1/p" "$1" | head -1
+}
+# sha256_of <file>: its digest, by whichever tool this machine has.
+sha256_of() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$1" | cut -d' ' -f1
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$1" | cut -d' ' -f1
+	else
+		die "need sha256sum or shasum to verify the download"
+	fi
+}
+
+want="$(listed_sha256 "$tmp/checksums.txt" "$archive")"
 [ -n "$want" ] || die "$archive is not listed in checksums.txt"
-if command -v sha256sum >/dev/null 2>&1; then
-	got="$(sha256sum "$tmp/$archive" | cut -d' ' -f1)"
-elif command -v shasum >/dev/null 2>&1; then
-	got="$(shasum -a 256 "$tmp/$archive" | cut -d' ' -f1)"
-else
-	die "need sha256sum or shasum to verify the download"
-fi
+got="$(sha256_of "$tmp/$archive")" || exit 1
 [ "$want" = "$got" ] || die "checksum mismatch for $archive
   expected $want
   got      $got
@@ -186,6 +207,119 @@ if { [ "$os_name" = linux ] || [ -d "$tmp/lib" ]; } && [ -f "$bindir/mgit-sandbo
   the sandbox will not until the daemon loads."
 	fi
 	say "$sout"
+fi
+
+# --- libkrunfw: a separate, opt-in download (Apple silicon macOS) -----------
+# The macOS sandbox needs libkrunfw, the library that carries the guest Linux
+# kernel. It is distributed under its own licenses (LGPL-2.1-only for the
+# library, GPL-2.0-only for the kernel and its patches), so mgit's archive
+# never carries it. This step fetches it on its own, and only when the user
+# enables the sandbox (MGIT_SANDBOX=1) and says yes to a question that names
+# the licenses and the source. It is verified against its own checksums.txt
+# and installed beside libkrun, in $PREFIX/lib/mgit, where the daemon looks
+# for it, with its license texts, notice and source offer. It never writes
+# outside $PREFIX. The Linux archive carries its own libkrunfw. Refs: MGIT-306
+#
+# The tarball holds, at its top level: libkrunfw.5.dylib, LICENSE-GPL-2.0-only,
+# LICENSE-LGPL-2.1-only, NOTICE.txt and SOURCE-OFFER.txt.
+LIBKRUNFW_VERSION="5.5.0"
+LIBKRUNFW_KERNEL="linux-6.12.91"
+LIBKRUNFW_SOURCE="https://github.com/containers/libkrunfw/releases/tag/v$LIBKRUNFW_VERSION"
+LIBKRUNFW_KERNEL_SOURCE="https://cdn.kernel.org/pub/linux/kernel/v6.x/$LIBKRUNFW_KERNEL.tar.xz"
+# TODO(maintainer): decision a. Where the tarball and its checksums.txt are
+# hosted is not decided, so there is no default location: until it is, the
+# step stops and says so rather than fetching from a guessed URL.
+LIBKRUNFW_DEFAULT_BASE=""
+LIBKRUNFW_FILES="libkrunfw.5.dylib LICENSE-GPL-2.0-only LICENSE-LGPL-2.1-only NOTICE.txt SOURCE-OFFER.txt"
+
+libkrunfw_notice() {
+	say ""
+	say "==> libkrunfw $LIBKRUNFW_VERSION, the guest kernel library the macOS sandbox needs"
+	say "    libkrunfw is a separate library from https://github.com/containers/libkrunfw,"
+	say "    not part of mgit. It bundles a Linux kernel ($LIBKRUNFW_KERNEL)."
+	say "    Licenses: LGPL-2.1-only AND GPL-2.0-only (LGPL-2.1-only for the library code,"
+	say "    GPL-2.0-only for the bundled kernel and the patches applied to it)."
+	say "    Source:"
+	say "      $LIBKRUNFW_SOURCE"
+	say "      $LIBKRUNFW_KERNEL_SOURCE"
+	say "    The download carries both license texts and the full source offer."
+}
+
+# libkrunfw_accepted: 0 when the user said yes, 1 when they said no or could
+# not be asked. MGIT_LIBKRUNFW_ACCEPT answers without a prompt; otherwise the
+# question goes to the terminal, because stdin is this script under `curl | sh`.
+libkrunfw_accepted() {
+	answer="${MGIT_LIBKRUNFW_ACCEPT:-}"
+	if [ -z "$answer" ]; then
+		if ! { : </dev/tty; } 2>/dev/null; then
+			say "    No terminal to ask on. To accept, run again with MGIT_LIBKRUNFW_ACCEPT=yes."
+			return 1
+		fi
+		printf 'Download libkrunfw %s under these licenses? [y/N] ' "$LIBKRUNFW_VERSION" >/dev/tty
+		read -r answer </dev/tty || answer=""
+	fi
+	case "$answer" in
+	y | Y | yes | YES | 1) return 0 ;;
+	n | N | no | NO | 0 | "") return 1 ;;
+	*) die "MGIT_LIBKRUNFW_ACCEPT must be yes or no, not '$answer'. Core mgit is installed." ;;
+	esac
+}
+
+install_libkrunfw() {
+	base="${MGIT_LIBKRUNFW_BASE-$LIBKRUNFW_DEFAULT_BASE}"
+	[ -n "$base" ] || die "this installer has no download location for libkrunfw yet.
+  Set MGIT_LIBKRUNFW_BASE to a location that holds $1 and its checksums.txt,
+  or install libkrunfw with Homebrew:
+    brew trust hyper-swe/tap
+    brew install hyper-swe/tap/libkrunfw
+  Core mgit is installed and works; the sandbox needs libkrunfw."
+	kdir="$tmp/libkrunfw"
+	mkdir -p "$kdir/x"
+	say "==> downloading libkrunfw $LIBKRUNFW_VERSION ($1)"
+	fetch "$base/$1" "$kdir/$1" || die "no $1 at $base. Core mgit is installed."
+	fetch "$base/checksums.txt" "$kdir/checksums.txt" || die "no checksums.txt at $base. Core mgit is installed."
+	kwant="$(listed_sha256 "$kdir/checksums.txt" "$1")"
+	[ -n "$kwant" ] || die "$1 is not listed in $base/checksums.txt. Core mgit is installed."
+	kgot="$(sha256_of "$kdir/$1")" || exit 1
+	[ "$kwant" = "$kgot" ] || die "checksum mismatch for $1
+  expected $kwant
+  got      $kgot
+  Refusing to install libkrunfw. Core mgit is installed."
+	say "    ok: sha256 verified"
+	tar -xzf "$kdir/$1" -C "$kdir/x"
+	# The library never lands without its license texts and source offer.
+	for f in $LIBKRUNFW_FILES; do
+		[ -f "$kdir/x/$f" ] && [ ! -L "$kdir/x/$f" ] || die "$1 does not carry $f; refusing to install libkrunfw. Core mgit is installed."
+	done
+	kdoc="$prefix/share/mgit/THIRD_PARTY/libkrunfw"
+	mkdir -p "$kdoc" "$prefix/lib/mgit" || die "cannot create $kdoc or $prefix/lib/mgit"
+	for f in $LIBKRUNFW_FILES; do
+		[ "$f" = libkrunfw.5.dylib ] || install -m 0644 "$kdir/x/$f" "$kdoc/$f"
+	done
+	install -m 0644 "$kdir/x/libkrunfw.5.dylib" "$prefix/lib/mgit/libkrunfw.5.dylib"
+	say "    installed $prefix/lib/mgit/libkrunfw.5.dylib (beside libkrun)"
+	say "    installed $kdoc/ (its license texts, notice and source offer)"
+}
+
+sandbox="${MGIT_SANDBOX:-0}"
+if [ "$os_name/$arch_name" = darwin/arm64 ] && [ -f "$bindir/mgit-sandboxd" ]; then
+	if [ "$sandbox" = 1 ]; then
+		libkrunfw_notice
+		if libkrunfw_accepted; then
+			install_libkrunfw "libkrunfw_${LIBKRUNFW_VERSION}_darwin_arm64.tar.gz"
+		else
+			say "    libkrunfw was not downloaded. The sandbox needs it; core mgit does not."
+		fi
+	else
+		say ""
+		say "The microVM sandbox also needs libkrunfw, a separate library under its own"
+		say "licenses. To add it, run this installer again with MGIT_SANDBOX=1, or use"
+		say "Homebrew: brew trust hyper-swe/tap && brew install hyper-swe/tap/libkrunfw"
+	fi
+elif [ "$sandbox" = 1 ] && [ "$os_name" = linux ]; then
+	say "    the Linux archive carries libkrunfw; nothing more to fetch"
+elif [ "$sandbox" = 1 ]; then
+	say "    the sandbox runs on Linux and Apple silicon macOS only; libkrunfw is not fetched"
 fi
 
 case ":$PATH:" in

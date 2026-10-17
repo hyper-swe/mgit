@@ -15,6 +15,15 @@ on:
   # PR -- added specifically to give the new libkrun-linux job (below) its
   # first real run, since push/pull_request alone never fire on this branch.
   workflow_dispatch:
+    inputs:
+      # brew-install-no-libkrun resolves hyper-swe/tap from this branch of
+      # hyper-swe/homebrew-tap instead of its default branch, so a formula
+      # change in both repositories can be proved before either merges.
+      # Refs: MGIT-306
+      tap_branch:
+        description: "hyper-swe/homebrew-tap branch for the brew install check (empty: the tap's default branch)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -294,7 +303,14 @@ jobs:
       - name: Assert installed Go version
         run: bash scripts/ci/assert-go-version.sh
 
+      # The formula depends on hyper-swe/tap/libkrunfw, so the check takes the
+      # one documented setup step, `brew trust hyper-swe/tap`, and proves
+      # libkrunfw arrives. On a pull request it resolves the tap's default
+      # branch; a dispatch can name the tap branch to resolve instead.
+      # Refs: MGIT-306
       - name: Install mgit from the repo formula on a libkrun-free runner
+        env:
+          MGIT_TAP_BRANCH: ${{ inputs.tap_branch }}
         run: scripts/brew-install-no-libkrun.sh
 
   # The macOS job above is the ONLY thing that compiled the libkrun cgo
