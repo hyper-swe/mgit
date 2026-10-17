@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.4] - 2026-10-17
+## [0.7.5] - 2026-10-17
+
+Version 0.7.4 was tagged but never released: its release run stopped before publishing, so there are no 0.7.4 binaries. Everything that was in 0.7.4 is in this release, and the tag `v0.7.4` stays where it is.
 
 `linux_arm64` is build-verified and not boot-verified: it is built and
 load-checked, but no hosted CI runner offers KVM on arm64.
@@ -25,7 +27,11 @@ load-checked, but no hosted CI runner offers KVM on arm64.
   its own recorded source (`mgit sandbox base from <source>`) and says that
   the no-reference form switches it to the release's tested image, which may
   lack the toolchain the repository's image carries. The row for a base
-  composed before 0.6.8 names the recorded source too (MGIT-300).
+  composed before 0.6.8 names the recorded source too. When the recorded
+  source is the same image name at an older digest, which is what a base
+  composed with no reference records, the row names the no-reference form
+  instead, because recomposing from that older digest would not clear the row
+  (MGIT-300, MGIT-313).
 - `mgit doctor` has a `host/kvm` row on Linux: when the sandbox daemon links
   libkrun or firecracker and `/dev/kvm` is absent, refused or cannot be
   opened, the row fails with the plain cause and a remedy. With no daemon, or
@@ -88,6 +94,20 @@ load-checked, but no hosted CI runner offers KVM on arm64.
 
 ### Changed
 
+- The base image this release records as its tested guest base moved: `debian:12`
+  now resolves to `sha256:2c037a04925515fdd6ea85ea14a682d0e79931f5e9f5d07b6dbfc6ba12f9e858`,
+  where it was `sha256:f37a335e82bca302e955fa39f9dfe28f1be618f016f8a2b56318e5a5111afc26`,
+  the first change to the record since it was introduced. After you upgrade,
+  `mgit doctor` can show a stated difference in its base/release row for a
+  repository whose guest base was composed from the earlier image. Nothing
+  breaks: the base you have keeps working. To match the release, run
+  `mgit sandbox base from` with no reference: it composes `debian:12` at the
+  digest this release was tested with, and the row clears. A repository whose
+  base came from a different image, for example a Go image, keeps that image:
+  recompose it from its own source with `mgit sandbox base from <source>`, in
+  which case the row stays a stated difference by design, or keep the base as
+  it is. The container end-to-end check pins the same digest (MGIT-305,
+  MGIT-313).
 - `mgit sandbox launch` now gives the guest a repository of its own: the
   delivered files as a single base commit, with none of the host's history.
   `git status`, `git diff` and `git rev-parse HEAD` work in the guest, and the
