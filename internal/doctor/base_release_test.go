@@ -134,6 +134,23 @@ func TestBaseReleaseCheck_RemedyNamesTheRecordedSourceAndWarnsAboutTheNoReferenc
 		assert.NotContains(t, got.Remedy, "base from` (no reference), or keep", "the no-reference form is no longer offered as the first remedy")
 	})
 
+	// A base composed with no reference records the release image of that time as
+	// its source. Once the release record moves, that source is the same image
+	// name at an older digest; recomposing from it would pin the old image again
+	// and the row would never clear. The way forward there is the no-reference
+	// form, and the toolchain warning does not apply: the image name is the same.
+	// Refs: MGIT-313
+	t.Run("the_same_image_name_at_an_older_digest_is_recomposed_with_the_no_reference_form", func(t *testing.T) {
+		old := relName + "@" + movedD
+		got := run(BaseIdentity{Composed: "0.7.3", SourceRef: old, BaseDigest: baseD, ReleaseRef: relName + "@" + relDig})
+		assert.Equal(t, StatusDiffers, got.Status)
+		assert.NotContains(t, got.Remedy, "base from "+old, "the recorded source here is the older release image; recomposing from it changes nothing")
+		assert.Contains(t, got.Remedy, "`mgit sandbox base from` with no reference", "the no-reference form is the way forward")
+		assert.Contains(t, got.Remedy, relDig, "and the remedy names the digest this release was tested with")
+		assert.NotContains(t, got.Remedy, "toolchain", "the same image name carries the same toolchain")
+		assert.Contains(t, got.Remedy, "knowingly", "keeping the base is still offered")
+	})
+
 	t.Run("a_directory_base_has_no_recorded_source_and_the_warning_still_stands", func(t *testing.T) {
 		got := run(BaseIdentity{Composed: "0.7.3", BaseDigest: baseD, ReleaseRef: relName + "@" + relDig})
 		assert.Equal(t, StatusDiffers, got.Status)

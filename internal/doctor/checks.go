@@ -195,7 +195,14 @@ func (c BaseReleaseCheck) Run(context.Context) Result {
 			"release was smoke-tested with (%s@%s): composes before 0.6.8 recorded the platform manifest, not the image "+
 			"index — %s to compare", composedOrUnrecorded(id.Composed), srcTag, srcDigest, relTag, relDigest, recomposeToCompare(id))
 	case srcTag == relTag:
-		r.Status, r.Remedy = StatusDiffers, remedy
+		// The recorded source is the same image name at another digest: for a base
+		// composed with no reference that is the release image of its time, so the
+		// recorded-source remedy would pin the old image again and the row would
+		// never clear. The no-reference form is the way forward, and the toolchain
+		// warning does not apply because the image name is the same. Refs: MGIT-313
+		r.Status = StatusDiffers
+		r.Remedy = "recompose with `mgit sandbox base from` with no reference: it composes " + relTag + " at " + relDigest +
+			", the image this release was smoke-tested with. Or keep this image knowingly — this row then stays a stated difference"
 		r.Summary = fmt.Sprintf("the guest base was composed from %s@%s but this release was smoke-tested with "+
 			"%s@%s — the same tag pointed at different bytes, so the guest userspace is not the one this "+
 			"release was tested with", srcTag, srcDigest, relTag, relDigest)
