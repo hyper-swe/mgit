@@ -153,6 +153,13 @@ load-checked, but no hosted CI runner offers KVM on arm64.
 - CI: the pinned actions move to their current major versions and are
   proposed weekly for update, and the macOS libkrun job lints the files only
   it builds.
+- The release workflow installs `cosign` only after GoReleaser has run, and a
+  step before GoReleaser fails the job if a `cosign` is already on the PATH.
+  GoReleaser's action checks the checksum of the GoReleaser it downloads and
+  skips its signature check, because no `cosign` is present at that point. The
+  previous order stopped the 0.7.4 release, which was tagged and never
+  released, because the `cosign` it installed could not read GoReleaser's
+  signature bundle (MGIT-311).
 - Release checks: the Homebrew formula is compared with `brew/mgit.rb` before a
   tag (a missing `version` or `sha256` line counts as drift) and now also on
   every CI run (an unreachable tap skips loudly instead of failing), the fetch
