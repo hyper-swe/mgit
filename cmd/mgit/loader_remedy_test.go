@@ -83,7 +83,8 @@ func TestMissingLibraryRemedy_OnLinux_ARunPathItCannotReadIsSaid(t *testing.T) {
 func TestLoaderRemedy_TheLoaderLineChoosesThePlatformsRemedy(t *testing.T) {
 	lib, got := loaderRemedy("dyld[95534]: Library not loaded: /opt/homebrew/opt/libkrun/lib/libkrun.1.dylib", "/opt/homebrew/bin/mgit-sandboxd")
 	assert.Equal(t, "libkrun.1.dylib", lib)
-	assert.Contains(t, got, "brew trust libkrun/krun")
+	assert.Contains(t, got, "brew trust hyper-swe/tap")
+	assert.NotContains(t, got, "libkrun/krun")
 
 	lib, got = loaderRemedy("mgit-sandboxd: error while loading shared libraries: libkrun.so.1: cannot open shared object file", "")
 	assert.Equal(t, "libkrun.so.1", lib)
