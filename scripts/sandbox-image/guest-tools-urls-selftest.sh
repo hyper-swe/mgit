@@ -18,7 +18,7 @@ for arch in amd64 arm64; do
     && ok "$arch: JRE URL is built from the release name" || bad "$arch: JRE URL is not built from the release name"
   printf '%s\n' "$out" | grep -q "^node .*nodejs.org/dist/v22.23.3/node-v22.23.3-linux-.*\.tar\.xz$" \
     && ok "$arch: Node URL names the .tar.xz asset" || bad "$arch: Node URL does not name the .tar.xz asset"
-  printf '%s\n' "$out" | grep -q "^go .*go.dev/dl/go1.26.9.linux-$arch.tar.gz$" \
+  printf '%s\n' "$out" | grep -q "^go .*go.dev/dl/go1.26.10.linux-$arch.tar.gz$" \
     && ok "$arch: Go URL" || bad "$arch: Go URL wrong"
   printf '%s\n' "$out" | grep -q "^tlc .*tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar$" \
     && ok "$arch: TLC URL" || bad "$arch: TLC URL wrong"
