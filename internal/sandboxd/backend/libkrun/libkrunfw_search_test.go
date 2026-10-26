@@ -58,7 +58,16 @@ func TestLibkrunfwDirs_FindsLibkrunfwInTheDaemonsOwnLibDir(t *testing.T) {
 
 			got := libkrunfwDirs()
 
-			if len(got) == 0 || got[0] != dir {
+			// The daemon lists its path as given first, then as resolved; a
+			// temp directory behind a symlink (macOS /var) makes them differ,
+			// so the first entry must be the same directory, not the same text.
+			same := len(got) > 0 && got[0] == dir
+			if len(got) > 0 && !same {
+				a, errA := filepath.EvalSymlinks(got[0])
+				b, errB := filepath.EvalSymlinks(dir)
+				same = errA == nil && errB == nil && a == b
+			}
+			if !same {
 				t.Errorf("libkrunfwDirs() = %v, want %q first: the libkrunfw beside this daemon "+
 					"belongs to this install and must win over a system copy", got, dir)
 			}
