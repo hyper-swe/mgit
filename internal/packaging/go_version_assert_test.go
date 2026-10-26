@@ -14,7 +14,7 @@ func TestGoVersion_AssertActualCompiler(t *testing.T) {
 		name, version string
 		bad           bool
 	}{
-		{"exact", "go1.26.9", false}, {"unpatched", "go1.26.0", true}, {"previous", "go1.26.6", true},
+		{"exact", "go1.26.10", false}, {"previous_patch", "go1.26.9", true}, {"unpatched", "go1.26.0", true}, {"previous", "go1.26.6", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -28,7 +28,7 @@ func TestGoVersion_AssertActualCompiler(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			write("go.mod", "go 1.26.9\n", 0600)
+			write("go.mod", "go 1.26.10\n", 0600)
 			write("scripts/ci/assert-go-version.sh", readRepoFile(t, "scripts/ci/assert-go-version.sh"), 0600)
 			write("bin/go", "#!/bin/sh\n[ \"$GOTOOLCHAIN\" = local ] || exit 22\nprintf 'go version "+tc.version+" linux/amd64\\n'\n", 0700)
 			cmd := exec.Command("bash", filepath.Join(root, "scripts", "ci", "assert-go-version.sh")) //nolint:gosec // G204: fixed command and test-owned fixture paths

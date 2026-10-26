@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Build and guest verification toolchains use Go 1.26.10, which fixes
+  [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809) in `crypto/x509`.
+  The guest archive checksums match the Go publisher's Linux amd64 and
+  arm64 archives. Vulnerability checks remain enabled without exclusions.
+
 ## [0.7.5] - 2026-10-17
 
 Version 0.7.4 was tagged but never released: its release run stopped before publishing, so there are no 0.7.4 binaries. Everything that was in 0.7.4 is in this release, and the tag `v0.7.4` stays where it is.
