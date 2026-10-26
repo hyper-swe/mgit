@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installs it beside libkrun with its license texts and source offer. It has
   no default download location yet, so the step stops and says so unless you
   set `MGIT_LIBKRUNFW_BASE` (MGIT-306).
+- Every release hosts libkrunfw's corresponding source beside its binaries,
+  under the signed `checksums.txt`: the kernel tarball, libkrunfw's source,
+  patches and configuration, and now also the prebuilt kernel image the macOS
+  library is built from (`libkrunfw-v5.5.0-prebuilt-aarch64.tgz`, checked
+  against its pinned digest). The release workflow fails if any of them is
+  missing or unchecksummed. The offers name swe@hyperswe.com (MGIT-306).
 - The sandbox daemon looks for libkrunfw in its own library directory
   (`lib/` beside it, or `<prefix>/lib/mgit`) before the Homebrew prefix and
   the system directories (MGIT-306).

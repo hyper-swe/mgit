@@ -305,6 +305,13 @@ jobs:
             --prefix="libkrunfw-$LIBKRUNFW_VERSION/" -o "$src/libkrunfw-$LIBKRUNFW_VERSION-source.tar.gz" HEAD
           git -C "$RUNNER_TEMP/libkrun-src/libkrun" archive --format=tar.gz \
             --prefix="libkrun-$LIBKRUN_VERSION/" -o "$src/libkrun-$LIBKRUN_VERSION-source.tar.gz" HEAD
+          # The prebuilt kernel image the macOS libkrunfw is built from, verified
+          # against the pin and published beside the kernel source. Refs: MGIT-306
+          prebuilt="$RUNNER_TEMP/libkrunfw-prebuilt-aarch64.tgz"
+          bash scripts/ci/guard-fetch.sh -t 120 -l libkrunfw-prebuilt -c "rm -f '$prebuilt'" -- \
+            curl -fsSL -o "$prebuilt" "$LIBKRUNFW_PREBUILT_URL"
+          echo "$LIBKRUNFW_PREBUILT_SHA256  $prebuilt" | sha256sum -c -
+          cp "$prebuilt" "$src/libkrunfw-$LIBKRUNFW_VERSION-prebuilt-aarch64.tgz"
           ls -l "$src"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

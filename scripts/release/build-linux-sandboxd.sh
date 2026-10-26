@@ -116,8 +116,14 @@ ships them, as release assets:
   libkrunfw-$LIBKRUNFW_VERSION-source.tar.gz
       libkrunfw at $LIBKRUNFW_VERSION: the kernel patches, the kernel
       configuration and the build scripts applied to that kernel
+  libkrunfw-$LIBKRUNFW_VERSION-prebuilt-aarch64.tgz
+      upstream's prebuilt kernel image (kernel.c) the macOS libkrunfw is built
+      from, byte-identical to upstream's release asset
+      (sha256 $LIBKRUNFW_PREBUILT_SHA256)
   libkrun-$LIBKRUN_VERSION-source.tar.gz
       libkrun at $LIBKRUN_VERSION
+
+For any of this source, or a copy on other media, write to swe@hyperswe.com.
 
 They were built by scripts/release/build-linux-sandboxd.sh in the mgit
 repository at commit $commit, in an ubuntu:20.04 container.

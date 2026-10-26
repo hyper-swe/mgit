@@ -242,6 +242,10 @@ libkrunfw_notice() {
 	say "    Source:"
 	say "      $LIBKRUNFW_SOURCE"
 	say "      $LIBKRUNFW_KERNEL_SOURCE"
+	say "    Every mgit release also hosts the corresponding source, under its checksums.txt:"
+	say "    the kernel tarball, libkrunfw's source, patches and configuration, and the"
+	say "    prebuilt asset (libkrunfw-v$LIBKRUNFW_VERSION-prebuilt-aarch64.tgz) the library is built from."
+	say "    Questions, or a copy on other media: swe@hyperswe.com."
 	say "    The download carries both license texts and the full source offer."
 }
 
