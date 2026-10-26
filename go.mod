@@ -1,6 +1,6 @@
 module github.com/hyper-swe/mgit
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/Code-Hex/vz/v3 v3.7.1
