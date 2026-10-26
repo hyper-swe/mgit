@@ -82,6 +82,13 @@ func liveLandScenario(t *testing.T, hostSync bool) {
 
 	fixture := t.TempDir()
 	root, native := filepath.Join(fixture, "root"), filepath.Join(fixture, "native")
+	registration := native
+	if hostSync {
+		// Match the documented `mgit work wt` / Linux live posture path:
+		// registry relative, host sandbox binding canonical and absolute.
+		native = filepath.Join(root, "wt")
+		registration = "wt"
+	}
 	if err := os.MkdirAll(filepath.Join(root, "src"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +104,7 @@ func liveLandScenario(t *testing.T, hostSync bool) {
 	liveLandCommand(t, root, cli, "sandbox", "image", "init")
 	liveLandCommand(t, root, cli, "sandbox", "base", "from", "--guest-bin-dir", guestDir, "--json")
 	const task = "MGIT-317"
-	liveLandCommand(t, root, cli, "worktree", "add", native, "--task-id", task, "--agent-id", "land-regression")
+	liveLandCommand(t, root, cli, "worktree", "add", registration, "--task-id", task, "--agent-id", "land-regression")
 	// Registered before launch, so even a failed first boot gets cleanup.
 	t.Cleanup(func() {
 		if paths, err := resolveSandboxPaths(root); err == nil {
@@ -118,7 +125,7 @@ func liveLandScenario(t *testing.T, hostSync bool) {
 		if pids := liveLandDaemonPIDs(t, daemon, root); len(pids) != 0 {
 			t.Errorf("throwaway daemon still alive after cleanup: %v", pids)
 		}
-		if _, err := liveLandCommandResult(t, root, cli, "worktree", "remove", native, "--force"); err != nil {
+		if _, err := liveLandCommandResult(t, root, cli, "worktree", "remove", registration, "--force"); err != nil {
 			t.Errorf("remove test worktree: %v", err)
 		}
 	})

@@ -55,7 +55,13 @@ func (p *landProjection) target(ctx context.Context, task string) (*gitstore.Rep
 		return nil, fmt.Errorf("native worktree registration: %w", err)
 	}
 	if wt != nil {
-		registered, e := filepath.EvalSymlinks(wt.Path)
+		registeredPath := wt.Path
+		if !filepath.IsAbs(registeredPath) {
+			// The host registry can contain a relative `mgit work wt` path.
+			// Anchor it to the trusted repository, never the daemon's cwd.
+			registeredPath = filepath.Join(root, registeredPath)
+		}
+		registered, e := filepath.EvalSymlinks(registeredPath)
 		if e != nil || registered != path || wt.Branch != branch {
 			return nil, fmt.Errorf("native worktree registration does not match sandbox binding")
 		}

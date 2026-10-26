@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -205,4 +206,55 @@ func TestLandProjection_RetryAfterConflictCleanup(t *testing.T) {
 
 func TestProjectionShellQuote(t *testing.T) {
 	require.Equal(t, "'./file'\"'\"'$(literal)'", projectionShellQuote("./file'$(literal)"))
+}
+
+// Relative host registrations must not be interpreted relative to the daemon's
+// process cwd, nor compared as relative strings with the absolute sandbox path.
+func TestLandProjection_RelativeRegistration(t *testing.T) {
+	for _, kind := range []string{"relative", "dot-relative", "symlink", "mismatch", "branch mismatch"} {
+		t.Run(kind, func(t *testing.T) {
+			if runtime.GOOS == "windows" && kind == "symlink" {
+				t.Skip("requires host symlink creation privileges")
+			}
+			f := newProjectionFixture(t)
+			ctx := context.Background()
+			registered, err := filepath.Rel(f.root, f.native)
+			require.NoError(t, err)
+			switch kind {
+			case "dot-relative":
+				registered = "." + string(filepath.Separator) + registered
+			case "symlink":
+				link := filepath.Join(f.root, "native-link")
+				require.NoError(t, os.Symlink(f.native, link))
+				registered = "native-link"
+			case "mismatch":
+				registered = "."
+			}
+			branch := model.TaskBranchName("MGIT-317")
+			if kind == "branch mismatch" {
+				branch = "main"
+			}
+			require.NoError(t, f.idx.DeleteWorktree(ctx, f.native))
+			require.NoError(t, f.idx.InsertWorktree(ctx, &model.WorktreeInfo{Path: registered, Branch: branch, TaskID: "MGIT-317"}))
+			err = f.p.FastForward(ctx, "MGIT-317", f.tip)
+			if kind == "mismatch" || kind == "branch mismatch" {
+				require.ErrorContains(t, err, "registration does not match")
+				b, getErr := gitstore.NewBranchStore(f.repo).GetBranch(ctx, model.TaskBranchName("MGIT-317"))
+				require.NoError(t, getErr)
+				require.Equal(t, f.base, b.HeadCommit)
+				data, readErr := os.ReadFile(filepath.Join(f.native, "existing.txt"))
+				require.NoError(t, readErr)
+				require.Equal(t, "base\n", string(data))
+				return
+			}
+			require.NoError(t, err)
+			data, err := os.ReadFile(filepath.Join(f.native, "new.txt"))
+			require.NoError(t, err)
+			require.Equal(t, "new\n", string(data))
+			data, err = os.ReadFile(filepath.Join(f.root, "existing.txt"))
+			require.NoError(t, err)
+			require.Equal(t, "base\n", string(data))
+			require.NoError(t, f.p.Check(ctx, "MGIT-317"))
+		})
+	}
 }
