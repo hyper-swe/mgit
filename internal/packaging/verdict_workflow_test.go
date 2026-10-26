@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -156,4 +157,21 @@ func stepAfter(t *testing.T, cfg, marker string) string {
 		rest = rest[:j]
 	}
 	return rest
+}
+
+// A successful publisher job must not masquerade as a successful verdict.
+// The required commit status retains its name for branch protection.
+func TestVerdictGate_JobAndStatusNamesAreDistinct(t *testing.T) {
+	cfg := readRepoFile(t, ".github/workflows/verdict.yml")
+	const contextName = "reviewer-verdict-at-head"
+	contexts := regexp.MustCompile(`-f context=([^\s\\]+)`).FindAllStringSubmatch(cfg, -1)
+	require.Len(t, contexts, 1, "the workflow writes one required verdict context")
+	assert.Equal(t, contextName, contexts[0][1], "branch protection keeps the established status name")
+	_, jobs, ok := strings.Cut(cfg, "\njobs:\n")
+	require.True(t, ok, "the verdict workflow declares its jobs")
+	keys := regexp.MustCompile(`(?m)^  ([A-Za-z_][A-Za-z0-9_-]*):`).FindAllStringSubmatch(jobs, -1)
+	require.NotEmpty(t, keys, "at least one publisher job is present")
+	for _, key := range keys {
+		assert.NotEqual(t, contextName, key[1], "a successful job must not share the verdict status name")
+	}
 }
