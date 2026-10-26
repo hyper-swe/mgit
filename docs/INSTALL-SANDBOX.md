@@ -480,6 +480,23 @@ entry and says what changed, naming both digests — it never replaces the old
 one. Every composition is appended to `.mgit/sandbox/base-provenance.jsonl`,
 which `images.lock` cannot express because it holds one entry per name.
 
+Keeping the old cache entry does not keep its reference launchable in this
+repository. `images.lock` holds one current signed pin per name. A fresh boot
+using the previous pin is refused and names both digests and the replacement
+`--image` reference to use when relaunching. The old bytes are not deleted and
+the signature and content checks still apply to the current pin.
+
+Before switching that pin, recompose warns on stderr when a recorded sandbox
+or worktree binding still names the old reference. Existing registrations are
+not rewritten, and an already running VM is not restarted. Use the printed
+remove-then-launch commands only when ready to replace the old sandbox: removal
+tears down that sandbox, including a running VM. For example,
+`mgit sandbox remove TASK && mgit sandbox launch --task-id TASK --worktree PATH --image base@sha256:DIGEST`
+(substitute the printed task, worktree and current digest). Simply launching
+again without removal is refused because that task is already bound. A sandbox
+that has not booted yet still holds its original pin. If the registry cannot
+be read, the warning says that its old-reference users cannot be determined.
+
 **The digest is the identity; the tag is documentation.** A release RECORDS
 the guest base image it was smoke-tested with — image name and digest, in
 `internal/sandboxd/guestbase/release-base.json`, embedded in the binary — and
