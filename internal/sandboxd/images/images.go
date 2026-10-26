@@ -142,8 +142,9 @@ func (s *Store) Resolve(imageRef string) (ResolvedImage, error) {
 
 	// The reference must pin the same digest the lock records.
 	if entry.Digest != refDigest {
-		return ResolvedImage{}, fmt.Errorf("%w: ref digest %s != lock digest %s",
-			model.ErrVerificationFailed, refDigest, entry.Digest)
+		return ResolvedImage{}, fmt.Errorf("%w: reference %s no longer matches the current lock pin %s@%s; "+
+			"remove this sandbox and launch it again with --image %s@%s",
+			model.ErrVerificationFailed, imageRef, name, entry.Digest, name, entry.Digest)
 	}
 	// The signature must verify against the host trust root over the
 	// canonical payload binding name + both digests + cmdline (SEC-12):

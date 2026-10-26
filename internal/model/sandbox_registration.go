@@ -2,6 +2,10 @@ package model
 
 import "time"
 
+// SandboxRegistryFile is the durable sandbox registry and audit database,
+// relative to the host sandbox root, not the repository commit index.
+const SandboxRegistryFile = "sandbox-index.db"
+
 // SandboxRegistration is the DURABLE record of one registered sandbox: what a
 // fresh daemon needs to bring a registration back after the daemon that
 // created it has exited.
