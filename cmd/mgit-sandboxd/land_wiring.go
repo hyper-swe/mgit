@@ -81,10 +81,11 @@ func buildLandService(w landWiring) (sandboxd.SandboxLander, func() error, error
 
 	// The Lander is the ONLY shared-store writer on the land path; it is
 	// reachable only through the orchestrator below.
+	projection := &landProjection{repoRoot: repoRoot, resolver: w.resolver, idx: mainIdx, clock: w.clock}
 	lander := land.NewLander(
 		land.NewStoreImporter(repo),
 		mainIdx, // *index.Store satisfies land.CommitAppender (AppendTaskCommits)
-		land.NewStoreBrancher(gitstore.NewMergeStore(repo)),
+		projection,
 	)
 	parents := land.NewPoolAwareParentResolver(land.NewHostParentTreeResolver(repo))
 	// The per-pool ceiling is the single enforcement point for one pool's host
@@ -121,18 +122,28 @@ func buildLandService(w landWiring) (sandboxd.SandboxLander, func() error, error
 		_ = closer()
 		return nil, nil, fmt.Errorf("wire land service: %w", err)
 	}
-	return landAdapter{svc: landSvc}, closer, nil
+	return landAdapter{svc: landSvc, projection: projection}, closer, nil
 }
 
 // landAdapter adapts service.LandService's result to the daemon's
 // SandboxLander contract.
-type landAdapter struct{ svc *service.LandService }
+type landSummaryService interface {
+	Land(context.Context, string) (*service.LandSummary, error)
+}
+
+type landAdapter struct {
+	svc        landSummaryService
+	projection *landProjection
+}
 
 // Land routes a task land through the verified land service.
 func (a landAdapter) Land(ctx context.Context, taskID string) (int, string, error) {
 	s, err := a.svc.Land(ctx, taskID)
 	if err != nil {
 		return 0, "", err
+	}
+	if err := a.projection.Check(ctx, taskID); err != nil {
+		return 0, "", fmt.Errorf("sandbox land: %w", err)
 	}
 	return s.Commits, s.Branch, nil
 }
