@@ -96,10 +96,18 @@ jobs:
       # (exit 0, NOT CHECKED) when the tap cannot be fetched, so a network blip
       # does not turn CI red, and the release checklist runs it with --require
       # before a tag. Refs: MGIT-67
+      # A dispatch can name the tap branch to compare against, so a formula
+      # change in both repositories is proved before either merges. Refs: MGIT-306
       - name: Tap formula — the check's own refusals, then the live tap
+        env:
+          MGIT_TAP_BRANCH: ${{ inputs.tap_branch }}
         run: |
           bash scripts/ci/check-tap-formula-selftest.sh
-          bash scripts/ci/check-tap-formula.sh
+          if [ -n "$MGIT_TAP_BRANCH" ]; then
+            bash scripts/ci/check-tap-formula.sh --tap-url "https://raw.githubusercontent.com/hyper-swe/homebrew-tap/${MGIT_TAP_BRANCH}/Formula/mgit.rb"
+          else
+            bash scripts/ci/check-tap-formula.sh
+          fi
 
       # Every build tool and action on a reproducible path is pinned, or its
       # float is declared at the site with a reason. The self-test proves the
