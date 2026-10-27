@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	fmtdiff "github.com/go-git/go-git/v5/plumbing/format/diff"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -273,4 +274,26 @@ func changeHunks(change *object.Change) []model.Hunk {
 		return nil
 	}
 	return []model.Hunk{{LineStart: 1, LinesAdded: added, LinesRemoved: removed, Content: content.String()}}
+}
+
+// DiffTrees reports a task's composed eligible net tree, not the span between
+// two raw ledger tips (which can include undelivered/interleaved content).
+func (ds *DiffStore) DiffTrees(_ context.Context, fromHash, toHash string) ([]model.FileDiff, error) {
+	from, err := ds.repo.repo.TreeObject(plumbing.NewHash(fromHash))
+	if err != nil {
+		return nil, fmt.Errorf("read base tree: %w", err)
+	}
+	to, err := ds.repo.repo.TreeObject(plumbing.NewHash(toHash))
+	if err != nil {
+		return nil, fmt.Errorf("read result tree: %w", err)
+	}
+	changes, err := from.Diff(to)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]model.FileDiff, 0, len(changes))
+	for _, change := range changes {
+		result = append(result, changeToFileDiff(change))
+	}
+	return result, nil
 }

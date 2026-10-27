@@ -11,7 +11,8 @@ package index
 // commit each task forked from (MGIT-35).
 // Version 4: MGIT-102 — the `sandboxes` durable registry, so a sandbox
 // registration survives the daemon process that created it.
-const schemaVersion = 4
+// Version 5: append-only host content origin and delivery records (MGIT-323).
+const schemaVersion = 5
 
 // createTablesSQL defines all tables for the mgit index database.
 // task_commits is APPEND-ONLY: no UPDATE, no DELETE. Ever.
@@ -46,6 +47,24 @@ CREATE INDEX IF NOT EXISTS idx_task_commits_task_id ON task_commits(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_commits_agent_id ON task_commits(agent_id);
 -- Index for time-range queries
 CREATE INDEX IF NOT EXISTS idx_task_commits_created_at ON task_commits(created_at);
+
+-- Local authority only: bundle assertions never populate this table.
+CREATE TABLE IF NOT EXISTS content_admissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_commit_id INTEGER NOT NULL REFERENCES task_commits(id),
+    task_id TEXT NOT NULL,
+    commit_hash TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    origin TEXT NOT NULL CHECK (origin IN ('host', 'land')),
+    state TEXT NOT NULL CHECK (state IN ('pending', 'delivered')),
+    guest_content_hash TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_content_admissions_row ON content_admissions(task_commit_id, id);
+CREATE TRIGGER IF NOT EXISTS content_admissions_no_update BEFORE UPDATE ON content_admissions
+BEGIN SELECT RAISE(ABORT, 'content_admissions is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS content_admissions_no_delete BEFORE DELETE ON content_admissions
+BEGIN SELECT RAISE(ABORT, 'content_admissions is append-only'); END;
 
 -- Branch metadata
 -- Refs: FR-5

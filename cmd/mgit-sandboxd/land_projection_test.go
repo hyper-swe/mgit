@@ -29,11 +29,22 @@ type projectionFixture struct {
 }
 
 func newProjectionFixture(t *testing.T) projectionFixture {
+	return newProjectionFixtureMode(t, "regular")
+}
+
+func newProjectionFixtureMode(t *testing.T, mode string) projectionFixture {
 	t.Helper()
 	ctx := context.Background()
 	clock := func() time.Time { return time.Unix(1, 0) }
 	root, native, guest := t.TempDir(), t.TempDir(), t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "existing.txt"), []byte("base\n"), 0600))
+	switch mode {
+	case "executable":
+		require.NoError(t, os.Chmod(filepath.Join(root, "existing.txt"), 0700)) //nolint:gosec // G302: exercise the executable mode required by projection
+	case "symlink":
+		require.NoError(t, os.Remove(filepath.Join(root, "existing.txt")))
+		require.NoError(t, os.Symlink("base-link", filepath.Join(root, "existing.txt")))
+	}
 	repo, err := gitstore.Init(root, clock)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = repo.Close() })
@@ -46,6 +57,13 @@ func newProjectionFixture(t *testing.T) projectionFixture {
 	require.NoError(t, ws.WriteWorktreeMarker(guest, "guest", "MGIT-317"))
 	require.NoError(t, ws.WriteWorktreeMarker(native, model.TaskBranchName("MGIT-317"), "MGIT-317"))
 	require.NoError(t, os.WriteFile(filepath.Join(native, "existing.txt"), []byte("base\n"), 0600))
+	switch mode {
+	case "executable":
+		require.NoError(t, os.Chmod(filepath.Join(native, "existing.txt"), 0700)) //nolint:gosec // G302: exercise the executable mode required by projection
+	case "symlink":
+		require.NoError(t, os.Remove(filepath.Join(native, "existing.txt")))
+		require.NoError(t, os.Symlink("base-link", filepath.Join(native, "existing.txt")))
+	}
 	gr, err := gitstore.OpenLinked(guest, repo.MgitDir(), "guest", clock)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = gr.Close() })
@@ -145,7 +163,7 @@ func (projectionSummaryStub) Land(context.Context, string) (*service.LandSummary
 func TestLandProjection_AlreadyImportedCannotSilentlySucceed(t *testing.T) {
 	f := newProjectionFixture(t)
 	ctx := context.Background()
-	require.NoError(t, f.idx.AppendTaskCommits(ctx, []index.TaskCommitInsert{{TaskID: "MGIT-317", CommitHash: f.tip, ContentHash: "verified", AgentID: "test", Position: 0, SandboxID: "sandbox"}}))
+	require.NoError(t, f.idx.AppendTaskCommits(ctx, []index.TaskCommitInsert{{TaskID: "MGIT-317", CommitHash: f.tip, ContentHash: "verified", AgentID: "test", Position: 0, SandboxID: "sandbox", Origin: index.OriginLand}}))
 	adapter := landAdapter{svc: projectionSummaryStub{}, projection: f.p}
 	_, _, err := adapter.Land(ctx, "MGIT-317")
 	require.NoError(t, err, "zero-new land must retry pending projection safely")
@@ -189,7 +207,7 @@ func TestLandProjection_RetryAfterConflictCleanup(t *testing.T) {
 	f := newProjectionFixture(t)
 	ctx := context.Background()
 	require.NoError(t, os.WriteFile(filepath.Join(f.native, "existing.txt"), []byte("unrelated host edit\n"), 0600))
-	require.NoError(t, f.idx.AppendTaskCommits(ctx, []index.TaskCommitInsert{{TaskID: "MGIT-317", CommitHash: f.tip, ContentHash: "verified", AgentID: "test", Position: 0, SandboxID: "sandbox"}}))
+	require.NoError(t, f.idx.AppendTaskCommits(ctx, []index.TaskCommitInsert{{TaskID: "MGIT-317", CommitHash: f.tip, ContentHash: "verified", AgentID: "test", Position: 0, SandboxID: "sandbox", Origin: index.OriginLand}}))
 	adapter := landAdapter{svc: projectionSummaryStub{}, projection: f.p}
 	_, _, err := adapter.Land(ctx, "MGIT-317")
 	require.Error(t, err)
@@ -269,7 +287,7 @@ func TestLandProjection_DivergenceExplainsRetainedCommit(t *testing.T) {
 	require.NoError(t, gitstore.NewWorktreeStore(native).Add(ctx, "host-only.txt"))
 	hostTip, err := gitstore.NewCommitStore(native).CreateCommit(ctx, &model.Commit{AgentID: "test", Message: "test: native history moved"})
 	require.NoError(t, err)
-	require.NoError(t, f.idx.AppendTaskCommits(ctx, []index.TaskCommitInsert{{TaskID: "MGIT-317", CommitHash: f.tip, ContentHash: "verified", AgentID: "test", Position: 0, SandboxID: "sandbox"}}))
+	require.NoError(t, f.idx.AppendTaskCommits(ctx, []index.TaskCommitInsert{{TaskID: "MGIT-317", CommitHash: f.tip, ContentHash: "verified", AgentID: "test", Position: 0, SandboxID: "sandbox", Origin: index.OriginLand}}))
 	err = f.p.FastForward(ctx, "MGIT-317", f.tip)
 	require.ErrorContains(t, err, "non-fast-forward")
 	require.ErrorContains(t, err, "host tip "+hostTip[:8])
@@ -294,4 +312,66 @@ func TestLandProjection_DivergenceDoesNotInventLedgerRetention(t *testing.T) {
 	require.ErrorContains(t, err, "non-fast-forward")
 	require.ErrorContains(t, err, "no automatic recovery yet: MGIT-319")
 	require.NotContains(t, err.Error(), "is retained in task ledger")
+}
+
+// A recovery command must use admitted native content, never the pending tip.
+func TestLandProjection_RecoveryUsesAdmittedNativeCheckpoint(t *testing.T) {
+	for _, mode := range []string{"regular", "executable", "symlink"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newProjectionFixtureMode(t, mode)
+			ctx := context.Background()
+			require.NoError(t, f.idx.AddCommitToTask(ctx, "MGIT-317", f.base, "host-base", "test", 0))
+			require.NoError(t, f.idx.AppendTaskCommit(ctx, index.TaskCommitInsert{TaskID: "MGIT-317", CommitHash: f.tip, ContentHash: "verified", Position: 1, Origin: index.OriginLand}))
+			require.NoError(t, os.Remove(filepath.Join(f.native, "existing.txt")))
+			require.NoError(t, os.WriteFile(filepath.Join(f.native, "existing.txt"), []byte("preserve host\n"), 0600))
+			err := f.p.FastForward(ctx, "MGIT-317", f.tip)
+			require.Error(t, err)
+			require.NotContains(t, err.Error(), "--commit "+f.tip)
+			if mode == "symlink" {
+				require.Contains(t, err.Error(), "ln -s -- 'base-link' './existing.txt'")
+			} else {
+				require.Contains(t, err.Error(), "mgit restore './existing.txt' --commit "+f.base)
+				if mode == "executable" {
+					require.Contains(t, err.Error(), "chmod 700 './existing.txt'")
+				} else {
+					require.NotContains(t, err.Error(), "chmod 700")
+				}
+			}
+			backup := filepath.Join(t.TempDir(), "backup")
+			require.NoError(t, os.Rename(filepath.Join(f.native, "existing.txt"), backup))
+			repo, err := f.p.target(ctx, "MGIT-317")
+			require.NoError(t, err)
+			defer func() { _ = repo.Close() }()
+			restore := service.NewRestoreService(repo, gitstore.NewCommitStore(repo), f.native, f.idx)
+			if mode == "symlink" {
+				require.NoError(t, os.Symlink("base-link", filepath.Join(f.native, "existing.txt")))
+			} else {
+				_, err = restore.RestoreFile(ctx, "./existing.txt", f.base)
+				require.NoError(t, err)
+				if mode == "executable" {
+					require.NoError(t, os.Chmod(filepath.Join(f.native, "existing.txt"), 0700)) //nolint:gosec // G302: exercise the executable mode required by projection
+				}
+			}
+			_, err = restore.Unstage(ctx, []string{"existing.txt"})
+			require.NoError(t, err)
+			require.NoError(t, f.p.FastForward(ctx, "MGIT-317", f.tip))
+			data, err := os.ReadFile(backup) //nolint:gosec // G304: fixed file in this test-owned native fixture or its backup
+			require.NoError(t, err)
+			require.Equal(t, "preserve host\n", string(data))
+			data, err = os.ReadFile(filepath.Join(f.native, "existing.txt"))
+			require.NoError(t, err)
+			require.Equal(t, "guest\n", string(data))
+		})
+	}
+}
+
+func TestLandProjection_RecoveryCannotInventAdmission(t *testing.T) {
+	f := newProjectionFixture(t)
+	require.NoError(t, os.WriteFile(filepath.Join(f.native, "existing.txt"), []byte("host edit\n"), 0600))
+	err := f.p.FastForward(context.Background(), "MGIT-317", f.tip)
+	require.ErrorContains(t, err, "recovery checkpoint cannot be verified")
+	require.ErrorContains(t, err, "not an admitted task commit")
+	require.NotContains(t, err.Error(), "RECOVERY-1")
+	require.NotContains(t, err.Error(), "new empty directory")
+	require.NotContains(t, err.Error(), "run mgit restore")
 }

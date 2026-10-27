@@ -185,3 +185,64 @@ func (m *MergeStore) projectionConflict(path string, target map[string]blobEntry
 	}
 	return conflict
 }
+
+// VerifyDelivered is read-only: publication is not authority until the native
+// branch, tracked bytes, modes and staging have been read back. Untracked host
+// work outside the delivered tree is not promoted or removed.
+func (m *MergeStore) VerifyDelivered(_ context.Context, tip string) error {
+	head, err := m.repo.Head()
+	if err != nil {
+		return err
+	}
+	if head != tip {
+		return fmt.Errorf("native delivery read-back: expected %s, got %s", tip, head)
+	}
+	staged, err := m.repo.stagedPaths()
+	if err != nil {
+		return err
+	}
+	if len(staged) > 0 {
+		return fmt.Errorf("native delivery read-back: staging is not empty")
+	}
+	files, err := m.repo.headFiles()
+	if err != nil {
+		return err
+	}
+	for path, want := range files {
+		if err := m.repo.projectionParents(path); err != nil {
+			return err
+		}
+		data, mode, err := m.repo.workingFileContent(path)
+		if err != nil {
+			return fmt.Errorf("native delivery read-back %s: %w", path, err)
+		}
+		actual := blobEntry{hash: plumbing.ComputeHash(plumbing.BlobObject, data), mode: mode}
+		if actual != want {
+			return fmt.Errorf("native delivery read-back mismatch at %s", path)
+		}
+	}
+	return nil
+}
+
+// ProjectionRecoveryCheckpoint reads the current native entry, not the proposed
+// guest tree. The caller must separately verify local content admission before
+// offering commands which use it. It never writes or advances a reference.
+func (r *Repository) ProjectionRecoveryCheckpoint(path string) (string, *ProjectionConflictError, error) {
+	if err := validateRelPath(path); err != nil {
+		return "", nil, err
+	}
+	head, err := r.Head()
+	if err != nil {
+		return "", nil, err
+	}
+	files, err := r.headFiles()
+	if err != nil {
+		return "", nil, err
+	}
+	entryErr := NewMergeStore(r).projectionConflict(path, files)
+	var entry *ProjectionConflictError
+	if !errors.As(entryErr, &entry) {
+		return "", nil, entryErr
+	}
+	return head, entry, nil
+}

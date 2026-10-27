@@ -284,7 +284,7 @@ func (s *WorktreeService) existingForkBase(ctx context.Context, opts model.Workt
 		return tip, nil // no commit store to read history from: the pre-MGIT-35 behavior
 	}
 	base := tip
-	records, err := s.indexStore.GetTaskCommits(ctx, opts.TaskID)
+	records, err := s.indexStore.GetContentCommits(ctx, opts.TaskID)
 	if err != nil {
 		return "", fmt.Errorf("read task %s commits: %w", opts.TaskID, err)
 	}

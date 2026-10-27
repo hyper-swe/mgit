@@ -185,7 +185,7 @@ func liveLandScenario(t *testing.T, hostSync bool) {
 		}
 		third := liveLandCommand(t, native, cli, "sandbox", "exec", "--task-id", task, "--timeout", "90s", "--", "sh", "-ec",
 			"printf 'guest recovery tip\\n' > src/existing.txt; chmod 700 src/existing.txt; mgit add -- src/existing.txt; mgit commit --task-id MGIT-317 --agent-id land-regression -m 'test: recover pending projection' --json")
-		tip := liveLandWaitAttested(t, native, cli, task, third)
+		_ = liveLandWaitAttested(t, native, cli, task, third)
 		refusal, err := liveLandCommandResult(t, native, cli, "sandbox", "land", "--task-id", task, "--json")
 		if err == nil || !strings.Contains(refusal, "native projection would overwrite") || !strings.Contains(refusal, "mgit restore") {
 			t.Fatalf("expected actionable pending-projection conflict, got err=%v %s", err, refusal)
@@ -201,13 +201,23 @@ func liveLandScenario(t *testing.T, hostSync bool) {
 			t.Fatal(err)
 		}
 		// Follow the refusal's runnable remedy after preserving the host version.
-		liveLandCommand(t, native, cli, "restore", "./src/existing.txt", "--commit", tip)
-		liveLandCommand(t, native, "chmod", "700", "./src/existing.txt")
+		if !strings.Contains(refusal, "mgit restore './src/existing.txt' --commit "+committedID) {
+			t.Fatalf("refusal must name admitted native checkpoint: %s", refusal)
+		}
+		liveLandCommand(t, native, cli, "restore", "./src/existing.txt", "--commit", committedID)
 		liveLandCommand(t, native, cli, "restore", "--staged", "src/existing.txt")
 		liveLandCommand(t, native, cli, "sandbox", "land", "--task-id", task, "--json")
 		recovered := liveLandSnapshot(t, "after pending-projection recovery: native", native)
 		if recovered["src/existing.txt"] != "guest recovery tip\n" {
 			t.Fatalf("recovery did not publish attested tip: %q", recovered)
+		}
+		mode, err := os.Stat(filepath.Join(native, "src", "existing.txt"))
+		if err != nil || mode.Mode().Perm()&0111 == 0 {
+			t.Fatalf("land did not restore executable guest mode: mode=%v err=%v", mode, err)
+		}
+		backup, err := os.ReadFile(filepath.Join(fixture, "conflicting-host-backup.txt")) //nolint:gosec // G304: fixed backup in this test-owned fixture
+		if err != nil || string(backup) != hostConflict {
+			t.Fatalf("host backup lost: %q %v", backup, err)
 		}
 		finalRoot := liveLandSnapshot(t, "after pending-projection recovery: root", root)
 		for path := range liveLandExpected() {

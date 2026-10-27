@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade to 0.7.6
+
+- **finish or land in-flight tasks before upgrading to 0.7.6**. Task rows
+  recorded before the local content-admission ledger, and imported rows without
+  local admission, are retained for audit but refused by sandbox land, squash
+  `--to-git`, `diff --task-id`, git export, and restore. By-hash diff checks both
+  endpoints too. A task with only undelivered commits returns an explicit error,
+  not an empty patch. These refusals give a recovery sequence: preserve the old
+  repository, initialize a new empty repository outside it, copy only inspected
+  source files, and commit them under a new task. Do not reuse the old linked
+  worktree with a different task ID. See [content recovery](docs/CONTENT-RECOVERY.md).
+
+### Changed
+
+- Restore (file or whole tree), cherry-pick, rollback, and projection-conflict
+  recovery also require a locally admitted task commit as their content source.
+  An initial or sync-base snapshot without a task row is refused. This refusal
+  does not mean a healthy repository needs migration: select an admitted task
+  commit hash. Legacy/imported task rows with ambiguous origin still require
+  the inspected-file recovery described below.
+
+- Explicit-hash diff requires local admission for both endpoints, including
+  in a newly initialized repository. Initial and sync-base snapshots without
+  a task admission are refused. Use `mgit diff --task-id <id>` for a task
+  patch or select two admitted task commit hashes. `mgit show` remains an
+  inspection command: it displays retained commit changes without admitting
+  them for export or apply, and reports unreadable diffs as errors.
+
 ### Fixed
 
 - The pre-push hook removes its scratch file by file instead of with a
