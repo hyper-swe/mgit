@@ -86,18 +86,28 @@ func (p *landProjection) target(ctx context.Context, task string) (*gitstore.Rep
 
 // FastForward publishes only verified objects through a task-scoped native view.
 func (p *landProjection) FastForward(ctx context.Context, task, tip string) error {
-	return p.guard(func() error {
-		repo, err := p.target(ctx, task)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = repo.Close() }()
-		return p.publish(ctx, repo, task, tip)
-	})
+	return p.guard(func() error { return p.fastForwardLocked(ctx, task, tip) })
+}
+
+func (p *landProjection) fastForwardLocked(ctx context.Context, task, tip string) error {
+	repo, err := p.target(ctx, task)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = repo.Close() }()
+	return p.publish(ctx, repo, task, tip)
 }
 
 func (p *landProjection) publish(ctx context.Context, repo *gitstore.Repository, task, tip string) error {
-	err := gitstore.NewMergeStore(repo).FastForwardDelivered(ctx, model.TaskBranchName(task), tip)
+	snapshot, err := p.idx.GetContentSnapshot(ctx, task)
+	if err != nil {
+		return err
+	}
+	if err := index.RequireKnownContentOrigins(snapshot); err != nil {
+		return err
+	}
+
+	err = gitstore.NewMergeStore(repo).FastForwardDelivered(ctx, model.TaskBranchName(task), tip)
 	var divergence *gitstore.ProjectionDivergenceError
 	if errors.As(err, &divergence) {
 		// The importer appends verified commits before projection. Confirm the
@@ -115,21 +125,28 @@ func (p *landProjection) publish(ctx context.Context, repo *gitstore.Repository,
 	}
 	var conflict *gitstore.ProjectionConflictError
 	if errors.As(err, &conflict) {
-		path := projectionShellQuote("./" + conflict.Path)
-		remedy := fmt.Sprintf("move %s to a backup outside the worktree first", path)
-		if conflict.TargetExists {
-			if conflict.TargetMode == model.FileModeSymlink {
-				remedy += fmt.Sprintf("; run ln -s -- %s %s", projectionShellQuote(conflict.LinkTarget), path)
-			} else {
-				remedy += fmt.Sprintf("; run mgit restore %s --commit %s", path, tip)
-				if conflict.TargetMode == model.FileModeExecutable {
-					remedy += fmt.Sprintf("; run chmod 700 %s", path)
-				}
-			}
-		}
-		return fmt.Errorf("%w; %s; run mgit restore --staged %s, then mgit sandbox land --task-id %s", err, remedy, path, task)
+		return p.conflictRemedy(ctx, repo, task, err, conflict)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if err := gitstore.NewMergeStore(repo).VerifyDelivered(ctx, tip); err != nil {
+		return err
+	}
+	var delivered []index.CommitRecord
+	for _, r := range snapshot {
+		if r.Origin != index.OriginLand || r.State != index.AdmissionPending {
+			continue
+		}
+		onLineage, err := gitstore.NewMergeStore(repo).IsAncestor(ctx, r.CommitHash, tip)
+		if err != nil {
+			return err
+		}
+		if onLineage {
+			delivered = append(delivered, r.CommitRecord)
+		}
+	}
+	return p.idx.RecordDelivered(ctx, delivered)
 }
 
 // Check completes an already-attested pending projection using the same safe
@@ -169,3 +186,29 @@ func (p *landProjection) Check(ctx context.Context, task string) error {
 
 // Paths and link text originate in commit trees, not in a shell grammar.
 func projectionShellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
+
+// A pending guest tip cannot serve as its own recovery authority. Recover the
+// old entry from the still-current admitted native checkpoint, preserving host
+// edits outside the worktree before any restore/unstage/retry command.
+func (p *landProjection) conflictRemedy(ctx context.Context, repo *gitstore.Repository, task string, cause error, conflict *gitstore.ProjectionConflictError) error {
+	path := projectionShellQuote("./" + conflict.Path)
+	preserve := fmt.Sprintf("move %s to a backup outside the worktree first", path)
+	head, entry, err := repo.ProjectionRecoveryCheckpoint(conflict.Path)
+	if err == nil {
+		err = p.idx.RequireContentCommit(ctx, head)
+	}
+	if err != nil {
+		return fmt.Errorf("%w; preserve host files; recovery checkpoint cannot be verified: %w; no automatic recovery yet: MGIT-319", cause, err)
+	}
+	if entry.TargetExists {
+		if entry.TargetMode == model.FileModeSymlink {
+			preserve += fmt.Sprintf("; run ln -s -- %s %s", projectionShellQuote(entry.LinkTarget), path)
+		} else {
+			preserve += fmt.Sprintf("; run mgit restore %s --commit %s", path, head)
+			if entry.TargetMode == model.FileModeExecutable {
+				preserve += fmt.Sprintf("; run chmod 700 %s", path)
+			}
+		}
+	}
+	return fmt.Errorf("%w; %s; run mgit restore --staged %s, then mgit sandbox land --task-id %s", cause, preserve, path, projectionShellQuote(task))
+}

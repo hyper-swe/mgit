@@ -172,7 +172,7 @@ func OpenApp(path string) (*App, error) {
 		Audit:           audit,
 		Config:          cfgSvc,
 		Diff:            service.NewDiffService(ds, cs, idx),
-		Restore:         service.NewRestoreService(repo, cs, path),
+		Restore:         service.NewRestoreService(repo, cs, path, idx),
 		Checkout:        service.NewCheckoutService(bs, ws),
 		Merge:           service.NewMergeService(repo, bs, ms, cs),
 		GC:              service.NewGCService(gcs),

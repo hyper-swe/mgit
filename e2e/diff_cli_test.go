@@ -30,17 +30,17 @@ func TestDiff_BetweenCommits(t *testing.T) {
 	env := setupServiceEnv(t)
 	ctx := context.Background()
 
-	// Snapshot HEAD before any new commits.
-	from, err := env.repo.Head()
-	require.NoError(t, err)
-
 	// Create two commits on the same task.
-	_, err = env.commit.CreateCommit(ctx, service.CreateCommitRequest{
+	_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
 		AllowEmpty: true,
 		TaskID:     "MGIT-4.1.4",
 		AgentID:    "diff-test",
 		Message:    "first change",
 	})
+	require.NoError(t, err)
+
+	// Explicit-hash diff starts at an admitted host commit, not an unindexed base.
+	from, err := env.repo.Head()
 	require.NoError(t, err)
 
 	_, err = env.commit.CreateCommit(ctx, service.CreateCommitRequest{
@@ -108,6 +108,10 @@ func TestDiff_Statistics(t *testing.T) {
 	assert.Contains(t, statEmpty, "0 deletions(-)")
 
 	// Real commits → real stat output.
+	_, err := env.commit.CreateCommit(ctx, service.CreateCommitRequest{
+		AllowEmpty: true, TaskID: "MGIT-4.1.4", AgentID: "diff-test", Message: "accepted stat base",
+	})
+	require.NoError(t, err)
 	from, err := env.repo.Head()
 	require.NoError(t, err)
 

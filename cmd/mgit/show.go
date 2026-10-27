@@ -69,9 +69,11 @@ func showCmd() *cobra.Command {
 			// renders the real change — not just metadata. Refs: MGIT-33
 			diffs := c.FileDiffs
 			if len(diffs) == 0 && c.ParentID != "" {
-				if computed, derr := app.Diff.DiffCommits(ctx, c.ParentID, c.CommitID); derr == nil {
-					diffs = computed
+				computed, derr := app.Diff.InspectCommitDiff(ctx, c.ParentID, c.CommitID)
+				if derr != nil {
+					return fmt.Errorf("show diff: %w", derr)
 				}
+				diffs = computed
 			}
 			if len(diffs) > 0 {
 				_, _ = fmt.Fprintln(os.Stdout)

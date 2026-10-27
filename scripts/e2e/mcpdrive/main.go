@@ -284,14 +284,14 @@ func driveCommitAndReads(ctx context.Context, cli *client.Client, mgitBin, repo 
 	}
 	ok("mgit_commit created task-tagged commit " + hash)
 
-	if err := assertLogShowDiff(ctx, cli, hash); err != nil {
+	if err := assertLogShowDiff(ctx, cli, mgitBin, repo, hash); err != nil {
 		return "", err
 	}
 	return hash, nil
 }
 
 // assertLogShowDiff checks log/show/diff consistency for the commit just made.
-func assertLogShowDiff(ctx context.Context, cli *client.Client, hash string) error {
+func assertLogShowDiff(ctx context.Context, cli *client.Client, mgitBin, repo, hash string) error {
 	logText, err := callText(ctx, cli, "mgit_log", nil)
 	if err != nil {
 		return err
@@ -332,13 +332,45 @@ func assertLogShowDiff(ctx context.Context, cli *client.Client, hash string) err
 	if !strings.Contains(taskDiff, "feature.txt") {
 		return fmt.Errorf("mgit_diff (task) does not show feature.txt: %s", taskDiff)
 	}
-	pairDiff, err := callText(ctx, cli, "mgit_diff", map[string]any{
-		"commit1": shown.ParentID, "commit2": shown.CommitID,
+	// The initial sync-base is not an admitted task commit. Check the MCP
+	// refusal in both operand positions, including its task-diff remedy.
+	for _, pair := range [][2]string{{shown.ParentID, shown.CommitID}, {shown.CommitID, shown.ParentID}} {
+		req := mcp.CallToolRequest{}
+		req.Params.Name = "mgit_diff"
+		req.Params.Arguments = map[string]any{"commit1": pair[0], "commit2": pair[1]}
+		result, err := cli.CallTool(ctx, req)
+		if err != nil {
+			return fmt.Errorf("call mgit_diff (unindexed base): %w", err)
+		}
+		text := firstText(result)
+		if !result.IsError || !strings.Contains(text, "not an admitted task commit") || !strings.Contains(text, "mgit diff --task-id <id>") || strings.Contains(text, "RECOVERY-1") {
+			return fmt.Errorf("mgit_diff (unindexed base) must return a structured refusal with task-diff guidance, not migration: %s", text)
+		}
+	}
+	ok("mgit_diff refuses the unindexed base in either operand with task-diff guidance")
+
+	// Preserve the stage/status/first-commit regression above; create an actual
+	// second admitted task commit for the positive explicit-pair comparison.
+	if err := stageFile(ctx, mgitBin, repo, "feature.txt", "second hello from mcpdrive\n"); err != nil {
+		return err
+	}
+	secondText, err := callText(ctx, cli, "mgit_commit", map[string]any{
+		"task_id": "MCP-CORE-1", "message": "update feature file", "agent_id": "mcpdrive-e2e",
 	})
 	if err != nil {
 		return err
 	}
-	if !strings.Contains(pairDiff, "feature.txt") {
+	secondHash, err := parseCommitHash(secondText)
+	if err != nil {
+		return err
+	}
+	pairDiff, err := callText(ctx, cli, "mgit_diff", map[string]any{
+		"commit1": shown.CommitID, "commit2": secondHash,
+	})
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(pairDiff, "feature.txt") || !strings.Contains(pairDiff, "+second hello from mcpdrive") {
 		return fmt.Errorf("mgit_diff (commit pair) does not show feature.txt: %s", pairDiff)
 	}
 	ok("mgit_diff shows the change (task form and commit-pair form)")

@@ -15,9 +15,10 @@ import (
 // RollbackRequest holds parameters for rolling back task commits.
 // Refs: FR-6
 type RollbackRequest struct {
-	TaskID string `json:"task_id"`
-	Reason string `json:"reason,omitempty"`
-	DryRun bool   `json:"dry_run,omitempty"`
+	SourceHash string `json:"source_hash,omitempty"`
+	TaskID     string `json:"task_id"`
+	Reason     string `json:"reason,omitempty"`
+	DryRun     bool   `json:"dry_run,omitempty"`
 }
 
 // RollbackService creates revert commits that undo a task's net changes.
@@ -71,7 +72,20 @@ func (s *RollbackService) WithAudit(a *AuditService) *RollbackService {
 // without changing anything.
 // Refs: FR-6, FR-12, MGIT-54
 func (s *RollbackService) RollbackTask(ctx context.Context, req RollbackRequest) (*model.Commit, error) {
-	records, err := s.indexStore.GetTaskCommits(ctx, req.TaskID)
+	if req.SourceHash != "" {
+		source, err := s.commitStore.GetCommit(ctx, req.SourceHash)
+		if err != nil {
+			return nil, fmt.Errorf("rollback source: %w", err)
+		}
+		if err := s.indexStore.RequireContentCommit(ctx, source.CommitID); err != nil {
+			return nil, fmt.Errorf("rollback source: %w", err)
+		}
+		if source.TaskID.String() != req.TaskID {
+			return nil, fmt.Errorf("rollback source task mismatch")
+		}
+	}
+
+	records, err := s.indexStore.GetContentCommits(ctx, req.TaskID)
 	if err != nil {
 		return nil, fmt.Errorf("rollback task %s: get commits: %w", req.TaskID, err)
 	}
@@ -141,7 +155,11 @@ func (s *RollbackService) RollbackTask(ctx context.Context, req RollbackRequest)
 		return nil, fmt.Errorf("rollback task %s: %w", req.TaskID, err)
 	}
 
-	position := len(records)
+	raw, err := s.indexStore.GetTaskCommits(ctx, req.TaskID)
+	if err != nil {
+		return nil, fmt.Errorf("rollback ledger position: %w", err)
+	}
+	position := len(raw)
 	err = s.indexStore.AddCommitToTask(ctx, req.TaskID, hash, revertCommit.ContentHash, "mgit-rollback", position)
 	if err != nil {
 		return nil, fmt.Errorf("rollback task %s: index revert commit: %w", req.TaskID, err)

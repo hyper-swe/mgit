@@ -33,6 +33,10 @@ func (s *CommitService) CherryPick(ctx context.Context, req CherryPickRequest) (
 		return nil, fmt.Errorf("cherry-pick: %w", err)
 	}
 
+	if err := s.indexStore.RequireContentCommit(ctx, source.CommitID); err != nil {
+		return nil, fmt.Errorf("cherry-pick source: %w", err)
+	}
+
 	pickTask := req.TaskID
 	if pickTask == "" {
 		pickTask = source.TaskID.String()

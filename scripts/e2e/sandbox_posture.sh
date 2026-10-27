@@ -345,6 +345,15 @@ if [ "$backend" = "libkrun" ]; then
 	assert_contains "$(cat wt/built.txt)" "host advanced again" "refusal preserves the host commit"
 	[ ! -e refused-step.txt ] && [ ! -e wt/refused-step.txt ] || _e2e_fail "refused guest bytes reached a host worktree"
 	[ ! -e guest-step.txt ] || _e2e_fail "refusal changed repository root"
+	echo "land provenance: the land protocol does not carry the guest ledger hash today"
+	# Retention is audit, not delivery authority. A refusal stays visible in
+	# the raw ledger but must not enter either read-only git export or squash.
+	assert_contains "$(mgit log --task-id SB-1)" "divergent guest work" "refused commit remains in audit"
+	patch="$(cd wt && git config user.name e2e && git config user.email e2e@mgit.local && mgit export --task-id SB-1 --format git)" \
+		|| _e2e_fail "eligible content export failed after refusal"
+	assert_contains "$patch" "host advanced again" "export keeps accepted host work"
+	assert_not_contains "$patch" "refused-step.txt" "export excludes refused guest path"
+	assert_not_contains "$patch" "retained guest work" "export excludes refused guest bytes"
 	assert_ok_with_output "remove the refused sandbox before later scenarios" -- mgit sandbox remove SB-1 --force
 fi
 
