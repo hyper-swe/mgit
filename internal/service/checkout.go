@@ -19,18 +19,14 @@ type CheckoutService struct {
 	gate      *index.Store
 }
 
-// WithContentGate wires the ledger that decides whether a branch tip is
-// content a host worktree may materialize. Refs: MGIT-323.3
-func (s *CheckoutService) WithContentGate(idx *index.Store) *CheckoutService {
-	s.gate = idx
-	return s
-}
-
-// NewCheckoutService creates a CheckoutService backed by the given stores.
-func NewCheckoutService(bs *gitstore.BranchStore, ws *gitstore.WorktreeStore) *CheckoutService {
+// NewCheckoutService creates a CheckoutService backed by the given stores. The
+// ledger decides which branch tips a host worktree may materialize; without
+// one, Checkout refuses rather than switching ungated. Refs: MGIT-323.3
+func NewCheckoutService(bs *gitstore.BranchStore, ws *gitstore.WorktreeStore, idx *index.Store) *CheckoutService {
 	return &CheckoutService{
 		branches:  bs,
 		worktrees: ws,
+		gate:      idx,
 	}
 }
 
@@ -53,8 +49,16 @@ func (s *CheckoutService) Checkout(ctx context.Context, name string) (*CheckoutR
 	}
 
 	// Verify the target branch exists before touching the worktree.
-	if _, err := s.branches.GetBranch(ctx, name); err != nil {
+	br, err := s.branches.GetBranch(ctx, name)
+	if err != nil {
 		return nil, fmt.Errorf("checkout: %w", err)
+	}
+	// Refuse before any ref, index or disk change. Refs: MGIT-323.3
+	if s.gate == nil {
+		return nil, fmt.Errorf("checkout: no content ledger is wired, so the branch tip cannot be checked")
+	}
+	if err := s.gate.RequireDeliverableTip(ctx, br.HeadCommit); err != nil {
+		return nil, fmt.Errorf("checkout: branch %s ends at a retained guest commit: %w; stay on the current branch until it is delivered", name, err)
 	}
 
 	clean, dirty, err := s.worktrees.IsClean(ctx)

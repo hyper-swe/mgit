@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -184,6 +185,32 @@ func (s *Store) RecordDelivered(ctx context.Context, records []CommitRecord) err
 			}
 			if err := insertAdmission(ctx, tx, rec, found.Origin, AdmissionDelivered, found.GuestContentHash, now); err != nil {
 				return err
+			}
+		}
+		return nil
+	})
+}
+
+// ErrUndeliveredTip marks a commit that came from a sandbox land and has not
+// been delivered to the host. Callers phrase their own next step: a user who
+// picked a base or a branch needs another choice, not the repository recovery.
+var ErrUndeliveredTip = errors.New("undelivered guest commit")
+
+// RequireDeliverableTip checks the one hash a host task may start from or a
+// host worktree may materialize. It looks at that commit's own ledger rows,
+// not at its ancestry: it refuses a commit whose row is guest-origin and not
+// delivered, and says nothing about commits built on top of one. Unindexed host
+// commits, host rows and legacy rows are ordinary history and pass.
+// Refs: MGIT-323.2, MGIT-323.3
+func (s *Store) RequireDeliverableTip(ctx context.Context, hash string) error {
+	return s.ReadTx(ctx, func(tx *sql.Tx) error {
+		rows, err := readContentSnapshot(ctx, tx, " WHERE t.commit_hash = ? ORDER BY t.id", hash)
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			if r.Origin == OriginLand && r.State != AdmissionDelivered {
+				return fmt.Errorf("%w %s (task %s row %d): it came from a sandbox land and has not been delivered to the host", ErrUndeliveredTip, hash, r.TaskID, r.ID)
 			}
 		}
 		return nil

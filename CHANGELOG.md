@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `mgit work --base <commit>`, `mgit checkout <branch>` and `mgit worktree add` for
+  a task whose branch ends at a retained guest commit refuse that commit when it was
+  never delivered, before any branch, worktree, ref or file changes. Host commits, `HEAD`, branch names and branches with no ledger row work
+  as before. See [content recovery](docs/CONTENT-RECOVERY.md).
+
 - Restore (file or whole tree), cherry-pick, rollback, and projection-conflict
   recovery also require a locally admitted task commit as their content source.
   An initial or sync-base snapshot without a task row is refused. This refusal
