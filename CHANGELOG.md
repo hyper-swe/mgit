@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- The sandbox install guide now says interactive sessions in a guest are
+  unsupported on every backend in this build (`exec` has no stdin or TTY and
+  `sandbox shell` is refused), names `mgit work --sandbox` as the alternative, and says agents
+  stay on the host by design (MGIT-320, MGIT-321).
+
 ### Security
 
 - Build and guest verification toolchains use Go 1.26.10, which fixes
