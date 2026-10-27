@@ -17,7 +17,9 @@ import (
 // this hook is file-by-file removal, and the scratch holds exactly one file.
 // Refs: MGIT-318
 
-var recursiveRM = regexp.MustCompile(`\brm\s+-[a-zA-Z]*[rR]`)
+// recursiveRM matches an rm whose options include -r, -R, a bundle holding one
+// (-rf, -fr) or --recursive, however many option words come first.
+var recursiveRM = regexp.MustCompile(`\brm\b(\s+-[A-Za-z-]+)*?\s+(-[A-Za-z]*[rR][A-Za-z]*|--recursive)(\s|$)`)
 
 func TestPrePushHook_CleansUpWithoutARecursiveDelete(t *testing.T) {
 	hook, err := os.ReadFile(filepath.Join("..", "hooks", "pre-push"))
@@ -27,6 +29,15 @@ func TestPrePushHook_CleansUpWithoutARecursiveDelete(t *testing.T) {
 			continue
 		}
 		assert.False(t, recursiveRM.MatchString(line), "scripts/hooks/pre-push:%d must not delete recursively: %s", i+1, line)
+	}
+}
+
+func TestRecursiveRM_SeesEveryRecursiveSpelling(t *testing.T) {
+	for _, line := range []string{`rm -rf "$d"`, `rm -fr "$d"`, `rm -r "$d"`, `rm -R "$d"`, `rm --recursive "$d"`, `rm -f -r "$d"`, `rm -f --recursive "$d"`} {
+		assert.True(t, recursiveRM.MatchString(line), line)
+	}
+	for _, line := range []string{`rm -f "$guard"`, `rmdir "$d"`, `rm -f -- "$guard"`} {
+		assert.False(t, recursiveRM.MatchString(line), line)
 	}
 }
 

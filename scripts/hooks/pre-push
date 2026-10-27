@@ -27,14 +27,18 @@ set -euo pipefail
 root=$(git rev-parse --show-toplevel)
 zero='0000000000000000000000000000000000000000'
 status=0
-guarddir=$(mktemp -d)
+# An explicit template honours TMPDIR on BSD and GNU mktemp alike; the bare form
+# ignores it on macOS. Refs: MGIT-318
+guarddir=$(mktemp -d "${TMPDIR:-/tmp}/mgit-prepush.XXXXXX")
 guard="$guarddir/branchguard"
 # The scratch holds the one built guard binary, so cleanup removes that file and
 # then the empty directory: no recursive delete. Refs: MGIT-318
 # shellcheck disable=SC2329 # invoked by the EXIT trap below
 cleanup() {
 	rm -f "$guard"
-	rmdir "$guarddir" 2>/dev/null || true
+	# A scratch directory that is not empty is the case the file-by-file rule
+	# wants seen; say so and leave it, the push does not fail for it.
+	rmdir "$guarddir" 2>/dev/null || echo "pre-push: scratch $guarddir was not empty and was left in place." >&2
 }
 trap cleanup EXIT
 
