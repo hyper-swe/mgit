@@ -58,3 +58,11 @@ tip. Retain the backup until you have checked the delivered files. If mgit says
 that the recovery checkpoint cannot be verified, it does not offer an unverified
 restore command; preserve the host files and use the inspected-file sequence
 above instead.
+
+## Starting from, or switching to, retained guest content
+
+`mgit work --base <commit>`, `mgit checkout <branch>` and re-adding the worktree of a task whose branch ends at such a commit apply the same rule as
+the commands above: a commit that came from a sandbox land and was never
+delivered is not a base and not a checkout target. All three refuse before anything
+changes, and tell you to choose another base or stay on your branch. Commits with no ledger row, host commits, `HEAD` and ordinary branches
+are unaffected.

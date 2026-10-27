@@ -61,7 +61,8 @@ var contentReaderClasses = map[string]string{
 	"internal/service/verify.go:VerifyCommitChain":           "raw:integrity-not-delivery",
 	"internal/service/verify.go:VerifyTaskCommits":           "raw:integrity-not-delivery",
 	"internal/service/worktree.go:existingForkBase":          "content",
-	"internal/service/worktree.go:resolveBaseCommit":         "raw:explicit-host-base-selection; known open MGIT-323.2",
+	"internal/service/worktree.go:resolveBaseCommit":         "gated:RequireDeliverableTip",
+	"internal/service/worktree.go:resolveBaseRef":            "raw:resolved-then-gated-by-resolveBaseCommit",
 }
 
 func contentReaderCalls(source []byte) (map[string][]string, error) {
