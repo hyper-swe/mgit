@@ -71,7 +71,7 @@ func setupServiceEnv(t *testing.T) *serviceEnv {
 		verify:   service.NewVerifyService(cs, idx),
 		audit:    service.NewAuditService(auditPath, clock),
 		diff:     service.NewDiffService(ds, cs, idx),
-		checkout: service.NewCheckoutService(bs, ws),
+		checkout: service.NewCheckoutService(bs, ws, idx),
 		worktree: ws,
 		merge:    service.NewMergeService(repo, bs, ms, cs),
 		gc:       service.NewGCService(gcs),
