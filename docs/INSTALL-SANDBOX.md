@@ -35,6 +35,23 @@ do — the backends are not interchangeable:
 | artifact export (`sandbox export`) | yes | yes | **refused** |
 | guest can write outside `/tmp`, `/etc`, its worktree and its home | yes | **no** (upstream, MGIT-89) | yes |
 
+**Interactive sessions: interactive sessions in a guest are unsupported on
+libkrun.** `mgit sandbox exec` gives the guest no stdin and no TTY, and
+`mgit sandbox shell` is refused with "interactive shell requires the KVM guest
+PTY transport; use `mgit sandbox exec` for non-interactive commands" (measured
+on 0.7.5). Run one-shot commands with `mgit sandbox exec` or `mgit run`, and
+for an agent session use the host-routed shell: `mgit work --sandbox` binds the
+agent's shell to the task's worktree on the host and routes its commands into
+the guest. Serving the PTY transport on libkrun is tracked as MGIT-320, not
+built. Whether the firecracker backend serves it is not stated here.
+
+**Where an agent runs: agents stay on the host by design.** The guest has no
+`mtix` and no credentials, and in allowlist mode it can never reach the host's
+loopback or private ranges (`egress/ipclass.go`), so a host-side inbox wake
+cannot cross into it and nothing in a guest can wait on one. An agent keeps its
+loop and its credentials on the host and sends commands into the guest. A host
+bridge that runs one `sandbox exec` turn per wake is not built (MGIT-321).
+
 **Which one you have:** `mgit-sandboxd --vmm` prints the VMM the daemon links
 and where its libraries resolved, and `mgit doctor`'s `daemon/vmm` row says the
 same. The Linux release archives carry the libkrun daemon from the first
