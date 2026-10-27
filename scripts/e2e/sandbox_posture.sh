@@ -99,7 +99,9 @@ Darwin)
 esac
 
 # --- Live path --------------------------------------------------------------
-work="$(mktemp -d)"
+scratch_parent="${TMPDIR:-/tmp}"
+scratch_parent="${scratch_parent%/}"
+work="$(mktemp -d "$scratch_parent/mgit-posture.XXXXXXXX")" || exit 1
 # Teardown removes what this run launched and then PROVES it: a daemon that
 # outlives its mktemp root is exactly the leak MGIT-191 found six of. The stop
 # is scoped to this root's daemon (by its recorded pid); the check is by root,
@@ -112,7 +114,17 @@ cleanup() {
 	# not a race against the daemon's own self-drain. Keyed on --host-root,
 	# which the CLI always passes.
 	leaked="$(pgrep -f -- "--host-root $work/" 2>/dev/null || true)"
-	rm -rf "$work"
+	case "$work" in
+		"$scratch_parent"/mgit-posture.*) ;;
+		*) echo "refusing unexpected scratch cleanup path" >&2; exit 1 ;;
+	esac
+	find "$work" -mindepth 1 -print
+	find "$work" -mindepth 1 ! -type d -print -delete
+	find "$work" -depth -type d -empty -print -delete
+	if [ -e "$work" ]; then
+		echo "scratch cleanup left a nonempty directory: $work" >&2
+		exit 1
+	fi
 	if [ -n "$leaked" ]; then
 		echo "SANDBOX POSTURE E2E: FAIL -- daemon leaked after teardown (pid $leaked serving $work)" >&2
 		exit 1
@@ -287,7 +299,9 @@ echo "== land round-trip =="
   mgit commit -m 'work in sandbox' >/dev/null
 )
 # The land path verifies dual-hash + task binding + host-anchored attestation.
-assert_ok "sandbox land succeeds" -- mgit sandbox land --task SB-1
+assert_ok_with_output "sandbox land succeeds" -- mgit sandbox land --task SB-1
+assert_contains "$(cat wt/built.txt)" "contained" "host commit remains in the native worktree"
+[ ! -e built.txt ] || _e2e_fail "host commit unexpectedly reached repository root"
 
 # A commit made INSIDE the guest inherits the worktree's task, as the
 # generated guidance tells the agent (MGIT-256). The guest's .mgit is the
@@ -299,12 +313,39 @@ if [ "$backend" = "libkrun" ]; then
 	echo "== a guest commit inherits the worktree's task (MGIT-256) =="
 	trail() { mgit log --task-id SB-1 | grep -c 'guest step, no task id' || true; }
 	before="$(trail)"
+	# Refresh the guest ancestry from the native tip after the host commit.
+	assert_ok_with_output "remove the older sandbox registration" -- mgit sandbox remove SB-1 --force
+	assert_ok_with_output "launch from the current native tip" -- mgit sandbox launch --task-id SB-1 --worktree "$PWD/wt" --image "$MGIT_GUEST_IMAGE" --memory-mb 512
 	guestout="$(cd wt && mgit run -- sh -c "printf 'from the guest\n' > guest-step.txt && mgit commit -a -m 'guest step, no task id'" 2>&1)" \
 		|| { echo "$guestout"; _e2e_fail "a guest commit without --task-id was refused (MGIT-256; output above)"; }
-	assert_ok "the guest's commit lands" -- mgit sandbox land --task SB-1
+	assert_ok_with_output "the guest's commit lands" -- mgit sandbox land --task SB-1
 	after="$(trail)"
 	[ "$after" -eq $((before + 1)) ] || _e2e_fail "the guest's commit is not on task SB-1 after land ($before -> $after)"
+	assert_contains "$(cat wt/guest-step.txt)" "from the guest" "the guest commit reaches native bytes"
+	[ ! -e guest-step.txt ] || _e2e_fail "guest commit unexpectedly reached repository root"
 	pass "the guest commit is recorded on SB-1 with no --task-id"
+
+	# Isolate ancestry refusal from already-landed guest delivery bookkeeping.
+	assert_ok_with_output "remove the delivered sandbox" -- mgit sandbox remove SB-1 --force
+	assert_ok_with_output "register an ancestry-control sandbox" -- mgit sandbox launch --task-id SB-1 --worktree "$PWD/wt" --image "$MGIT_GUEST_IMAGE" --memory-mb 512
+	assert_ok_with_output "boot before advancing the host tip" -- mgit sandbox exec --task-id SB-1 -- sh -ec 'pwd; mgit --version'
+	( cd wt
+	  printf 'host advanced again\n' > built.txt
+	  mgit add -- built.txt >/dev/null
+	  mgit commit -m 'advance host with guest booted' >/dev/null
+	)
+	divergent="$(cd wt && mgit run -- sh -ec "printf 'retained guest work\\n' > refused-step.txt; mgit commit -a -m 'divergent guest work'" 2>&1)" \
+		|| { echo "$divergent"; _e2e_fail "divergence setup command failed before land"; }
+	if refused="$(mgit sandbox land --task SB-1 2>&1)"; then
+		echo "$refused"; _e2e_fail "divergent guest commit was not refused"
+	fi
+	for detail in 'non-fast-forward' 'host tip ' 'guest base ' 'guest commit ' 'is retained in task ledger' 'no automatic recovery yet: MGIT-319'; do
+		assert_contains "$refused" "$detail" "divergence refusal includes $detail"
+	done
+	assert_contains "$(cat wt/built.txt)" "host advanced again" "refusal preserves the host commit"
+	[ ! -e refused-step.txt ] && [ ! -e wt/refused-step.txt ] || _e2e_fail "refused guest bytes reached a host worktree"
+	[ ! -e guest-step.txt ] || _e2e_fail "refusal changed repository root"
+	assert_ok_with_output "remove the refused sandbox before later scenarios" -- mgit sandbox remove SB-1 --force
 fi
 
 

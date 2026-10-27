@@ -26,6 +26,20 @@ func (e *ProjectionConflictError) Error() string {
 	return fmt.Sprintf("native projection would overwrite host changes at %s", e.Path)
 }
 
+// ProjectionDivergenceError preserves both histories instead of rewinding the
+// host branch to a verified guest commit based on older history.
+type ProjectionDivergenceError struct {
+	HostTip, GuestBase string
+}
+
+func (e *ProjectionDivergenceError) Error() string {
+	base := e.GuestBase
+	if base == "" {
+		base = "none"
+	}
+	return fmt.Sprintf("native projection refused: non-fast-forward (host tip %.8s, guest base %.8s)", e.HostTip, base)
+}
+
 // FastForwardDelivered allows host entries already equal to the verified target
 // (the host-edit/sandbox-sync workflow), as well as entries still at the old
 // HEAD. It never accepts a third version. Contents AND git modes are compared,
@@ -44,7 +58,11 @@ func (m *MergeStore) FastForwardDelivered(ctx context.Context, branch, targetHas
 			return e
 		}
 		if !ok {
-			return fmt.Errorf("native projection refused: non-fast-forward")
+			base, e := m.MergeBase(ctx, cur.Hash().String(), targetHash)
+			if e != nil {
+				return fmt.Errorf("native projection history: %w", e)
+			}
+			return &ProjectionDivergenceError{HostTip: cur.Hash().String(), GuestBase: base}
 		}
 	}
 	current, err := m.repo.currentRef()

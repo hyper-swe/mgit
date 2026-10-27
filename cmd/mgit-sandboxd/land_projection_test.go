@@ -258,3 +258,40 @@ func TestLandProjection_RelativeRegistration(t *testing.T) {
 		})
 	}
 }
+
+func TestLandProjection_DivergenceExplainsRetainedCommit(t *testing.T) {
+	f := newProjectionFixture(t)
+	ctx := context.Background()
+	native, err := gitstore.OpenLinked(f.native, f.repo.MgitDir(), model.TaskBranchName("MGIT-317"), time.Now)
+	require.NoError(t, err)
+	defer func() { _ = native.Close() }()
+	require.NoError(t, os.WriteFile(filepath.Join(f.native, "host-only.txt"), []byte("host commit\n"), 0600))
+	require.NoError(t, gitstore.NewWorktreeStore(native).Add(ctx, "host-only.txt"))
+	hostTip, err := gitstore.NewCommitStore(native).CreateCommit(ctx, &model.Commit{AgentID: "test", Message: "test: native history moved"})
+	require.NoError(t, err)
+	require.NoError(t, f.idx.AppendTaskCommits(ctx, []index.TaskCommitInsert{{TaskID: "MGIT-317", CommitHash: f.tip, ContentHash: "verified", AgentID: "test", Position: 0, SandboxID: "sandbox"}}))
+	err = f.p.FastForward(ctx, "MGIT-317", f.tip)
+	require.ErrorContains(t, err, "non-fast-forward")
+	require.ErrorContains(t, err, "host tip "+hostTip[:8])
+	require.ErrorContains(t, err, "guest base "+f.base[:8])
+	require.ErrorContains(t, err, "guest commit "+f.tip[:8]+" is retained in task ledger")
+	require.ErrorContains(t, err, "no automatic recovery yet: MGIT-319")
+	b, err := gitstore.NewBranchStore(f.repo).GetBranch(ctx, model.TaskBranchName("MGIT-317"))
+	require.NoError(t, err)
+	require.Equal(t, hostTip, b.HeadCommit)
+	data, err := os.ReadFile(filepath.Join(f.native, "host-only.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "host commit\n", string(data))
+	_, err = os.Stat(filepath.Join(f.native, "new.txt"))
+	require.True(t, os.IsNotExist(err))
+}
+
+func TestLandProjection_DivergenceDoesNotInventLedgerRetention(t *testing.T) {
+	f := newProjectionFixture(t)
+	ctx := context.Background()
+	require.NoError(t, f.p.FastForward(ctx, "MGIT-317", f.tip))
+	err := f.p.FastForward(ctx, "MGIT-317", f.base)
+	require.ErrorContains(t, err, "non-fast-forward")
+	require.ErrorContains(t, err, "no automatic recovery yet: MGIT-319")
+	require.NotContains(t, err.Error(), "is retained in task ledger")
+}

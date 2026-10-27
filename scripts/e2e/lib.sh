@@ -47,6 +47,20 @@ assert_ok() {
 	if "$@" >/dev/null 2>&1; then pass "$what"; else _e2e_fail "$what — command failed: $*"; fi
 }
 
+# assert_ok_with_output keeps a failed command's diagnostic without weakening
+# the assertion. Land refusals include the path and recovery instructions.
+assert_ok_with_output() {
+	local what="$1" output
+	shift
+	[ "$1" = "--" ] && shift
+	if output="$("$@" 2>&1)"; then
+		pass "$what"
+	else
+		printf '%s\n' "$output" >&2
+		_e2e_fail "$what — command failed: $*"
+	fi
+}
+
 # assert_fails <what> -- <cmd...> : command must fail (non-zero)
 assert_fails() {
 	local what="$1"

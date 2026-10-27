@@ -98,6 +98,21 @@ func (p *landProjection) FastForward(ctx context.Context, task, tip string) erro
 
 func (p *landProjection) publish(ctx context.Context, repo *gitstore.Repository, task, tip string) error {
 	err := gitstore.NewMergeStore(repo).FastForwardDelivered(ctx, model.TaskBranchName(task), tip)
+	var divergence *gitstore.ProjectionDivergenceError
+	if errors.As(err, &divergence) {
+		// The importer appends verified commits before projection. Confirm the
+		// durable record before claiming retention in a diagnostic.
+		commits, readErr := p.idx.GetTaskCommits(ctx, task)
+		if readErr != nil {
+			return fmt.Errorf("%w; cannot confirm ledger retention: %w; no automatic recovery yet: MGIT-319", err, readErr)
+		}
+		for _, commit := range commits {
+			if commit.CommitHash == tip {
+				return fmt.Errorf("%w; guest commit %.8s is retained in task ledger; no automatic recovery yet: MGIT-319", err, tip)
+			}
+		}
+		return fmt.Errorf("%w; no automatic recovery yet: MGIT-319", err)
+	}
 	var conflict *gitstore.ProjectionConflictError
 	if errors.As(err, &conflict) {
 		path := projectionShellQuote("./" + conflict.Path)
