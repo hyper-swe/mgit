@@ -7,6 +7,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
+	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
 // CheckoutService switches the worktree to the tip of a target branch
@@ -15,6 +16,14 @@ import (
 type CheckoutService struct {
 	branches  *gitstore.BranchStore
 	worktrees *gitstore.WorktreeStore
+	gate      *index.Store
+}
+
+// WithContentGate wires the ledger that decides whether a branch tip is
+// content a host worktree may materialize. Refs: MGIT-323.3
+func (s *CheckoutService) WithContentGate(idx *index.Store) *CheckoutService {
+	s.gate = idx
+	return s
 }
 
 // NewCheckoutService creates a CheckoutService backed by the given stores.
