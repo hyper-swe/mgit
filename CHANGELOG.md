@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The pre-push hook removes its scratch file by file instead of with a
+  recursive delete, so a lane that may not run recursive deletes can push
+  through it (MGIT-318).
+
 ### Documentation
 
 - The sandbox install guide now says interactive sessions in a guest are
