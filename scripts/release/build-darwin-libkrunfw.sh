@@ -65,5 +65,7 @@ distributed separately from mgit.
 NOTICE
 bash "$here/libkrunfw-source-offer.sh" "$tag" >"$pkg/SOURCE-OFFER.txt"
 
-tar -czf "$out/$name" -C "$pkg" libkrunfw.5.dylib LICENSE-GPL-2.0-only LICENSE-LGPL-2.1-only NOTICE.txt SOURCE-OFFER.txt
+# macOS tar would add an AppleDouble ._ entry for every file that carries an
+# extended attribute; the tarball holds the five files and nothing else.
+COPYFILE_DISABLE=1 tar -czf "$out/$name" -C "$pkg" libkrunfw.5.dylib LICENSE-GPL-2.0-only LICENSE-LGPL-2.1-only NOTICE.txt SOURCE-OFFER.txt
 echo "built $out/$name ($(sha256 "$out/$name"))"
