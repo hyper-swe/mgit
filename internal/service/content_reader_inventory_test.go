@@ -42,7 +42,7 @@ var contentReaderClasses = map[string]string{
 	"internal/service/bundle.go:Export":                                 "raw:audit-bundle",
 	"internal/service/bundle.go:Import":                                 "raw:existence; no admission imported",
 	"internal/service/cadence.go:TaskCadence":                           "raw:metadata",
-	"internal/service/deliverable_history.go:requireDeliverableHistory": "raw:parent-walk; reads ancestry only, content refused by the ledger",
+	"internal/service/deliverable_history.go:requireDeliverableHistory": "raw:parent-walk over every parent; reads ancestry only, content refused by the ledger",
 	"internal/service/cherrypick.go:CherryPick":                         "apply",
 	"internal/service/commit.go:CreateCommit":                           "raw:position",
 	"internal/service/commit.go:GetCommit":                              "raw:forensic-wrapper",

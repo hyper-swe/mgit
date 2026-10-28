@@ -68,8 +68,9 @@ changes, and tell you to choose another base or stay on your branch. Commits wit
 are unaffected.
 
 The rule covers history, not only the commit you name: a commit built on an
-undelivered guest commit, for example one you made on the host on top of it, is
-refused too, and the message names the guest commit underneath. mgit follows the
-parent chain until it reaches a delivered sandbox-land commit, which vouches for
-everything below it, or the first commit. A host commit does not vouch for what is
-under it. A chain longer than 2000 commits is refused rather than passed unchecked.
+undelivered guest commit, for example one you made on the host on top of it, or a
+merge of its branch, is refused too, and the message names the guest commit
+underneath. mgit follows every parent until it reaches a delivered sandbox-land
+commit, which vouches for everything below it, or the first commit. A host commit
+does not vouch for what is under it. A history mgit cannot read is refused rather
+than passed unchecked.
