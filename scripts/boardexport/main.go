@@ -205,7 +205,7 @@ var (
 	// A lane name stands alone as a word: a branch (fix/mgit-168), a scratch
 	// directory (/tmp/mgit-98-wt) or a per-user socket directory (T/mgit-501)
 	// that merely contains the same letters is not a role.
-	roleRe = regexp.MustCompile(`(?:^|[\s("'\x60,;:])(?:(?i:reviewer-(?:mgit|\d+)|mgit-linux(?:-\d+)?|go-agent(?:-\d+)?)|mgit-\d+)(?:$|[\s)"'\x60,;:.'])`)
+	roleRe = regexp.MustCompile(`(?:^|[\s("'\x60,;:])(?:(?i:reviewer-(?:mgit|\d+)|mgit-linux(?:-\d+)?|go-agent(?:-\d+)?)|mgit-\d+)(?:$|[\s)"'\x60,;:.])`)
 	// A checkout is where the working agents build; its name is not public.
 	checkoutRe = regexp.MustCompile(`\bmgit-dev\b|\bswe-go\b(?:-[\w]+)*`)
 	ticketRe   = regexp.MustCompile(`\b(?:FEAT|HSWE|PROJ)-\d`)
