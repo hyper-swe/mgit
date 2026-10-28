@@ -430,3 +430,37 @@ jobs:
           LIBRARY_PATH: /usr/local/lib64
           LD_LIBRARY_PATH: /usr/local/lib64
         run: go test -buildvcs=false -tags libkrun ./cmd/mgit-sandboxd/ -count=1
+
+  # The free hosted arm64 runner exposes no /dev/kvm (probe run 40688736659),
+  # so no guest boots here; everything else about linux/arm64 that needs no
+  # KVM runs on the same runner: the build, the whole test suite and the
+  # vulnerability scan. The arm64 boot leg waits on a host that has KVM.
+  # Refs: MGIT-230.5.2
+  test-linux-arm64:
+    name: Test (linux/arm64, no KVM)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
+
+      - name: Build every package
+        run: go build ./...
+
+      - name: Run tests
+        run: go test ./... -count=1
+
+      - name: Run vulnerability check
+        run: |
+          # pin-exempt and fetch-guarded exactly as in the Test job; see there.
+            # pin-exempt: govulncheck floats on purpose — a pinned scanner stops finding new vulnerabilities; the fetch is guarded (MGIT-143) and the float is a recorded decision (MGIT-179)
+          bash scripts/ci/guard-fetch.sh -t 120 -l govulncheck-install \
+            -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
+            go install golang.org/x/vuln/cmd/govulncheck@latest
+          python3 scripts/ci/check-go-toolchain.py
+          govulncheck ./...
