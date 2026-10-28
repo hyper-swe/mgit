@@ -367,6 +367,9 @@ func TestTextLeaks_NamesTheNodeFieldAndClassOfEachShape(t *testing.T) {
 		{"a sibling coordination ticket", "description", "see HSWE-20.5", "another product's ticket"},
 		{"a home path on macOS", "description", "runs /Users/someone/.local/bin/mgit", "personal path"},
 		{"a home path on Linux", "description", "in /home/someone/work", "personal path"},
+		{"a capitalised reviewer lane", "description", "Reviewer-mgit's live check", "working role"},
+		{"a development checkout", "prompt", "a clone of mgit-dev", "checkout name"},
+		{"a sibling product checkout", "description", "the swe-go-2 tree", "checkout name"},
 		{"a lab evidence path", "description", "evidence/MGIT-317/correction/x.txt", "lab path"},
 		{"a lane log path", "description", "see lanes/log/a.md", "lab path"},
 	}
