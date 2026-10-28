@@ -2,8 +2,9 @@
 #
 # MGIT-230.5 could not boot-validate the linux_arm64 daemon because no hosted
 # runner was known to offer /dev/kvm. This job only REPORTS what the runner
-# has; it changes nothing and needs no checkout, no secrets and no token
-# beyond read access. It runs by hand (workflow_dispatch), once. The follow-up
+# has. It needs no checkout, no secrets and no token grant; the only thing
+# it changes is the runner's own udev rule for /dev/kvm, as the amd64 jobs do.
+# It runs by hand (workflow_dispatch), once. The follow-up
 # depends on the answer: KVM present moves the arm64 boot run into free CI;
 # absent keeps arm64 build-verified only.
 # Refs: MGIT-230.5.1
@@ -25,7 +26,18 @@ jobs:
         run: |
           set +e
           echo "== uname"; uname -srm
-          echo "== /dev/kvm"; ls -l /dev/kvm
+          echo "== /dev/kvm before the udev rule"
+          ls -l /dev/kvm || echo "/dev/kvm is absent on this runner"
+          # The same rule the amd64 jobs apply: a /dev/kvm that is present
+          # but mode 0660 would otherwise read as absent. trigger is
+          # asynchronous, so settle before looking again.
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          sudo udevadm settle || true
+          echo "== /dev/kvm after the udev rule"
+          ls -l /dev/kvm || echo "/dev/kvm is absent on this runner"
           echo "== cpuinfo: x86 virtualization flags (expect 0 on arm64)"
           grep -c -E 'vmx|svm' /proc/cpuinfo
           echo "== cpuinfo: arm64 features"
