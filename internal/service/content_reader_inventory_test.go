@@ -63,6 +63,7 @@ var contentReaderClasses = map[string]string{
 	"internal/service/verify.go:VerifyTaskCommits":                      "raw:integrity-not-delivery",
 	"internal/service/worktree.go:existingForkBase":                     "content",
 	"internal/service/worktree.go:resolveBaseCommit":                    "gated:requireDeliverableHistory",
+	"internal/service/merge.go:Merge":                                   "gated:requireDeliverableHistory",
 	"internal/service/worktree.go:resolveBaseRef":                       "raw:resolved-then-gated-by-resolveBaseCommit",
 }
 

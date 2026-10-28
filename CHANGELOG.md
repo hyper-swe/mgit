@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and does not look below a delivered sandbox-land commit; a host commit does
   not stop it. A history that cannot be read is refused rather than passed
   unchecked. See [content recovery](docs/CONTENT-RECOVERY.md).
+- `mgit merge` refuses a source branch that ends at, or is built on, a retained
+  guest commit that was never delivered, for the fast-forward, `--no-ff` and
+  `--squash` strategies, before any ref, index or file changes. Merging host
+  branches works as before. See [content recovery](docs/CONTENT-RECOVERY.md).
 
 - Restore (file or whole tree), cherry-pick, rollback, and projection-conflict
   recovery also require a locally admitted task commit as their content source.
