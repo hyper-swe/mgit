@@ -73,7 +73,7 @@ func setupServiceEnv(t *testing.T) *serviceEnv {
 		diff:     service.NewDiffService(ds, cs, idx),
 		checkout: service.NewCheckoutService(bs, ws, idx),
 		worktree: ws,
-		merge:    service.NewMergeService(repo, bs, ms, cs),
+		merge:    service.NewMergeService(repo, bs, ms, cs).WithLedger(idx),
 		gc:       service.NewGCService(gcs),
 		bundle:   service.NewBundleService(idx, clock),
 		wtSvc:    service.NewWorktreeService(idx, service.NewBranchService(repo, bs, idx), ws, clock),

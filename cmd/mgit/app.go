@@ -174,7 +174,7 @@ func OpenApp(path string) (*App, error) {
 		Diff:            service.NewDiffService(ds, cs, idx),
 		Restore:         service.NewRestoreService(repo, cs, path, idx),
 		Checkout:        service.NewCheckoutService(bs, ws, idx).WithCommits(cs),
-		Merge:           service.NewMergeService(repo, bs, ms, cs),
+		Merge:           service.NewMergeService(repo, bs, ms, cs).WithLedger(idx),
 		GC:              service.NewGCService(gcs),
 		Bundle:          service.NewBundleService(idx, clock),
 		Sync:            service.NewSyncService(repo, ws, cs, boundTask, clock),

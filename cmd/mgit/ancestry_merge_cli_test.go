@@ -23,6 +23,14 @@ func TestAncestryAdmission_CLI_MergeOfAnUndeliveredBranchIsRefused(t *testing.T)
 	require.NoError(t, os.WriteFile(filepath.Join(wt, "retained.txt"), []byte("retained guest bytes\n"), 0o600))
 	require.NoError(t, runCLI(t, "commit", "-a", "-m", "a step that stays undelivered"))
 
+	t.Chdir(root)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "hostside.txt"), []byte("host\n"), 0o600))
+	require.NoError(t, runCLI(t, "commit", "-a", "--task-id", "HOST-1", "-m", "host side"))
+	// The merge is made while the branch is still admissible, as a merge already
+	// in a store would have been; merge now refuses an undelivered source.
+	require.NoError(t, runCLI(t, "merge", "task/MGIT-323", "--no-ff", "-m", "merge the branch"))
+
+	// The branch's commit is then retained undelivered.
 	idx, err := index.New(filepath.Join(root, ".mgit", "index.db"), time.Now)
 	require.NoError(t, err)
 	rows, err := idx.GetTaskCommits(context.Background(), "MGIT-323")
@@ -31,11 +39,6 @@ func TestAncestryAdmission_CLI_MergeOfAnUndeliveredBranchIsRefused(t *testing.T)
 		TaskID: "AUDIT-pending", CommitHash: rows[len(rows)-1].CommitHash, ContentHash: "retained", Origin: index.OriginLand,
 	}))
 	require.NoError(t, idx.Close())
-
-	t.Chdir(root)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "hostside.txt"), []byte("host\n"), 0o600))
-	require.NoError(t, runCLI(t, "commit", "-a", "--task-id", "HOST-1", "-m", "host side"))
-	require.NoError(t, runCLI(t, "merge", "task/MGIT-323", "--no-ff", "-m", "merge the branch"))
 
 	fork := filepath.Join(t.TempDir(), "fork")
 	err = runCLI(t, "work", fork, "--task-id", "MGIT-323.9", "--base", "HEAD")
