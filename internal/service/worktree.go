@@ -198,7 +198,7 @@ func (s *WorktreeService) resolveForkBase(ctx context.Context, opts model.Worktr
 	if existing, err := s.branch.GetBranch(ctx, branchName); err == nil {
 		// Re-provisioning a task whose branch ends at a retained guest commit
 		// would put those bytes on the host disk. Refs: MGIT-323.3
-		if err := s.indexStore.RequireDeliverableTip(ctx, existing.HeadCommit); err != nil {
+		if err := requireDeliverableHistory(ctx, s.indexStore, s.commits, existing.HeadCommit); err != nil {
 			return "", fmt.Errorf("worktree for %s: branch %s ends at a retained guest commit: %w; its host worktree cannot be re-created until that commit is delivered", opts.TaskID, branchName, err)
 		}
 		return s.existingForkBase(ctx, opts, branchName, existing.HeadCommit)
@@ -347,7 +347,7 @@ func (s *WorktreeService) resolveBaseCommit(ctx context.Context, baseRef string)
 	}
 	// A retained guest commit that was never delivered is not a base.
 	// Refs: MGIT-323.2
-	if err := s.indexStore.RequireDeliverableTip(ctx, hash); err != nil {
+	if err := requireDeliverableHistory(ctx, s.indexStore, s.commits, hash); err != nil {
 		return "", fmt.Errorf("--base %s: %w; choose a delivered base: HEAD, a host branch or a delivered task commit", baseRef, err)
 	}
 	return hash, nil

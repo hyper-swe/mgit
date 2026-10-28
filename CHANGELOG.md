@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a task whose branch ends at a retained guest commit refuse that commit when it was
   never delivered, before any branch, worktree, ref or file changes. Host commits, `HEAD`, branch names and branches with no ledger row work
   as before. See [content recovery](docs/CONTENT-RECOVERY.md).
+- The same three commands also refuse a commit that is built on a retained,
+  undelivered guest commit, such as a host commit made on top of one, or a merge
+  of its branch. The check follows every parent, so the merged-in side counts,
+  and does not look below a delivered sandbox-land commit; a host commit does
+  not stop it. A history that cannot be read is refused rather than passed
+  unchecked. See [content recovery](docs/CONTENT-RECOVERY.md).
 
 - Restore (file or whole tree), cherry-pick, rollback, and projection-conflict
   recovery also require a locally admitted task commit as their content source.

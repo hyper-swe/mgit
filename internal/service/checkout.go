@@ -17,6 +17,7 @@ type CheckoutService struct {
 	branches  *gitstore.BranchStore
 	worktrees *gitstore.WorktreeStore
 	gate      *index.Store
+	commits   commitReader
 }
 
 // NewCheckoutService creates a CheckoutService backed by the given stores. The
@@ -28,6 +29,13 @@ func NewCheckoutService(bs *gitstore.BranchStore, ws *gitstore.WorktreeStore, id
 		worktrees: ws,
 		gate:      idx,
 	}
+}
+
+// WithCommits wires the commit reader the branch-tip history check walks.
+// Refs: MGIT-323.5
+func (s *CheckoutService) WithCommits(c commitReader) *CheckoutService {
+	s.commits = c
+	return s
 }
 
 // CheckoutResult holds the outcome of a checkout operation, suitable for
@@ -57,7 +65,7 @@ func (s *CheckoutService) Checkout(ctx context.Context, name string) (*CheckoutR
 	if s.gate == nil {
 		return nil, fmt.Errorf("checkout: no content ledger is wired, so the branch tip cannot be checked")
 	}
-	if err := s.gate.RequireDeliverableTip(ctx, br.HeadCommit); err != nil {
+	if err := requireDeliverableHistory(ctx, s.gate, s.commits, br.HeadCommit); err != nil {
 		return nil, fmt.Errorf("checkout: branch %s ends at a retained guest commit: %w; stay on the current branch until it is delivered", name, err)
 	}
 

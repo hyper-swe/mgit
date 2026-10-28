@@ -66,3 +66,11 @@ the commands above: a commit that came from a sandbox land and was never
 delivered is not a base and not a checkout target. All three refuse before anything
 changes, and tell you to choose another base or stay on your branch. Commits with no ledger row, host commits, `HEAD` and ordinary branches
 are unaffected.
+
+The rule covers history, not only the commit you name: a commit built on an
+undelivered guest commit, for example one you made on the host on top of it, or a
+merge of its branch, is refused too, and the message names the guest commit
+underneath. mgit follows every parent until it reaches a delivered sandbox-land
+commit, which vouches for everything below it, or the first commit. A host commit
+does not vouch for what is under it. A history mgit cannot read is refused rather
+than passed unchecked.

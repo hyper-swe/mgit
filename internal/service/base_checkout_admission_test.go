@@ -51,7 +51,7 @@ func TestBaseAdmission_CheckoutRefusesBranchAtUndeliveredContent(t *testing.T) {
 	before, err := e.repo.Head()
 	require.NoError(t, err)
 
-	svc := NewCheckoutService(e.bs, gitstore.NewWorktreeStore(e.repo), e.idx)
+	svc := NewCheckoutService(e.bs, gitstore.NewWorktreeStore(e.repo), e.idx).WithCommits(e.cs)
 	_, err = svc.Checkout(ctx, "at-refused")
 	require.ErrorContains(t, err, "undelivered")
 
@@ -70,7 +70,7 @@ func TestBaseAdmission_CheckoutKeepsPlainHostBranchesWorking(t *testing.T) {
 	// A host branch whose tip was never indexed (no task ledger row at all).
 	require.NoError(t, e.bs.CreateBranch(ctx, &model.Branch{Name: "plain-host", HeadCommit: head}))
 
-	svc := NewCheckoutService(e.bs, gitstore.NewWorktreeStore(e.repo), e.idx)
+	svc := NewCheckoutService(e.bs, gitstore.NewWorktreeStore(e.repo), e.idx).WithCommits(e.cs)
 	res, err := svc.Checkout(ctx, "plain-host")
 	require.NoError(t, err)
 	require.Equal(t, "switched", res.Status)
