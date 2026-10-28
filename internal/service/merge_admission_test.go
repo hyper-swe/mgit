@@ -44,7 +44,9 @@ func TestMergeAdmission_AHostBranchStillMerges(t *testing.T) {
 	svc := NewMergeService(e.repo, e.bs, gitstore.NewMergeStore(e.repo), e.cs).WithLedger(e.idx)
 	res, err := svc.Merge(ctx, MergeRequest{SourceBranch: "plain-host"})
 	require.NoError(t, err)
-	require.Equal(t, "fast-forward", res.Status)
+	// plain-host sits at HEAD, so there is nothing to integrate (MGIT-326);
+	// the point here is that the admission gate does not refuse it.
+	require.Equal(t, "already up to date", res.Status)
 }
 
 func TestMergeAdmission_WithoutALedgerFailsClosed(t *testing.T) {

@@ -89,6 +89,12 @@ func (s *MergeService) Merge(ctx context.Context, req MergeRequest) (*MergeResul
 		strategy = MergeAuto
 	}
 
+	switch strategy {
+	case MergeAuto, MergeNoFF, MergeSquash:
+	default:
+		return nil, fmt.Errorf("merge: unknown strategy %q", strategy)
+	}
+
 	// Resolve source branch tip + current HEAD.
 	src, err := s.branches.GetBranch(ctx, req.SourceBranch)
 	if err != nil {
@@ -126,6 +132,24 @@ func (s *MergeService) Merge(ctx context.Context, req MergeRequest) (*MergeResul
 	}
 	if err := requireDeliverableHistory(ctx, s.gate, s.commits, src.HeadCommit); err != nil {
 		return nil, fmt.Errorf("merge: branch %s ends at, or is built on, a retained guest commit: %w; merge it after that commit is delivered", req.SourceBranch, err)
+	}
+
+	// A source that is already an ancestor of HEAD has nothing to integrate:
+	// every strategy reports up to date instead of adding a commit.
+	// Refs: MGIT-326
+	upToDate, err := s.merge.IsAncestor(ctx, src.HeadCommit, headHash)
+	if err != nil {
+		return nil, fmt.Errorf("merge: ancestor check: %w", err)
+	}
+	if upToDate {
+		return &MergeResult{
+			Strategy:   strategy,
+			Source:     req.SourceBranch,
+			Target:     currentBranch,
+			MergedHash: headHash,
+			FastFwd:    false,
+			Status:     "already up to date",
+		}, nil
 	}
 
 	// Conflict detection (skipped only for fast-forward, where there is
