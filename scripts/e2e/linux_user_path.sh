@@ -119,6 +119,30 @@ gwd="$(cd "$P" && timeout 120 mgit run -- pwd 2>&1)"
 echo "  the guest works in the worktree at its host path ($where)"
 echo "  PASS"
 
+step "6b the mount point was made by an overlay at the deepest existing ancestor, not by a copy"
+# Outside /tmp the guest must make the worktree's mount point beneath a
+# directory the base image ships. On Linux libkrun the repair mounts an overlay
+# AT that directory (the directory itself as the lower layer, an upper in
+# memory): nothing is copied into guest memory, and the directory's contents
+# stay visible. The seeded tmpfs it replaces shows as fstype tmpfs. The
+# deepest mount above the worktree is read from the guest's own mountinfo, so
+# a pass names the directory that was repaired. Refs: MGIT-230.8
+if [ "$where" = "outside /tmp" ]; then
+	mi="$(cd "$P" && timeout 120 mgit run -- cat /proc/self/mountinfo 2>&1)"
+	anc="$(printf '%s\n' "$mi" | awk -v p="$PH" '$5 != p && index(p "/", $5 "/") == 1 && length($5) > best { best = length($5); line = $0 } END { print line }')"
+	[ -n "$anc" ] || fail "overlay" "no mount above the worktree in the guest's mountinfo: $(first "$mi" 2)"
+	mp="$(printf '%s\n' "$anc" | awk '{print $5}')"
+	echo "  repaired directory: $mp"
+	printf '  %s\n' "$anc"
+	case "$anc" in
+	*" - overlay overlay "*"lowerdir=$mp,"*) ;;
+	*) fail "overlay" "the deepest mount above the worktree ($mp) is not an overlay with itself as the lower layer: $anc" ;;
+	esac
+	echo "  PASS"
+else
+	echo "  skipped: the worktree is under /tmp, where no repair is needed"
+fi
+
 step "7 sync a host edit into the running guest"
 printf 'v2\n' >"$P/f.txt"
 out="$(cd "$R" && mgit sandbox sync --task-id "$TASK" --force 2>&1)" || fail "sync" "$(first "$out")"
