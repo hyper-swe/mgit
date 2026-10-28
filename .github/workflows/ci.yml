@@ -433,8 +433,11 @@ jobs:
 
   # The free hosted arm64 runner exposes no /dev/kvm (probe run 40688736659),
   # so no guest boots here; everything else about linux/arm64 that needs no
-  # KVM runs on the same runner: the build, the whole test suite and the
-  # vulnerability scan. The arm64 boot leg waits on a host that has KVM.
+  # KVM runs on the same runner: the build, the test suite and the
+  # vulnerability scan. The tests that boot a VM cannot run without KVM; they
+  # skip, and the step after the tests lists every skip with its reason, so a
+  # skip is read and not assumed. The arm64 boot leg waits on a host that has
+  # KVM.
   # Refs: MGIT-230.5.2
   test-linux-arm64:
     name: Test (linux/arm64, no KVM)
@@ -452,8 +455,17 @@ jobs:
       - name: Build every package
         run: go build ./...
 
-      - name: Run tests
-        run: go test ./... -count=1
+      - name: Run tests (VM tests skip without KVM)
+        run: |
+          set -o pipefail
+          go test ./... -count=1 -v 2>&1 | tee "$RUNNER_TEMP/arm64-test.log"
+
+      - name: Skipped tests and their reasons
+        if: always()
+        run: |
+          n=$(grep -c -- '--- SKIP' "$RUNNER_TEMP/arm64-test.log" || true)
+          echo "skipped tests: $n"
+          grep -A1 -- '--- SKIP' "$RUNNER_TEMP/arm64-test.log" | grep -v '^--$' || true
 
       - name: Run vulnerability check
         run: |
