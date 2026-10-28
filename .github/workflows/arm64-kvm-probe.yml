@@ -1,0 +1,43 @@
+# One-time probe: does the free GitHub-hosted arm64 runner expose KVM?
+#
+# MGIT-230.5 could not boot-validate the linux_arm64 daemon because no hosted
+# runner was known to offer /dev/kvm. This job only REPORTS what the runner
+# has; it changes nothing and needs no checkout, no secrets and no token
+# beyond read access. It runs by hand (workflow_dispatch), once. The follow-up
+# depends on the answer: KVM present moves the arm64 boot run into free CI;
+# absent keeps arm64 build-verified only.
+# Refs: MGIT-230.5.1
+name: arm64 KVM probe
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  probe:
+    name: KVM on ubuntu-24.04-arm
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Report what the runner exposes
+        shell: bash
+        run: |
+          set +e
+          echo "== uname"; uname -srm
+          echo "== /dev/kvm"; ls -l /dev/kvm
+          echo "== cpuinfo: x86 virtualization flags (expect 0 on arm64)"
+          grep -c -E 'vmx|svm' /proc/cpuinfo
+          echo "== cpuinfo: arm64 features"
+          grep -E 'Features|CPU implementer' /proc/cpuinfo | head -4
+          echo "== dmesg (kvm), if permitted"
+          dmesg 2>&1 | grep -i kvm | head -20
+          echo "== id and groups"; id; groups
+          echo "== open /dev/kvm read-write"
+          if [ -e /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+            python3 -c 'import os; fd=os.open("/dev/kvm", os.O_RDWR); print("opened /dev/kvm read-write: KVM present"); os.close(fd)'
+            echo "open rc=$?"
+          else
+            echo "KVM absent or not accessible"
+          fi
+          exit 0
