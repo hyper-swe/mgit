@@ -458,14 +458,13 @@ jobs:
       - name: Run tests (VM tests skip without KVM)
         run: |
           set -o pipefail
-          go test ./... -count=1 -v 2>&1 | tee "$RUNNER_TEMP/arm64-test.log"
+          go test ./... -count=1 -json | tee "$RUNNER_TEMP/arm64-test.json"
 
-      - name: Skipped tests and their reasons
+      # go test -json carries each skip's reason with its test, subtests
+      # included; the script prints them, and any failed test's output.
+      - name: Skipped and failed tests, with reasons
         if: always()
-        run: |
-          n=$(grep -c -- '--- SKIP' "$RUNNER_TEMP/arm64-test.log" || true)
-          echo "skipped tests: $n"
-          grep -A1 -- '--- SKIP' "$RUNNER_TEMP/arm64-test.log" | grep -v '^--$' || true
+        run: python3 scripts/ci/list-go-skips.py < "$RUNNER_TEMP/arm64-test.json"
 
       - name: Run vulnerability check
         run: |
