@@ -7,6 +7,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
+	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
 // MergeStrategy controls how the source branch is integrated into HEAD.
@@ -54,6 +55,7 @@ type MergeService struct {
 	merge    *gitstore.MergeStore
 	commits  *gitstore.CommitStore
 	repo     *gitstore.Repository
+	gate     *index.Store
 }
 
 // NewMergeService creates a MergeService with the given store dependencies.
@@ -64,6 +66,14 @@ func NewMergeService(repo *gitstore.Repository, bs *gitstore.BranchStore, ms *gi
 		commits:  cs,
 		repo:     repo,
 	}
+}
+
+// WithLedger gives the merge the content ledger that decides which source
+// branches may be integrated. Without one, Merge refuses rather than merging
+// ungated. Refs: MGIT-323.4
+func (s *MergeService) WithLedger(idx *index.Store) *MergeService {
+	s.gate = idx
+	return s
 }
 
 // Merge integrates SourceBranch into the current HEAD branch using the
@@ -105,6 +115,17 @@ func (s *MergeService) Merge(ctx context.Context, req MergeRequest) (*MergeResul
 			FastFwd:    false,
 			Status:     "already up to date",
 		}, nil
+	}
+
+	// A source that ends at, or is built on, a retained guest commit that was
+	// never delivered would put those bytes on the host branch and disk, for
+	// every strategy. Refuse before any ref, index or file changes.
+	// Refs: MGIT-323.4
+	if s.gate == nil {
+		return nil, fmt.Errorf("merge: no content ledger is wired, so the source branch cannot be checked")
+	}
+	if err := requireDeliverableHistory(ctx, s.gate, s.commits, src.HeadCommit); err != nil {
+		return nil, fmt.Errorf("merge: branch %s ends at, or is built on, a retained guest commit: %w; merge it after that commit is delivered", req.SourceBranch, err)
 	}
 
 	// Conflict detection (skipped only for fast-forward, where there is

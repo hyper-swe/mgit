@@ -74,3 +74,8 @@ underneath. mgit follows every parent until it reaches a delivered sandbox-land
 commit, which vouches for everything below it, or the first commit. A host commit
 does not vouch for what is under it. A history mgit cannot read is refused rather
 than passed unchecked.
+
+`mgit merge` applies the same rule to the source branch, for the fast-forward,
+`--no-ff` and `--squash` strategies alike: a branch that ends at, or is built on,
+an undelivered guest commit is refused before any ref or file changes, and mgit
+tells you to merge it after that commit is delivered.
