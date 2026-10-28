@@ -394,3 +394,15 @@ go build ./... && go test ./internal/sandboxd/... -count=1
 Refs: ADR-010, SEC-04, FR-17.8
 
 Refs: MGIT-48, MGIT-44, MGIT-61.2
+
+## libkrunfw source obligations
+
+libkrunfw carries a GPL-2.0-only kernel, so every release that ships a
+libkrunfw binary, bottle or tarball owes its complete corresponding source.
+
+- [ ] Never delete a release, or its source assets, that carried a libkrunfw
+      binary, bottle or tarball for at least three years after it was last
+      offered.
+- [ ] Keep swe@hyperswe.com monitored, and answer source requests within days.
+- [ ] When the libkrunfw pin changes, publish the new source set before or
+      with the first binary.

@@ -333,7 +333,7 @@ by test in `scripts/e2e/libkrun_linux_column.sh`.
 
 The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`, but on Linux that builds the firecracker daemon, which boots only a kernel + rootfs image and refuses `sandbox sync` and `sandbox export`: use the release archive for the agent loop ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md)).
 
-- **macOS** requires Apple Silicon (arm64), macOS 14+, and **libkrunfw**, the guest kernel library. libkrunfw is a separate library under its own licenses (LGPL-2.1-only AND GPL-2.0-only), so mgit's archive never carries it. With Homebrew, it comes from mgit's own tap with mgit:
+- **macOS** requires Apple Silicon (arm64), macOS 14+, and **libkrunfw**, the guest kernel library. libkrunfw is a separate library under its own licenses (LGPL-2.1-only AND GPL-2.0-only), and on macOS it is a separate install, not part of mgit's archive. With Homebrew, it comes from mgit's own tap with mgit:
 
   ```bash
   brew trust hyper-swe/tap

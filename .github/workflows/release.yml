@@ -352,6 +352,7 @@ jobs:
           sums="$(gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern checksums.txt --output - )"
           for want in "libkrunfw-$LIBKRUNFW_VERSION-kernel-linux-$LIBKRUNFW_KERNEL_VERSION.tar.xz" \
                       "libkrunfw-$LIBKRUNFW_VERSION-source.tar.gz" "libkrunfw-$LIBKRUNFW_VERSION-prebuilt-aarch64.tgz" \
+                      "libkrunfw_${LIBKRUNFW_VERSION}_darwin_arm64.tar.gz" \
                       "libkrun-$LIBKRUN_VERSION-source.tar.gz"; do
             printf '%s\n' "$assets" | grep -qx "$want" || { echo "FATAL: release $TAG has no $want"; exit 1; }
             printf '%s\n' "$sums" | grep -q "  $want\$" || { echo "FATAL: checksums.txt does not cover $want"; exit 1; }

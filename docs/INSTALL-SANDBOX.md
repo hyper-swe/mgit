@@ -183,7 +183,7 @@ from source, with the pinned versions, is `scripts/sandbox-image/build-libkrun.s
 libkrunfw is the library the daemon's libkrun loads the guest kernel from. It
 is a separate library under its own licenses, LGPL-2.1-only for the library
 code and GPL-2.0-only for the bundled Linux kernel and the patches applied to
-it, so mgit's release archive never carries it. You get it in one of two ways.
+it. On macOS it is a separate install, not part of mgit's release archive. You get it in one of two ways.
 
 **With Homebrew.** The mgit formula depends on `hyper-swe/tap/libkrunfw`, from
 the same tap as mgit. Trust the tap once, then install mgit:

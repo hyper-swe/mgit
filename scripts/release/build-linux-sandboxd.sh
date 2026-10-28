@@ -103,7 +103,7 @@ cat >"$out/THIRD_PARTY/SOURCES.txt" <<EOF
 mgit-sandboxd in this archive links two libraries shipped beside it in lib/:
 
   $krun_so     libkrun $LIBKRUN_VERSION (Apache-2.0), https://github.com/containers/libkrun
-  $krunfw_so   libkrunfw $LIBKRUNFW_VERSION, https://github.com/containers/libkrunfw
+  $krunfw_so   libkrunfw $LIBKRUNFW_VERSION, https://github.com/libkrun/libkrunfw
                its glue code is LGPL-2.1-only; it carries a Linux $LIBKRUNFW_KERNEL_VERSION
                kernel (GPL-2.0-only) that runs only inside the guest microVM
 
@@ -117,8 +117,9 @@ ships them, as release assets:
       libkrunfw at $LIBKRUNFW_VERSION: the kernel patches, the kernel
       configuration and the build scripts applied to that kernel
   libkrunfw-$LIBKRUNFW_VERSION-prebuilt-aarch64.tgz
-      upstream's prebuilt kernel image (kernel.c) the macOS libkrunfw is built
-      from, byte-identical to upstream's release asset
+      for reference, not source: upstream's prebuilt kernel image (kernel.c,
+      object code) the macOS libkrunfw is built from, byte-identical to
+      upstream's release asset
       (sha256 $LIBKRUNFW_PREBUILT_SHA256)
   libkrun-$LIBKRUN_VERSION-source.tar.gz
       libkrun at $LIBKRUN_VERSION

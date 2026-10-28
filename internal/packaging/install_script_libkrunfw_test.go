@@ -121,7 +121,7 @@ func TestInstallScript_MacOS_SandboxEnabledAndAccepted_InstallsLibkrunfwBesideLi
 	assert.Less(t, notice, fetch, "the license notice must come before the download")
 	for _, want := range []string{
 		"libkrunfw " + libkrunfwTestVersion,
-		"https://github.com/containers/libkrunfw/releases/tag/v" + libkrunfwTestVersion,
+		"https://github.com/libkrun/libkrunfw/releases/tag/v" + libkrunfwTestVersion,
 		"https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.91.tar.xz",
 	} {
 		assert.Contains(t, out[:fetch], want, "the notice before the download must name %q", want)

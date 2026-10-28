@@ -212,9 +212,10 @@ fi
 # --- libkrunfw: a separate, opt-in download (Apple silicon macOS) -----------
 # The macOS sandbox needs libkrunfw, the library that carries the guest Linux
 # kernel. It is distributed under its own licenses (LGPL-2.1-only for the
-# library, GPL-2.0-only for the kernel and its patches), so mgit's archive
-# never carries it. This step fetches it on its own, and only when the user
-# enables the sandbox (MGIT_SANDBOX=1) and says yes to a question that names
+# library, GPL-2.0-only for the kernel and its patches) and ships as a
+# separate download, not in mgit's macOS archive. This step fetches it, and
+# only when the user enables the sandbox (MGIT_SANDBOX=1) and says yes to a
+# question that names
 # the licenses and the source. It is verified against its own checksums.txt
 # and installed beside libkrun, in $PREFIX/lib/mgit, where the daemon looks
 # for it, with its license texts, notice and source offer. It never writes
@@ -224,28 +225,28 @@ fi
 # LICENSE-LGPL-2.1-only, NOTICE.txt and SOURCE-OFFER.txt.
 LIBKRUNFW_VERSION="5.5.0"
 LIBKRUNFW_KERNEL="linux-6.12.91"
-LIBKRUNFW_SOURCE="https://github.com/containers/libkrunfw/releases/tag/v$LIBKRUNFW_VERSION"
+LIBKRUNFW_SOURCE="https://github.com/libkrun/libkrunfw/releases/tag/v$LIBKRUNFW_VERSION"
 LIBKRUNFW_KERNEL_SOURCE="https://cdn.kernel.org/pub/linux/kernel/v6.x/$LIBKRUNFW_KERNEL.tar.xz"
-# TODO(maintainer): decision a. Where the tarball and its checksums.txt are
-# hosted is not decided, so there is no default location: until it is, the
-# step stops and says so rather than fetching from a guessed URL.
-LIBKRUNFW_DEFAULT_BASE=""
+# The tarball and its checksums.txt are published in the same mgit release as
+# the source assets, so the default location is this release.
+LIBKRUNFW_DEFAULT_BASE="$base_url"
 LIBKRUNFW_FILES="libkrunfw.5.dylib LICENSE-GPL-2.0-only LICENSE-LGPL-2.1-only NOTICE.txt SOURCE-OFFER.txt"
 
 libkrunfw_notice() {
 	say ""
 	say "==> libkrunfw $LIBKRUNFW_VERSION, the guest kernel library the macOS sandbox needs"
-	say "    libkrunfw is a separate library from https://github.com/containers/libkrunfw,"
-	say "    not part of mgit. It bundles a Linux kernel ($LIBKRUNFW_KERNEL)."
+	say "    libkrunfw is a separate library from https://github.com/libkrun/libkrunfw,"
+	say "    distributed separately from mgit. It bundles a Linux kernel ($LIBKRUNFW_KERNEL)."
 	say "    Licenses: LGPL-2.1-only AND GPL-2.0-only (LGPL-2.1-only for the library code,"
 	say "    GPL-2.0-only for the bundled kernel and the patches applied to it)."
 	say "    Source:"
 	say "      $LIBKRUNFW_SOURCE"
 	say "      $LIBKRUNFW_KERNEL_SOURCE"
 	say "    Every mgit release also hosts the corresponding source, under its checksums.txt:"
-	say "    the kernel tarball, libkrunfw's source, patches and configuration, and the"
-	say "    prebuilt asset (libkrunfw-v$LIBKRUNFW_VERSION-prebuilt-aarch64.tgz) the library is built from."
-	say "    Questions, or a copy on other media: swe@hyperswe.com."
+	say "    the kernel tarball and libkrunfw's source, patches and configuration; and, for"
+	say "    reference, the prebuilt kernel image (libkrunfw-v$LIBKRUNFW_VERSION-prebuilt-aarch64.tgz) the library is built from."
+	say "    If any link stops working, write to swe@hyperswe.com for the complete source,"
+	say "    at no charge beyond the cost of physically providing it."
 	say "    The download carries both license texts and the full source offer."
 }
 
