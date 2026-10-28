@@ -52,7 +52,7 @@ func requireDeliverableHistory(ctx context.Context, idx *index.Store, commits co
 		}
 		parents, err := commits.Parents(ctx, hash)
 		if err != nil {
-			return fmt.Errorf("%w: the history of %s cannot be checked: commit %s could not be read: %v", index.ErrUndeliveredTip, tip, hash, err)
+			return fmt.Errorf("%w: the history of %s cannot be checked: commit %s could not be read: %w", index.ErrUndeliveredTip, tip, hash, err)
 		}
 		queue = append(queue, parents...)
 	}
