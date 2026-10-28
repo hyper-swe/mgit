@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -139,4 +141,45 @@ func TestMakeMountPoint_NeverShadowsTheRoot(t *testing.T) {
 	require.Error(t, err)
 	assert.Empty(t, shadowed)
 	assert.Contains(t, err.Error(), "root")
+}
+
+// The repair is visible on a passing run: one record names the directory that
+// was shadowed and the mount point it made room for, so a green job shows WHICH
+// directory the guest repaired. Refs: MGIT-230.8
+func TestMakeMountPoint_LogsTheShadowedDirectoryOnASuccessfulRepair(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	calls := 0
+	err := makeMountPoint("/home/alice/src/wt", mountPointOps{
+		mkdirAll: func(string, os.FileMode) error {
+			calls++
+			if calls == 1 {
+				return errCopyUp
+			}
+			return nil
+		},
+		stat:            statIn("/", "/home"),
+		isCopyUpRefusal: isCopyUp,
+		shadow:          func(string) error { return nil },
+		logger:          log,
+	})
+	require.NoError(t, err)
+	out := buf.String()
+	assert.Contains(t, out, "event=mount_point_shadowed")
+	assert.Contains(t, out, "dir=/home")
+	assert.Contains(t, out, "path=/home/alice/src/wt")
+}
+
+// A mount point that needs no repair says nothing: the line means a repair ran.
+func TestMakeMountPoint_LogsNothingWhenNoRepairIsNeeded(t *testing.T) {
+	var buf bytes.Buffer
+	err := makeMountPoint("/tmp/wt", mountPointOps{
+		mkdirAll:        func(string, os.FileMode) error { return nil },
+		stat:            statIn("/", "/tmp"),
+		isCopyUpRefusal: isCopyUp,
+		shadow:          func(string) error { t.Fatal("no shadow expected"); return nil },
+		logger:          slog.New(slog.NewTextHandler(&buf, nil)),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, buf.String())
 }
