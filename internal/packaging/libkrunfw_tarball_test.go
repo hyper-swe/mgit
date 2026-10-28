@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -59,7 +60,7 @@ func TestSourceOfferScript_WithoutATag_IsRefused(t *testing.T) {
 }
 
 // prebuiltFixture writes a prebuilt-asset lookalike (libkrunfw/Makefile and the
-// two licence texts) and returns it with its sha256.
+// two license texts) and returns it with its sha256.
 func prebuiltFixture(t *testing.T) (string, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "libkrunfw-prebuilt-aarch64.tgz")
@@ -123,7 +124,7 @@ func tarballEntries(t *testing.T, path string) map[string]string {
 	got := map[string]string{}
 	for {
 		h, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return got
 		}
 		require.NoError(t, err)
@@ -156,10 +157,15 @@ func TestBuildDarwinLibkrunfw_AssemblesTheTarballInstallShTakes(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(out, name)) //nolint:gosec // a t.TempDir path
 	require.NoError(t, err)
 	sum := sha256.Sum256(data)
-	require.NoError(t, os.WriteFile(filepath.Join(out, "checksums.txt"), []byte(hex.EncodeToString(sum[:])+"  "+name+"\n"), 0o600))
+	dl := t.TempDir()
+	dlRoot, err := os.OpenRoot(dl)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = dlRoot.Close() })
+	require.NoError(t, dlRoot.WriteFile(name, data, 0o600))
+	require.NoError(t, dlRoot.WriteFile("checksums.txt", []byte(hex.EncodeToString(sum[:])+"  "+name+"\n"), 0o600))
 	prefix := t.TempDir()
 	res, err := runInstall(t, macOSRelease(t), prefix, onMacOS(t),
-		"MGIT_SANDBOX=1", "MGIT_LIBKRUNFW_ACCEPT=yes", "MGIT_LIBKRUNFW_BASE=file://"+out)
+		"MGIT_SANDBOX=1", "MGIT_LIBKRUNFW_ACCEPT=yes", "MGIT_LIBKRUNFW_BASE=file://"+dl)
 	require.NoError(t, err, "%s", res)
 	assert.FileExists(t, filepath.Join(prefix, "lib", "mgit", "libkrunfw.5.dylib"))
 	assert.FileExists(t, filepath.Join(prefix, "share", "mgit", "THIRD_PARTY", "libkrunfw", "SOURCE-OFFER.txt"))
