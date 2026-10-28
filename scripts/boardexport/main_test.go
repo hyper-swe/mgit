@@ -25,6 +25,7 @@ func TestTheCommittedBoardCarriesNoAgentIdentities(t *testing.T) {
 	assert.Zero(t, assignees, "nodes still name who claimed them")
 	assert.Zero(t, agents, "the agents section still lists identities")
 	assert.Zero(t, sessions, "the sessions section still lists identities")
+	assert.Zero(t, agentWritten(d), "nodes still carry agent-written notes: cut the board with scripts/boardexport, never commit a raw tracker export (MGIT-327.1)")
 	for _, n := range d.Nodes {
 		assert.Contains(t, []string{"", "cli", "mcp"}, n.Creator,
 			"%s names who filed it: a creator is the interface (cli, mcp), never an identity (MGIT-264)", n.ID)
