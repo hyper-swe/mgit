@@ -327,6 +327,55 @@ jobs:
           path: ${{ runner.temp }}/dist-sources/
           if-no-files-found: error
 
+  # The macOS libkrunfw tarball install.sh's opt-in step downloads, assembled
+  # for every pull request by scripts/release/build-darwin-libkrunfw.sh from
+  # upstream's prebuilt kernel image (checked against its pin) and smoke-tested
+  # by linking a program against the library it holds. A release run uploads
+  # it for the release to publish beside the source, under the signed
+  # checksums. Refs: MGIT-306
+  darwin-libkrunfw:
+    name: macOS libkrunfw tarball (arm64)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch upstream's prebuilt kernel image
+        run: |
+          . scripts/sandbox-image/pins.env
+          bash scripts/ci/guard-fetch.sh -t 120 -l libkrunfw-prebuilt -c "rm -f '$RUNNER_TEMP/libkrunfw-prebuilt-aarch64.tgz'" -- \
+            curl -fsSL -o "$RUNNER_TEMP/libkrunfw-prebuilt-aarch64.tgz" "$LIBKRUNFW_PREBUILT_URL"
+
+      - name: Assemble the tarball
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then tag="$GITHUB_REF_NAME"; else tag="v0.0.0-ci.$GITHUB_RUN_ID"; fi
+          bash scripts/release/build-darwin-libkrunfw.sh \
+            "$RUNNER_TEMP/libkrunfw-prebuilt-aarch64.tgz" "$RUNNER_TEMP/dist-libkrunfw" "$tag"
+
+      - name: The tarball holds a library a program can link, and the notices
+        run: |
+          . scripts/sandbox-image/pins.env
+          ver="${LIBKRUNFW_VERSION#v}"
+          x="$RUNNER_TEMP/libkrunfw-check"; mkdir -p "$x"
+          tar -xzf "$RUNNER_TEMP/dist-libkrunfw/libkrunfw_${ver}_darwin_arm64.tar.gz" -C "$x"
+          for f in libkrunfw.5.dylib LICENSE-GPL-2.0-only LICENSE-LGPL-2.1-only NOTICE.txt SOURCE-OFFER.txt; do
+            test -f "$x/$f" || { echo "FATAL: the tarball has no $f"; exit 1; }
+          done
+          cat >"$x/t.c" <<'CSRC'
+          #include <stdio.h>
+          int krunfw_get_version(void);
+          int main(void) { printf("%d\n", krunfw_get_version()); return 0; }
+          CSRC
+          cc "$x/t.c" "$x/libkrunfw.5.dylib" -Wl,-rpath,"$x" -o "$x/t"
+          test "$("$x/t")" = 5 || { echo "FATAL: the library's ABI version is not 5"; exit 1; }
+          grep -q "linux-$LIBKRUNFW_KERNEL_VERSION" "$x/SOURCE-OFFER.txt"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.ref_type == 'tag'
+        with:
+          name: darwin-libkrunfw
+          path: ${{ runner.temp }}/dist-libkrunfw/
+          if-no-files-found: error
+
   # The macOS sandbox daemon, built and verified for every pull request by
   # scripts/release/build-darwin-sandboxd.sh; the release ships the artifact
   # this job uploads in its own run. Carry a patched libkrun in the macOS
