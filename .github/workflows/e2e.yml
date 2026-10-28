@@ -359,7 +359,9 @@ jobs:
           # Exactly the five files: a stray entry (macOS tar's ._ AppleDouble
           # files, for one) fails the job.
           want="LICENSE-GPL-2.0-only LICENSE-LGPL-2.1-only NOTICE.txt SOURCE-OFFER.txt libkrunfw.5.dylib"
-          got="$(tar -tzf "$tarball" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+          # python's reader, not tar -t: macOS tar folds the ._ entries into the
+          # file they belong to and never lists them.
+          got="$(python3 -I -m tarfile -l "$tarball" | sed 's/ *$//' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
           test "$got" = "$want" || { echo "FATAL: the tarball holds: $got"; exit 1; }
           x="$RUNNER_TEMP/libkrunfw-check"; mkdir -p "$x"
           tar -xzf "$RUNNER_TEMP/dist-libkrunfw/libkrunfw_${ver}_darwin_arm64.tar.gz" -C "$x"
