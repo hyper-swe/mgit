@@ -434,6 +434,7 @@ func mountWorktree(logger *slog.Logger) error {
 		stat:            os.Stat,
 		isCopyUpRefusal: copyUpRefusal,
 		shadow:          func(dir string) error { return ensureWritableDir(dir, logger) },
+		logger:          logger,
 	}); err != nil {
 		return err
 	}
