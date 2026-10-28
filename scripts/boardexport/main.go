@@ -40,6 +40,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 )
 
 // exportData mirrors the tracker's export (mtix internal/store/sqlite
@@ -191,6 +194,75 @@ func agentWritten(d *exportData) int {
 	return n
 }
 
+// The shapes the public text must not carry. Titles, descriptions, prompts,
+// acceptance and labels are public by design, but a working role's name, a
+// sibling product's ticket id or a person's home path is not something the
+// project publishes; the board text report's hashed lists did not know these
+// shapes, and an export shipped with all three while reporting 0 hits. The
+// checks are shapes, not a list of names, and report the class only, never the
+// text. Refs: MGIT-327.6
+var (
+	// A lane name stands alone as a word: a branch (fix/mgit-168), a scratch
+	// directory (/tmp/mgit-98-wt) or a per-user socket directory (T/mgit-501)
+	// that merely contains the same letters is not a role.
+	roleRe   = regexp.MustCompile(`(?:^|[\s("'\x60,;:])(?:reviewer-(?:mgit|\d+)|mgit-(?:\d+|linux(?:-\d+)?)|go-agent(?:-\d+)?)(?:$|[\s)"'\x60,;:.])`)
+	ticketRe = regexp.MustCompile(`\b(?:FEAT|HSWE|PROJ)-\d`)
+	macPath  = regexp.MustCompile(`/Users/`)
+	homePath = regexp.MustCompile(`/home/([A-Za-z0-9._-]+)`)
+	labRe    = regexp.MustCompile(`\blanes/|\bevidence/[A-Z]+-\d|\bfrontier/`)
+)
+
+// placeholderHomes are the home-directory names that stand for "a user" in
+// examples and CI paths, not a person.
+var placeholderHomes = map[string]bool{
+	"user": true, "username": true, "runner": true, "you": true, "name": true,
+	"alice": true, "bob": true, "me": true, "example": true, "agent": true,
+}
+
+// textLeaks reports, by node, field and class, each place the public text
+// names a working role, another product's ticket or a personal path, or a lab
+// path. It never returns the text itself.
+func textLeaks(d *exportData) []string {
+	var out []string
+	for _, n := range d.Nodes {
+		for _, f := range []struct{ name, text string }{
+			{"title", n.Title}, {"description", n.Description}, {"prompt", n.Prompt},
+			{"acceptance", n.Acceptance}, {"labels", n.Labels},
+		} {
+			add := func(class string) { out = append(out, fmt.Sprintf("%s %s: %s", n.ID, f.name, class)) }
+			if roleRe.MatchString(f.text) {
+				add("working role")
+			}
+			if ticketRe.MatchString(f.text) {
+				add("another product's ticket")
+			}
+			personal := macPath.MatchString(f.text)
+			for _, m := range homePath.FindAllStringSubmatch(f.text, -1) {
+				if !placeholderHomes[m[1]] {
+					personal = true
+				}
+			}
+			if personal {
+				add("personal path")
+			}
+			if labRe.MatchString(f.text) {
+				add("lab path")
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// leakError turns the reports into the refusal both modes print.
+func leakError(leaks []string) error {
+	shown := leaks
+	if len(shown) > 12 {
+		shown = shown[:12]
+	}
+	return fmt.Errorf("the board's public text names a working role, another product's ticket or a personal path in %d places (reword them in the tracker, then export again): %s", len(leaks), strings.Join(shown, "; "))
+}
+
 // creatorNamesSomeone reports whether a node's creator is an identity rather
 // than the interface it was filed through. The tracker writes "cli" or "mcp"
 // by default, but takes --assign or the filer's author identity
@@ -273,6 +345,9 @@ func run(in, out string, check bool) error {
 		if a+g+s+c > 0 {
 			return fmt.Errorf("the board names identities: %d assigned nodes, %d creators naming someone, %d agent rows, %d session rows", a, c, g, s)
 		}
+		if leaks := textLeaks(d); len(leaks) > 0 {
+			return leakError(leaks)
+		}
 		if w > 0 {
 			return fmt.Errorf("the board carries agent-written fields on %d nodes (annotations, activity or a previous status): the public board is cut without them", w)
 		}
@@ -282,6 +357,9 @@ func run(in, out string, check bool) error {
 	if info, statErr := os.Stat(filepath.Join(filepath.Dir(out), "data")); statErr == nil && info.IsDir() {
 		return fmt.Errorf("REFUSING: %s sits beside a live tracker database (%s): the tracker would auto-import this board in REPLACE mode and lose the database's assignees, agents and annotations. Cut board exports in a fresh worktree",
 			out, filepath.Join(filepath.Dir(out), "data"))
+	}
+	if leaks := textLeaks(d); len(leaks) > 0 {
+		return leakError(leaks)
 	}
 	body, blanked, err := rewrite(d, redact)
 	if err != nil {

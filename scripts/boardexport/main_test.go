@@ -360,6 +360,7 @@ func TestTextLeaks_NamesTheNodeFieldAndClassOfEachShape(t *testing.T) {
 		{"a reviewer lane", "description", "Found by reviewer-mgit on a PR", "working role"},
 		{"a numbered reviewer lane", "acceptance", "PASS from reviewer-2", "working role"},
 		{"a builder lane", "description", "Found by mgit-2 while pushing", "working role"},
+		{"a builder lane at the start", "title", "mgit-2: pushing", "working role"},
 		{"a linux lane", "prompt", "owner mgit-linux-35", "working role"},
 		{"an older builder lane", "description", "told go-agent-2 first", "working role"},
 		{"a sibling ticket", "title", "FEAT-6.39: a thing", "another product's ticket"},
@@ -383,10 +384,11 @@ func TestTextLeaks_NamesTheNodeFieldAndClassOfEachShape(t *testing.T) {
 
 func TestTextLeaks_AllowsWhatIsPublicByDesign(t *testing.T) {
 	for _, text := range []string{
-		"MGIT-317 and FR-17.17 and ADR-012",
+		"MGIT-317 and FR-17.17 and ADR-012 and the example task id MTIX-30.6",
 		"the reviewer-verdict-at-head check",
 		"a placeholder path /home/user/repo/worktrees/task and /home/runner/work/_temp",
 		"~/.local/bin/mgit and ~/Library/Caches/mgit",
+		"branch fix/mgit-168-symlink-delete, scratch /tmp/mgit-98-wt and T/mgit-501/ab12/d.sock",
 		"Found by the reviewer, fixed by the builder; the lead decides",
 	} {
 		assert.Empty(t, textLeaks(withText(t, "description", text)), text)
