@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -24,6 +25,7 @@ func TestTheCommittedBoardCarriesNoAgentIdentities(t *testing.T) {
 	assert.Zero(t, assignees, "nodes still name who claimed them")
 	assert.Zero(t, agents, "the agents section still lists identities")
 	assert.Zero(t, sessions, "the sessions section still lists identities")
+	assert.Zero(t, agentWritten(d), "nodes still carry agent-written notes: cut the board with scripts/boardexport, never commit a raw tracker export (MGIT-327.1)")
 	for _, n := range d.Nodes {
 		assert.Contains(t, []string{"", "cli", "mcp"}, n.Creator,
 			"%s names who filed it: a creator is the interface (cli, mcp), never an identity (MGIT-264)", n.ID)
@@ -225,4 +227,98 @@ func TestRun_ACreatorThatNamesSomeoneIsAnIdentity(t *testing.T) {
 	assert.Equal(t, "mcp", got.Nodes[1].Creator, "an interface name is not an identity and stays")
 	assert.Equal(t, d.Nodes[0].ContentHash, got.Nodes[0].ContentHash, "content is untouched")
 	require.NoError(t, run(board, board, true), "after the rewrite, -check passes")
+}
+
+// SCHEMA 2.0.0 CARRIES AGENT-WRITTEN TEXT THE PUBLIC BOARD MUST NOT PUBLISH.
+// The tracker's 2.0.0 export adds three per-node fields: annotations and
+// activity, which hold what lanes and reviewers wrote about a ticket (names,
+// verdicts, internal paths), and previous_status. The public board is cut
+// without them. Refs: MGIT-327.1
+
+// fixtureV2 is a board as the 2.0.0 tracker writes it: notes on a node.
+func fixtureV2(t *testing.T) *exportData {
+	t.Helper()
+	d := fixture(t)
+	d.SchemaVersion = "2.0.0"
+	d.Nodes[0].PreviousStatus = "in_progress"
+	d.Nodes[0].Annotations = []json.RawMessage{json.RawMessage(
+		`{"id":"a1","author":"some-agent-01","text":"a lane wrote this","created_at":"c","resolved":false}`)}
+	d.Nodes[0].Activity = []json.RawMessage{json.RawMessage(
+		`{"id":"act-1","type":"claim","author":"some-agent-01","text":"Claimed by some-agent-01","created_at":"c"}`)}
+	sum, err := checksum(d)
+	require.NoError(t, err)
+	d.Checksum = sum
+	return d
+}
+
+func TestLoad_ReadsASchema2BoardWithNodeNotes(t *testing.T) {
+	raw, err := encode(fixtureV2(t))
+	require.NoError(t, err)
+	d, err := load(raw)
+	require.NoError(t, err, "a 2.0.0 board reproduces byte for byte and its checksum verifies")
+	assert.Len(t, d.Nodes[0].Annotations, 1)
+	assert.Len(t, d.Nodes[0].Activity, 1)
+	assert.Equal(t, "in_progress", d.Nodes[0].PreviousStatus)
+}
+
+func TestRedact_DropsTheAgentWrittenNodeFieldsAndKeepsTheBoardVerifiable(t *testing.T) {
+	d := fixtureV2(t)
+	title, hash := d.Nodes[0].Title, d.Nodes[0].ContentHash
+
+	redact(d)
+
+	for _, n := range d.Nodes {
+		assert.Empty(t, n.Annotations, n.ID)
+		assert.Empty(t, n.Activity, n.ID)
+		assert.Empty(t, n.PreviousStatus, n.ID)
+	}
+	assert.Equal(t, title, d.Nodes[0].Title, "the public text of a ticket is untouched")
+	assert.Equal(t, hash, d.Nodes[0].ContentHash, "node integrity is untouched")
+	raw, err := encode(d)
+	require.NoError(t, err)
+	_, err = load(raw)
+	require.NoError(t, err, "the public board is reproducible and its checksum verifies")
+	assert.NotContains(t, string(raw), "some-agent-01", "no name the dropped fields carried is left anywhere")
+}
+
+func TestRun_CheckFailsWhileANodeCarriesAgentWrittenNotes(t *testing.T) {
+	for name, strip := range map[string]func(d *exportData){
+		"annotations":     func(d *exportData) { d.Nodes[0].Activity, d.Nodes[0].PreviousStatus = nil, "" },
+		"activity":        func(d *exportData) { d.Nodes[0].Annotations, d.Nodes[0].PreviousStatus = nil, "" },
+		"previous status": func(d *exportData) { d.Nodes[0].Annotations, d.Nodes[0].Activity = nil, nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := fixtureV2(t)
+			// No identity is left, so only the notes can fail the check.
+			d.Nodes[0].Assignee, d.Agents, d.Sessions = "", nil, nil
+			strip(d)
+			sum, err := checksum(d)
+			require.NoError(t, err)
+			d.Checksum = sum
+			raw, err := encode(d)
+			require.NoError(t, err)
+			board := filepath.Join(t.TempDir(), "tasks.json")
+			require.NoError(t, os.WriteFile(board, raw, 0o600))
+
+			err = run(board, board, true)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "agent-written")
+		})
+	}
+}
+
+func TestRun_RewritesASchema2BoardToAPublicOne(t *testing.T) {
+	raw, err := encode(fixtureV2(t))
+	require.NoError(t, err)
+	board := filepath.Join(t.TempDir(), "tasks.json")
+	require.NoError(t, os.WriteFile(board, raw, 0o600))
+
+	require.Error(t, run(board, board, true))
+	require.NoError(t, run(board, board, false))
+	require.NoError(t, run(board, board, true), "after the rewrite, check mode passes")
+	out, err := os.ReadFile(board) //nolint:gosec // G304: test-only; board is this test's own temp file
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), `"annotations"`)
+	assert.NotContains(t, string(out), `"activity"`)
+	assert.NotContains(t, string(out), `"previous_status"`)
 }

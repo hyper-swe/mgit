@@ -86,6 +86,14 @@ type exportNode struct {
 	DeferUntil  string  `json:"defer_until,omitempty"`
 	DeletedAt   string  `json:"deleted_at,omitempty"`
 	UID         string  `json:"uid,omitempty"`
+	// Schema 2.0.0 adds three per-node fields, in this order. Annotations and
+	// activity hold what lanes and reviewers wrote about a ticket; they are
+	// kept as raw JSON because the public board never carries them, and this
+	// mirror only has to reproduce them to prove the file before dropping
+	// them. Refs: MGIT-327.1
+	PreviousStatus string            `json:"previous_status,omitempty"`
+	Annotations    []json.RawMessage `json:"annotations,omitempty"`
+	Activity       []json.RawMessage `json:"activity,omitempty"`
 }
 
 type exportDep struct {
@@ -170,6 +178,19 @@ func identities(d *exportData) (assignees, agents, sessions int) {
 	return assignees, len(d.Agents), len(d.Sessions)
 }
 
+// agentWritten counts the nodes that still carry agent-written fields: notes
+// and activity written by lanes and reviewers, and the status a node came
+// from. The public board carries none of them. Refs: MGIT-327.1
+func agentWritten(d *exportData) int {
+	n := 0
+	for _, node := range d.Nodes {
+		if len(node.Annotations) > 0 || len(node.Activity) > 0 || node.PreviousStatus != "" {
+			n++
+		}
+	}
+	return n
+}
+
 // creatorNamesSomeone reports whether a node's creator is an identity rather
 // than the interface it was filed through. The tracker writes "cli" or "mcp"
 // by default, but takes --assign or the filer's author identity
@@ -208,6 +229,9 @@ func redact(d *exportData) int {
 		if creatorNamesSomeone(d.Nodes[i].Creator) {
 			d.Nodes[i].Creator = ""
 		}
+		// Schema 2.0.0: what lanes and reviewers wrote about a ticket is not
+		// public. The title, description, prompt and acceptance are, and stay.
+		d.Nodes[i].Annotations, d.Nodes[i].Activity, d.Nodes[i].PreviousStatus = nil, nil, ""
 	}
 	d.Agents, d.Sessions = nil, nil
 	// The inputs are strings and numbers that just decoded, so encoding
@@ -244,9 +268,13 @@ func run(in, out string, check bool) error {
 	}
 	a, g, s := identities(d)
 	c := namedCreators(d)
+	w := agentWritten(d)
 	if check {
 		if a+g+s+c > 0 {
 			return fmt.Errorf("the board names identities: %d assigned nodes, %d creators naming someone, %d agent rows, %d session rows", a, c, g, s)
+		}
+		if w > 0 {
+			return fmt.Errorf("the board carries agent-written fields on %d nodes (annotations, activity or a previous status): the public board is cut without them", w)
 		}
 		fmt.Println("boardexport: the board names no identities and its checksum verifies")
 		return nil
@@ -266,7 +294,7 @@ func run(in, out string, check bool) error {
 	if err := os.Rename(tmp, out); err != nil {
 		return fmt.Errorf("replace the board: %w", err)
 	}
-	fmt.Printf("boardexport: blanked %d assignees and %d creators, removed %d agent rows and %d session rows; checksum %s\n", blanked, c, g, s, d.Checksum)
+	fmt.Printf("boardexport: blanked %d assignees and %d creators, removed %d agent rows, %d session rows and the agent-written fields of %d nodes; checksum %s\n", blanked, c, g, s, w, d.Checksum)
 	return nil
 }
 
