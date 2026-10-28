@@ -17,7 +17,7 @@ func setupCheckoutEnv(t *testing.T) (*testEnv, *CheckoutService) {
 	t.Helper()
 	env := setupTestEnv(t)
 	ws := gitstore.NewWorktreeStore(env.repo)
-	checkoutSvc := NewCheckoutService(env.bs, ws)
+	checkoutSvc := NewCheckoutService(env.bs, ws, env.idx)
 	return env, checkoutSvc
 }
 
