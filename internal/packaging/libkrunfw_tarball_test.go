@@ -197,6 +197,8 @@ func TestE2EWorkflow_BuildsAndSmokeTestsTheMacOSLibkrunfwTarballAndUploadsItOnAT
 		"scripts/release/build-darwin-libkrunfw.sh",
 		"scripts/ci/guard-fetch.sh",
 		"krunfw_get_version",
+		`want="LICENSE-GPL-2.0-only LICENSE-LGPL-2.1-only NOTICE.txt SOURCE-OFFER.txt libkrunfw.5.dylib"`,
+		`the tarball holds:`,
 		"name: darwin-libkrunfw",
 		"if: github.ref_type == 'tag'",
 	} {
