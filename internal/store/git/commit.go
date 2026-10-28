@@ -206,6 +206,27 @@ func (cs *CommitStore) GetCommit(_ context.Context, hash string) (*model.Commit,
 	return commitFromGitObject(obj), nil
 }
 
+// Parents returns every parent hash of a commit, in order: none for a root,
+// two or more for a merge. GetCommit keeps only the first parent in
+// model.Commit, so a walk of history that must not skip a merged-in branch
+// reads them here. A commit that cannot be read yields ErrCommitNotFound.
+// Refs: MGIT-323.5
+func (cs *CommitStore) Parents(_ context.Context, hash string) ([]string, error) {
+	h, err := cs.resolveCommitHash(hash)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := cs.repo.repo.CommitObject(h)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", model.ErrCommitNotFound, hash)
+	}
+	parents := make([]string, 0, len(obj.ParentHashes))
+	for _, p := range obj.ParentHashes {
+		parents = append(parents, p.String())
+	}
+	return parents, nil
+}
+
 // resolveCommitHash resolves a full or abbreviated hex commit-hash reference to
 // a concrete object hash, mirroring git's prefix semantics. A full 40-char hash
 // is returned as-is. A shorter hex prefix (>= minAbbrevLen) is matched against

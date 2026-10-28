@@ -88,6 +88,7 @@ func (l *Lander) Land(ctx context.Context, taskID string, pool []Object, commits
 			AgentID:     c.Commit.AgentID,
 			Position:    c.Position,
 			SandboxID:   sandboxID,
+			Origin:      index.OriginLand,
 		})
 	}
 	if err := l.appender.AppendTaskCommits(ctx, rows); err != nil {

@@ -161,6 +161,7 @@ archives:
       # `files` REPLACES that default rather than adding to it — so they have
       # to be named here or an Apache-2.0 product ships with no license text.
       - LICENSE*
+      - NOTICE*
       - README*
       - CHANGELOG*
       - src: "dist/mgit-guest_linux_{{ .Arch }}*/mgit-guest"

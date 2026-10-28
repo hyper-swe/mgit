@@ -19,6 +19,8 @@ func TestE2E_Diff_Abbreviations(t *testing.T) {
 	bin := buildMgitBinary(t)
 	root := t.TempDir()
 	mustMgit(t, bin, root, "init")
+	// An initial base has no task admission; use an accepted host endpoint.
+	mustMgit(t, bin, root, "commit", "--allow-empty", "--task-id", "MGIT-292.CLI", "-m", "accepted base")
 	gr, err := gogit.PlainOpen(filepath.Join(root, ".mgit"))
 	require.NoError(t, err)
 	first, err := gr.Head()

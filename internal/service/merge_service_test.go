@@ -19,7 +19,7 @@ func setupMergeEnv(t *testing.T) (*testEnv, *MergeService) {
 	t.Helper()
 	env := setupTestEnv(t)
 	ms := gitstore.NewMergeStore(env.repo)
-	mergeSvc := NewMergeService(env.repo, env.bs, ms, env.cs)
+	mergeSvc := NewMergeService(env.repo, env.bs, ms, env.cs).WithLedger(env.idx)
 	return env, mergeSvc
 }
 

@@ -124,7 +124,11 @@ func (s *SquashService) SquashTask(ctx context.Context, req SquashRequest) (*mod
 	squashCommit.ParentID = plan.base
 
 	// Index the squash commit
-	position := len(plan.hashes)
+	raw, err := s.indexStore.GetTaskCommits(ctx, req.TaskID)
+	if err != nil {
+		return nil, fmt.Errorf("squash ledger position: %w", err)
+	}
+	position := len(raw)
 	err = s.indexStore.AddCommitToTask(ctx, req.TaskID, hash, squashCommit.ContentHash, "mgit-squash", position)
 	if err != nil {
 		return nil, fmt.Errorf("squash task %s: index squash commit: %w", req.TaskID, err)
@@ -157,7 +161,7 @@ type squashPlan struct {
 // fork base and builds the squash message — without creating anything.
 // Refs: FR-7, MGIT-22, MGIT-112
 func (s *SquashService) planSquash(ctx context.Context, req SquashRequest) (*squashPlan, error) {
-	records, err := s.indexStore.GetTaskCommits(ctx, req.TaskID)
+	records, err := s.indexStore.GetContentCommits(ctx, req.TaskID)
 	if err != nil {
 		return nil, fmt.Errorf("squash task %s: get commits: %w", req.TaskID, err)
 	}

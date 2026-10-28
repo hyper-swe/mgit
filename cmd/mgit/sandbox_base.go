@@ -216,8 +216,11 @@ func sandboxBaseFromCmd() *cobra.Command {
 			"With a reference, the tag is resolved to a digest ONCE and recorded as\n" +
 			"provenance: a tag can point twice, a digest cannot, and the tag is\n" +
 			"documentation only. Re-composing the same tag onto different bytes\n" +
-			"produces a new cache entry and says what changed; it never replaces what\n" +
-			"you had pinned. `mgit doctor` states, beside the release's record, when a\n" +
+			"produces a new cache entry and says what changed. The old cache entry is\n" +
+			"kept, but this repo's signed lock switches to the new pin. Before it switches,\n" +
+			"recorded sandboxes using the old reference are warned about: a fresh boot\n" +
+			"from that reference is refused; relaunch with the printed current --image.\n" +
+			"Running VMs are not restarted. `mgit doctor` states, beside the release's record, when a\n" +
 			"base was composed from something else.\n\n" +
 			"The image supplies the Linux userspace your agent's toolchain needs; mgit\n" +
 			"supplies the supervisor and the CLI. Because YOU pull the image, mgit\n" +
@@ -377,8 +380,12 @@ func composeBaseFromImage(cmd *cobra.Command, refArg string, opts composeOptions
 	if err := recordComposedPin(env.cache, env.hostRoot, cached, cmd.ErrOrStderr()); err != nil {
 		return composeResult{}, err
 	}
+	signer := signWith(env.priv)
 	return registerComposedBase(env.hostRoot, cached, resolved, opts,
-		signWith(env.priv), func() time.Time { return time.Now().UTC() })
+		func(hostRoot, name string, entry images.Entry) (string, error) {
+			warnStaleBaseUsers(cmd.Context(), hostRoot, name, entry.Digest, cmd.ErrOrStderr())
+			return signer(hostRoot, name, entry)
+		}, func() time.Time { return time.Now().UTC() })
 }
 
 // composeEnv is everything a composition needs before it touches a registry:

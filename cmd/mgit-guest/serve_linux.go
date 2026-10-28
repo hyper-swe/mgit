@@ -408,6 +408,13 @@ func mountPseudoFS(source, target, fstype string) error {
 	return nil
 }
 
+// copyUpRefusal reports the error a guest root that cannot copy up returns when
+// a path under a directory the image ships is created: EOPNOTSUPP, from the
+// lower filesystem refusing FS_IOC_GETFLAGS (MGIT-89). It is the one signal the
+// mount-point repair keys on, so it is named and pinned by a test rather than
+// left as a closure in the wiring. Refs: MGIT-230.8, MGIT-230.7
+func copyUpRefusal(err error) bool { return errors.Is(err, unix.EOPNOTSUPP) }
+
 // mountWorktree reads the host-supplied worktree descriptor from the
 // kernel command line and mounts the worktree at its identical absolute
 // path. Creating that mount point on a guest root that cannot copy up is
@@ -425,8 +432,10 @@ func mountWorktree(logger *slog.Logger) error {
 	if err := makeMountPoint(wt.Path, mountPointOps{
 		mkdirAll:        os.MkdirAll,
 		stat:            os.Stat,
-		isCopyUpRefusal: func(err error) bool { return errors.Is(err, unix.EOPNOTSUPP) },
+		isCopyUpRefusal: copyUpRefusal,
 		shadow:          func(dir string) error { return ensureWritableDir(dir, logger) },
+		logger:          logger,
+		record:          func(dir, path string) error { return writeShadowRecord(shadowRecordFile, dir, path) },
 	}); err != nil {
 		return err
 	}

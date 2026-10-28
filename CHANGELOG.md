@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade to 0.7.6
+
+- **finish or land in-flight tasks before upgrading to 0.7.6**. Task rows
+  recorded before the local content-admission ledger, and imported rows without
+  local admission, are retained for audit but refused by sandbox land, squash
+  `--to-git`, `diff --task-id`, git export, and restore. By-hash diff checks both
+  endpoints too. A task with only undelivered commits returns an explicit error,
+  not an empty patch. These refusals give a recovery sequence: preserve the old
+  repository, initialize a new empty repository outside it, copy only inspected
+  source files, and commit them under a new task. Do not reuse the old linked
+  worktree with a different task ID. See [content recovery](docs/CONTENT-RECOVERY.md).
+
+### Changed
+
+- `mgit work --base <commit>`, `mgit checkout <branch>` and `mgit worktree add` for
+  a task whose branch ends at a retained guest commit refuse that commit when it was
+  never delivered, before any branch, worktree, ref or file changes. Host commits, `HEAD`, branch names and branches with no ledger row work
+  as before. See [content recovery](docs/CONTENT-RECOVERY.md).
+- The same three commands also refuse a commit that is built on a retained,
+  undelivered guest commit, such as a host commit made on top of one, or a merge
+  of its branch. The check follows every parent, so the merged-in side counts,
+  and does not look below a delivered sandbox-land commit; a host commit does
+  not stop it. A history that cannot be read is refused rather than passed
+  unchecked. See [content recovery](docs/CONTENT-RECOVERY.md).
+- `mgit merge` refuses a source branch that ends at, or is built on, a retained
+  guest commit that was never delivered, for the fast-forward, `--no-ff` and
+  `--squash` strategies, before any ref, index or file changes. Merging host
+  branches works as before. See [content recovery](docs/CONTENT-RECOVERY.md).
+
+- Restore (file or whole tree), cherry-pick, rollback, and projection-conflict
+  recovery also require a locally admitted task commit as their content source.
+  An initial or sync-base snapshot without a task row is refused. This refusal
+  does not mean a healthy repository needs migration: select an admitted task
+  commit hash. Legacy/imported task rows with ambiguous origin still require
+  the inspected-file recovery described below.
+
+- Explicit-hash diff requires local admission for both endpoints, including
+  in a newly initialized repository. Initial and sync-base snapshots without
+  a task admission are refused. Use `mgit diff --task-id <id>` for a task
+  patch or select two admitted task commit hashes. `mgit show` remains an
+  inspection command: it displays retained commit changes without admitting
+  them for export or apply, and reports unreadable diffs as errors.
+
+### Fixed
+
+- On Linux, when the guest makes a worktree's mount point by shadowing the
+  deepest directory the image ships with a writable tmpfs, it now says which
+  directory it shadowed: one log line, and a one-line record in
+  `/tmp/.mgit-mount-point-shadowed` that a command inside the guest can read.
+  Before, a passing run showed nothing. The repair itself is unchanged.
+
+- The pre-push hook removes its scratch file by file instead of with a
+  recursive delete, so a lane that may not run recursive deletes can push
+  through it (MGIT-318).
+
+### Documentation
+
+- The sandbox install guide now says interactive sessions in a guest are
+  unsupported on every backend in this build (`exec` has no stdin or TTY and
+  `sandbox shell` is refused), names `mgit work --sandbox` as the alternative, and says agents
+  stay on the host by design (MGIT-320, MGIT-321).
+
 ### Security
 
 - Build and guest verification toolchains use Go 1.26.10, which fixes

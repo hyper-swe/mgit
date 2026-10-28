@@ -119,6 +119,27 @@ gwd="$(cd "$P" && timeout 120 mgit run -- pwd 2>&1)"
 echo "  the guest works in the worktree at its host path ($where)"
 echo "  PASS"
 
+step "6b the repair is on record: the guest names the directory it shadowed"
+# Outside /tmp the guest makes the worktree's mount point by shadowing the
+# deepest directory the base image ships with a writable tmpfs (the copy-up
+# refusal, MGIT-89). On a passing run nothing said which directory that was, so
+# the guest now leaves a one-line record in /tmp, and this step reads it and
+# checks it against the guest's own mountinfo: the shadowed directory is the
+# deepest mount above the worktree, and the worktree is the path the repair
+# made room for. Refs: MGIT-230.8
+if [ "$where" = "outside /tmp" ]; then
+	rec="$(cd "$P" && timeout 120 mgit run -- cat /tmp/.mgit-mount-point-shadowed 2>&1)"
+	mi="$(cd "$P" && timeout 120 mgit run -- cat /proc/self/mountinfo 2>&1)"
+	mp="$(printf '%s\n' "$mi" | awk -v p="$PH" '$5 != p && index(p "/", $5 "/") == 1 && length($5) > best { best = length($5); mp = $5 } END { print mp }')"
+	echo "  record: $rec"
+	echo "  deepest mount above the worktree: $mp"
+	[ -n "$mp" ] || fail "record" "no mount above the worktree in the guest's mountinfo: $(first "$mi" 2)"
+	[ "$rec" = "dir=$mp path=$PH" ] || fail "record" "the guest's record is '$rec', want 'dir=$mp path=$PH'"
+	echo "  PASS"
+else
+	echo "  skipped: the worktree is under /tmp, where no repair is needed"
+fi
+
 step "7 sync a host edit into the running guest"
 printf 'v2\n' >"$P/f.txt"
 out="$(cd "$R" && mgit sandbox sync --task-id "$TASK" --force 2>&1)" || fail "sync" "$(first "$out")"

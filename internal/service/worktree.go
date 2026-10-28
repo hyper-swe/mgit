@@ -196,6 +196,11 @@ func (s *WorktreeService) guard(fn func() error) error {
 func (s *WorktreeService) resolveForkBase(ctx context.Context, opts model.WorktreeAddOptions,
 	branchName string, report *forkReport) (string, error) {
 	if existing, err := s.branch.GetBranch(ctx, branchName); err == nil {
+		// Re-provisioning a task whose branch ends at a retained guest commit
+		// would put those bytes on the host disk. Refs: MGIT-323.3
+		if err := requireDeliverableHistory(ctx, s.indexStore, s.commits, existing.HeadCommit); err != nil {
+			return "", fmt.Errorf("worktree for %s: branch %s ends at a retained guest commit: %w; its host worktree cannot be re-created until that commit is delivered", opts.TaskID, branchName, err)
+		}
 		return s.existingForkBase(ctx, opts, branchName, existing.HeadCommit)
 	}
 	// A branch that does not exist can only be created under the task's own
@@ -284,7 +289,7 @@ func (s *WorktreeService) existingForkBase(ctx context.Context, opts model.Workt
 		return tip, nil // no commit store to read history from: the pre-MGIT-35 behavior
 	}
 	base := tip
-	records, err := s.indexStore.GetTaskCommits(ctx, opts.TaskID)
+	records, err := s.indexStore.GetContentCommits(ctx, opts.TaskID)
 	if err != nil {
 		return "", fmt.Errorf("read task %s commits: %w", opts.TaskID, err)
 	}
@@ -336,6 +341,19 @@ func (s *WorktreeService) createBranchAtBase(ctx context.Context, taskID, baseRe
 // exist only in the project's git (e.g. a git tag) are out of scope for v1 — a
 // documented follow-up. Refs: MGIT-35, ADR-008 §4
 func (s *WorktreeService) resolveBaseCommit(ctx context.Context, baseRef string) (string, error) {
+	hash, err := s.resolveBaseRef(ctx, baseRef)
+	if err != nil {
+		return "", err
+	}
+	// A retained guest commit that was never delivered is not a base.
+	// Refs: MGIT-323.2
+	if err := requireDeliverableHistory(ctx, s.indexStore, s.commits, hash); err != nil {
+		return "", fmt.Errorf("--base %s: %w; choose a delivered base: HEAD, a host branch or a delivered task commit", baseRef, err)
+	}
+	return hash, nil
+}
+
+func (s *WorktreeService) resolveBaseRef(ctx context.Context, baseRef string) (string, error) {
 	if baseRef == "HEAD" {
 		head, err := s.repo.Head()
 		if err != nil {

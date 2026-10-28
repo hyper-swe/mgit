@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -30,9 +31,37 @@ func NewDiffService(ds *gitstore.DiffStore, cs *gitstore.CommitStore, idx *index
 // DiffCommits computes the file-level diff between two commits.
 // Refs: FR-11
 func (s *DiffService) DiffCommits(ctx context.Context, fromHash, toHash string) ([]model.FileDiff, error) {
-	diffs, err := s.diffStore.DiffCommits(ctx, fromHash, toHash)
+	// Both endpoints can contribute bytes to a patch (including removals).
+	// Resolve abbreviations before checking the authoritative local rows.
+	var hashes []string
+	for _, hash := range []string{fromHash, toHash} {
+		source, err := s.commitStore.GetCommit(ctx, hash)
+		if err != nil {
+			return nil, fmt.Errorf("diff source: %w", err)
+		}
+		if err := s.indexStore.RequireContentCommit(ctx, source.CommitID); err != nil {
+			var unindexed *index.UnindexedContentCommitError
+			if errors.As(err, &unindexed) {
+				return nil, fmt.Errorf("diff source %s is not an admitted task commit; use `mgit diff --task-id <id>` for a task patch, or select two admitted task commit hashes", unindexed.Hash)
+			}
+			return nil, fmt.Errorf("diff source: %w", err)
+		}
+		hashes = append(hashes, source.CommitID)
+	}
+	diffs, err := s.diffStore.DiffCommits(ctx, hashes[0], hashes[1])
 	if err != nil {
 		return nil, fmt.Errorf("diff commits: %w", err)
+	}
+	return diffs, nil
+}
+
+// InspectCommitDiff reads retained objects for forensic inspection, including
+// pending and legacy commits. It does not authorize export or apply; those
+// callers must use the admitted-content methods instead.
+func (s *DiffService) InspectCommitDiff(ctx context.Context, parentHash, commitHash string) ([]model.FileDiff, error) {
+	diffs, err := s.diffStore.DiffCommits(ctx, parentHash, commitHash)
+	if err != nil {
+		return nil, fmt.Errorf("inspect commit diff: %w", err)
 	}
 	return diffs, nil
 }
@@ -41,7 +70,7 @@ func (s *DiffService) DiffCommits(ctx context.Context, fromHash, toHash string) 
 // Returns the diff from before the task's first commit to after its last.
 // Refs: FR-11
 func (s *DiffService) DiffTask(ctx context.Context, taskID string) ([]model.FileDiff, error) {
-	records, err := s.indexStore.GetTaskCommits(ctx, taskID)
+	records, err := s.indexStore.GetContentCommits(ctx, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("diff task %s: get commits: %w", taskID, err)
 	}
@@ -55,7 +84,14 @@ func (s *DiffService) DiffTask(ctx context.Context, taskID string) ([]model.File
 		return nil, fmt.Errorf("diff task %s: get first commit: %w", taskID, err)
 	}
 
-	lastHash := records[len(records)-1].CommitHash
+	hashes := make([]string, len(records))
+	for i, r := range records {
+		hashes[i] = r.CommitHash
+	}
+	tree, err := s.commitStore.BuildSquashTree(ctx, hashes)
+	if err != nil {
+		return nil, fmt.Errorf("diff task %s: %w", taskID, err)
+	}
 
 	// ADR-008 §4: enforce the cumulative diff is taken from the task's PINNED
 	// fork-base (equal to the first commit's parent by construction); fail loud
@@ -69,13 +105,13 @@ func (s *DiffService) DiffTask(ctx context.Context, taskID string) ([]model.File
 		return []model.FileDiff{}, nil
 	}
 
-	return s.diffStore.DiffCommits(ctx, firstCommit.ParentID, lastHash)
+	return s.diffStore.DiffTrees(ctx, tree.BaseTree, tree.Tree)
 }
 
 // DiffRange computes the diff over a range of commits.
 // Refs: FR-11
 func (s *DiffService) DiffRange(ctx context.Context, fromHash, toHash string) ([]model.FileDiff, error) {
-	return s.diffStore.DiffCommits(ctx, fromHash, toHash)
+	return s.DiffCommits(ctx, fromHash, toHash)
 }
 
 // Statistics computes aggregate line change counts for a set of diffs.

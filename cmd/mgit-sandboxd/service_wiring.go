@@ -22,7 +22,7 @@ import (
 // (sandbox_events, FR-17.18), co-located with the host sandbox config
 // (images.lock, trust root) under the host root — host-side data, never
 // inside a worktree.
-const sandboxIndexDB = "sandbox-index.db"
+const sandboxIndexDB = model.SandboxRegistryFile
 
 // buildSandboxService constructs the lifecycle service the daemon
 // dispatches to: the supervised (ceiling-wrapped) manager, the append-only

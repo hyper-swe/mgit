@@ -35,6 +35,26 @@ do — the backends are not interchangeable:
 | artifact export (`sandbox export`) | yes | yes | **refused** |
 | guest can write outside `/tmp`, `/etc`, its worktree and its home | yes | **no** (upstream, MGIT-89) | yes |
 
+**Interactive sessions: interactive sessions in a guest are unsupported on
+every backend in this build.** `mgit sandbox exec` carries no stdin (the
+request has no stdin field) and gives the guest no TTY, and `mgit sandbox shell`
+is refused on every backend with "interactive shell requires the KVM guest PTY
+transport; use `mgit sandbox exec` for non-interactive commands" (measured on
+0.7.5 with libkrun; the refusal is unconditional in the client). Run one-shot
+commands with `mgit sandbox exec` or `mgit run`, and for an agent session use
+the host-routed shell: `mgit work --sandbox` wires the agent's shell to the
+task's worktree on the host, and for the routed agent families (Claude Code
+and Codex, where hooks rewrite every shell call) routes its commands into the
+guest; other harnesses are advisory only (`--require-routing` refuses them).
+Serving the PTY transport is tracked as MGIT-320, not built.
+
+**Where an agent runs: agents stay on the host by design.** The guest has no
+`mtix` and no credentials, and in allowlist mode it can never reach the host's
+loopback or private ranges (`egress/ipclass.go`): the guest cannot reach the
+host's inbox, so nothing in a guest can wait on a wake. An agent keeps its loop
+and its credentials on the host and sends commands into the guest. A host
+bridge that runs one `sandbox exec` turn per wake is not built (MGIT-321).
+
 **Which one you have:** `mgit-sandboxd --vmm` prints the VMM the daemon links
 and where its libraries resolved, and `mgit doctor`'s `daemon/vmm` row says the
 same. The Linux release archives carry the libkrun daemon from the first
@@ -511,6 +531,23 @@ Re-composing the same tag onto different bytes therefore produces a new cache
 entry and says what changed, naming both digests — it never replaces the old
 one. Every composition is appended to `.mgit/sandbox/base-provenance.jsonl`,
 which `images.lock` cannot express because it holds one entry per name.
+
+Keeping the old cache entry does not keep its reference launchable in this
+repository. `images.lock` holds one current signed pin per name. A fresh boot
+using the previous pin is refused and names both digests and the replacement
+`--image` reference to use when relaunching. The old bytes are not deleted and
+the signature and content checks still apply to the current pin.
+
+Before switching that pin, recompose warns on stderr when a recorded sandbox
+or worktree binding still names the old reference. Existing registrations are
+not rewritten, and an already running VM is not restarted. Use the printed
+remove-then-launch commands only when ready to replace the old sandbox: removal
+tears down that sandbox, including a running VM. For example,
+`mgit sandbox remove TASK && mgit sandbox launch --task-id TASK --worktree PATH --image base@sha256:DIGEST`
+(substitute the printed task, worktree and current digest). Simply launching
+again without removal is refused because that task is already bound. A sandbox
+that has not booted yet still holds its original pin. If the registry cannot
+be read, the warning says that its old-reference users cannot be determined.
 
 **The digest is the identity; the tag is documentation.** A release RECORDS
 the guest base image it was smoke-tested with — image name and digest, in
