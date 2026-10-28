@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// The guest recognises the copy-up refusal by EOPNOTSUPP and nothing else. The
+// The guest recognizes the copy-up refusal by EOPNOTSUPP and nothing else. The
 // wiring in mountWorktree is only exercised by a real libkrun VM, so this pins
 // the predicate it uses. Refs: MGIT-230.8, MGIT-230.7
 func TestCopyUpRefusal_IsExactlyEOPNOTSUPP(t *testing.T) {
