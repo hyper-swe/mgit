@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **repairing a base that absorbed an untracked path**. The README now says to
+  exclude the path and run one explicit capture, that earlier tasks keep their
+  base, and that a path Git tracks and the working tree still holds can't be
+  repaired this way. No behaviour change. Refs: MGIT-324
+
 ### Upgrade to 0.7.6
 
 - **finish or land in-flight tasks before upgrading to 0.7.6**. Task rows
