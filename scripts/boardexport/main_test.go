@@ -25,6 +25,7 @@ func TestTheCommittedBoardCarriesNoAgentIdentities(t *testing.T) {
 	assert.Zero(t, assignees, "nodes still name who claimed them")
 	assert.Zero(t, agents, "the agents section still lists identities")
 	assert.Zero(t, sessions, "the sessions section still lists identities")
+	assert.Empty(t, textLeaks(d), "the committed board's text names a working role, another product's ticket or a personal path (MGIT-327.6)")
 	assert.Zero(t, agentWritten(d), "nodes still carry agent-written notes: cut the board with scripts/boardexport, never commit a raw tracker export (MGIT-327.1)")
 	for _, n := range d.Nodes {
 		assert.Contains(t, []string{"", "cli", "mcp"}, n.Creator,
@@ -321,4 +322,91 @@ func TestRun_RewritesASchema2BoardToAPublicOne(t *testing.T) {
 	assert.NotContains(t, string(out), `"annotations"`)
 	assert.NotContains(t, string(out), `"activity"`)
 	assert.NotContains(t, string(out), `"previous_status"`)
+}
+
+// THE PUBLIC BOARD'S TEXT NAMES NO WORKING ROLE, NO OTHER PRODUCT'S TICKET
+// AND NO PERSON'S PATH. Titles, descriptions, prompts, acceptance and labels
+// are public, and the export shipped once with a lane name, a sibling
+// product's ticket id and a home-directory path in them while the board text
+// report found 0 hits. -check now refuses those shapes, by node and field
+// and class, never echoing the text. Refs: MGIT-327.6
+
+func withText(t *testing.T, field, text string) *exportData {
+	t.Helper()
+	d := fixture(t)
+	d.Nodes[0].Assignee, d.Agents, d.Sessions = "", nil, nil
+	switch field {
+	case "title":
+		d.Nodes[0].Title = text
+	case "description":
+		d.Nodes[0].Description = text
+	case "prompt":
+		d.Nodes[0].Prompt = text
+	case "acceptance":
+		d.Nodes[0].Acceptance = text
+	case "labels":
+		d.Nodes[0].Labels = text
+	}
+	sum, err := checksum(d)
+	require.NoError(t, err)
+	d.Checksum = sum
+	return d
+}
+
+func TestTextLeaks_NamesTheNodeFieldAndClassOfEachShape(t *testing.T) {
+	tests := []struct {
+		name, field, text, class string
+	}{
+		{"a reviewer lane", "description", "Found by reviewer-mgit on a PR", "working role"},
+		{"a numbered reviewer lane", "acceptance", "PASS from reviewer-2", "working role"},
+		{"a builder lane", "description", "Found by mgit-2 while pushing", "working role"},
+		{"a linux lane", "prompt", "owner mgit-linux-35", "working role"},
+		{"an older builder lane", "description", "told go-agent-2 first", "working role"},
+		{"a sibling ticket", "title", "FEAT-6.39: a thing", "another product's ticket"},
+		{"a sibling coordination ticket", "description", "see HSWE-20.5", "another product's ticket"},
+		{"a home path on macOS", "description", "runs /Users/someone/.local/bin/mgit", "personal path"},
+		{"a home path on Linux", "description", "in /home/someone/work", "personal path"},
+		{"a lab evidence path", "description", "evidence/MGIT-317/correction/x.txt", "lab path"},
+		{"a lane log path", "description", "see lanes/log/a.md", "lab path"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			leaks := textLeaks(withText(t, tt.field, tt.text))
+			require.Len(t, leaks, 1, "%v", leaks)
+			assert.Contains(t, leaks[0], "MGIT-1")
+			assert.Contains(t, leaks[0], tt.field)
+			assert.Contains(t, leaks[0], tt.class)
+			assert.NotContains(t, leaks[0], tt.text, "the report never echoes the text")
+		})
+	}
+}
+
+func TestTextLeaks_AllowsWhatIsPublicByDesign(t *testing.T) {
+	for _, text := range []string{
+		"MGIT-317 and FR-17.17 and ADR-012",
+		"the reviewer-verdict-at-head check",
+		"a placeholder path /home/user/repo/worktrees/task and /home/runner/work/_temp",
+		"~/.local/bin/mgit and ~/Library/Caches/mgit",
+		"Found by the reviewer, fixed by the builder; the lead decides",
+	} {
+		assert.Empty(t, textLeaks(withText(t, "description", text)), text)
+	}
+}
+
+func TestRun_CheckAndRewriteRefuseABoardWhoseTextLeaks(t *testing.T) {
+	d := withText(t, "description", "Found by reviewer-mgit")
+	raw, err := encode(d)
+	require.NoError(t, err)
+	board := filepath.Join(t.TempDir(), "tasks.json")
+	require.NoError(t, os.WriteFile(board, raw, 0o600))
+
+	err = run(board, board, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "public text")
+	err = run(board, board, false)
+	require.Error(t, err, "the export refuses to write a board whose text leaks")
+	assert.Contains(t, err.Error(), "public text")
+	after, readErr := os.ReadFile(board) //nolint:gosec // G304: test-only; board is this test's own temp file
+	require.NoError(t, readErr)
+	assert.Equal(t, raw, after, "nothing is written")
 }
