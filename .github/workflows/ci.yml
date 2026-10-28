@@ -430,3 +430,48 @@ jobs:
           LIBRARY_PATH: /usr/local/lib64
           LD_LIBRARY_PATH: /usr/local/lib64
         run: go test -buildvcs=false -tags libkrun ./cmd/mgit-sandboxd/ -count=1
+
+  # The free hosted arm64 runner exposes no /dev/kvm (probe run 40688736659),
+  # so no guest boots here; everything else about linux/arm64 that needs no
+  # KVM runs on the same runner: the build, the test suite and the
+  # vulnerability scan. The tests that boot a VM cannot run without KVM; they
+  # skip, and the step after the tests lists every skip with its reason, so a
+  # skip is read and not assumed. The arm64 boot leg waits on a host that has
+  # KVM.
+  # Refs: MGIT-230.5.2
+  test-linux-arm64:
+    name: Test (linux/arm64, no KVM)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
+
+      - name: Build every package
+        run: go build ./...
+
+      - name: Run tests (VM tests skip without KVM)
+        run: |
+          set -o pipefail
+          go test ./... -count=1 -json | tee "$RUNNER_TEMP/arm64-test.json"
+
+      # go test -json carries each skip's reason with its test, subtests
+      # included; the script prints them, and any failed test's output.
+      - name: Skipped and failed tests, with reasons
+        if: always()
+        run: python3 scripts/ci/list-go-skips.py < "$RUNNER_TEMP/arm64-test.json"
+
+      - name: Run vulnerability check
+        run: |
+          # pin-exempt and fetch-guarded exactly as in the Test job; see there.
+            # pin-exempt: govulncheck floats on purpose — a pinned scanner stops finding new vulnerabilities; the fetch is guarded (MGIT-143) and the float is a recorded decision (MGIT-179)
+          bash scripts/ci/guard-fetch.sh -t 120 -l govulncheck-install \
+            -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
+            go install golang.org/x/vuln/cmd/govulncheck@latest
+          python3 scripts/ci/check-go-toolchain.py
+          govulncheck ./...
