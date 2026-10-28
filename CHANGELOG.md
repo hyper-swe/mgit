@@ -52,13 +52,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- On Linux, a worktree outside `/tmp` no longer has its parent directory copied
-  into guest memory. The guest now makes the worktree's mount point by mounting
-  an overlay at the deepest directory the image ships, with that directory as
-  the lower layer, so its contents stay visible and nothing is copied. If the
-  kernel refuses the overlay the guest falls back to the earlier copy and logs
-  it. A repaired mount point now logs which directory it repaired.
-
 - The pre-push hook removes its scratch file by file instead of with a
   recursive delete, so a lane that may not run recursive deletes can push
   through it (MGIT-318).

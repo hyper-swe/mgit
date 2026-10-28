@@ -433,7 +433,7 @@ func mountWorktree(logger *slog.Logger) error {
 		mkdirAll:        os.MkdirAll,
 		stat:            os.Stat,
 		isCopyUpRefusal: copyUpRefusal,
-		shadow:          func(dir string) error { return shadowMountPointDir(dir, logger) },
+		shadow:          func(dir string) error { return ensureWritableDir(dir, logger) },
 		logger:          logger,
 	}); err != nil {
 		return err
