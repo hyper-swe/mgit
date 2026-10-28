@@ -202,17 +202,32 @@ func agentWritten(d *exportData) int {
 // checks are shapes, not a list of names, and report the class only, never the
 // text. Refs: MGIT-327.6
 var (
-	// A lane name stands alone as a word: a branch (fix/mgit-168), a scratch
-	// directory (/tmp/mgit-98-wt) or a per-user socket directory (T/mgit-501)
-	// that merely contains the same letters is not a role.
-	roleRe = regexp.MustCompile(`(?:^|[\s("'\x60,;:])(?:(?i:reviewer-(?:mgit|\d+)|mgit-linux(?:-\d+)?|go-agent(?:-\d+)?)|mgit-\d+)(?:$|[\s)"'\x60,;:.])`)
-	// A checkout is where the working agents build; its name is not public.
-	checkoutRe = regexp.MustCompile(`\bmgit-dev\b|\bswe-go\b(?:-[\w]+)*`)
-	ticketRe   = regexp.MustCompile(`\b(?:FEAT|HSWE|PROJ)-\d`)
-	macPath    = regexp.MustCompile(`/Users/`)
+	// B and A bound a name: it stands alone, not inside a branch
+	// (fix/mgit-168), a scratch directory (/tmp/mgit-98-wt) or a per-user
+	// socket directory (T/mgit-501), which contain the same letters. Any
+	// other character, markdown and punctuation included, ends a name.
+	reviewerRe = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9-])reviewer-([a-z0-9]+)(?:[^A-Za-z0-9-]|$)`)
+	laneRe     = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9-])(?:mgit-linux(?:-\d+)?|go-agent(?:-\d+)?|mgit-review(?:-[a-z0-9]+)?)(?:[^A-Za-z0-9-]|$)`)
+	digitLane  = regexp.MustCompile(`(?:^|[^A-Za-z0-9/._-])[Mm]git-\d(?:[^A-Za-z0-9/-]|$)`)
+	sessionRe  = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9/._-])swe-([a-z]{2})(?:[^A-Za-z0-9/-]|$)`)
+	roleWords  = regexp.MustCompile(`(?i)\bthe (?:merger|frontier|desk)\b|\b(?:watcher|pi|merger|frontier|desk) lane\b`)
+	rulingRe   = regexp.MustCompile(`\bR-H\d+`)
+	ticketRe   = regexp.MustCompile(`(?i)\b(?:FEAT|HSWE|PROJ|SWE)[- ]\d`)
+	macPath    = regexp.MustCompile(`/Users\b|[A-Za-z]:\\Users\\|~/workspace|/tmp/claude-\d+`)
 	homePath   = regexp.MustCompile(`/home/([A-Za-z0-9._-]+)`)
-	labRe      = regexp.MustCompile(`\blanes/|\bevidence/[A-Z]+-\d|\bfrontier/`)
+	labRe      = regexp.MustCompile(`(?i)\b(?:lanes|frontier|dogfood|rulings\.d)/|\bevidence/[A-Z]+-\d`)
+	personRe   = regexp.MustCompile(`(?i)\bvimal\b`)
+	// A checkout is where the working agents build; its name is not public.
+	checkoutRe = regexp.MustCompile(`(?i)\bmgit-dev(?:-[a-z0-9]+)*\b|\bswe-go\b(?:-[\w]+)*`)
 )
+
+// nonRoleReviewers are hyphenated words that start "reviewer-" and are plain
+// public terms: the CI check "reviewer-verdict-at-head" and "reviewer-directed".
+var nonRoleReviewers = map[string]bool{"verdict": true, "directed": true}
+
+// hyphens are the Unicode dashes folded to '-' before matching, so a lane name
+// cannot be spelled around the check.
+var hyphens = strings.NewReplacer("\u2010", "-", "\u2011", "-", "\u2012", "-", "\u2013", "-", "\u2014", "-", "\u2015", "-", "\u2212", "-")
 
 // placeholderHomes are the home-directory names that stand for "a user" in
 // examples and CI paths, not a person.
@@ -221,9 +236,54 @@ var placeholderHomes = map[string]bool{
 	"alice": true, "bob": true, "me": true, "example": true, "agent": true,
 }
 
+// leakClasses names the classes found in one field's text, never the text.
+func leakClasses(text string) []string {
+	text = hyphens.Replace(text)
+	var out []string
+	role := laneRe.MatchString(text) || digitLane.MatchString(text) || roleWords.MatchString(text)
+	for _, m := range reviewerRe.FindAllStringSubmatch(text, -1) {
+		if !nonRoleReviewers[strings.ToLower(m[1])] {
+			role = true
+		}
+	}
+	for _, m := range sessionRe.FindAllStringSubmatch(text, -1) {
+		if strings.ToLower(m[1]) != "go" {
+			role = true
+		}
+	}
+	if role {
+		out = append(out, "working role")
+	}
+	if rulingRe.MatchString(text) {
+		out = append(out, "internal ruling id")
+	}
+	if ticketRe.MatchString(text) {
+		out = append(out, "another product's ticket")
+	}
+	personal := macPath.MatchString(text)
+	for _, m := range homePath.FindAllStringSubmatch(text, -1) {
+		if !placeholderHomes[m[1]] {
+			personal = true
+		}
+	}
+	if personal {
+		out = append(out, "personal path")
+	}
+	if labRe.MatchString(text) {
+		out = append(out, "lab path")
+	}
+	if personRe.MatchString(text) {
+		out = append(out, "person name")
+	}
+	if checkoutRe.MatchString(text) {
+		out = append(out, "checkout name")
+	}
+	return out
+}
+
 // textLeaks reports, by node, field and class, each place the public text
-// names a working role, another product's ticket or a personal path, or a lab
-// path. It never returns the text itself.
+// names a working role, an internal ruling, another product's ticket, a
+// checkout, a person or a personal or lab path. It never returns the text.
 func textLeaks(d *exportData) []string {
 	var out []string
 	for _, n := range d.Nodes {
@@ -231,27 +291,8 @@ func textLeaks(d *exportData) []string {
 			{"title", n.Title}, {"description", n.Description}, {"prompt", n.Prompt},
 			{"acceptance", n.Acceptance}, {"labels", n.Labels},
 		} {
-			add := func(class string) { out = append(out, fmt.Sprintf("%s %s: %s", n.ID, f.name, class)) }
-			if roleRe.MatchString(f.text) {
-				add("working role")
-			}
-			if ticketRe.MatchString(f.text) {
-				add("another product's ticket")
-			}
-			personal := macPath.MatchString(f.text)
-			for _, m := range homePath.FindAllStringSubmatch(f.text, -1) {
-				if !placeholderHomes[m[1]] {
-					personal = true
-				}
-			}
-			if personal {
-				add("personal path")
-			}
-			if labRe.MatchString(f.text) {
-				add("lab path")
-			}
-			if checkoutRe.MatchString(f.text) {
-				add("checkout name")
+			for _, class := range leakClasses(f.text) {
+				out = append(out, fmt.Sprintf("%s %s: %s", n.ID, f.name, class))
 			}
 		}
 	}
@@ -265,7 +306,7 @@ func leakError(leaks []string) error {
 	if len(shown) > 12 {
 		shown = shown[:12]
 	}
-	return fmt.Errorf("the board's public text names a working role, another product's ticket, a checkout or a personal path in %d places (reword them in the tracker, then export again): %s", len(leaks), strings.Join(shown, "; "))
+	return fmt.Errorf("the board's public text names a working role, an internal ruling, another product's ticket, a checkout, a person or a personal path in %d places (reword them in the tracker, then export again): %s", len(leaks), strings.Join(shown, "; "))
 }
 
 // creatorNamesSomeone reports whether a node's creator is an identity rather
