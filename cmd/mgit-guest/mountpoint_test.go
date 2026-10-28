@@ -183,3 +183,55 @@ func TestMakeMountPoint_LogsNothingWhenNoRepairIsNeeded(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, buf.String())
 }
+
+// The repair leaves a one-line record a later command can read from inside the
+// guest, so a passing run shows which directory was shadowed even though the
+// guest's console is shown only on failure. Refs: MGIT-230.8
+func TestMakeMountPoint_RecordsTheShadowedDirectoryForALaterReader(t *testing.T) {
+	var recorded []string
+	calls := 0
+	err := makeMountPoint("/home/alice/src/wt", mountPointOps{
+		mkdirAll: func(string, os.FileMode) error {
+			calls++
+			if calls == 1 {
+				return errCopyUp
+			}
+			return nil
+		},
+		stat:            statIn("/", "/home"),
+		isCopyUpRefusal: isCopyUp,
+		shadow:          func(string) error { return nil },
+		record:          func(dir, path string) error { recorded = append(recorded, "dir="+dir+" path="+path); return nil },
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dir=/home path=/home/alice/src/wt"}, recorded)
+}
+
+func TestMakeMountPoint_ARecordFailureDoesNotFailTheBoot(t *testing.T) {
+	calls := 0
+	err := makeMountPoint("/home/alice/src/wt", mountPointOps{
+		mkdirAll: func(string, os.FileMode) error {
+			calls++
+			if calls == 1 {
+				return errCopyUp
+			}
+			return nil
+		},
+		stat:            statIn("/", "/home"),
+		isCopyUpRefusal: isCopyUp,
+		shadow:          func(string) error { return nil },
+		record:          func(string, string) error { return errors.New("read-only") },
+	})
+	require.NoError(t, err, "the record is evidence, not a boot step")
+}
+
+func TestMakeMountPoint_RecordsNothingWhenNoRepairIsNeeded(t *testing.T) {
+	err := makeMountPoint("/tmp/wt", mountPointOps{
+		mkdirAll:        func(string, os.FileMode) error { return nil },
+		stat:            statIn("/", "/tmp"),
+		isCopyUpRefusal: isCopyUp,
+		shadow:          func(string) error { t.Fatal("no shadow expected"); return nil },
+		record:          func(string, string) error { t.Fatal("no record expected"); return nil },
+	})
+	require.NoError(t, err)
+}
