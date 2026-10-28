@@ -18,6 +18,10 @@ type mountPointOps struct {
 	shadow func(dir string) error
 	// logger, when set, records which directory a repair shadowed.
 	logger *slog.Logger
+	// record, when set, leaves a one-line record of the repair where a later
+	// command inside the guest can read it. Best effort: a failure is logged,
+	// never a boot failure. Refs: MGIT-230.8
+	record func(dir, path string) error
 }
 
 // makeMountPoint creates the worktree's identical-path mount point in the
@@ -54,6 +58,11 @@ func makeMountPoint(path string, ops mountPointOps) error {
 	if err := ops.mkdirAll(path, 0o755); err != nil {
 		return fmt.Errorf("mgit-guest: create worktree mount point %q: still refused after %s "+
 			"was shadowed with a writable tmpfs: %w", path, anc, err)
+	}
+	if ops.record != nil {
+		if err := ops.record(anc, path); err != nil && ops.logger != nil {
+			ops.logger.Warn("could not record the shadowed directory", "event", "mount_point_record_failed", "dir", anc, "error", err.Error())
+		}
 	}
 	if ops.logger != nil {
 		// One line on every repair that worked, so a passing run shows WHICH

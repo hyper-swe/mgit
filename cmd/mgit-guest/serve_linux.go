@@ -435,6 +435,7 @@ func mountWorktree(logger *slog.Logger) error {
 		isCopyUpRefusal: copyUpRefusal,
 		shadow:          func(dir string) error { return ensureWritableDir(dir, logger) },
 		logger:          logger,
+		record:          func(dir, path string) error { return writeShadowRecord(shadowRecordFile, dir, path) },
 	}); err != nil {
 		return err
 	}

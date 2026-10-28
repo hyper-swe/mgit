@@ -52,6 +52,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On Linux, when the guest makes a worktree's mount point by shadowing the
+  deepest directory the image ships with a writable tmpfs, it now says which
+  directory it shadowed: one log line, and a one-line record in
+  `/tmp/.mgit-mount-point-shadowed` that a command inside the guest can read.
+  Before, a passing run showed nothing. The repair itself is unchanged.
+
 - The pre-push hook removes its scratch file by file instead of with a
   recursive delete, so a lane that may not run recursive deletes can push
   through it (MGIT-318).
