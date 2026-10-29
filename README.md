@@ -95,6 +95,14 @@ If a linked worktree points to a missing Git directory, checkpoints refuse rathe
 than proceed without exclusions. Restore the directory and run `git worktree repair`,
 or recreate the worktree, before retrying.
 
+If a base has already absorbed an untracked path, repair it by excluding the
+path and running one explicit capture (`mgit work <path> --task-id <ID>
+--include-uncommitted`, which also creates a task worktree). The capture appends
+a new base commit without the path. Tasks created earlier keep
+the base they forked from, so they still contain it. A path that Git tracks and
+the working tree still holds can't be repaired this way: the next capture adds
+it back.
+
 <p align="center">
   <a href="#why-this-exists">Why</a> &middot;
   <a href="#how-containment-works">Containment</a> &middot;

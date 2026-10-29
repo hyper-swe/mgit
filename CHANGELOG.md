@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **repairing a base that absorbed an untracked path**. The README now says to
+  exclude the path and run one explicit capture, that earlier tasks keep their
+  base, and that a path Git tracks and the working tree still holds can't be
+  repaired this way. No behaviour change. Refs: MGIT-324
+
 ## [0.7.6] - 2026-10-29
 
 `linux_arm64` is build-verified and not boot-verified: it is built and
