@@ -301,8 +301,14 @@ jobs:
           tarball="$HOME/.cache/mgit-libkrun/linux-$LIBKRUNFW_KERNEL_VERSION.tar.xz"
           echo "$LIBKRUNFW_KERNEL_SHA256  $tarball" | sha256sum -c -
           cp "$tarball" "$src/libkrunfw-$LIBKRUNFW_VERSION-kernel-linux-$LIBKRUNFW_KERNEL_VERSION.tar.xz"
-          git -C "$RUNNER_TEMP/libkrun-src/libkrunfw" archive --format=tar.gz \
-            --prefix="libkrunfw-$LIBKRUNFW_VERSION/" -o "$src/libkrunfw-$LIBKRUNFW_VERSION-source.tar.gz" HEAD
+          # libkrunfw's source archive is the tap release's file, byte for byte,
+          # checked against its pin: one file, one digest, on both releases.
+          # Refs: MGIT-306
+          libkrunfw_src="$RUNNER_TEMP/libkrunfw-source.tar.gz"
+          bash scripts/ci/guard-fetch.sh -t 120 -l libkrunfw-source -c "rm -f '$libkrunfw_src'" -- \
+            curl -fsSL -o "$libkrunfw_src" "$LIBKRUNFW_SOURCE_URL"
+          echo "$LIBKRUNFW_SOURCE_SHA256  $libkrunfw_src" | sha256sum -c -
+          cp "$libkrunfw_src" "$src/libkrunfw-$LIBKRUNFW_VERSION-source.tar.gz"
           git -C "$RUNNER_TEMP/libkrun-src/libkrun" archive --format=tar.gz \
             --prefix="libkrun-$LIBKRUN_VERSION/" -o "$src/libkrun-$LIBKRUN_VERSION-source.tar.gz" HEAD
           # The prebuilt kernel image the macOS libkrunfw is built from, verified
