@@ -10,7 +10,7 @@ before:
     # The licence texts of the Go modules compiled into the binaries, in one
     # file the archives carry beside NOTICE. It stops the release when a
     # module has no licence file. Refs: MGIT-306
-    - bash scripts/release/third-party-licenses.sh dist/THIRD_PARTY_LICENSES.txt
+    - bash scripts/release/third-party-licenses.sh build/THIRD_PARTY_LICENSES.txt
     # The tests below link this runner's libkrun, which must carry the net
     # API (MGIT-61.14). The darwin daemon that ships links its own libkrun,
     # checked by scripts/release/verify-darwin-sandboxd.sh (MGIT-259).
@@ -166,7 +166,7 @@ archives:
       # to be named here or an Apache-2.0 product ships with no license text.
       - LICENSE*
       - NOTICE*
-      - src: dist/THIRD_PARTY_LICENSES.txt
+      - src: build/THIRD_PARTY_LICENSES.txt
         strip_parent: true
       - README*
       - CHANGELOG*

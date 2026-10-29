@@ -57,8 +57,24 @@ func TestThirdPartyLicensesScript_AModuleWithNoLicenceTextStopsTheBuild(t *testi
 
 func TestGoreleaser_ShipsTheGeneratedThirdPartyLicencesInEveryArchive(t *testing.T) {
 	cfg := readRepoFile(t, ".goreleaser.yaml")
-	assert.Contains(t, cfg, "scripts/release/third-party-licenses.sh dist/THIRD_PARTY_LICENSES.txt",
+	assert.Contains(t, cfg, "scripts/release/third-party-licenses.sh build/THIRD_PARTY_LICENSES.txt",
 		"a before hook must generate the file")
-	assert.True(t, strings.Contains(cfg, "src: dist/THIRD_PARTY_LICENSES.txt") || strings.Contains(cfg, `src: "dist/THIRD_PARTY_LICENSES.txt"`),
+	assert.True(t, strings.Contains(cfg, "src: build/THIRD_PARTY_LICENSES.txt") || strings.Contains(cfg, `src: "build/THIRD_PARTY_LICENSES.txt"`),
 		"the archive must carry the generated file")
+}
+
+// goreleaser refuses to build when dist/ is not empty, and before hooks run
+// before the build: a hook that writes into dist/ stops the release. The
+// generated file lives in build/, which is ignored, and is read from there.
+func TestGoreleaser_NoBeforeHookWritesIntoDist(t *testing.T) {
+	cfg := readRepoFile(t, ".goreleaser.yaml")
+	hooks, ok := cutSection(cfg, "before:\n  hooks:\n", "\nbuilds:")
+	require.True(t, ok, "the before hooks must be found")
+	for _, line := range strings.Split(hooks, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "- ") {
+			continue
+		}
+		assert.NotContains(t, trimmed, "dist/", "a before hook must not write into dist/: goreleaser then refuses the build (%q)", trimmed)
+	}
 }
