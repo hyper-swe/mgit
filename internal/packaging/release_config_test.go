@@ -512,6 +512,47 @@ func TestCIWorkflow_ProvesTheBrewInstallOnALibkrunFreeRunner(t *testing.T) {
 	}
 }
 
+// The tap must be tapped whether or not a branch is named. On a pull request
+// MGIT_TAP_BRANCH is empty, and `brew trust` alone does not tap: brew then
+// reports "No available formula hyper-swe/tap/libkrunfw" on every attempt.
+// So the `brew tap` of hyper-swe/tap must come before the branch condition,
+// not inside it. Refs: MGIT-306
+func TestBrewInstallCheck_TapsTheOwnTapWhetherOrNotABranchIsNamed(t *testing.T) {
+	script := readRepoFile(t, checkScript)
+	var lines []string
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		lines = append(lines, trimmed)
+	}
+	index := func(needle string, from int) int {
+		for i := from; i < len(lines); i++ {
+			if strings.Contains(lines[i], needle) {
+				return i
+			}
+		}
+		return -1
+	}
+	trust := index(`"$BREW" trust hyper-swe/tap`, 0)
+	if trust < 0 {
+		t.Fatal("the check must take the documented setup step, `brew trust hyper-swe/tap`")
+	}
+	branch := index(`if [ -n "$TAP_BRANCH" ]`, trust)
+	if branch < 0 {
+		t.Fatal("the check must still resolve a named tap branch after the trust step")
+	}
+	tap := index(`"$BREW" tap "$OWN_TAP"`, trust)
+	if tap < 0 {
+		t.Fatal("the check must tap hyper-swe/tap after trusting it")
+	}
+	if tap > branch {
+		t.Error("`brew tap hyper-swe/tap` is inside the MGIT_TAP_BRANCH condition, so a run " +
+			"with no branch named never taps it and libkrunfw cannot resolve")
+	}
+}
+
 // findInCode reports whether `needle` appears on a line of a shell script that
 // is not a comment, returning that line. A guard that cannot distinguish a
 // command from a comment warning against it is not a guard.

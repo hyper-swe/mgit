@@ -180,19 +180,21 @@ if ! grep -q "file://${WORK}/mgit.tar.gz" "$TAP_FORMULA_DIR/mgit.rb"; then
 fi
 
 # --------------------------------------------------------------------------
-# 4. The one documented setup step, then (only when MGIT_TAP_BRANCH is set)
-#    the tap branch the dependency resolves from.
+# 4. The one documented setup step, the tap itself, then (only when
+#    MGIT_TAP_BRANCH is set) the tap branch the dependency resolves from.
 # --------------------------------------------------------------------------
 echo "==> brew trust $OWN_TAP (the documented setup step)"
 "$BREW" trust hyper-swe/tap
 TRUSTED_HERE=1
+# `brew trust` does not tap: without this step the dependency cannot resolve
+# at all. The default remote, so the trust recorded above matches the tap.
+# -t 300 is provisional: this step has no run history yet (MGIT-143).
+echo "==> brew tap $OWN_TAP"
+"$REPO_ROOT/scripts/ci/guard-fetch.sh" -t 300 -l brew-tap-own-tap \
+  -c "$BREW untap $OWN_TAP >/dev/null 2>&1 || true" -- \
+  "$BREW" tap "$OWN_TAP"
 if [ -n "$TAP_BRANCH" ]; then
   echo "==> Resolving $OWN_TAP from its branch $TAP_BRANCH"
-  # The default remote, so the trust recorded above matches the tap. -t 300
-  # is provisional: this step has no run history yet (MGIT-143).
-  "$REPO_ROOT/scripts/ci/guard-fetch.sh" -t 300 -l brew-tap-own-tap \
-    -c "$BREW untap $OWN_TAP >/dev/null 2>&1 || true" -- \
-    "$BREW" tap "$OWN_TAP"
   OWN_TAP_DIR="$("$BREW" --repository "$OWN_TAP")"
   "$REPO_ROOT/scripts/ci/guard-fetch.sh" -t 300 -l brew-tap-own-tap-branch \
     -c none:'git fetch writes objects before it moves any ref, so a failed fetch leaves the checkout as it was' -- \

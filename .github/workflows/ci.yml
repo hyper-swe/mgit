@@ -313,8 +313,9 @@ jobs:
 
       # The formula depends on hyper-swe/tap/libkrunfw, so the check takes the
       # one documented setup step, `brew trust hyper-swe/tap`, and proves
-      # libkrunfw arrives. On a pull request it resolves the tap's default
-      # branch; a dispatch can name the tap branch to resolve instead.
+      # libkrunfw arrives. Trust does not tap, so the check also runs
+      # `brew tap hyper-swe/tap`: its default branch on a pull request, or the
+      # branch a dispatch names.
       # Refs: MGIT-306
       - name: Install mgit from the repo formula on a libkrun-free runner
         env:
