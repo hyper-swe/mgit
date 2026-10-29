@@ -8,7 +8,7 @@ import (
 
 // A base that absorbed an untracked runtime path is repaired by excluding the
 // path and running one explicit capture; the README says so, says what stays
-// unchanged, and says which paths cannot be repaired this way. The behaviour
+// unchanged, and says which paths cannot be repaired this way. The behavior
 // is covered by TestE2E_Resync_IgnoredUntrackedCaptureOrders.
 // Refs: MGIT-324
 
