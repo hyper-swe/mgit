@@ -67,12 +67,13 @@ hosted arm64 runner has no KVM (measured), so no guest boots there.
   while real host conflicts, staged changes, mode mismatches and unsafe parent
   entries are refused before anything is written. A commit that was recorded
   but not written to the worktree is retried on the next land, with backup, restore and
-  retry instructions in place of a misleading no-op.
+  retry instructions in place of a misleading no-op (MGIT-317).
 - When a base is recomposed under a moved image tag, a launch that still names
   the old pin is refused with the old and the current pin named, and the
   replacement sequence (remove, then launch) is printed with the right flags.
   Before the new pin replaces the old one, any registration still using the old
-  pin is listed. Existing registrations and running VMs are not changed.
+  pin is listed. Existing registrations and running VMs are not changed
+  (MGIT-286).
 
 ### Fixed
 
