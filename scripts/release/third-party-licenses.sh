@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# third-party-licenses.sh <out-file> — write the licence texts of every Go
+# third-party-licenses.sh <out-file> — write the license texts of every Go
 # module compiled into mgit's shipped binaries (mgit, mgit-sandboxd,
 # mgit-guest) to one file, which the release archives carry beside NOTICE.
 #
@@ -8,8 +8,8 @@
 # replaces that list with a file of "path<TAB>version<TAB>dir" lines, so the
 # refusal can be tested without a module cache.
 #
-# A module with no licence file stops the build: shipping a binary without the
-# licence text of something compiled into it is the failure this prevents.
+# A module with no license file stops the build: shipping a binary without the
+# license text of something compiled into it is the failure this prevents.
 # The output is written whole or not at all.
 # Refs: MGIT-306
 set -euo pipefail
@@ -45,9 +45,9 @@ fi
 
 body="$work/body.txt"
 {
-	echo "Third-party licences"
+	echo "Third-party licenses"
 	echo
-	echo "mgit's binaries include the Go modules below. Each module's licence text"
+	echo "mgit's binaries include the Go modules below. Each module's license text"
 	echo "follows, as published with that module."
 	echo
 } >"$body"
@@ -66,7 +66,7 @@ while IFS="$(printf '\t')" read -r path version dir; do
 		} >>"$body"
 	done
 	if [ "$found" -eq 0 ]; then
-		echo "refusing: $path $version has no licence file in $dir" >&2
+		echo "refusing: $path $version has no license file in $dir" >&2
 		exit 1
 	fi
 done <"$modules"

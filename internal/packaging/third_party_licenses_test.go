@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The release archives ship the licence texts of the Go modules compiled into
+// The release archives ship the license texts of the Go modules compiled into
 // their binaries, in one generated file, so an MIT or BSD dependency's notice
-// travels with the binary that contains it. A module with no licence text
+// travels with the binary that contains it. A module with no license text
 // stops the build rather than shipping without one. Refs: MGIT-306
 
-func TestThirdPartyLicensesScript_CarriesTheLicenceTextOfEveryCompiledInModule(t *testing.T) {
+func TestThirdPartyLicensesScript_CarriesTheLicenseTextOfEveryCompiledInModule(t *testing.T) {
 	skipOnWindows(t)
 	out := filepath.Join(t.TempDir(), "THIRD_PARTY_LICENSES.txt")
 	log, err := runRepoScript(t, repoRoot(t), "third-party-licenses.sh", nil, out)
@@ -35,10 +35,10 @@ func TestThirdPartyLicensesScript_CarriesTheLicenceTextOfEveryCompiledInModule(t
 	}
 	assert.Contains(t, text, "Permission is hereby granted", "an MIT dependency's text must be present")
 	assert.Contains(t, text, "Redistribution and use in source and binary forms", "a BSD dependency's text must be present")
-	assert.NotContains(t, text, "== github.com/hyper-swe/mgit ", "mgit's own licence is shipped as LICENSE, not listed here")
+	assert.NotContains(t, text, "== github.com/hyper-swe/mgit ", "mgit's own license is shipped as LICENSE, not listed here")
 }
 
-func TestThirdPartyLicensesScript_AModuleWithNoLicenceTextStopsTheBuild(t *testing.T) {
+func TestThirdPartyLicensesScript_AModuleWithNoLicenseTextStopsTheBuild(t *testing.T) {
 	skipOnWindows(t)
 	dir := t.TempDir()
 	bare := filepath.Join(dir, "bare")
@@ -49,13 +49,13 @@ func TestThirdPartyLicensesScript_AModuleWithNoLicenceTextStopsTheBuild(t *testi
 
 	out := filepath.Join(dir, "out.txt")
 	log, err := runRepoScript(t, repoRoot(t), "third-party-licenses.sh", []string{"MGIT_LICENSES_MODULES_FILE=" + list}, out)
-	require.Error(t, err, "a module with no licence file must refuse: %s", log)
+	require.Error(t, err, "a module with no license file must refuse: %s", log)
 	assert.Contains(t, log, "example.com/bare")
 	_, statErr := os.Stat(out)
 	assert.True(t, os.IsNotExist(statErr), "no partial file may be left behind")
 }
 
-func TestGoreleaser_ShipsTheGeneratedThirdPartyLicencesInEveryArchive(t *testing.T) {
+func TestGoreleaser_ShipsTheGeneratedThirdPartyLicensesInEveryArchive(t *testing.T) {
 	cfg := readRepoFile(t, ".goreleaser.yaml")
 	assert.Contains(t, cfg, "scripts/release/third-party-licenses.sh build/THIRD_PARTY_LICENSES.txt",
 		"a before hook must generate the file")
