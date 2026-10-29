@@ -38,7 +38,7 @@ hosted arm64 runner has no KVM (measured), so no guest boots there.
   not stop it. A history that cannot be read is refused rather than passed
   unchecked. See [content recovery](docs/CONTENT-RECOVERY.md).
 - `mgit merge` refuses a source branch that ends at, or is built on, a retained
-  guest commit that was never delivered, for the fast-forward, `--no-ff` and
+  guest commit that was never delivered, for the default, `--no-ff` and
   `--squash` strategies, before any ref, index or file changes. Merging host
   branches works as before. See [content recovery](docs/CONTENT-RECOVERY.md).
 
@@ -58,7 +58,7 @@ hosted arm64 runner has no KVM (measured), so no guest boots there.
 
 - `mgit merge` of a source branch whose tip is already contained in the current
   branch now reports "already up to date" and leaves the branch where it is,
-  for the fast-forward, `--no-ff` and `--squash` strategies. Before, `--no-ff`
+  for the default, `--no-ff` and `--squash` strategies. Before, `--no-ff`
   and the default strategy wrote a merge commit and `--squash` wrote a commit
   for content the branch already had (MGIT-326).
 - `mgit sandbox land` publishes verified sandbox commits into the task's bound
