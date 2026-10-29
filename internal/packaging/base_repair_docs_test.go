@@ -15,7 +15,7 @@ import (
 func TestDocs_ABaseThatAbsorbedAnUntrackedPathIsRepairedByExclusionAndOneCapture(t *testing.T) {
 	readme := flatten(readRepoFile(t, "README.md"))
 	for _, want := range []string{
-		"excluding the path and running one explicit capture (`mgit work --include-uncommitted`)",
+		"excluding the path and running one explicit capture (`mgit work <path> --task-id <ID> --include-uncommitted`, which also creates a task worktree)",
 		"Tasks created earlier keep the base they forked from",
 		"A path that Git tracks and the working tree still holds can't be repaired this way",
 	} {
