@@ -29,10 +29,21 @@ changes — the `install` method, `caveats`, `depends_on` — that change does
 cannot push to that repo directly; see docs/release/RELEASE-CHECKLIST.md for
 when this manual sync is required.
 
-## Install command (unchanged)
+## libkrunfw
+
+The tap also carries `Formula/libkrunfw.rb`, which mgit's formula depends on
+for Apple silicon macOS. It is maintained in the tap itself, not here, and
+`update-formula.yml` never touches it. mgit's archive never carries
+libkrunfw. Refs: MGIT-306
+
+## Install command
 
 ```bash
+brew trust hyper-swe/tap
 brew install hyper-swe/tap/mgit
 ```
+
+The trust step is what lets Homebrew load the libkrunfw dependency from the
+tap.
 
 Refs: MGIT-44

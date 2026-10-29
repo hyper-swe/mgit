@@ -347,16 +347,15 @@ composed from anything else.
    automates.** libkrun gates its net-device API behind an opt-in build flag,
    and mgit requires an explicit NIC in every mode — without one libkrun falls
    back to TSI and the guest gets full host egress, so `mgit-sandboxd` refuses
-   to start. The `libkrun/krun` tap passes `NET=1` today, but that is a
-   THIRD-PARTY build flag: if the formula ever drops it, every Mac install
-   breaks. The script checks this; the manual equivalent, and what to run when
+   to start. The macOS archive's libkrun is built here with `NET=1`
+   (`scripts/release/build-darwin-sandboxd.sh`); the script checks this. The
+   manual equivalent, run in the extracted macOS archive, and what to run when
    a user reports the capability refusal, is:
    ```
-   brew tap libkrun/krun
-   brew trust libkrun/krun   # required: Homebrew refuses to load an untrusted tap
-   brew install libkrun
-   nm -gU "$(brew --prefix libkrun)/lib/libkrun.dylib" | grep krun_add_net_unixgram
+   nm -gU lib/libkrun.1.dylib | grep krun_add_net_unixgram
    ```
+   The archive carries no libkrunfw (`verify-darwin-sandboxd.sh` refuses one);
+   libkrunfw comes from `hyper-swe/tap/libkrunfw`. Refs: MGIT-306
    A match is required. `make check-libkrun-net` performs the same check at
    build time, and mgit-sandboxd re-verifies it at startup and refuses closed.
    Refs: MGIT-61.14
@@ -395,3 +394,15 @@ go build ./... && go test ./internal/sandboxd/... -count=1
 Refs: ADR-010, SEC-04, FR-17.8
 
 Refs: MGIT-48, MGIT-44, MGIT-61.2
+
+## libkrunfw source obligations
+
+libkrunfw carries a GPL-2.0-only kernel, so every release that ships a
+libkrunfw binary, bottle or tarball owes its complete corresponding source.
+
+- [ ] Never delete a release, or its source assets, that carried a libkrunfw
+      binary, bottle or tarball for at least three years after it was last
+      offered.
+- [ ] Keep swe@hyperswe.com monitored, and answer source requests within days.
+- [ ] When the libkrunfw pin changes, publish the new source set before or
+      with the first binary.

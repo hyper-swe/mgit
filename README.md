@@ -207,10 +207,11 @@ It also sidesteps a macOS trap that a browser download cannot: see [Why not just
 **Homebrew** (macOS / Linux):
 
 ```bash
+brew trust hyper-swe/tap
 brew install hyper-swe/tap/mgit
 ```
 
-One command, no other taps and no `brew trust` — the [sandbox](#enable-the-sandbox) layer has its own prerequisites, and none of them are needed to install or use core mgit.
+No other tap is needed. On Apple silicon macOS the formula also installs libkrunfw, the [sandbox](#enable-the-sandbox)'s guest kernel library, from the same tap, and Homebrew loads a dependency only from a tap you trust, so trust the tap first. On Linux and Intel macOS the trust step changes nothing. Core mgit needs none of the sandbox's prerequisites.
 
 **Go**:
 
@@ -340,15 +341,14 @@ by test in `scripts/e2e/libkrun_linux_column.sh`.
 
 The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`, but on Linux that builds the firecracker daemon, which boots only a kernel + rootfs image and refuses `sandbox sync` and `sandbox export`: use the release archive for the agent loop ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md)).
 
-- **macOS** requires Apple Silicon (arm64), macOS 14+, and **libkrunfw**, the guest kernel library, which is *not* installed with mgit — it comes with the libkrun formula of a third-party Homebrew tap, and Homebrew will not load a formula from a tap you have not trusted. All three commands are needed, in this order:
+- **macOS** requires Apple Silicon (arm64), macOS 14+, and **libkrunfw**, the guest kernel library. libkrunfw is a separate library under its own licenses (LGPL-2.1-only AND GPL-2.0-only), and on macOS it is a separate install, not part of mgit's archive. With Homebrew, it comes from mgit's own tap with mgit:
 
   ```bash
-  brew tap libkrun/krun
-  brew trust libkrun/krun
-  brew install libkrun
+  brew trust hyper-swe/tap
+  brew install hyper-swe/tap/mgit
   ```
 
-  `brew install libkrun` on its own fails, and so does the fully-qualified name — see [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#installing-libkrun-on-macos) for why, and for why mgit no longer tries to install it for you. The release/brew daemon carries its own libkrun in `lib/` beside it — keep them together — and is code-signed with the hypervisor entitlement (a `go install`-ed daemon links Homebrew's libkrun, is unsigned and must be signed locally).
+  With the curl installer, add `MGIT_SANDBOX=1`: after it installs mgit, it names libkrunfw's licenses and source and asks before it downloads libkrunfw as a separate file ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#installing-libkrunfw-on-macos) has the details, including the default download location and the `MGIT_LIBKRUNFW_BASE` override). The release/brew daemon carries its own libkrun in `lib/` beside it — keep them together — and is code-signed with the hypervisor entitlement (a `go install`-ed daemon links a libkrun you provide, is unsigned and must be signed locally).
 - **Linux** requires `/dev/kvm` (read-writable by your user) and glibc 2.31+, and nothing else: the release archive carries libkrun and libkrunfw in `lib/` beside `mgit-sandboxd`, so extract the whole archive and keep them together. The kernel inside libkrunfw is GPL-2.0; its source is published with every release that bundles it ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#the-linux-archive-and-what-it-carries)).
 - **Windows and Intel macOS** have no sandbox backend yet; core mgit runs without it.
 

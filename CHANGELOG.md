@@ -14,6 +14,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   base, and that a path Git tracks and the working tree still holds can't be
   repaired this way. No behaviour change. Refs: MGIT-324
 
+### Changed
+
+- On Apple silicon macOS, the Homebrew formula depends on
+  `hyper-swe/tap/libkrunfw`, the sandbox's guest kernel library, from mgit's
+  own tap. Run `brew trust hyper-swe/tap` once, then `brew install
+  hyper-swe/tap/mgit`. mgit no longer sends you to the libkrun/krun tap, and
+  `mgit doctor` and the sandbox's failure messages name the new steps. mgit's
+  archive does not carry libkrunfw (MGIT-306).
+- `install.sh` sets up libkrunfw on Apple silicon macOS only when you run it
+  with `MGIT_SANDBOX=1`: it names libkrunfw's licenses
+  (LGPL-2.1-only AND GPL-2.0-only) and source, asks before downloading it as
+  a separate file, checks it against that download's `checksums.txt`, and
+  installs it beside libkrun with its license texts and source offer. It
+  downloads from the same release as the mgit archive; set
+  `MGIT_LIBKRUNFW_BASE` to use a mirror instead (MGIT-306).
+- Every release hosts libkrunfw's corresponding source beside its binaries,
+  under the signed `checksums.txt`: the kernel tarball, libkrunfw's source,
+  patches and configuration, and now also the prebuilt kernel image the macOS
+  library is built from (`libkrunfw-v5.5.0-prebuilt-aarch64.tgz`, checked
+  against its pinned digest). The release workflow fails if any of them is
+  missing or unchecksummed. The offers name swe@hyperswe.com (MGIT-306).
+- The sandbox daemon looks for libkrunfw in its own library directory
+  (`lib/` beside it, or `<prefix>/lib/mgit`) before the Homebrew prefix and
+  the system directories (MGIT-306).
+
 ## [0.7.6] - 2026-10-29
 
 `linux_arm64` is build-verified and not boot-verified: it is built and

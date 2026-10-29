@@ -15,6 +15,15 @@ on:
   # PR -- added specifically to give the new libkrun-linux job (below) its
   # first real run, since push/pull_request alone never fire on this branch.
   workflow_dispatch:
+    inputs:
+      # brew-install-no-libkrun resolves hyper-swe/tap from this branch of
+      # hyper-swe/homebrew-tap instead of its default branch, so a formula
+      # change in both repositories can be proved before either merges.
+      # Refs: MGIT-306
+      tap_branch:
+        description: "hyper-swe/homebrew-tap branch for the brew install check (empty: the tap's default branch)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -87,10 +96,18 @@ jobs:
       # (exit 0, NOT CHECKED) when the tap cannot be fetched, so a network blip
       # does not turn CI red, and the release checklist runs it with --require
       # before a tag. Refs: MGIT-67
+      # A dispatch can name the tap branch to compare against, so a formula
+      # change in both repositories is proved before either merges. Refs: MGIT-306
       - name: Tap formula — the check's own refusals, then the live tap
+        env:
+          MGIT_TAP_BRANCH: ${{ inputs.tap_branch }}
         run: |
           bash scripts/ci/check-tap-formula-selftest.sh
-          bash scripts/ci/check-tap-formula.sh
+          if [ -n "$MGIT_TAP_BRANCH" ]; then
+            bash scripts/ci/check-tap-formula.sh --tap-url "https://raw.githubusercontent.com/hyper-swe/homebrew-tap/${MGIT_TAP_BRANCH}/Formula/mgit.rb"
+          else
+            bash scripts/ci/check-tap-formula.sh
+          fi
 
       # Every build tool and action on a reproducible path is pinned, or its
       # float is declared at the site with a reason. The self-test proves the
@@ -294,7 +311,15 @@ jobs:
       - name: Assert installed Go version
         run: bash scripts/ci/assert-go-version.sh
 
+      # The formula depends on hyper-swe/tap/libkrunfw, so the check takes the
+      # one documented setup step, `brew trust hyper-swe/tap`, and proves
+      # libkrunfw arrives. Trust does not tap, so the check also runs
+      # `brew tap hyper-swe/tap`: its default branch on a pull request, or the
+      # branch a dispatch names.
+      # Refs: MGIT-306
       - name: Install mgit from the repo formula on a libkrun-free runner
+        env:
+          MGIT_TAP_BRANCH: ${{ inputs.tap_branch }}
         run: scripts/brew-install-no-libkrun.sh
 
   # The macOS job above is the ONLY thing that compiled the libkrun cgo

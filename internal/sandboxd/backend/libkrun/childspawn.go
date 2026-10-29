@@ -215,9 +215,38 @@ var libkrunfwSearchDirs = []string{
 	"/usr/lib/" + runtime.GOARCH + "-linux-gnu",
 }
 
-// libkrunfwDirs returns the standard install directories that actually
-// contain libkrunfw on this machine.
-func libkrunfwDirs() []string { return libkrunfwDirsIn(libkrunfwSearchDirs) }
+// libkrunfwDirs returns the directories that actually contain libkrunfw on
+// this machine: this daemon's own library directories first, then the
+// standard install prefixes.
+//
+// The daemon's own directories are where install.sh puts the opt-in
+// libkrunfw (<prefix>/lib/mgit, beside the libkrun the release ships) and
+// where an extracted archive keeps its libraries (lib/ beside the daemon). A
+// copy there belongs to this install, so it comes before a system copy.
+// Refs: MGIT-306
+func libkrunfwDirs() []string {
+	return libkrunfwDirsIn(append(daemonLibDirs(os.Executable), libkrunfwSearchDirs...))
+}
+
+// daemonLibDirs lists this daemon's own library directories, <dir>/lib and
+// <dir>/../lib/mgit, for its path as given and as resolved through any
+// symlink: the same places its run path names for libkrun (bundleCandidates).
+// An executable that cannot be resolved contributes nothing.
+func daemonLibDirs(exe func() (string, error)) []string {
+	path, err := exe()
+	if err != nil {
+		return nil
+	}
+	var dirs []string
+	seen := map[string]bool{}
+	for _, c := range bundleCandidates(path, "") {
+		if d := filepath.Clean(c); !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs
+}
 
 // libkrunfwDirsIn returns those of dirs holding a libkrunfw shared library.
 // Directories that do not have it are dropped rather than padding the
