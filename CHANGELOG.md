@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The sandbox daemon looks for libkrunfw in its own library directory
   (`lib/` beside it, or `<prefix>/lib/mgit`) before the Homebrew prefix and
   the system directories (MGIT-306).
+- libkrunfw's source archive is one file with one digest. Releases from now
+  on attach the exact `libkrunfw-v5.5.0-source.tar.gz` that the tap release
+  `libkrunfw-5.5.0` publishes, checked against its pinned sha256, instead of
+  building a second archive of the same source that differs only in its top
+  directory name; the release's post-publish check requires `checksums.txt`
+  to list it at that digest (MGIT-306).
 
 ## [0.7.6] - 2026-10-29
 

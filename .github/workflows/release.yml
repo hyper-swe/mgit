@@ -365,6 +365,11 @@ jobs:
             printf '%s\n' "$sums" | grep -q "  $want\$" || { echo "FATAL: checksums.txt does not cover $want"; exit 1; }
             echo "ok: $want published and checksummed"
           done
+          # One source archive, one digest: the file attached here is the tap
+          # release's, byte for byte. Refs: MGIT-306
+          printf '%s\n' "$sums" | grep -q "^$LIBKRUNFW_SOURCE_SHA256  libkrunfw-$LIBKRUNFW_VERSION-source.tar.gz\$" \
+            || { echo "FATAL: checksums.txt does not list libkrunfw-$LIBKRUNFW_VERSION-source.tar.gz at the pinned digest $LIBKRUNFW_SOURCE_SHA256"; exit 1; }
+          echo "ok: the libkrunfw source archive carries the pinned digest"
 
   homebrew:
     name: Update Homebrew Tap
