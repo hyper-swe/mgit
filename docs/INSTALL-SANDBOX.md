@@ -219,10 +219,12 @@ download's `checksums.txt`, and installs it beside libkrun in
 `MGIT_LIBKRUNFW_ACCEPT=yes` (or `no`). Without `MGIT_SANDBOX=1` the installer
 fetches nothing beyond mgit's own archive.
 
-The installer has no default download location for libkrunfw yet, so this
-step stops and says so unless you set `MGIT_LIBKRUNFW_BASE` to a location that
-holds `libkrunfw_5.5.0_darwin_arm64.tar.gz` and its `checksums.txt`. Until
-then, use Homebrew: a curl-installed daemon finds a Homebrew libkrunfw too.
+By default the installer downloads libkrunfw from the same release as the
+mgit archive it just installed, where `libkrunfw_5.5.0_darwin_arm64.tar.gz`
+and its `checksums.txt` are published. To use a mirror instead, set
+`MGIT_LIBKRUNFW_BASE` to a location that holds those two files. A
+curl-installed daemon also finds a Homebrew libkrunfw, so Homebrew works as
+well.
 
 > **Why mgit depends only on its own tap.** The formula once depended on
 > libkrun from a third-party tap. Homebrew resolves dependencies before it

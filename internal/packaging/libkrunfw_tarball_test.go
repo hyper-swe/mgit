@@ -196,6 +196,64 @@ func TestBuildDarwinLibkrunfw_ABuildThatLeavesNoLibrary_IsRefused(t *testing.T) 
 	assert.Contains(t, log, "left no")
 }
 
+// fakeBrewScript writes a brew that logs every call to calls and answers the
+// preflight questions from the preinstalled list.
+func fakeBrewScript(t *testing.T, preinstalled string) (brew, calls string) {
+	t.Helper()
+	dir := t.TempDir()
+	calls = filepath.Join(dir, "calls")
+	brew = filepath.Join(dir, "brew")
+	body := "#!/bin/sh\necho \"$*\" >>" + calls + "\n" +
+		"case \"$1 $2 $3\" in\n" +
+		"  \"list --versions " + preinstalled + "\") echo \"" + preinstalled + " 1.0\"; exit 0 ;;\n" +
+		"esac\nexit 1\n"
+	require.NoError(t, os.WriteFile(brew, []byte(body), 0o700)) //nolint:gosec // a t.TempDir path
+	return brew, calls
+}
+
+// A preflight refusal must leave what was already installed alone: the check
+// has installed nothing, so its cleanup must uninstall nothing.
+func TestBrewInstallCheck_ARefusedPreflightUninstallsNothing(t *testing.T) {
+	skipOnWindows(t)
+	root := repoRoot(t)
+	for _, preinstalled := range []string{"libkrun", "libkrunfw"} {
+		t.Run(preinstalled, func(t *testing.T) {
+			brew, calls := fakeBrewScript(t, preinstalled)
+			cmd := exec.Command("bash", filepath.Join(root, "scripts", "brew-install-no-libkrun.sh")) //nolint:gosec // G204: test-only; a repo script by constant name
+			cmd.Env = append(os.Environ(), "BREW="+brew)
+			out, err := cmd.CombinedOutput()
+			require.Error(t, err, "the check must refuse when %s is already installed: %s", preinstalled, out)
+			log, readErr := os.ReadFile(calls) //nolint:gosec // a t.TempDir path
+			require.NoError(t, readErr)
+			assert.NotContains(t, string(log), "uninstall", "a refusal ran an uninstall:\n%s", log)
+		})
+	}
+}
+
+// The assembler owns its scratch directory and leaves none behind, on success
+// or on failure.
+func TestBuildDarwinLibkrunfw_RemovesItsScratchDirectoryOnSuccessAndOnFailure(t *testing.T) {
+	skipOnWindows(t)
+	prebuilt, sha := prebuiltFixture(t)
+	root := scriptTree(t, sha)
+	nolib := filepath.Join(t.TempDir(), "nolib")
+	require.NoError(t, os.WriteFile(nolib, []byte("#!/bin/sh\nexit 0\n"), 0o700)) //nolint:gosec // a t.TempDir path
+	for name, mk := range map[string]string{"success": fakeMake(t), "failure": nolib} {
+		t.Run(name, func(t *testing.T) {
+			scratch := t.TempDir()
+			_, err := runRepoScript(t, root, "build-darwin-libkrunfw.sh", []string{"MAKE=" + mk, "TMPDIR=" + scratch}, prebuilt, t.TempDir(), "v9.9.9")
+			if name == "success" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+			left, readErr := os.ReadDir(scratch)
+			require.NoError(t, readErr)
+			assert.Empty(t, left, "the script left its scratch directory behind")
+		})
+	}
+}
+
 func TestE2EWorkflow_BuildsAndSmokeTestsTheMacOSLibkrunfwTarballAndUploadsItOnATag(t *testing.T) {
 	job := jobBlock(t, readRepoFile(t, ".github/workflows/e2e.yml"), "darwin-libkrunfw")
 	for _, want := range []string{

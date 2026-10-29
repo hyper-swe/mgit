@@ -68,9 +68,14 @@ esac
 
 # Every step is `|| true`: this runs on EXIT, including the failure exits, and
 # a cleanup step that fails must not overwrite the status the check produced.
+# Uninstalls only what THIS run installed (INSTALLED_HERE, set just before the
+# install): a refusal in the preflight must never remove a libkrun or libkrunfw
+# that was already on the machine.
 cleanup() {
-  "$BREW" uninstall --force "$FORMULA" >/dev/null 2>&1 || true
-  "$BREW" uninstall --force "$OWN_TAP/libkrunfw" >/dev/null 2>&1 || true
+  if [ -n "${INSTALLED_HERE:-}" ]; then
+    "$BREW" uninstall --force "$FORMULA" >/dev/null 2>&1 || true
+    "$BREW" uninstall --force "$OWN_TAP/libkrunfw" >/dev/null 2>&1 || true
+  fi
   "$BREW" untap "$TAP" >/dev/null 2>&1 || true
   if [ -n "${TRUSTED_HERE:-}" ]; then "$BREW" untrust "$OWN_TAP" >/dev/null 2>&1 || true; fi
   if [ -n "${WORK:-}" ]; then rm -rf "$WORK" || true; fi
@@ -213,6 +218,7 @@ fi
 # fetches, runs the formula's install block and links the result.
 # --------------------------------------------------------------------------
 echo "==> brew install $FORMULA"
+INSTALLED_HERE=1
 # The formula's own archive is a file:// URL, but resolving and installing its
 # DEPENDENCIES pulls bottles from the same third-party CDN that returned 504
 # for half an hour on 2026-08-15. -t 300 is the MGIT-143 rule applied to this

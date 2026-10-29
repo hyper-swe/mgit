@@ -88,9 +88,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `MGIT_SANDBOX=1`: it names libkrunfw's licenses
   (LGPL-2.1-only AND GPL-2.0-only) and source, asks before downloading it as
   a separate file, checks it against that download's `checksums.txt`, and
-  installs it beside libkrun with its license texts and source offer. It has
-  no default download location yet, so the step stops and says so unless you
-  set `MGIT_LIBKRUNFW_BASE` (MGIT-306).
+  installs it beside libkrun with its license texts and source offer. It
+  downloads from the same release as the mgit archive; set
+  `MGIT_LIBKRUNFW_BASE` to use a mirror instead (MGIT-306).
 - Every release hosts libkrunfw's corresponding source beside its binaries,
   under the signed `checksums.txt`: the kernel tarball, libkrunfw's source,
   patches and configuration, and now also the prebuilt kernel image the macOS

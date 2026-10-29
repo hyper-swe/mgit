@@ -39,6 +39,9 @@ fi
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/build-darwin-libkrunfw.XXXXXX")" || { echo "cannot create a scratch directory" >&2; exit 1; }
 case "$work" in "${TMPDIR:-/tmp}"/build-darwin-libkrunfw.*) ;; *) echo "refusing: unexpected scratch dir $work" >&2; exit 2 ;; esac
+# The scratch directory is this script's own (mktemp, checked above): it goes
+# on success and on failure.
+trap 'rm -rf "$work"' EXIT
 mkdir -p "$out"
 
 tar -xzf "$prebuilt" -C "$work"
