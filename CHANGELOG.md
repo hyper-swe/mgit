@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **repairing a base that absorbed an untracked path**. The README now says to
+  exclude the path and run one explicit capture, that earlier tasks keep their
+  base, and that a path Git tracks and the working tree still holds can't be
+  repaired this way. No behaviour change. Refs: MGIT-324
+
+## [0.7.6] - 2026-10-29
+
+`linux_arm64` is build-verified and not boot-verified: it is built and
+load-checked, and its build, tests and vulnerability scan run in CI, but the
+hosted arm64 runner has no KVM (measured), so no guest boots there.
+
 ### Upgrade to 0.7.6
 
 - **finish or land in-flight tasks before upgrading to 0.7.6**. Task rows
@@ -32,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not stop it. A history that cannot be read is refused rather than passed
   unchecked. See [content recovery](docs/CONTENT-RECOVERY.md).
 - `mgit merge` refuses a source branch that ends at, or is built on, a retained
-  guest commit that was never delivered, for the fast-forward, `--no-ff` and
+  guest commit that was never delivered, for the default, `--no-ff` and
   `--squash` strategies, before any ref, index or file changes. Merging host
   branches works as before. See [content recovery](docs/CONTENT-RECOVERY.md).
 
@@ -50,6 +63,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inspection command: it displays retained commit changes without admitting
   them for export or apply, and reports unreadable diffs as errors.
 
+- `mgit merge` of a source branch whose tip is already contained in the current
+  branch now reports "already up to date" and leaves the branch where it is,
+  for the default, `--no-ff` and `--squash` strategies. Before, `--no-ff`
+  and the default strategy wrote a merge commit and `--squash` wrote a commit
+  for content the branch already had (MGIT-326).
+- `mgit sandbox land` publishes verified sandbox commits into the task's bound
+  native worktree rather than the repository-root checkout. A file already
+  matching the verified tip is accepted after a host edit and sandbox sync,
+  while real host conflicts, staged changes, mode mismatches and unsafe parent
+  entries are refused before anything is written. A commit that was recorded
+  but not written to the worktree is retried on the next land, with backup, restore and
+  retry instructions in place of a misleading no-op (MGIT-317).
+- When a base is recomposed under a moved image tag, a launch that still names
+  the old pin is refused with the old and the current pin named, and the
+  replacement sequence (remove, then launch) is printed with the right flags.
+  Before the new pin replaces the old one, any registration still using the old
+  pin is listed. Existing registrations and running VMs are not changed
+  (MGIT-286).
+
 ### Fixed
 
 - On Linux, when the guest makes a worktree's mount point by shadowing the
@@ -62,6 +94,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recursive delete, so a lane that may not run recursive deletes can push
   through it (MGIT-318).
 
+### Release engineering
+
+- The release archives include the `NOTICE` file, and `NOTICE` names the bundled
+  libkrun (Apache-2.0) and libkrunfw (LGPL-2.1-only glue and the GPL-2.0-only
+  Linux kernel), pointing to the license texts and source assets that ship with
+  them (MGIT-315, MGIT-316).
+- The build, the whole test suite and the vulnerability scan now also run on
+  linux/arm64 for every change. The hosted arm64 runner has no `/dev/kvm`
+  (measured), so no guest boots there: the tests that need a VM skip, each
+  skip is listed with its reason, and the linux/arm64 daemon remains
+  build-verified and not boot-verified (MGIT-230.5.2).
+
 ### Documentation
 
 - The sandbox install guide now says interactive sessions in a guest are
@@ -71,6 +115,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Dependencies moved to fixed versions: `golang.org/x/net` v0.62.0
+  ([GO-2026-6866](https://pkg.go.dev/vuln/GO-2026-6866),
+  [GO-2026-6860](https://pkg.go.dev/vuln/GO-2026-6860)),
+  `github.com/labstack/echo/v4` v4.15.3
+  ([GO-2026-6293](https://pkg.go.dev/vuln/GO-2026-6293)) and
+  `go.mongodb.org/mongo-driver` v1.17.7
+  ([GO-2026-5327](https://pkg.go.dev/vuln/GO-2026-5327)). The release-time
+  scans of the source and of the built binaries (Linux amd64 and arm64, macOS
+  arm64) report one remaining finding,
+  [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) (`golang.org/x/crypto/openpgp`).
+  It is a scanner false positive: no mgit binary imports or links that package,
+  and the report appears only for binaries built with the symbol table
+  stripped (`-ldflags -s`), as the release binaries are; the same source built
+  without `-s` scans clean (MGIT-293.1).
 - Build and guest verification toolchains use Go 1.26.10, which fixes
   [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809) in `crypto/x509`.
   The guest archive checksums match the Go publisher's Linux amd64 and
