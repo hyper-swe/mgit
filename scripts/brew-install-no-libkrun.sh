@@ -168,8 +168,13 @@ echo "==> Serving brew/mgit.rb from scratch tap $TAP"
 "$BREW" tap-new "$TAP" --no-git >/dev/null
 TAP_FORMULA_DIR="$("$BREW" --repository "$TAP")/Formula"
 mkdir -p "$TAP_FORMULA_DIR"
+# The formula has no version line (the version is read from the release urls),
+# and a file:// url cannot supply one, so a version line is added before the
+# first platform block.
 sed \
   -e "s|^  version \".*\"|  version \"${VERSION}\"|" \
+  -e "s|^  on_macos do\$|  version \"${VERSION}\"\\
+  on_macos do|" \
   -e "s|^      url \".*\"|      url \"file://${WORK}/mgit.tar.gz\"|" \
   -e "s|^      sha256 \".*\"|      sha256 \"${SHA}\"|" \
   "$REPO_ROOT/brew/mgit.rb" > "$TAP_FORMULA_DIR/mgit.rb"
@@ -178,9 +183,10 @@ sed \
 # formula), the install below would fail for a reason that has nothing to do
 # with this check, and the failure message would send the next reader hunting
 # a dependency bug that is not there.
-if ! grep -q "file://${WORK}/mgit.tar.gz" "$TAP_FORMULA_DIR/mgit.rb"; then
+if ! grep -q "file://${WORK}/mgit.tar.gz" "$TAP_FORMULA_DIR/mgit.rb" \
+  || [ "$(grep -c "^  version \"${VERSION}\"\$" "$TAP_FORMULA_DIR/mgit.rb")" -ne 1 ]; then
   echo "FAIL: could not point the formula at the local archive." >&2
-  echo "      brew/mgit.rb's url/sha256 lines were reformatted; update the sed above." >&2
+  echo "      brew/mgit.rb's url/sha256/on_macos lines were reformatted; update the sed above." >&2
   exit 1
 fi
 
