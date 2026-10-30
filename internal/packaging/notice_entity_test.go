@@ -16,3 +16,10 @@ func TestNotice_NamesTheCopyrightHolderAsALegalEntity(t *testing.T) {
 	assert.Equal(t, "Copyright 2025-2026 "+entity, lines[0], "the first line must name the copyright holder")
 	assert.Contains(t, strings.Join(lines[:4], "\n"), "software developed by "+entity)
 }
+
+// The appendix line of LICENSE names the same holder as NOTICE.
+// Refs: MGIT-306
+func TestLicense_AppendixNamesTheCopyrightHolderAsALegalEntity(t *testing.T) {
+	const entity = "Astutic Artificial Intelligence Private Limited"
+	assert.Contains(t, "\n"+readRepoFile(t, "LICENSE"), "\n   Copyright 2025-2026 "+entity+"\n")
+}
