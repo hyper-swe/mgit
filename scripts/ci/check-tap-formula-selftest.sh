@@ -19,8 +19,9 @@ echo "== tap formula drift self-test =="
 [ -f "$CHECK" ] || { bad "check-tap-formula.sh does not exist"; echo "$fails failure(s)" >&2; exit 1; }
 
 SRC="$REPO/brew/mgit.rb"
-# the generated lines, as the tap's update-formula.yml writes them
-sed -e 's/^\( *version "\)[^"]*"/\10.9.9"/' -e 's/^\( *sha256 "\)[0-9a-f]*"/\1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"/' "$SRC" > "$WORK/synced.rb"
+# the generated lines, as the tap's update-formula.yml writes them: literal release
+# urls naming the release version, and real checksums
+sed -e 's#/download/v[0-9][0-9.]*/mgit_[0-9][0-9.]*_#/download/v0.9.9/mgit_0.9.9_#' -e 's/^\( *sha256 "\)[0-9a-f]*"/\1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"/' "$SRC" > "$WORK/synced.rb"
 
 run() { # run <tap file or missing path> [extra args]; sets out and rc
 	local tap="$1"; shift
@@ -28,7 +29,7 @@ run() { # run <tap file or missing path> [extra args]; sets out and rc
 }
 
 run "$WORK/synced.rb"
-[ "$rc" -eq 0 ] && ok "a tap body that differs only in version and checksums is in sync" || bad "in-sync tap flagged (rc=$rc): $out"
+[ "$rc" -eq 0 ] && ok "a tap body that differs only in the release version and checksums is in sync" || bad "in-sync tap flagged (rc=$rc): $out"
 cmp -s "$WORK/synced.rb" "$SRC" && bad "fixture is identical to the source, so the ignore rule is untested"
 
 # drift: the install shape changed in the repo but not in the tap
@@ -49,9 +50,9 @@ sed 's/aaaaaaaa/bbbbbbbb/' "$WORK/synced.rb" > "$WORK/sums.rb"
 run "$WORK/sums.rb"
 [ "$rc" -eq 0 ] && ok "changed checksums alone are not drift" || bad "checksum-only change flagged: $out"
 
-# a tap that lost a checksum line, or a version line, is drift: the ignore rule
+# a tap that lost a checksum line, or a url line, is drift: the ignore rule
 # hides the VALUES the tap rewrites, not the lines themselves
-for what in 'sha256' 'version'; do
+for what in 'sha256' 'url'; do
 	python3 - "$WORK/synced.rb" "$WORK/lost-$what.rb" "$what" <<'PY'
 import sys, re
 lines = open(sys.argv[1]).read().split("\n")
