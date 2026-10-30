@@ -1,43 +1,20 @@
 class Mgit < Formula
   desc "Sandboxed, checkpointed working substrate for LLM coding agents"
   homepage "https://github.com/hyper-swe/mgit"
+  # The four url lines and the four sha256 lines below are a template: the
+  # tap's own update-formula.yml (hyper-swe/homebrew-tap) overwrites them at
+  # every real release from that release's checksums.txt. The version is the
+  # one in the urls (Homebrew reads it from there), so there is no version
+  # line to keep in step. The urls are rewritten by
+  # .github/scripts/rewrite_formula_urls.py, and the shas by a literal TEXT
+  # regex over this file's declaration order (darwin arm/intel, linux
+  # arm/intel) -- `sha256 "[A-Fa-f0-9]*"`, one quoted literal per line, NOT a
+  # Ruby variable: a shared constant would render as `sha256 SOME_CONST`,
+  # which the regex does not match at all. That regex also requires 64 HEX
+  # characters -- the literal word "PLACEHOLDER" does NOT match it either.
+  # Never hand-edit these eight lines; they are correct only right after a
+  # real release's automated update.
   license "Apache-2.0"
-  # version + all four sha256 below are a template: the tap's own
-  # update-formula.yml (hyper-swe/homebrew-tap) overwrites them at every real
-  # release from that release's checksums.txt via a literal TEXT regex over
-  # this file's declaration order (darwin arm/intel, linux arm/intel) --
-  # `sha256 "[A-Fa-f0-9]*"`, one quoted literal per line, NOT a Ruby
-  # variable: a shared constant would render as `sha256 SOME_CONST` in the
-  # file, which the regex does not match at all. That regex also requires
-  # 64 HEX characters -- the literal word "PLACEHOLDER" that used to be here
-  # does NOT match it either, so the automated update would silently leave a
-  # non-hex value in place forever instead of overwriting it. 64 zeros is a
-  # valid (obviously fake) sha256-shaped placeholder the real regex actually
-  # replaces. Never hand-edit these four lines; they are correct only right
-  # after a real release's automated update.
-  version "0.1.0"
-
-  on_macos do
-    on_arm do
-      url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_darwin_arm64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
-    end
-    on_intel do
-      url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_darwin_amd64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
-    end
-  end
-
-  on_linux do
-    on_arm do
-      url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_linux_arm64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
-    end
-    on_intel do
-      url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_linux_amd64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
-    end
-  end
 
   # libkrunfw, the library that carries the sandbox's guest kernel, comes from
   # this tap (hyper-swe/tap), never from mgit's archive: it is distributed
@@ -61,6 +38,23 @@ class Mgit < Formula
   on_macos do
     on_arm do
       depends_on "hyper-swe/tap/libkrunfw"
+      url "https://github.com/hyper-swe/mgit/releases/download/v0.7.6/mgit_0.7.6_darwin_arm64.tar.gz"
+      sha256 "d22423ab959113586b3ed1c6832bdb1b156fc14fbf60a404bf11aa8853f1268c"
+    end
+    on_intel do
+      url "https://github.com/hyper-swe/mgit/releases/download/v0.7.6/mgit_0.7.6_darwin_amd64.tar.gz"
+      sha256 "2809df46d53d7dde780c272f5b136db94150d1c1da4c2381e428043d55726783"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/hyper-swe/mgit/releases/download/v0.7.6/mgit_0.7.6_linux_arm64.tar.gz"
+      sha256 "781a2b93ef6ae255b40098f4b7f789c90e61d2351ff1baab4c995d99881789be"
+    end
+    on_intel do
+      url "https://github.com/hyper-swe/mgit/releases/download/v0.7.6/mgit_0.7.6_linux_amd64.tar.gz"
+      sha256 "f119573dd3c4194c102742a061f84804d598c7e73a8f612ec2ab06adc8a05934"
     end
   end
 

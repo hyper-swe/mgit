@@ -9,7 +9,7 @@
 #
 #   bash scripts/ci/check-tap-formula.sh [--require] [--repo-formula FILE] [--tap-url URL]
 #
-# Exit 0  the bodies match (version and sha256 values ignored), or the tap could not
+# Exit 0  the bodies match (version, release-url version and sha256 values ignored), or the tap could not
 #         be fetched: that prints "SKIPPED ... NOT CHECKED" and is NOT a pass.
 # Exit 1  the bodies differ; the diff and the remedy are printed.
 # Exit 3  the tap could not be fetched and --require was given (the pre-tag gate).
@@ -53,19 +53,22 @@ TAP="$WORK/tap.rb"
 	|| skip "could not fetch $TAP_URL: $(tail -n 1 "$WORK/fetch.log")"
 [ -s "$TAP" ] || skip "$TAP_URL returned an empty file"
 
-# Only the VALUES the tap rewrites are ignored: `version "x"` and `sha256 "hex"`.
-# The lines stay, with the value replaced by a placeholder, so a tap that lost one
-# is drift and not a quiet pass.
-norm() { sed -E 's/^([[:space:]]*)(version|sha256) "[^"]*"[[:space:]]*$/\1\2 "<generated>"/' "$1"; }
+# Only the VALUES the tap rewrites are ignored: `version "x"` and `sha256 "hex"`,
+# and the release version inside a release url. The lines stay, with the value
+# replaced by a placeholder, so a tap that lost one is drift and not a quiet pass.
+norm() {
+	sed -E -e 's/^([[:space:]]*)(version|sha256) "[^"]*"[[:space:]]*$/\1\2 "<generated>"/' \
+		-e 's#/download/v[0-9][0-9A-Za-z.+-]*/mgit_[0-9][0-9A-Za-z.+-]*_#/download/v<generated>/mgit_<generated>_#' "$1"
+}
 norm "$REPO_FORMULA" > "$WORK/repo.norm"
 norm "$TAP" > "$WORK/tap.norm"
 
 if diff -u "$WORK/tap.norm" "$WORK/repo.norm" > "$WORK/diff.txt"; then
-	echo "check-tap-formula: the tap formula body matches brew/mgit.rb (version and sha256 values ignored)"
+	echo "check-tap-formula: the tap formula body matches brew/mgit.rb (version, release-url version and sha256 values ignored)"
 	exit 0
 fi
 echo "check-tap-formula: DRIFT: the live tap formula body differs from brew/mgit.rb" >&2
-echo "  (--- is the tap, +++ is this repository; version and sha256 values are ignored)" >&2
+echo "  (--- is the tap, +++ is this repository; release version and sha256 values are ignored)" >&2
 sed 's/^/  /' "$WORK/diff.txt" >&2
 echo "Remedy: copy the body of brew/mgit.rb into Formula/mgit.rb in hyper-swe/homebrew-tap," >&2
 echo "keeping the tap's own version and sha256 lines, and commit it there. Do not touch the mtix formula." >&2
