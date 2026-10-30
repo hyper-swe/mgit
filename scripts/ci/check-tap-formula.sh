@@ -14,6 +14,10 @@
 # Exit 1  the bodies differ; the diff and the remedy are printed.
 # Exit 3  the tap could not be fetched and --require was given (the pre-tag gate).
 #
+# Version agreement between the four urls is NOT checked here: a tap whose urls
+# name different releases reads as in sync. The tap's own update step counts its
+# rewrites.
+#
 # Decision (MGIT-67): DETECT drift rather than generate the tap body from here.
 # Generating would mean this repository pushing to the tap, which it cannot do
 # and should not hold credentials for, and the tap's own workflow already owns
@@ -71,5 +75,5 @@ echo "check-tap-formula: DRIFT: the live tap formula body differs from brew/mgit
 echo "  (--- is the tap, +++ is this repository; release version and sha256 values are ignored)" >&2
 sed 's/^/  /' "$WORK/diff.txt" >&2
 echo "Remedy: copy the body of brew/mgit.rb into Formula/mgit.rb in hyper-swe/homebrew-tap," >&2
-echo "keeping the tap's own version and sha256 lines, and commit it there. Do not touch the mtix formula." >&2
+echo "keeping the tap's own url and sha256 lines, and commit it there. Do not touch the mtix formula." >&2
 exit 1
