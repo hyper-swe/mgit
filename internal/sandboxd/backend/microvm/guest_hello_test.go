@@ -158,3 +158,18 @@ func TestExec_DroppedConnection_NamesTheSuspect(t *testing.T) {
 	assert.Contains(t, err.Error(), "suspect")
 	assert.Contains(t, err.Error(), "not version skew")
 }
+
+// The guest's build string is shown sanitized: control and escape bytes are
+// dropped and the printable remainder is kept, so the operator sees what the
+// guest said without it acting on their terminal.
+func TestLaunch_BuildStringWithControlBytes_IsShownSanitized(t *testing.T) {
+	mgr := execManager(t, &scriptedGuest{
+		frame: currentGuestFrame(execwire.ProtocolVersion+1, "v1\x1b[31mred\x07\x00end"),
+	})
+	_, err := mgr.Launch(context.Background(), launchOpts("MGIT-158", model.NetworkModeNone))
+	require.ErrorIs(t, err, model.ErrGuestVersionSkew)
+	assert.Contains(t, err.Error(), "v1[31mredend")
+	for _, bad := range []string{"\x1b", "\x07", "\x00"} {
+		assert.NotContains(t, err.Error(), bad)
+	}
+}
