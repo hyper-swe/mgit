@@ -19,11 +19,10 @@ import (
 // is synchronous, so the count is what the host read, which is what it could
 // have held in memory.
 type floodGuest struct {
-	kind      byte
-	chunk     []byte
-	taken     atomic.Int64
-	frames    atomic.Int64
-	probeOnly bool
+	kind   byte
+	chunk  []byte
+	taken  atomic.Int64
+	frames atomic.Int64
 }
 
 func (g *floodGuest) DialGuest(ctx context.Context, _ string) (net.Conn, error) {
