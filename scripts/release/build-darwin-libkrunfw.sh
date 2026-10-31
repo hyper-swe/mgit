@@ -24,6 +24,10 @@ prebuilt="$1" out="$2" tag="$3"
 here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/../sandbox-image/pins.env"
 ver="${LIBKRUNFW_VERSION#v}"
+: "${MACOS_MIN_VERSION:?pins.env must define MACOS_MIN_VERSION}"
+# The dylib is compiled on the runner; it must still load on the oldest
+# supported macOS. Refs: HSWE-17.7.4
+export MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN_VERSION"
 name="libkrunfw_${ver}_darwin_arm64.tar.gz"
 
 sha256() {
@@ -53,6 +57,7 @@ mkdir -p "$stage"
 (cd "$src" && "${MAKE:-make}" && "${MAKE:-make}" PREFIX="$stage" install)
 dylib="$stage/lib/libkrunfw.5.dylib"
 [ -f "$dylib" ] && [ ! -L "$dylib" ] || { echo "the build left no $dylib" >&2; exit 1; }
+bash "$here/macho-min-check.sh" "$MACOS_MIN_VERSION" "$dylib"
 
 pkg="$work/pkg"
 mkdir -p "$pkg"

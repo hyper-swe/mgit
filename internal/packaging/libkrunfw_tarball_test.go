@@ -26,6 +26,9 @@ func runRepoScript(t *testing.T, root, script string, env []string, args ...stri
 	t.Helper()
 	cmd := exec.Command("bash", append([]string{filepath.Join(root, "scripts", "release", script)}, args...)...) //nolint:gosec // G204: test-only; a repo script by constant name
 	cmd.Env = append(os.Environ(), env...)
+	// The scripts record the dylib's minimum macOS with otool, which only a
+	// Mac has; this stands in for it, reporting the supported minimum.
+	cmd.Env = append(cmd.Env, "PATH="+fakeOtool(t, buildVersion("14.0"))+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -94,10 +97,10 @@ func scriptTree(t *testing.T, sha string) string {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "scripts", "release"), 0o750))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "scripts", "sandbox-image"), 0o750))
-	for _, s := range []string{"build-darwin-libkrunfw.sh", "libkrunfw-source-offer.sh"} {
+	for _, s := range []string{"build-darwin-libkrunfw.sh", "libkrunfw-source-offer.sh", "macho-min-check.sh"} {
 		require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "release", s), []byte(readRepoFile(t, "scripts/release/"+s)), 0o700)) //nolint:gosec // a t.TempDir path
 	}
-	pins := "LIBKRUNFW_VERSION=v5.5.0\nLIBKRUNFW_KERNEL_VERSION=6.12.91\nLIBKRUNFW_KERNEL_URL=https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.91.tar.xz\nLIBKRUNFW_PREBUILT_SHA256=" + sha + "\n"
+	pins := "MACOS_MIN_VERSION=14.0\nLIBKRUNFW_VERSION=v5.5.0\nLIBKRUNFW_KERNEL_VERSION=6.12.91\nLIBKRUNFW_KERNEL_URL=https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.91.tar.xz\nLIBKRUNFW_PREBUILT_SHA256=" + sha + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "sandbox-image", "pins.env"), []byte(pins), 0o600))
 	return root
 }
@@ -257,7 +260,7 @@ func TestBuildDarwinLibkrunfw_RemovesItsScratchDirectoryOnSuccessAndOnFailure(t 
 func TestE2EWorkflow_BuildsAndSmokeTestsTheMacOSLibkrunfwTarballAndUploadsItOnATag(t *testing.T) {
 	job := jobBlock(t, readRepoFile(t, ".github/workflows/e2e.yml"), "darwin-libkrunfw")
 	for _, want := range []string{
-		"runs-on: macos-14",
+		"runs-on: macos-15",
 		"scripts/release/build-darwin-libkrunfw.sh",
 		"scripts/ci/guard-fetch.sh",
 		"krunfw_get_version",

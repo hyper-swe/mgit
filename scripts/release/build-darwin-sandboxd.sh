@@ -25,6 +25,14 @@ die() { echo "build-darwin-sandboxd: FATAL: $*" >&2; exit 1; }
 [ "$(uname -s)/$(uname -m)" = Darwin/arm64 ] || die "this builds the darwin/arm64 daemon; run it on an Apple Silicon Mac"
 : "${MGIT_BUILD_VERSION:?set MGIT_BUILD_VERSION (the release version, without the v)}"
 : "${LIBKRUN_VERSION:?pins.env must define LIBKRUN_VERSION}"
+: "${MACOS_MIN_VERSION:?pins.env must define MACOS_MIN_VERSION}"
+
+# What this builds must still run on the oldest supported macOS, whatever
+# image builds it. cargo and clang read the environment variable; Go's build
+# cache does not key on it, so cgo is keyed on the flag as well. Setting
+# these flags replaces Go's default "-O2 -g", so those stay in the value. Refs: HSWE-17.7.4
+export MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN_VERSION"
+export CGO_CFLAGS="-O2 -g -mmacosx-version-min=$MACOS_MIN_VERSION"
 : "${LIBKRUN_DARWIN_PATCH:?pins.env must define LIBKRUN_DARWIN_PATCH}"
 : "${LIBKRUN_DARWIN_PATCH_SHA256:?pins.env must define LIBKRUN_DARWIN_PATCH_SHA256}"
 for tool in go cargo pkg-config ld.lld install_name_tool codesign otool xcrun; do
@@ -82,11 +90,17 @@ pkg="github.com/hyper-swe/mgit/internal/buildinfo"
 	cd "$root"
 	# Single quotes: @executable_path is for the dynamic loader, never the shell.
 	CGO_ENABLED=1 PKG_CONFIG_PATH="$prefix/lib/pkgconfig" PKG_CONFIG_LIBDIR="$prefix/lib/pkgconfig" \
-		CGO_LDFLAGS='-Wl,-rpath,@executable_path/lib -Wl,-rpath,@executable_path/../lib/mgit' \
+		CGO_LDFLAGS="-O2 -g -mmacosx-version-min=$MACOS_MIN_VERSION -Wl,-rpath,@executable_path/lib -Wl,-rpath,@executable_path/../lib/mgit" \
 		go build -trimpath \
 		-ldflags "-s -w -X $pkg.version=$MGIT_BUILD_VERSION -X $pkg.commit=$commit -X $pkg.date=$date -X github.com/hyper-swe/mgit/internal/sandboxd/backend/libkrun.bundled=1" \
-		-o "$out/mgit-sandboxd" ./cmd/mgit-sandboxd/
+		-o "$out/mgit-sandboxd" ./cmd/mgit-sandboxd/ 2>"$work/link.log" || { cat "$work/link.log" >&2; exit 1; }
+	cat "$work/link.log" >&2
+	# The linker warns, and still succeeds, when it is handed objects built for
+	# a newer macOS than the target. That is the same defect as a wrong
+	# minimum, so it fails here. Refs: HSWE-17.7.4
+	bash "$here/link-warning-check.sh" "$work/link.log"
 )
+bash "$here/macho-min-check.sh" "$MACOS_MIN_VERSION" "$out/mgit-sandboxd" "$out/lib/libkrun.1.dylib"
 codesign --force --sign - --entitlements "$root/build/darwin/vz.entitlements" "$out/mgit-sandboxd"
 
 echo "== 6/6 license texts, the source notice, and the verifier =="
