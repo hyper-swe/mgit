@@ -341,7 +341,7 @@ jobs:
   # checksums. Refs: MGIT-306
   darwin-libkrunfw:
     name: macOS libkrunfw tarball (arm64)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -408,7 +408,7 @@ jobs:
   # build; fixes MGIT-225. Refs: MGIT-259
   darwin-sandboxd:
     name: macOS sandbox daemon (arm64, libkrun bundled)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

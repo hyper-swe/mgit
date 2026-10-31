@@ -45,6 +45,9 @@ func TestDarwinBuild_PinsTheDeploymentTarget(t *testing.T) {
 	} {
 		assert.Contains(t, build, want)
 	}
+	fw := readRepoFile(t, "scripts/release/build-darwin-libkrunfw.sh")
+	assert.Contains(t, fw, `MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN_VERSION"`)
+	assert.Contains(t, fw, "macho-min-check.sh")
 	verify := readRepoFile(t, "scripts/release/verify-darwin-sandboxd.sh")
 	assert.Contains(t, verify, "macho-min-check.sh", "the verifier checks the shipped files, not only the build")
 }
@@ -63,7 +66,7 @@ func runMinCheck(t *testing.T, loadCommands string) (string, error) {
 	bin := fakeOtool(t, loadCommands)
 	file := filepath.Join(t.TempDir(), "x")
 	require.NoError(t, os.WriteFile(file, []byte("x"), 0o600))
-	cmd := exec.Command("bash", filepath.Join(repoRoot(t), "scripts/release/macho-min-check.sh"), "14.0", file) //nolint:gosec // repo script
+	cmd := exec.Command("bash", filepath.Join(repoRoot(t), "scripts", "release", "macho-min-check.sh"), "14.0", file) //nolint:gosec // repo script
 	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, err := cmd.CombinedOutput()
 	return string(out), err

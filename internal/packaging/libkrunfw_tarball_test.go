@@ -257,7 +257,7 @@ func TestBuildDarwinLibkrunfw_RemovesItsScratchDirectoryOnSuccessAndOnFailure(t 
 func TestE2EWorkflow_BuildsAndSmokeTestsTheMacOSLibkrunfwTarballAndUploadsItOnATag(t *testing.T) {
 	job := jobBlock(t, readRepoFile(t, ".github/workflows/e2e.yml"), "darwin-libkrunfw")
 	for _, want := range []string{
-		"runs-on: macos-14",
+		"runs-on: macos-15",
 		"scripts/release/build-darwin-libkrunfw.sh",
 		"scripts/ci/guard-fetch.sh",
 		"krunfw_get_version",

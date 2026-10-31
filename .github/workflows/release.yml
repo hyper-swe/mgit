@@ -94,7 +94,7 @@ jobs:
   release:
     name: Release
     needs: [preflight, e2e]
-    runs-on: macos-14 # Apple Silicon — builds+signs the darwin daemon natively
+    runs-on: macos-15 # Apple Silicon — builds+signs the darwin daemon natively
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -227,7 +227,7 @@ jobs:
     # release, because the whole point is exercising what a user who downloads
     # the archive gets. Each job gets its own runner, so `needs: release` gives
     # us exactly that. Refs: MGIT-84, MGIT-64, MGIT-65
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Install Homebrew's libkrun and libkrunfw, as a user does: the daemon
