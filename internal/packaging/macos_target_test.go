@@ -128,3 +128,30 @@ func TestLinkWarningCheck(t *testing.T) {
 		assert.NoError(t, err, out)
 	})
 }
+
+// Setting CGO_CFLAGS / CGO_LDFLAGS replaces Go's default "-O2 -g", so the pinned
+// values must carry them or the shipped daemon's C is unoptimised and has no
+// debug info.
+func TestDarwinBuild_KeepsGosDefaultCgoOptimisation(t *testing.T) {
+	build := readRepoFile(t, "scripts/release/build-darwin-sandboxd.sh")
+	assert.Contains(t, build, `CGO_CFLAGS="-O2 -g -mmacosx-version-min=$MACOS_MIN_VERSION"`)
+	assert.Contains(t, build, `CGO_LDFLAGS="-O2 -g -mmacosx-version-min=$MACOS_MIN_VERSION `)
+}
+
+// The checks only protect the release if the build actually runs them, and a
+// commented-out call keeps every other test green. Each must be a live line.
+func TestDarwinBuild_RunsItsChecks(t *testing.T) {
+	build := readRepoFile(t, "scripts/release/build-darwin-sandboxd.sh")
+	live := map[string]bool{}
+	for _, line := range strings.Split(build, "\n") {
+		if l := strings.TrimSpace(line); !strings.HasPrefix(l, "#") {
+			live[l] = true
+		}
+	}
+	for _, want := range []string{
+		`bash "$here/link-warning-check.sh" "$work/link.log"`,
+		`bash "$here/macho-min-check.sh" "$MACOS_MIN_VERSION" "$out/mgit-sandboxd" "$out/lib/libkrun.1.dylib"`,
+	} {
+		assert.Truef(t, live[want], "the build must run %s as a live line", want)
+	}
+}

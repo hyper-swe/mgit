@@ -29,9 +29,10 @@ die() { echo "build-darwin-sandboxd: FATAL: $*" >&2; exit 1; }
 
 # What this builds must still run on the oldest supported macOS, whatever
 # image builds it. cargo and clang read the environment variable; Go's build
-# cache does not key on it, so cgo is keyed on the flag as well. Refs: HSWE-17.7.4
+# cache does not key on it, so cgo is keyed on the flag as well. Setting
+# these flags replaces Go's default "-O2 -g", so those stay in the value. Refs: HSWE-17.7.4
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN_VERSION"
-export CGO_CFLAGS="${CGO_CFLAGS:-} -mmacosx-version-min=$MACOS_MIN_VERSION"
+export CGO_CFLAGS="-O2 -g -mmacosx-version-min=$MACOS_MIN_VERSION"
 : "${LIBKRUN_DARWIN_PATCH:?pins.env must define LIBKRUN_DARWIN_PATCH}"
 : "${LIBKRUN_DARWIN_PATCH_SHA256:?pins.env must define LIBKRUN_DARWIN_PATCH_SHA256}"
 for tool in go cargo pkg-config ld.lld install_name_tool codesign otool xcrun; do
@@ -89,7 +90,7 @@ pkg="github.com/hyper-swe/mgit/internal/buildinfo"
 	cd "$root"
 	# Single quotes: @executable_path is for the dynamic loader, never the shell.
 	CGO_ENABLED=1 PKG_CONFIG_PATH="$prefix/lib/pkgconfig" PKG_CONFIG_LIBDIR="$prefix/lib/pkgconfig" \
-		CGO_LDFLAGS="-mmacosx-version-min=$MACOS_MIN_VERSION -Wl,-rpath,@executable_path/lib -Wl,-rpath,@executable_path/../lib/mgit" \
+		CGO_LDFLAGS="-O2 -g -mmacosx-version-min=$MACOS_MIN_VERSION -Wl,-rpath,@executable_path/lib -Wl,-rpath,@executable_path/../lib/mgit" \
 		go build -trimpath \
 		-ldflags "-s -w -X $pkg.version=$MGIT_BUILD_VERSION -X $pkg.commit=$commit -X $pkg.date=$date -X github.com/hyper-swe/mgit/internal/sandboxd/backend/libkrun.bundled=1" \
 		-o "$out/mgit-sandboxd" ./cmd/mgit-sandboxd/ 2>"$work/link.log" || { cat "$work/link.log" >&2; exit 1; }
