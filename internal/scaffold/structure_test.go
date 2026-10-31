@@ -94,27 +94,28 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 
 	// Check that internal/ only contains expected subdirectories
 	expectedInternalSubs := map[string]bool{
-		"model":        true,
-		"store":        true,
-		"service":      true,
-		"api":          true,
-		"mcp":          true,
-		"mtix":         true,
-		"testutil":     true,
-		"scaffold":     true, // our test package
-		"docs":         true, // documentation generator
-		"sandboxd":     true, // sandbox helper daemon library (FR-17.16, MGIT-11.4.1)
-		"guest":        true, // guest supervisor library (FR-17.16, MGIT-11.5.6)
-		"execwire":     true, // host<->guest exec wire protocol (FR-17.11, MGIT-11.9.2)
-		"landwire":     true, // host<->guest land object-frame wire protocol (FR-17.5, MGIT-11.10.10)
-		"guestboot":    true, // host->guest worktree-mount boot contract (FR-17.3, MGIT-11.6.5)
-		"guestnet":     true, // guest NIC/resolver configuration at boot (FR-17.7, MGIT-68)
-		"controlproto": true, // host CLI<->daemon control-plane protocol (FR-17.34, MGIT-11.10.7)
-		"agentadapter": true, // cooperative agent-harness routing config (FR-17, MGIT-11.11.1)
-		"packaging":    true, // release/distribution config regression guards (MGIT-44)
-		"buildinfo":    true, // ldflags-stamped build metadata both shipped binaries report (MGIT-83)
-		"branchguard":  true, // pre-push branch-scope check for this repo's own branches (MGIT-142)
-		"doctor":       true, // standing checks converting closed incidents (MGIT-162, R-H300)
+		"model":         true,
+		"store":         true,
+		"service":       true,
+		"api":           true,
+		"mcp":           true,
+		"mtix":          true,
+		"testutil":      true,
+		"scaffold":      true, // our test package
+		"docs":          true, // documentation generator
+		"sandboxd":      true, // sandbox helper daemon library (FR-17.16, MGIT-11.4.1)
+		"guest":         true, // guest supervisor library (FR-17.16, MGIT-11.5.6)
+		"execwire":      true, // host<->guest exec wire protocol (FR-17.11, MGIT-11.9.2)
+		"landwire":      true, // host<->guest land object-frame wire protocol (FR-17.5, MGIT-11.10.10)
+		"guestboot":     true, // host->guest worktree-mount boot contract (FR-17.3, MGIT-11.6.5)
+		"guestnet":      true, // guest NIC/resolver configuration at boot (FR-17.7, MGIT-68)
+		"controlproto":  true, // host CLI<->daemon control-plane protocol (FR-17.34, MGIT-11.10.7)
+		"agentadapter":  true, // cooperative agent-harness routing config (FR-17, MGIT-11.11.1)
+		"packaging":     true, // release/distribution config regression guards (MGIT-44)
+		"buildinfo":     true, // ldflags-stamped build metadata both shipped binaries report (MGIT-83)
+		"branchguard":   true, // pre-push branch-scope check for this repo's own branches (MGIT-142)
+		"doctor":        true, // standing checks converting closed incidents (MGIT-162, R-H300)
+		"historyexport": true, // versioned task-history export document (MGIT-297)
 	}
 
 	entries, err := os.ReadDir(filepath.Join(root, "internal"))
