@@ -22,7 +22,7 @@ type scriptedGuest struct {
 	frame          func() []byte // the result-frame JSON the guest sends; nil = say nothing
 	hold           bool          // keep the connection open and silent
 	dropAfterFirst bool          // answer the first dial (the probe), then close every later one unanswered
-	dialed        int
+	dialed         int
 }
 
 func (g *scriptedGuest) DialGuest(ctx context.Context, _ string) (net.Conn, error) {
