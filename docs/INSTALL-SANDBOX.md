@@ -646,6 +646,20 @@ From a source checkout, `base from` cross-builds them instead. To use builds
 you made yourself, pass `--guest-bin-dir <dir>` containing `mgit` and
 `mgit-guest` built for `linux/<arch>`.
 
+### When the guest and the daemon are from different builds
+
+At launch the daemon and the guest confirm they speak the same exec protocol.
+If the base was composed with an older mgit, the launch stops and says so:
+
+```
+guest is from a different mgit build than the daemon: the guest predates the
+version handshake, the daemon is build v0.7.2; recompose this repository's
+guest base with `mgit sandbox base from <image>`
+```
+
+Run the command it names, then launch again. The protocol number changes only
+when the two ends can no longer talk, so most upgrades need no recompose.
+
 ### Bring your own directory
 
 If you already have a Linux userspace tree — debootstrap output, an unpacked
