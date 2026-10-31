@@ -15,6 +15,7 @@ import (
 // exportCmd implements mgit export. Refs: FR-8.13, MGIT-4.2.4
 func exportCmd() *cobra.Command {
 	var taskID, output, format string
+	var omitMessages bool
 
 	cmd := &cobra.Command{
 		Use:   "export [task-id]",
@@ -27,6 +28,12 @@ func exportCmd() *cobra.Command {
 			if taskID == "" {
 				return fmt.Errorf("a task ID (positional or --task-id) is required")
 			}
+			// A flag that does nothing for the chosen format would let a
+			// reader believe messages were left out of a document that
+			// carries them. Refs: MGIT-297
+			if omitMessages && format != "history" {
+				return fmt.Errorf("export: --omit-messages applies to --format history only")
+			}
 
 			app, err := openAppFromCwd()
 			if err != nil {
@@ -35,7 +42,7 @@ func exportCmd() *cobra.Command {
 			defer app.Close()
 
 			ctx := context.Background()
-			payload, err := buildExportPayload(ctx, app, format, taskID)
+			payload, err := buildExportPayload(ctx, app, format, taskID, omitMessages)
 			if err != nil {
 				return err
 			}
@@ -71,6 +78,7 @@ func exportCmd() *cobra.Command {
 	bindTaskIDFlag(cmd, &taskID, "Task to export (required)")
 	cmd.Flags().StringVar(&output, "output", "", "Output file (default: stdout)")
 	cmd.Flags().StringVar(&format, "format", "json", "Export format: json | history | git | audit-log")
+	cmd.Flags().BoolVar(&omitMessages, "omit-messages", false, "With --format history, leave every step's message out of the document")
 	return cmd
 }
 
@@ -86,7 +94,7 @@ type exportPayload struct {
 // buildExportPayload renders the requested export format for a task. Every
 // format here is a READ: none of them creates a commit, moves a ref, writes an
 // index row or appends to the audit trail. Refs: FR-8.13, MGIT-4.2.4, MGIT-112
-func buildExportPayload(ctx context.Context, app *App, format, taskID string) (exportPayload, error) {
+func buildExportPayload(ctx context.Context, app *App, format, taskID string, omitMessages bool) (exportPayload, error) {
 	switch format {
 	case "json", "":
 		// Reads the task's indexed micro-commits straight from SQLite — no
@@ -103,7 +111,7 @@ func buildExportPayload(ctx context.Context, app *App, format, taskID string) (e
 		return exportPayload{data: data}, nil
 
 	case "history":
-		return exportHistory(ctx, app, taskID)
+		return exportHistory(ctx, app, taskID, omitMessages)
 
 	case "git":
 		return exportGitPatch(ctx, app, taskID)
@@ -125,7 +133,7 @@ func buildExportPayload(ctx context.Context, app *App, format, taskID string) (e
 // exportHistory renders the task's steps and audit records as the versioned
 // document described in docs/history-export.md. It is a READ like the other
 // formats. Refs: MGIT-297
-func exportHistory(ctx context.Context, app *App, taskID string) (exportPayload, error) {
+func exportHistory(ctx context.Context, app *App, taskID string, omitMessages bool) (exportPayload, error) {
 	records, err := app.Commit.GetTaskCommits(ctx, taskID)
 	if err != nil {
 		return exportPayload{}, fmt.Errorf("export history: %w", err)
@@ -143,7 +151,11 @@ func exportHistory(ctx context.Context, app *App, taskID string) (exportPayload,
 				return exportPayload{}, fmt.Errorf("export history: files of step %d (%s): %w", rec.Position, rec.CommitHash, err)
 			}
 		}
-		steps = append(steps, historyexport.FromRecord(rec, c))
+		step := historyexport.FromRecord(rec, c)
+		if omitMessages {
+			step.Message = "" // the field is omitted from the document when empty
+		}
+		steps = append(steps, step)
 	}
 	entries, err := app.Audit.GetAuditLog(service.AuditFilters{TaskID: taskID})
 	if err != nil {

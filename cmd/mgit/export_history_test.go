@@ -103,3 +103,54 @@ func TestExportFormatHistory_ARollbackReasonIsInTheRevertStepOnly(t *testing.T) 
 	assert.Contains(t, string(docText), "a secret typed into a message or\na `--reason` is in the export",
 		"the document must say that step messages, a rollback reason included, are exported")
 }
+
+// TestExportFormatHistory_OmitMessagesLeavesNoStepMessageInTheDocument drives
+// the real verb with a rollback reason in play: with --omit-messages no step
+// carries a message, so neither the commit text nor the reason is in the
+// document, while the rest of the step and the audit records stay. Refs: MGIT-297
+func TestExportFormatHistory_OmitMessagesLeavesNoStepMessageInTheDocument(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, runCLI(t, "init", "--no-agent-files"))
+	const taskID, secret = "EXP-OMIT", "token=FAKE-SECRET-456"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o600))
+	require.NoError(t, runCLI(t, "commit", "-a", "--task-id", taskID, "-m", "add the a file"))
+	require.NoError(t, runCLI(t, "rollback", "--task-id", taskID, "--reason", secret))
+
+	full, stderr, err := runCLICap(t, "export", "--task-id", taskID, "--format", "history")
+	require.NoError(t, err, stderr)
+	stdout, stderr, err := runCLICap(t, "export", "--task-id", taskID, "--format", "history", "--omit-messages")
+	require.NoError(t, err, stderr)
+
+	doc, err := historyexport.Parse([]byte(stdout))
+	require.NoError(t, err)
+	fullDoc, err := historyexport.Parse([]byte(full))
+	require.NoError(t, err)
+	assert.Equal(t, historyexport.SchemaVersion, doc.SchemaVersion, "dropping a field's value does not change the version")
+	require.Len(t, doc.Steps, len(fullDoc.Steps))
+	for i, s := range doc.Steps {
+		assert.Empty(t, s.Message, "step %d must carry no message", i)
+		assert.Equal(t, fullDoc.Steps[i].CommitID, s.CommitID, "the rest of step %d is unchanged", i)
+		assert.Equal(t, fullDoc.Steps[i].Files, s.Files)
+	}
+	assert.Equal(t, fullDoc.Audit, doc.Audit, "audit records are unchanged")
+	assert.NotContains(t, stdout, `"message"`, "the key is absent, not empty")
+	assert.NotContains(t, stdout, "add the a file")
+	assert.NotContains(t, stdout, secret)
+	assert.Contains(t, full, secret, "without the flag the reason is still carried, as documented")
+}
+
+// TestExportOmitMessages_WithAnotherFormat_IsRefused keeps the flag from being
+// a silent no-op: it applies to the history format only. Refs: MGIT-297
+func TestExportOmitMessages_WithAnotherFormat_IsRefused(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	require.NoError(t, runCLI(t, "init", "--no-agent-files"))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o600))
+	require.NoError(t, runCLI(t, "commit", "-a", "--task-id", "EXP-REFUSE", "-m", "add a"))
+	for _, format := range []string{"json", "audit-log", "git"} {
+		_, stderr, err := runCLICap(t, "export", "--task-id", "EXP-REFUSE", "--format", format, "--omit-messages")
+		require.Error(t, err, "format %s must refuse the flag", format)
+		assert.Contains(t, err.Error()+stderr, "--omit-messages applies to --format history only", "the refusal names the flag and the format")
+	}
+}
