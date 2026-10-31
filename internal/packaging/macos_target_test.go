@@ -41,7 +41,7 @@ func TestDarwinBuild_PinsTheDeploymentTarget(t *testing.T) {
 		`-mmacosx-version-min=$MACOS_MIN_VERSION`,
 		"CGO_CFLAGS", "CGO_LDFLAGS",
 		"macho-min-check.sh",
-		"newer than",
+		"link-warning-check.sh",
 	} {
 		assert.Contains(t, build, want)
 	}
@@ -99,4 +99,32 @@ func TestMachoMinCheck(t *testing.T) {
 			assert.Error(t, err, out)
 		})
 	}
+}
+
+func runLinkCheck(t *testing.T, log string) (string, error) {
+	t.Helper()
+	f := filepath.Join(t.TempDir(), "link.log")
+	require.NoError(t, os.WriteFile(f, []byte(log), 0o600))
+	out, err := exec.Command("bash", filepath.Join(repoRoot(t), "scripts", "release", "link-warning-check.sh"), f).CombinedOutput() //nolint:gosec // repo script
+	return string(out), err
+}
+
+// The real text Apple's ld prints, one line, as captured from a link of a
+// macOS 15 object against a macOS 14 target.
+const realLdWarning = "# github.com/hyper-swe/mgit/cmd/mgit-sandboxd\n" +
+	"ld: warning: object file (/tmp/go-link-123/000004.o) was built for newer 'macOS' version (15.0) than being linked (14.0)\n"
+
+func TestLinkWarningCheck(t *testing.T) {
+	t.Run("fails on the real ld warning", func(t *testing.T) {
+		out, err := runLinkCheck(t, realLdWarning)
+		assert.Error(t, err, out)
+	})
+	t.Run("fails when the warning wraps across lines", func(t *testing.T) {
+		out, err := runLinkCheck(t, "ld: warning: object file (a.o) was built for newer 'macOS' version (15.0)\n  than being linked (14.0)\n")
+		assert.Error(t, err, out)
+	})
+	t.Run("passes a clean link log", func(t *testing.T) {
+		out, err := runLinkCheck(t, "# github.com/hyper-swe/mgit/cmd/mgit-sandboxd\nld: warning: ignoring duplicate libraries: '-lobjc'\n")
+		assert.NoError(t, err, out)
+	})
 }

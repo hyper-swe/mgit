@@ -97,10 +97,7 @@ pkg="github.com/hyper-swe/mgit/internal/buildinfo"
 	# The linker warns, and still succeeds, when it is handed objects built for
 	# a newer macOS than the target. That is the same defect as a wrong
 	# minimum, so it fails here. Refs: HSWE-17.7.4
-	if grep -q "newer than" "$work/link.log"; then
-		echo "FAIL: the linker reports objects built for a newer macOS than $MACOS_MIN_VERSION" >&2
-		exit 1
-	fi
+	bash "$here/link-warning-check.sh" "$work/link.log"
 )
 bash "$here/macho-min-check.sh" "$MACOS_MIN_VERSION" "$out/mgit-sandboxd" "$out/lib/libkrun.1.dylib"
 codesign --force --sign - --entitlements "$root/build/darwin/vz.entitlements" "$out/mgit-sandboxd"
