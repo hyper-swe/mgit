@@ -55,6 +55,11 @@ const (
 	frameHeaderLen = 5 // 1 type byte + 4-byte big-endian length
 )
 
+// ProtocolVersion is the exec wire protocol number. It changes only when the
+// two ends can no longer talk, never per release, so two mgit builds that
+// agree on it interoperate whatever their version strings say. Refs: MGIT-158
+const ProtocolVersion = 1
+
 // Liveness timing, single-sourced here so the daemon that beats and the
 // client that judges the silence cannot drift apart. Refs: FR-17.11.1, MGIT-133
 const (
@@ -100,6 +105,13 @@ type Result struct {
 	// Identity is the daemon's verdict on RanAs, set only on the
 	// daemon->client hop (the guest never fills it). Refs: MGIT-151
 	Identity *model.ExecIdentity `json:"identity,omitempty"`
+	// GuestProtocol is the wire protocol number the guest speaks (ProtocolVersion
+	// at its build). Absent from a guest built before the handshake; zero means
+	// "did not say", which the daemon treats as a stale guest. Refs: MGIT-158
+	GuestProtocol int `json:"guest_protocol,omitempty"`
+	// GuestBuild is the guest's own build version, for the operator's message
+	// only; the daemon never decides on it. Refs: MGIT-158
+	GuestBuild string `json:"guest_build,omitempty"`
 }
 
 // ResultFrame is the JSON payload of the terminal result frame: the

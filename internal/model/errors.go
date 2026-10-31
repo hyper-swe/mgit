@@ -213,6 +213,10 @@ var (
 	// the sandbox was torn down rather than reported as running. Refs: MGIT-92
 	ErrGuestNotServing = errors.New("guest never answered on its control channel")
 
+	// ErrGuestVersionSkew reports a guest that answered but speaks another exec
+	// protocol than the daemon (or predates the handshake). Refs: MGIT-158
+	ErrGuestVersionSkew = errors.New("guest is from a different mgit build than the daemon")
+
 	// ErrGuestExecIdentityMismatch reports that a daemon-internal guest exec
 	// ran as an identity other than the one asked for — the guest confirmed a
 	// different uid/gid. A sync refuses rather than trust a guest that ran the
