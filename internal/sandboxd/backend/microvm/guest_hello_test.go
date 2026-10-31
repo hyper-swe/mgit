@@ -19,17 +19,22 @@ import (
 // for a guest built from another mgit release. reply runs once the request has
 // been read, so the host's write never blocks on the pipe.
 type scriptedGuest struct {
-	frame   func() []byte // the result-frame JSON the guest sends; nil = say nothing
-	hold    bool          // keep the connection open and silent
-	dialled int
+	frame          func() []byte // the result-frame JSON the guest sends; nil = say nothing
+	hold           bool          // keep the connection open and silent
+	dropAfterFirst bool          // answer the first dial (the probe), then close every later one unanswered
+	dialed        int
 }
 
 func (g *scriptedGuest) DialGuest(ctx context.Context, _ string) (net.Conn, error) {
-	g.dialled++
+	g.dialed++
+	drop := g.dropAfterFirst && g.dialed > 1
 	client, server := net.Pipe()
 	go func() {
 		defer func() { _ = server.Close() }()
 		if _, err := execwire.ReadRequest(server); err != nil {
+			return
+		}
+		if drop {
 			return
 		}
 		if g.hold {
@@ -137,4 +142,19 @@ func TestResultFrame_OldDaemonDecodesANewGuestsFrame(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(newFrame, &legacy))
 	assert.Equal(t, "guest exec: start: no such file", legacy.Error)
+}
+
+// After the launch proved the guest matches, a connection the guest drops
+// mid-command is reported with a named suspect, not as a bare EOF: the guest
+// process stopped, and version skew is ruled out because the launch checked it.
+func TestExec_DroppedConnection_NamesTheSuspect(t *testing.T) {
+	mgr := execManager(t, &scriptedGuest{
+		frame: currentGuestFrame(execwire.ProtocolVersion, "v1.2.3"), dropAfterFirst: true,
+	})
+	info, err := mgr.Launch(context.Background(), launchOpts("MGIT-158", model.NetworkModeNone))
+	require.NoError(t, err)
+	_, err = mgr.Exec(context.Background(), info.ID, model.ExecRequest{Command: []string{"/bin/true"}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "suspect")
+	assert.Contains(t, err.Error(), "not version skew")
 }
