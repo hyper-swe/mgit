@@ -7,6 +7,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/hyper-swe/mgit/internal/buildinfo"
 	"github.com/hyper-swe/mgit/internal/execwire"
 )
 
@@ -38,6 +39,11 @@ func (s *Supervisor) Serve(ctx context.Context, conn io.ReadWriter) error {
 // sendResult writes the terminal result frame and returns execErr so a
 // guest-side start failure both reaches the host and surfaces locally.
 func (s *Supervisor) sendResult(w io.Writer, outcome Outcome, execErr error) error {
+	// Every result names the protocol this guest speaks and its build, so the
+	// daemon can refuse a mismatched pair at the first exchange instead of
+	// meeting it later as a dropped connection. Refs: MGIT-158
+	outcome.GuestProtocol = execwire.ProtocolVersion
+	outcome.GuestBuild, _, _ = buildinfo.Resolve()
 	frame := execwire.ResultFrame{Result: outcome}
 	if execErr != nil {
 		frame.Error = execErr.Error()

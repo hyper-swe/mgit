@@ -26,6 +26,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/hyper-swe/mgit/internal/buildinfo"
 	"github.com/hyper-swe/mgit/internal/execwire"
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/sandboxd/guestexec"
@@ -686,7 +687,7 @@ func (m *Manager) execUntilTheGuestAnswers(
 		}
 		if !m.guestNeverAnswered(id) || !isSilentDisconnect(err, stdout, stderr) ||
 			!time.Now().Add(guestReadyPollInterval).Before(deadline) {
-			return nil, fmt.Errorf("%s exec: %w", m.cfg.Backend, err)
+			return nil, fmt.Errorf("%s exec: %w%s", m.cfg.Backend, err, dropSuspect(err))
 		}
 		m.cfg.Logger.Debug("guest not serving yet; retrying the first command",
 			"event", "guest_not_serving", "sandbox_id", id, "attempts", attempt+1)
@@ -779,6 +780,64 @@ func (m *Manager) markGuestAnswered(id string) {
 // from its name. Refs: MGIT-92, MGIT-272, FR-17.11
 var guestProbeCommand = []string{"/nonexistent/mgit-guest-readiness-probe"}
 
+// dropSuspect names the likely cause when the guest closed the connection
+// without a reply. The launch already checked that the guest speaks this
+// daemon's protocol, so skew is ruled out and the guest process itself is the
+// suspect. Empty for any other error. Refs: MGIT-158
+func dropSuspect(err error) string {
+	if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, syscall.ECONNRESET) {
+		return ""
+	}
+	return " (suspect: the guest process exited or crashed mid-command; the guest matched this " +
+		"daemon's exec protocol at launch, so this is not version skew)"
+}
+
+// maxGuestBuildChars bounds the guest-supplied build string quoted in an error.
+const maxGuestBuildChars = 64
+
+// checkGuestHello judges the guest's first answer. A guest that does not say
+// which protocol it speaks predates the handshake; one that names another
+// number cannot talk to this daemon. Both are refused by name with the
+// command that fixes them. The guest is the hostile party, so its build string
+// is cut to a short run of printable characters before it is quoted.
+// Refs: MGIT-158
+func checkGuestHello(r execwire.Result) error {
+	if r.GuestProtocol == execwire.ProtocolVersion {
+		return nil
+	}
+	daemonBuild, _, _ := buildinfo.Resolve()
+	guestSays := "predates the version handshake"
+	if r.GuestProtocol != 0 {
+		guestSays = fmt.Sprintf("speaks exec protocol %d (this daemon speaks %d)",
+			r.GuestProtocol, execwire.ProtocolVersion)
+	}
+	if b := printableBounded(r.GuestBuild, maxGuestBuildChars); b != "" {
+		guestSays += ", build " + b
+	}
+	return fmt.Errorf("%w: the guest %s, the daemon is build %s; "+
+		"recompose this repository's guest base with `mgit sandbox base from <image>`",
+		model.ErrGuestVersionSkew, guestSays, printableBounded(daemonBuild, maxGuestBuildChars))
+}
+
+// printableBounded keeps only printable ASCII from s and cuts it to max
+// characters, marking a cut. Refs: MGIT-158
+func printableBounded(s string, max int) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range s {
+		if r < 0x20 || r > 0x7e {
+			continue
+		}
+		if n == max {
+			b.WriteString("...")
+			break
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return b.String()
+}
+
 // consoleTailBytes bounds how much guest console a failed launch quotes. Large
 // enough for a Go panic with a few frames, small enough that an agent's error
 // stays readable.
@@ -808,7 +867,12 @@ func (m *Manager) awaitGuestServing(ctx context.Context, id string) error {
 	deadline := time.Now().Add(m.cfg.GuestReadyTimeout)
 	var lastErr error
 	for attempt := 0; ; attempt++ {
-		_, _, _, err := m.execOnce(ctx, id, req)
+		// The probe's read is bounded by its own deadline, so a guest that
+		// accepts the connection and says nothing cannot hold the launch past
+		// the readiness window whatever the caller's context allows.
+		probeCtx, cancel := context.WithTimeout(ctx, m.cfg.GuestReadyTimeout)
+		result, _, _, err := m.execOnce(probeCtx, id, req)
+		cancel()
 		// READY means the GUEST answered: either it ran the probe (it will not)
 		// or, as expected, it replied refusing to. Anything else — a dial that
 		// never reaches a listener, a silent disconnect, a mangled frame — is
@@ -817,7 +881,9 @@ func (m *Manager) awaitGuestServing(ctx context.Context, id string) error {
 		// disconnect, so treating "not a silent disconnect" as proof of life
 		// declared a launched sandbox over a guest that had already exited.
 		if err == nil || errors.Is(err, guestexec.ErrGuestReported) {
-			return nil
+			// It answered; now say whether it is the guest this daemon speaks
+			// to. A mismatch is final, never retried. Refs: MGIT-158
+			return checkGuestHello(result)
 		}
 		lastErr = err
 		if !time.Now().Add(guestReadyPollInterval).Before(deadline) {
