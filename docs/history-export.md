@@ -33,7 +33,7 @@ Top level
 |---|---|---|
 | `schema_version` | integer | The format version. Always first. |
 | `task_id` | string | The task exported. |
-| `steps` | array of step | The task's delivered micro-commits, in the order mgit recorded them. A commit that mgit retained but did not deliver is not listed. |
+| `steps` | array of step | The task's delivered micro-commits, in the order mgit recorded them. A commit that mgit retained but did not deliver is not listed. If a delivered step was built on such a commit, mgit refuses the export instead of describing that commit. |
 | `audit` | array of audit record | The task's audit-trail entries, oldest first. `[]` when there are none. |
 
 Step

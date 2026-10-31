@@ -87,3 +87,42 @@ func pathsOf(files []model.FileDiff) []string {
 	}
 	return out
 }
+
+// A delivered step built on a commit that was retained but not delivered is
+// refused: diffing it against the previous delivered step would list the
+// undelivered commit's paths and blob ids under it, and its parent id would
+// name an undelivered hash. DiffTask leaves that content out. Refs: MGIT-297
+func TestDiffTaskSteps_AStepBuiltOnAnUndeliveredCommitIsRefused(t *testing.T) {
+	e := setupTestEnv(t)
+	ctx := context.Background()
+	stageAndCommitFiles(t, e, "MGIT-1", "base", map[string]string{"base.txt": "base\n"})
+	stageAndCommitFiles(t, e, "MGIT-9", "step a", map[string]string{"a.txt": "a\n"})
+
+	// P: a land-origin commit with no delivery, made on top of step a.
+	p := &model.Commit{TaskID: mustTaskID(t, "MGIT-9"), AgentID: "guest", Message: "[MGIT:MGIT-9] undelivered"}
+	require.NoError(t, os.WriteFile(filepath.Join(e.repo.Root(), "guest.txt"), []byte("guest\n"), 0o600))
+	require.NoError(t, e.wt.Add(ctx, "guest.txt"))
+	pHash, err := e.cs.CreateCommit(ctx, p)
+	require.NoError(t, err)
+	raw, err := e.idx.GetTaskCommits(ctx, "MGIT-9")
+	require.NoError(t, err)
+	require.NoError(t, e.idx.AppendTaskCommits(ctx, []index.TaskCommitInsert{{
+		TaskID: "MGIT-9", CommitHash: pHash, ContentHash: p.ContentHash, Position: len(raw), Origin: index.OriginLand,
+	}}))
+
+	// B: a host step whose git parent is P.
+	b := stageAndCommitFiles(t, e, "MGIT-9", "step b", map[string]string{"b.txt": "b\n"})
+	require.Equal(t, pHash, b.ParentID, "the fixture must build step b on the undelivered commit")
+
+	steps, err := stepDiffs(e).DiffTaskSteps(ctx, "MGIT-9")
+	require.ErrorIs(t, err, model.ErrVerificationFailed)
+	require.Nil(t, steps)
+	require.NotContains(t, err.Error(), pHash, "the error does not name the undelivered hash")
+}
+
+func mustTaskID(t *testing.T, id string) model.TaskID {
+	t.Helper()
+	tid, err := model.ParseTaskID(id)
+	require.NoError(t, err)
+	return tid
+}

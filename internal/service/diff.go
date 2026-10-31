@@ -212,17 +212,25 @@ func (s *DiffService) DiffTaskSteps(ctx context.Context, taskID string) ([]TaskS
 	}
 	steps := make([]TaskStepDiff, 0, len(records))
 	for i, rec := range records {
+		commit, err := s.commitStore.GetCommit(ctx, rec.CommitHash)
+		if err != nil {
+			return nil, fmt.Errorf("diff task steps %s: step %d: %w", taskID, rec.Position, err)
+		}
 		var before string
 		if i == 0 {
-			first, err := s.commitStore.GetCommit(ctx, rec.CommitHash)
-			if err != nil {
-				return nil, fmt.Errorf("diff task steps %s: get first commit: %w", taskID, err)
-			}
-			if err := assertPinnedForkBase(ctx, s.indexStore, taskID, first.ParentID); err != nil {
+			if err := assertPinnedForkBase(ctx, s.indexStore, taskID, commit.ParentID); err != nil {
 				return nil, fmt.Errorf("diff task steps %s: %w", taskID, err)
 			}
-			before = first.ParentID
+			before = commit.ParentID
 		} else {
+			// Each step is compared with the previous delivered step, so its
+			// git parent must be that step. A step built on a commit that was
+			// retained but not delivered would list that commit's files and
+			// blob ids under it, which DiffTask leaves out, so it is refused.
+			if commit.ParentID != records[i-1].CommitHash {
+				return nil, fmt.Errorf("diff task steps %s: step %d is built on a commit that was not delivered; its file list cannot be given without describing that commit: %w",
+					taskID, rec.Position, model.ErrVerificationFailed)
+			}
 			before = records[i-1].CommitHash
 		}
 		files := []model.FileDiff{}

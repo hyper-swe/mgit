@@ -28,7 +28,7 @@ var contentReaderClasses = map[string]string{
 	"cmd/mgit-sandboxd/land_projection.go:publish":                      "via:RequireKnownContentOrigins",
 	"cmd/mgit/cherry_pick.go:cherryPickCmd":                             "via:RequireContentSource",
 	"cmd/mgit/export.go:buildExportPayload":                             "raw:metadata-only; git export delegates PreviewGitPatch",
-	"cmd/mgit/export.go:exportHistory":                                  "raw:message of delivered steps only; the step list and files come from the gated DiffTaskSteps",
+	"cmd/mgit/export.go:exportHistory":                                  "raw:message and parent id of delivered steps only; DiffTaskSteps gates the step list and files and refuses a step whose parent is not the previous delivered step or the fork base",
 	"cmd/mgit/log_cadence.go:runTaskLog":                                "raw:audit",
 	"cmd/mgit/log_cadence.go:subjectFor":                                "raw:subject-only",
 	"cmd/mgit/rollback.go:rollbackCmd":                                  "raw:source-task-resolution; RollbackTask checks SourceHash",
