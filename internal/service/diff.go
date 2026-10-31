@@ -221,6 +221,15 @@ func (s *DiffService) DiffTaskSteps(ctx context.Context, taskID string) ([]TaskS
 			if err := assertPinnedForkBase(ctx, s.indexStore, taskID, commit.ParentID); err != nil {
 				return nil, fmt.Errorf("diff task steps %s: %w", taskID, err)
 			}
+			// With no pinned base the check above passes, so also refuse a
+			// parent that is, or is built on, an undelivered land commit:
+			// the document would name it. Refs: MGIT-297
+			if commit.ParentID != "" {
+				if err := requireDeliverableHistory(ctx, s.indexStore, s.commitStore, commit.ParentID); err != nil {
+					return nil, fmt.Errorf("diff task steps %s: the first step is not known to be built on delivered history; its file list cannot be given without risking a description of an undelivered commit: %w",
+						taskID, model.ErrVerificationFailed)
+				}
+			}
 			before = commit.ParentID
 		} else {
 			// Each step is compared with the previous delivered step, so its

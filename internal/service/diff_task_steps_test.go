@@ -126,3 +126,33 @@ func mustTaskID(t *testing.T, id string) model.TaskID {
 	require.NoError(t, err)
 	return tid
 }
+
+// With no worktree there is no pinned fork base to check, so the first step
+// must not be accepted when its parent is an undelivered land commit: the
+// document's parent id would name it. Refs: MGIT-297
+func TestDiffTaskSteps_AFirstStepBuiltOnAnUndeliveredCommitIsRefusedWithNoPin(t *testing.T) {
+	e := setupTestEnv(t)
+	ctx := context.Background()
+	stageAndCommitFiles(t, e, "MGIT-1", "base", map[string]string{"base.txt": "base\n"})
+
+	// P: a land-origin commit with no delivery, at position 0 of the task.
+	p := &model.Commit{TaskID: mustTaskID(t, "MGIT-9"), AgentID: "guest", Message: "[MGIT:MGIT-9] undelivered"}
+	require.NoError(t, os.WriteFile(filepath.Join(e.repo.Root(), "guest.txt"), []byte("guest\n"), 0o600))
+	require.NoError(t, e.wt.Add(ctx, "guest.txt"))
+	pHash, err := e.cs.CreateCommit(ctx, p)
+	require.NoError(t, err)
+	require.NoError(t, e.idx.AppendTaskCommits(ctx, []index.TaskCommitInsert{{
+		TaskID: "MGIT-9", CommitHash: pHash, ContentHash: p.ContentHash, Position: 0, Origin: index.OriginLand,
+	}}))
+
+	// A: the task's host step, whose git parent is P. The task has no worktree.
+	a := stageAndCommitFiles(t, e, "MGIT-9", "step a", map[string]string{"a.txt": "a\n"})
+	require.Equal(t, pHash, a.ParentID, "the fixture must build step a on the undelivered commit")
+	_, werr := e.idx.GetWorktreeByTask(ctx, "MGIT-9")
+	require.ErrorIs(t, werr, model.ErrWorktreeNotFound, "the case is the one with no pinned base")
+
+	steps, err := stepDiffs(e).DiffTaskSteps(ctx, "MGIT-9")
+	require.ErrorIs(t, err, model.ErrVerificationFailed)
+	require.Nil(t, steps)
+	require.NotContains(t, err.Error(), pHash, "the error does not name the undelivered hash")
+}
