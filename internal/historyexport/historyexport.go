@@ -149,7 +149,7 @@ func Parse(data []byte) (Document, error) {
 		SchemaVersion *int `json:"schema_version"`
 	}
 	if err := json.Unmarshal(data, &probe); err != nil {
-		return Document{}, fmt.Errorf("%w: %v", ErrNotAnExport, err)
+		return Document{}, fmt.Errorf("%w: %w", ErrNotAnExport, err)
 	}
 	if probe.SchemaVersion == nil {
 		return Document{}, fmt.Errorf("%w: no schema_version field", ErrNotAnExport)
@@ -159,7 +159,7 @@ func Parse(data []byte) (Document, error) {
 	}
 	var d Document
 	if err := json.Unmarshal(data, &d); err != nil {
-		return Document{}, fmt.Errorf("%w: %v", ErrNotAnExport, err)
+		return Document{}, fmt.Errorf("%w: %w", ErrNotAnExport, err)
 	}
 	return d, nil
 }

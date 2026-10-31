@@ -41,7 +41,7 @@ func TestDiffTaskSteps_AnUndeliveredCommitIsNotAStepNorABase(t *testing.T) {
 	steps, err := stepDiffs(e).DiffTaskSteps(context.Background(), "MGIT-323")
 	require.NoError(t, err)
 	require.NotEmpty(t, steps)
-	var paths []string
+	paths := make([]string, 0, len(steps))
 	for _, st := range steps {
 		require.NotEqual(t, pending, st.Record.CommitHash, "the undelivered commit is not a step")
 		paths = append(paths, pathsOf(st.Files)...)

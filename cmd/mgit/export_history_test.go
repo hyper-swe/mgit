@@ -78,7 +78,7 @@ func TestExportFormatHistory_ARollbackReasonIsInTheRevertStepOnly(t *testing.T) 
 	dir := t.TempDir()
 	t.Chdir(dir)
 	require.NoError(t, runCLI(t, "init", "--no-agent-files"))
-	const taskID, secret = "EXP-ROLL", "token=FAKE-SECRET-123"
+	const taskID, secret = "EXP-ROLL", "token=FAKE-SECRET-123" //nolint:gosec // G101: a fake secret the test must not find in the document
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o600))
 	require.NoError(t, runCLI(t, "commit", "-a", "--task-id", taskID, "-m", "add a"))
 	require.NoError(t, runCLI(t, "rollback", "--task-id", taskID, "--reason", secret))
@@ -112,7 +112,7 @@ func TestExportFormatHistory_OmitMessagesLeavesNoStepMessageInTheDocument(t *tes
 	dir := t.TempDir()
 	t.Chdir(dir)
 	require.NoError(t, runCLI(t, "init", "--no-agent-files"))
-	const taskID, secret = "EXP-OMIT", "token=FAKE-SECRET-456"
+	const taskID, secret = "EXP-OMIT", "token=FAKE-SECRET-456" //nolint:gosec // G101: a fake secret the test must not find in the document
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o600))
 	require.NoError(t, runCLI(t, "commit", "-a", "--task-id", taskID, "-m", "add the a file"))
 	require.NoError(t, runCLI(t, "rollback", "--task-id", taskID, "--reason", secret))
