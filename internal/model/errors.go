@@ -217,6 +217,10 @@ var (
 	// protocol than the daemon (or predates the handshake). Refs: MGIT-158
 	ErrGuestVersionSkew = errors.New("guest is from a different mgit build than the daemon")
 
+	// ErrGuestProbeOutput reports a guest that answered the readiness probe
+	// with more output than any probe reply carries. Refs: HSWE-17.7.2
+	ErrGuestProbeOutput = errors.New("guest sent more output than the readiness probe allows")
+
 	// ErrGuestExecIdentityMismatch reports that a daemon-internal guest exec
 	// ran as an identity other than the one asked for — the guest confirmed a
 	// different uid/gid. A sync refuses rather than trust a guest that ran the

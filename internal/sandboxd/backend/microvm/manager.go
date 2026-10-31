@@ -792,6 +792,14 @@ func dropSuspect(err error) string {
 		"daemon's exec protocol at launch, so this is not version skew)"
 }
 
+// The readiness probe's reply is a refusal of a few bytes. These bound what the
+// host will read in answer to it; a guest sending more is refused by name.
+// Refs: HSWE-17.7.2
+const (
+	probeOutputCapBytes = 64 << 10 // total stdout+stderr bytes
+	probeFrameCap       = 256      // output frames, empty ones included
+)
+
 // maxGuestBuildChars bounds the guest-supplied build string quoted in an error.
 const maxGuestBuildChars = 64
 
