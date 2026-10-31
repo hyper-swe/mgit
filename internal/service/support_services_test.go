@@ -18,6 +18,8 @@ func TestDiffService_DiffCommits(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()
 
+	// Explicit-hash patches require locally admitted endpoints, including the base.
+	stageAndCommitFiles(t, env, "MGIT-1.1", "accepted base", map[string]string{"diff.txt": "before\n"})
 	head1, err := env.repo.Head()
 	require.NoError(t, err)
 

@@ -18,11 +18,31 @@
 # run the SAME code -- a developer can point it at a scratch Homebrew prefix
 # via $BREW and get the runner's answer, not a false green.
 #
+# THE ONE SETUP STEP. The formula now depends on libkrunfw from the
+# maintainers' own tap, hyper-swe/tap (MGIT-306). Homebrew trusts the formula
+# named on the command line, but refuses that formula's dependency from a tap
+# nobody trusted, so the documented install is two commands:
+#
+#   brew trust hyper-swe/tap
+#   brew install hyper-swe/tap/mgit
+#
+# This check takes exactly that step and no other: it trusts hyper-swe/tap,
+# never sets HOMEBREW_NO_REQUIRE_TAP_TRUST and never trusts a third-party tap,
+# and proves libkrunfw was absent before the install and linked where the
+# sandbox looks for it after it. A dependency on any OTHER tap still fails
+# here, on the untrusted-tap gate, which is the MGIT-75 guard.
+#
+# Until hyper-swe/tap's default branch carries Formula/libkrunfw.rb, the
+# dependency cannot resolve from it. MGIT_TAP_BRANCH names a branch of
+# hyper-swe/homebrew-tap to resolve hyper-swe/tap from instead, so a change
+# to both repositories can be proved before either is merged.
+#
 # Usage:
 #   scripts/brew-install-no-libkrun.sh              # uses `brew` from PATH
 #   BREW=/path/to/scratch/brew scripts/brew-install-no-libkrun.sh
+#   MGIT_TAP_BRANCH=<branch> scripts/brew-install-no-libkrun.sh
 #
-# Refs: MGIT-75, MGIT-69, MGIT-70
+# Refs: MGIT-306, MGIT-75, MGIT-69, MGIT-70
 
 set -euo pipefail
 
@@ -36,12 +56,28 @@ FORMULA="${TAP}/mgit"
 # own `test do` block asserts `mgit --version` reports it, so the binary is
 # stamped with the same value below.
 VERSION="0.0.0-mgit75check"
+OWN_TAP="hyper-swe/tap"
+TAP_BRANCH="${MGIT_TAP_BRANCH:-}"
+case "$TAP_BRANCH" in
+"" | [A-Za-z0-9]*) ;;
+*) echo "FAIL: MGIT_TAP_BRANCH '$TAP_BRANCH' is not a branch name" >&2; exit 1 ;;
+esac
+case "$TAP_BRANCH" in
+*[!A-Za-z0-9._/-]* | *..*) echo "FAIL: MGIT_TAP_BRANCH '$TAP_BRANCH' is not a branch name" >&2; exit 1 ;;
+esac
 
 # Every step is `|| true`: this runs on EXIT, including the failure exits, and
 # a cleanup step that fails must not overwrite the status the check produced.
+# Uninstalls only what THIS run installed (INSTALLED_HERE, set just before the
+# install): a refusal in the preflight must never remove a libkrun or libkrunfw
+# that was already on the machine.
 cleanup() {
-  "$BREW" uninstall --force "$FORMULA" >/dev/null 2>&1 || true
+  if [ -n "${INSTALLED_HERE:-}" ]; then
+    "$BREW" uninstall --force "$FORMULA" >/dev/null 2>&1 || true
+    "$BREW" uninstall --force "$OWN_TAP/libkrunfw" >/dev/null 2>&1 || true
+  fi
   "$BREW" untap "$TAP" >/dev/null 2>&1 || true
+  if [ -n "${TRUSTED_HERE:-}" ]; then "$BREW" untrust "$OWN_TAP" >/dev/null 2>&1 || true; fi
   if [ -n "${WORK:-}" ]; then rm -rf "$WORK" || true; fi
 }
 trap cleanup EXIT
@@ -83,6 +119,24 @@ if "$BREW" tap | grep -qx "libkrun/krun"; then
 fi
 echo "    ok: the libkrun/krun tap is not present"
 
+# The formula's one dependency must also have to arrive: libkrunfw absent, and
+# hyper-swe/tap not yet trusted, as on a fresh Mac. Refs: MGIT-306
+if "$BREW" list --versions libkrunfw >/dev/null 2>&1; then
+  echo "FAIL: libkrunfw is already installed on this machine; the install could not" >&2
+  echo "      prove that the formula brings it." >&2
+  exit 1
+fi
+if ! TRUSTED_TAPS="$("$BREW" trust --json=v1 --tap)"; then
+  echo "FAIL: this Homebrew cannot list its trusted taps (\`brew trust --json=v1 --tap\`)," >&2
+  echo "      so whether $OWN_TAP is already trusted is unknown." >&2
+  exit 1
+fi
+if printf '%s\n' "$TRUSTED_TAPS" | grep -q "\"$OWN_TAP"; then
+  echo "FAIL: $OWN_TAP is already trusted here; a fresh user has not trusted it yet." >&2
+  exit 1
+fi
+echo "    ok: libkrunfw is not installed and $OWN_TAP is not trusted"
+
 # --------------------------------------------------------------------------
 # 2. Build the binary the formula will install, and stage it as the archive
 #    the formula fetches.
@@ -114,8 +168,13 @@ echo "==> Serving brew/mgit.rb from scratch tap $TAP"
 "$BREW" tap-new "$TAP" --no-git >/dev/null
 TAP_FORMULA_DIR="$("$BREW" --repository "$TAP")/Formula"
 mkdir -p "$TAP_FORMULA_DIR"
+# The formula has no version line (the version is read from the release urls),
+# and a file:// url cannot supply one, so a version line is added before the
+# first platform block.
 sed \
   -e "s|^  version \".*\"|  version \"${VERSION}\"|" \
+  -e "s|^  on_macos do\$|  version \"${VERSION}\"\\
+  on_macos do|" \
   -e "s|^      url \".*\"|      url \"file://${WORK}/mgit.tar.gz\"|" \
   -e "s|^      sha256 \".*\"|      sha256 \"${SHA}\"|" \
   "$REPO_ROOT/brew/mgit.rb" > "$TAP_FORMULA_DIR/mgit.rb"
@@ -124,36 +183,82 @@ sed \
 # formula), the install below would fail for a reason that has nothing to do
 # with this check, and the failure message would send the next reader hunting
 # a dependency bug that is not there.
-if ! grep -q "file://${WORK}/mgit.tar.gz" "$TAP_FORMULA_DIR/mgit.rb"; then
+if ! grep -q "file://${WORK}/mgit.tar.gz" "$TAP_FORMULA_DIR/mgit.rb" \
+  || [ "$(grep -c "^  version \"${VERSION}\"\$" "$TAP_FORMULA_DIR/mgit.rb")" -ne 1 ]; then
   echo "FAIL: could not point the formula at the local archive." >&2
-  echo "      brew/mgit.rb's url/sha256 lines were reformatted; update the sed above." >&2
+  echo "      brew/mgit.rb's url/sha256/on_macos lines were reformatted; update the sed above." >&2
   exit 1
 fi
 
 # --------------------------------------------------------------------------
-# 4. THE CHECK: a real install, not a dry run.
+# 4. The one documented setup step, the tap itself, then (only when
+#    MGIT_TAP_BRANCH is set) the tap branch the dependency resolves from.
+# --------------------------------------------------------------------------
+echo "==> brew trust $OWN_TAP (the documented setup step)"
+"$BREW" trust hyper-swe/tap
+TRUSTED_HERE=1
+# `brew trust` does not tap: without this step the dependency cannot resolve
+# at all. The default remote, so the trust recorded above matches the tap.
+# -t 300 is provisional: this step has no run history yet (MGIT-143).
+echo "==> brew tap $OWN_TAP"
+"$REPO_ROOT/scripts/ci/guard-fetch.sh" -t 300 -l brew-tap-own-tap \
+  -c "$BREW untap $OWN_TAP >/dev/null 2>&1 || true" -- \
+  "$BREW" tap "$OWN_TAP"
+if [ -n "$TAP_BRANCH" ]; then
+  echo "==> Resolving $OWN_TAP from its branch $TAP_BRANCH"
+  OWN_TAP_DIR="$("$BREW" --repository "$OWN_TAP")"
+  "$REPO_ROOT/scripts/ci/guard-fetch.sh" -t 300 -l brew-tap-own-tap-branch \
+    -c none:'git fetch writes objects before it moves any ref, so a failed fetch leaves the checkout as it was' -- \
+    git -C "$OWN_TAP_DIR" fetch --depth 1 origin "$TAP_BRANCH"
+  git -C "$OWN_TAP_DIR" checkout -q FETCH_HEAD
+  # An auto-update before the install would move the tap back to its default
+  # branch.
+  export HOMEBREW_NO_AUTO_UPDATE=1
+fi
+
+# --------------------------------------------------------------------------
+# 5. THE CHECK: a real install, not a dry run.
 #
 # `brew install` and not `brew install --dry-run`, because the dry run is
 # precisely what passed while the bug was live. This resolves dependencies,
 # fetches, runs the formula's install block and links the result.
 # --------------------------------------------------------------------------
 echo "==> brew install $FORMULA"
+INSTALLED_HERE=1
 # The formula's own archive is a file:// URL, but resolving and installing its
 # DEPENDENCIES pulls bottles from the same third-party CDN that returned 504
 # for half an hour on 2026-08-15. -t 300 is the MGIT-143 rule applied to this
 # step's history: worst SUCCESSFUL run 65s across n=111, 4x that up the ladder.
-# Refs: MGIT-143, MGIT-119
-if ! "$REPO_ROOT/scripts/ci/guard-fetch.sh" -t 300 -l brew-install-mgit-formula \
+#
+# The dependency now includes libkrunfw, which hyper-swe/tap builds from
+# source until its bottles are published: a compile of upstream's generated
+# kernel.c. That build has no run history yet, so the bound is provisional,
+# 1500s, to be re-derived from its history under the same rule.
+# Refs: MGIT-143, MGIT-119, MGIT-306
+if ! "$REPO_ROOT/scripts/ci/guard-fetch.sh" -t 1500 -l brew-install-mgit-formula \
   -c none:'brew verifies the checksum of everything it reuses and keeps a partial download as .incomplete, which it resumes rather than re-extracting' -- \
   "$BREW" install "$FORMULA"; then
   echo >&2
   echo "FAIL: \`brew install\` failed on a machine without libkrun." >&2
-  echo "      If the error above mentions an untrusted tap or an unavailable" >&2
-  echo "      formula, brew/mgit.rb has regained a third-party-tap dependency" >&2
-  echo "      (MGIT-75). Core mgit does not need one: it is CGO-free and never" >&2
-  echo "      links libkrun. Document the sandbox activation in caveats instead." >&2
+  echo "      If the error above mentions an untrusted tap, brew/mgit.rb depends on a" >&2
+  echo "      tap other than $OWN_TAP (MGIT-75); only $OWN_TAP is covered by the" >&2
+  echo "      documented trust step. If it says $OWN_TAP has no libkrunfw formula, the" >&2
+  echo "      tap's default branch does not carry it yet: set MGIT_TAP_BRANCH (MGIT-306)." >&2
   exit 1
 fi
+
+echo "==> libkrunfw must arrive with mgit, linked where the sandbox looks"
+LIBKRUNFW="$("$BREW" --prefix)/lib/libkrunfw.5.dylib"
+if [ ! -e "$LIBKRUNFW" ]; then
+  echo "FAIL: $LIBKRUNFW is missing after the install; the sandbox searches" >&2
+  echo "      $("$BREW" --prefix)/lib for libkrunfw by its file name." >&2
+  exit 1
+fi
+if find "$("$BREW" --prefix "$FORMULA")/" -name 'libkrunfw*' | grep -q .; then
+  echo "FAIL: the mgit keg carries libkrunfw; it must come only from $OWN_TAP/libkrunfw." >&2
+  exit 1
+fi
+echo "    ok: $LIBKRUNFW is linked, and the mgit keg carries no libkrunfw"
 
 echo "==> brew test $FORMULA"
 "$BREW" test "$FORMULA"
@@ -190,4 +295,5 @@ mkdir -p "$CORE"
 )
 
 echo
-echo "PASS: brew install of mgit succeeds, and core mgit works, with libkrun absent."
+echo "PASS: after \`brew trust $OWN_TAP\`, brew install of mgit succeeds with libkrun absent,"
+echo "      brings libkrunfw from $OWN_TAP, and core mgit works."

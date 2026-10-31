@@ -9,6 +9,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	gitstore "github.com/hyper-swe/mgit/internal/store/git"
+	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
 // RestoreService restores file content from a specific commit without
@@ -19,16 +20,18 @@ type RestoreService struct {
 	commitStore *gitstore.CommitStore
 	repo        *gitstore.Repository
 	repoRoot    string
+	indexStore  *index.Store
 }
 
 // NewRestoreService creates a RestoreService backed by the given repository
 // and commit store. repoRoot is the working-directory root into which
 // restored files will be written.
-func NewRestoreService(repo *gitstore.Repository, cs *gitstore.CommitStore, repoRoot string) *RestoreService {
+func NewRestoreService(repo *gitstore.Repository, cs *gitstore.CommitStore, repoRoot string, idx *index.Store) *RestoreService {
 	return &RestoreService{
 		commitStore: cs,
 		repo:        repo,
 		repoRoot:    repoRoot,
+		indexStore:  idx,
 	}
 }
 
@@ -62,6 +65,10 @@ func (s *RestoreService) RestoreAll(ctx context.Context, hash string, force bool
 	target, err := s.commitStore.GetCommit(ctx, hash)
 	if err != nil {
 		return nil, fmt.Errorf("restore --all: %w", err)
+	}
+
+	if err := s.indexStore.RequireContentCommit(ctx, target.CommitID); err != nil {
+		return nil, fmt.Errorf("restore source: %w", err)
 	}
 
 	apply, uncommitted, err := s.repo.ComputeRestoreDiffs(target.CommitID)
@@ -157,7 +164,15 @@ func (s *RestoreService) RestoreFile(ctx context.Context, path, hash string) (*R
 		return nil, fmt.Errorf("restore: refusing path %q (must be relative, no traversal)", path)
 	}
 
-	contents, err := s.commitStore.GetFileFromCommit(ctx, hash, cleaned)
+	source, err := s.commitStore.GetCommit(ctx, hash)
+	if err != nil {
+		return nil, fmt.Errorf("restore source: %w", err)
+	}
+	if err := s.indexStore.RequireContentCommit(ctx, source.CommitID); err != nil {
+		return nil, fmt.Errorf("restore source: %w", err)
+	}
+
+	contents, err := s.commitStore.GetFileFromCommit(ctx, source.CommitID, cleaned)
 	if err != nil {
 		return nil, fmt.Errorf("restore: %w", err)
 	}

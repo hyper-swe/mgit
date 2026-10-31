@@ -1,41 +1,60 @@
 class Mgit < Formula
   desc "Sandboxed, checkpointed working substrate for LLM coding agents"
   homepage "https://github.com/hyper-swe/mgit"
+  # The four url lines and the four sha256 lines below are a template: the
+  # tap's own update-formula.yml (hyper-swe/homebrew-tap) overwrites them at
+  # every real release from that release's checksums.txt. The version is the
+  # one in the urls (Homebrew reads it from there), so there is no version
+  # line to keep in step. The urls are rewritten by
+  # .github/scripts/rewrite_formula_urls.py, and the shas by a literal TEXT
+  # regex over this file's declaration order (darwin arm/intel, linux
+  # arm/intel) -- `sha256 "[A-Fa-f0-9]*"`, one quoted literal per line, NOT a
+  # Ruby variable: a shared constant would render as `sha256 SOME_CONST`,
+  # which the regex does not match at all. That regex also requires 64 HEX
+  # characters -- the literal word "PLACEHOLDER" does NOT match it either.
+  # Never hand-edit these eight lines; they are correct only right after a
+  # real release's automated update.
   license "Apache-2.0"
-  # version + all four sha256 below are a template: the tap's own
-  # update-formula.yml (hyper-swe/homebrew-tap) overwrites them at every real
-  # release from that release's checksums.txt via a literal TEXT regex over
-  # this file's declaration order (darwin arm/intel, linux arm/intel) --
-  # `sha256 "[A-Fa-f0-9]*"`, one quoted literal per line, NOT a Ruby
-  # variable: a shared constant would render as `sha256 SOME_CONST` in the
-  # file, which the regex does not match at all. That regex also requires
-  # 64 HEX characters -- the literal word "PLACEHOLDER" that used to be here
-  # does NOT match it either, so the automated update would silently leave a
-  # non-hex value in place forever instead of overwriting it. 64 zeros is a
-  # valid (obviously fake) sha256-shaped placeholder the real regex actually
-  # replaces. Never hand-edit these four lines; they are correct only right
-  # after a real release's automated update.
-  version "0.1.0"
 
+  # libkrunfw, the library that carries the sandbox's guest kernel, comes from
+  # this tap (hyper-swe/tap), never from mgit's archive: it is distributed
+  # under LGPL-2.1-only and GPL-2.0-only, and the maintainers keep it out of
+  # mgit's own release. The macOS archive carries libkrun (MGIT-259), so
+  # libkrunfw is the one external library, and only Apple silicon macOS has a
+  # sandbox backend that needs it. The Linux archive carries its own copy.
+  #
+  # The one setup step this needs is `brew trust hyper-swe/tap`. Homebrew
+  # trusts a formula named on the command line (`brew install
+  # hyper-swe/tap/mgit`) but refuses to load that formula's DEPENDENCY from a
+  # tap nobody trusted, and resolves dependencies before it fetches anything.
+  #
+  # NEVER a dependency on a third-party tap, such as the libkrun/krun tap this
+  # formula once named (`depends_on "libkrun/krun/libkrun"`). Trusting that
+  # tap was a decision about a third-party VMM that belonged to the user, and
+  # without it `brew install hyper-swe/tap/mgit` aborted with exit 1 having
+  # installed nothing, not even core mgit, which never links libkrun (it is
+  # CGO-free). The same trust step that installs mgit now covers libkrunfw.
+  # Refs: MGIT-306, MGIT-75, MGIT-61.15
   on_macos do
     on_arm do
-      url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_darwin_arm64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      depends_on "hyper-swe/tap/libkrunfw"
+      url "https://github.com/hyper-swe/mgit/releases/download/v0.7.6/mgit_0.7.6_darwin_arm64.tar.gz"
+      sha256 "d22423ab959113586b3ed1c6832bdb1b156fc14fbf60a404bf11aa8853f1268c"
     end
     on_intel do
-      url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_darwin_amd64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      url "https://github.com/hyper-swe/mgit/releases/download/v0.7.6/mgit_0.7.6_darwin_amd64.tar.gz"
+      sha256 "2809df46d53d7dde780c272f5b136db94150d1c1da4c2381e428043d55726783"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_linux_arm64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      url "https://github.com/hyper-swe/mgit/releases/download/v0.7.6/mgit_0.7.6_linux_arm64.tar.gz"
+      sha256 "781a2b93ef6ae255b40098f4b7f789c90e61d2351ff1baab4c995d99881789be"
     end
     on_intel do
-      url "https://github.com/hyper-swe/mgit/releases/download/v#{version}/mgit_#{version}_linux_amd64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      url "https://github.com/hyper-swe/mgit/releases/download/v0.7.6/mgit_0.7.6_linux_amd64.tar.gz"
+      sha256 "f119573dd3c4194c102742a061f84804d598c7e73a8f612ec2ab06adc8a05934"
     end
   end
 
@@ -68,34 +87,6 @@ class Mgit < Formula
     (pkgshare/"THIRD_PARTY").install Dir["THIRD_PARTY/*"] if Dir.exist?("THIRD_PARTY")
   end
 
-  # NO `depends_on "libkrun/krun/libkrun"`. DO NOT ADD ONE BACK.
-  #
-  # The macOS daemon loads libkrunfw from the libkrun/krun tap (its libkrun
-  # ships in the archive, MGIT-259), but declaring a dependency on that tap
-  # here broke `brew install hyper-swe/tap/mgit` outright for every user who
-  # did not already have libkrun (MGIT-75). Homebrew refuses to
-  # LOAD a formula from an untrusted third-party tap, and dependency
-  # resolution happens before anything is fetched, so the install aborted with
-  # exit 1 having installed NOTHING — not even core mgit, which never links
-  # libkrun at all (it is CGO-free). Reproduced on a Homebrew prefix with
-  # libkrun genuinely absent, in both states a real user can be in:
-  #
-  #   tap absent:    Warning: No available formula with the name
-  #                  "libkrun/krun/libkrun". This command requires the tap
-  #                  libkrun/krun.
-  #   tap untrusted: Error: Refusing to load formula libkrun/krun/libkrun
-  #                  from untrusted tap libkrun/krun.
-  #
-  # `=> :optional` is not the fix either. It does dodge the load (measured),
-  # but its opt-in path `--with-libkrun` still fails — on libkrunfw, which
-  # libkrun itself depends on from the same untrusted tap, and which no
-  # command-line argument can whitelist. Only `brew trust libkrun/krun`
-  # unblocks it, and a trust decision about a third-party VMM belongs to the
-  # user who wants a sandbox, not to everyone who wants a commit substrate.
-  #
-  # So the sandbox is a documented second step (see caveats); `mgit doctor`
-  # names a missing libkrunfw with the remedy. Refs: MGIT-75, MGIT-61.15
-
   # The sandbox's libkrun backend needs a libkrun BUILT WITH NETWORKING.
   # mgit attaches an explicit network device to every sandbox in every mode;
   # without one libkrun falls back to TSI and the guest gets full host egress,
@@ -117,27 +108,26 @@ class Mgit < Formula
         1. Prerequisites:
            - Linux: KVM (/dev/kvm read-writable by you) and glibc 2.31+;
              the daemon's hypervisor libraries are installed with mgit
-           - macOS: Apple Silicon (arm64), macOS 14 or later, plus libkrunfw,
-             the guest kernel library, which is NOT installed with mgit (the
-             daemon's libkrun is) -- it comes with the libkrun formula of a
-             third-party tap you have to trust before Homebrew will load it:
-               brew tap libkrun/krun
-               brew trust libkrun/krun
-               brew install libkrun
-             (`brew trust` is required, and whole-tap trust specifically:
-             libkrun pulls in libkrunfw from the same tap.)
+           - macOS: Apple Silicon (arm64), macOS 14 or later. The daemon's
+             libkrun is installed with mgit, and libkrunfw, the guest kernel
+             library, is installed with it from this tap (hyper-swe/tap),
+             which you trust once before installing:
+               brew trust hyper-swe/tap
+               brew install hyper-swe/tap/mgit
+             libkrunfw is a separate library under its own licenses
+             (LGPL-2.1-only AND GPL-2.0-only); its keg holds the license
+             texts and the source offer.
            (Windows and Intel macOS have no sandbox backend yet)
         2. Provision the guest: compose one from any Linux image --
                mgit sandbox base from debian:12
 
       libkrun must be built WITH networking support. The libkrun installed
-      with mgit is checked for it before release; a daemon you build from
-      source links Homebrew's libkrun, which the libkrun/krun tap builds with
-      NET=1. If you build libkrun yourself, build it with `make NET=1`. Verify:
+      with mgit is checked for it before release. If you build the daemon
+      or libkrun yourself, build libkrun with `make NET=1`, and verify it:
 
-        nm -gU "$(brew --prefix libkrun)/lib/libkrun.dylib" | grep krun_add_net_unixgram
+        nm -gU /path/to/your/libkrun.dylib | grep krun_add_net_unixgram
 
-      A libkrun without that symbol cannot host a sandbox: mgit requires an
+      A libkrun without networking cannot host a sandbox: mgit requires an
       explicit network device in every mode, and without one the guest would
       get unrestricted host egress. mgit-sandboxd fails closed in that case
       -- core mgit is unaffected either way.

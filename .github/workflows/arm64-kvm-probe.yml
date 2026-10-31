@@ -1,0 +1,55 @@
+# One-time probe: does the free GitHub-hosted arm64 runner expose KVM?
+#
+# MGIT-230.5 could not boot-validate the linux_arm64 daemon because no hosted
+# runner was known to offer /dev/kvm. This job only REPORTS what the runner
+# has. It needs no checkout, no secrets and no token grant; the only thing
+# it changes is the runner's own udev rule for /dev/kvm, as the amd64 jobs do.
+# It runs by hand (workflow_dispatch), once. The follow-up
+# depends on the answer: KVM present moves the arm64 boot run into free CI;
+# absent keeps arm64 build-verified only.
+# Refs: MGIT-230.5.1
+name: arm64 KVM probe
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  probe:
+    name: KVM on ubuntu-24.04-arm
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Report what the runner exposes
+        shell: bash
+        run: |
+          set +e
+          echo "== uname"; uname -srm
+          echo "== /dev/kvm before the udev rule"
+          ls -l /dev/kvm || echo "/dev/kvm is absent on this runner"
+          # The same rule the amd64 jobs apply: a /dev/kvm that is present
+          # but mode 0660 would otherwise read as absent. trigger is
+          # asynchronous, so settle before looking again.
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          sudo udevadm settle || true
+          echo "== /dev/kvm after the udev rule"
+          ls -l /dev/kvm || echo "/dev/kvm is absent on this runner"
+          echo "== cpuinfo: x86 virtualization flags (expect 0 on arm64)"
+          grep -c -E 'vmx|svm' /proc/cpuinfo
+          echo "== cpuinfo: arm64 features"
+          grep -E 'Features|CPU implementer' /proc/cpuinfo | head -4
+          echo "== dmesg (kvm), if permitted"
+          dmesg 2>&1 | grep -i kvm | head -20
+          echo "== id and groups"; id; groups
+          echo "== open /dev/kvm read-write"
+          if [ -e /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+            python3 -c 'import os; fd=os.open("/dev/kvm", os.O_RDWR); print("opened /dev/kvm read-write: KVM present"); os.close(fd)'
+            echo "open rc=$?"
+          else
+            echo "KVM absent or not accessible"
+          fi
+          exit 0

@@ -7,8 +7,241 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **repairing a base that absorbed an untracked path**. The README now says to
+  exclude the path and run one explicit capture, that earlier tasks keep their
+  base, and that a path Git tracks and the working tree still holds can't be
+  repaired this way. No behaviour change. Refs: MGIT-324
+
+### Changed
+
+- On Apple silicon macOS, the Homebrew formula depends on
+  `hyper-swe/tap/libkrunfw`, the sandbox's guest kernel library, from mgit's
+  own tap. Run `brew trust hyper-swe/tap` once, then `brew install
+  hyper-swe/tap/mgit`. mgit no longer sends you to the libkrun/krun tap, and
+  `mgit doctor` and the sandbox's failure messages name the new steps. mgit's
+  archive does not carry libkrunfw (MGIT-306).
+- `install.sh` sets up libkrunfw on Apple silicon macOS only when you run it
+  with `MGIT_SANDBOX=1`: it names libkrunfw's licenses
+  (LGPL-2.1-only AND GPL-2.0-only) and source, asks before downloading it as
+  a separate file, checks it against that download's `checksums.txt`, and
+  installs it beside libkrun with its license texts and source offer. It
+  downloads from the same release as the mgit archive; set
+  `MGIT_LIBKRUNFW_BASE` to use a mirror instead (MGIT-306).
+- Every release hosts libkrunfw's corresponding source beside its binaries,
+  under the signed `checksums.txt`: the kernel tarball, libkrunfw's source,
+  patches and configuration, and now also the prebuilt kernel image the macOS
+  library is built from (`libkrunfw-v5.5.0-prebuilt-aarch64.tgz`, checked
+  against its pinned digest). The release workflow fails if any of them is
+  missing or unchecksummed. The offers name swe@hyperswe.com (MGIT-306).
+- The sandbox daemon looks for libkrunfw in its own library directory
+  (`lib/` beside it, or `<prefix>/lib/mgit`) before the Homebrew prefix and
+  the system directories (MGIT-306).
+- libkrunfw's source archive is one file with one digest. Releases from now
+  on attach the exact `libkrunfw-v5.5.0-source.tar.gz` that the tap release
+  `libkrunfw-5.5.0` publishes, checked against its pinned sha256, instead of
+  building a second archive of the same source that differs only in its top
+  directory name; the release's post-publish check requires `checksums.txt`
+  to list it at that digest (MGIT-306).
+
+## [0.7.6] - 2026-10-29
+
+`linux_arm64` is build-verified and not boot-verified: it is built and
+load-checked, and its build, tests and vulnerability scan run in CI, but the
+hosted arm64 runner has no KVM (measured), so no guest boots there.
+
+### Upgrade to 0.7.6
+
+- **finish or land in-flight tasks before upgrading to 0.7.6**. Task rows
+  recorded before the local content-admission ledger, and imported rows without
+  local admission, are retained for audit but refused by sandbox land, squash
+  `--to-git`, `diff --task-id`, git export, and restore. By-hash diff checks both
+  endpoints too. A task with only undelivered commits returns an explicit error,
+  not an empty patch. These refusals give a recovery sequence: preserve the old
+  repository, initialize a new empty repository outside it, copy only inspected
+  source files, and commit them under a new task. Do not reuse the old linked
+  worktree with a different task ID. See [content recovery](docs/CONTENT-RECOVERY.md).
+
+### Changed
+
+- `mgit work --base <commit>`, `mgit checkout <branch>` and `mgit worktree add` for
+  a task whose branch ends at a retained guest commit refuse that commit when it was
+  never delivered, before any branch, worktree, ref or file changes. Host commits, `HEAD`, branch names and branches with no ledger row work
+  as before. See [content recovery](docs/CONTENT-RECOVERY.md).
+- The same three commands also refuse a commit that is built on a retained,
+  undelivered guest commit, such as a host commit made on top of one, or a merge
+  of its branch. The check follows every parent, so the merged-in side counts,
+  and does not look below a delivered sandbox-land commit; a host commit does
+  not stop it. A history that cannot be read is refused rather than passed
+  unchecked. See [content recovery](docs/CONTENT-RECOVERY.md).
+- `mgit merge` refuses a source branch that ends at, or is built on, a retained
+  guest commit that was never delivered, for the default, `--no-ff` and
+  `--squash` strategies, before any ref, index or file changes. Merging host
+  branches works as before. See [content recovery](docs/CONTENT-RECOVERY.md).
+
+- Restore (file or whole tree), cherry-pick, rollback, and projection-conflict
+  recovery also require a locally admitted task commit as their content source.
+  An initial or sync-base snapshot without a task row is refused. This refusal
+  does not mean a healthy repository needs migration: select an admitted task
+  commit hash. Legacy/imported task rows with ambiguous origin still require
+  the inspected-file recovery described below.
+
+- Explicit-hash diff requires local admission for both endpoints, including
+  in a newly initialized repository. Initial and sync-base snapshots without
+  a task admission are refused. Use `mgit diff --task-id <id>` for a task
+  patch or select two admitted task commit hashes. `mgit show` remains an
+  inspection command: it displays retained commit changes without admitting
+  them for export or apply, and reports unreadable diffs as errors.
+
+- `mgit merge` of a source branch whose tip is already contained in the current
+  branch now reports "already up to date" and leaves the branch where it is,
+  for the default, `--no-ff` and `--squash` strategies. Before, `--no-ff`
+  and the default strategy wrote a merge commit and `--squash` wrote a commit
+  for content the branch already had (MGIT-326).
+- `mgit sandbox land` publishes verified sandbox commits into the task's bound
+  native worktree rather than the repository-root checkout. A file already
+  matching the verified tip is accepted after a host edit and sandbox sync,
+  while real host conflicts, staged changes, mode mismatches and unsafe parent
+  entries are refused before anything is written. A commit that was recorded
+  but not written to the worktree is retried on the next land, with backup, restore and
+  retry instructions in place of a misleading no-op (MGIT-317).
+- When a base is recomposed under a moved image tag, a launch that still names
+  the old pin is refused with the old and the current pin named, and the
+  replacement sequence (remove, then launch) is printed with the right flags.
+  Before the new pin replaces the old one, any registration still using the old
+  pin is listed. Existing registrations and running VMs are not changed
+  (MGIT-286).
+
 ### Fixed
 
+- On Linux, when the guest makes a worktree's mount point by shadowing the
+  deepest directory the image ships with a writable tmpfs, it now says which
+  directory it shadowed: one log line, and a one-line record in
+  `/tmp/.mgit-mount-point-shadowed` that a command inside the guest can read.
+  Before, a passing run showed nothing. The repair itself is unchanged.
+
+- The pre-push hook removes its scratch file by file instead of with a
+  recursive delete, so a lane that may not run recursive deletes can push
+  through it (MGIT-318).
+
+### Release engineering
+
+- The release archives include the `NOTICE` file, and `NOTICE` names the bundled
+  libkrun (Apache-2.0) and libkrunfw (LGPL-2.1-only glue and the GPL-2.0-only
+  Linux kernel), pointing to the license texts and source assets that ship with
+  them (MGIT-315, MGIT-316).
+- The build, the whole test suite and the vulnerability scan now also run on
+  linux/arm64 for every change. The hosted arm64 runner has no `/dev/kvm`
+  (measured), so no guest boots there: the tests that need a VM skip, each
+  skip is listed with its reason, and the linux/arm64 daemon remains
+  build-verified and not boot-verified (MGIT-230.5.2).
+
+### Documentation
+
+- The sandbox install guide now says interactive sessions in a guest are
+  unsupported on every backend in this build (`exec` has no stdin or TTY and
+  `sandbox shell` is refused), names `mgit work --sandbox` as the alternative, and says agents
+  stay on the host by design (MGIT-320, MGIT-321).
+
+### Security
+
+- Dependencies moved to fixed versions: `golang.org/x/net` v0.62.0
+  ([GO-2026-6866](https://pkg.go.dev/vuln/GO-2026-6866),
+  [GO-2026-6860](https://pkg.go.dev/vuln/GO-2026-6860)),
+  `github.com/labstack/echo/v4` v4.15.3
+  ([GO-2026-6293](https://pkg.go.dev/vuln/GO-2026-6293)) and
+  `go.mongodb.org/mongo-driver` v1.17.7
+  ([GO-2026-5327](https://pkg.go.dev/vuln/GO-2026-5327)). The release-time
+  scans of the source and of the built binaries (Linux amd64 and arm64, macOS
+  arm64) report one remaining finding,
+  [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) (`golang.org/x/crypto/openpgp`).
+  It is a scanner false positive: no mgit binary imports or links that package,
+  and the report appears only for binaries built with the symbol table
+  stripped (`-ldflags -s`), as the release binaries are; the same source built
+  without `-s` scans clean (MGIT-293.1).
+- Build and guest verification toolchains use Go 1.26.10, which fixes
+  [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809) in `crypto/x509`.
+  The guest archive checksums match the Go publisher's Linux amd64 and
+  arm64 archives. Vulnerability checks remain enabled without exclusions.
+
+## [0.7.5] - 2026-10-17
+
+Version 0.7.4 was tagged but never released: its release run stopped before publishing, so there are no 0.7.4 binaries. Everything that was in 0.7.4 is in this release, and the tag `v0.7.4` stays where it is.
+
+`linux_arm64` is build-verified and not boot-verified: it is built and
+load-checked, but no hosted CI runner offers KVM on arm64.
+
+### Fixed
+
+- Staging a generated file by name (for example `mgit add CLAUDE.md`, which
+  the guide mgit appends to a worktree's `CLAUDE.md` tells an agent to do for
+  a real edit) now commits the file without mgit's generated
+  `BEGIN mgit-sandbox ... END mgit-sandbox` block; the working copy keeps the
+  block. A file that is nothing but the block is committed as it is, a begin
+  line with no end line is never half-removed, and text sharing a line with a
+  marker is kept byte for byte (MGIT-126).
+- `mgit doctor`'s base/release difference row now points a repository back at
+  its own recorded source (`mgit sandbox base from <source>`) and says that
+  the no-reference form switches it to the release's tested image, which may
+  lack the toolchain the repository's image carries. The row for a base
+  composed before 0.6.8 names the recorded source too. When the recorded
+  source is the same image name at an older digest, which is what a base
+  composed with no reference records, the row names the no-reference form
+  instead, because recomposing from that older digest would not clear the row
+  (MGIT-300, MGIT-313).
+- `mgit doctor` has a `host/kvm` row on Linux: when the sandbox daemon links
+  libkrun or firecracker and `/dev/kvm` is absent, refused or cannot be
+  opened, the row fails with the plain cause and a remedy. With no daemon, or
+  the container backend, it reads not-checked and does not fail doctor. Off
+  Linux it reads not-checked (MGIT-301).
+- A libkrun boot that fails before its VM reports now says "no KVM device"
+  outright when `/dev/kvm` is absent (Linux), and names the signal or status
+  the VMM process ended with; a status reaped after mgit's own kill is not
+  named as the cause (MGIT-302).
+- `mgit diff` accepts a unique abbreviated commit id (four hexadecimal digits
+  or more) for either side, as `git diff` does; an unknown or ambiguous id is
+  still refused, and says which.
+- `mgit commit -m` given more than once keeps every message as its own
+  paragraph, in order, joined by a blank line. A single message is recorded
+  byte for byte, as before.
+- A repository made with `git clone --shared` (objects borrowed from another
+  repository through an absolute alternates path) is now read correctly; the
+  borrowed objects are looked up only after a local miss, and mgit changes
+  nothing in the Git repository.
+- Inside a linked Git worktree, the repository's shared `info/exclude` rules
+  are honored, so files Git already ignores no longer enter a task's first
+  captured state.
+- The directory-recovery hints printed when `mgit add` or `mgit restore
+  --staged` refuse a directory entry are now safe to paste: a path that
+  starts with a dash gets a relative prefix, and the restore hint says it also
+  unstages the files under that directory. Every refused entry is named.
+- `mgit work <path> --branch <name>` for a branch that does not exist is now
+  refused before anything is created. It used to fail late and leave an
+  orphan `task/<id>` branch behind (MGIT-127).
+- A commit made from inside a task worktree records the agent the worktree is
+  bound to (`mgit work --agent-id`), not the default `cli` (MGIT-117).
+- A failing worktree lookup (a closed index store, a canceled request) is
+  reported as that failure, not as "not found" for a worktree that exists
+  (MGIT-116).
+- A sandbox with a network allowlist now starts when `TMPDIR` is long. The
+  per-sandbox sockets used to exceed the operating system's socket path limit
+  for a runtime directory of 62 bytes or more (MGIT-279).
+- A launch that fails before any guest exists reports only its own cause; it
+  no longer adds advice about guest memory (MGIT-108).
+- Image sources written as `docker.io/...` resolve to the registry that
+  serves them, and a registry response that is not an image manifest is
+  reported with the serving host and HTTP status instead of as a digest
+  mismatch.
+- On the libkrun backend, a published port outside 1-65535 is an invalid
+  request that names the port, and a failure to clear, bind or restrict the
+  control socket is reported as that I/O fault; neither reads as "no sandbox
+  backend available" any more (MGIT-232.1).
+- `mgit sandbox launch` on a Git worktree or clone no longer leaves a
+  `.git` pointer file in the guest that made Git fail with "not a git
+  repository"; the launch says what Git the guest gets. Usage lines for the
+  sandbox verbs show `--task-id`, the documented flag, instead of the hidden
+  `--task` alias.
 - `mgit init` in a directory that already has files now records those files
   (ignore rules applied; `.git` and `.mgit` left out) as the base. Before, the
   store started empty, so the first task's `--to-git` patch carried every
@@ -19,6 +252,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The base image this release records as its tested guest base moved: `debian:12`
+  now resolves to `sha256:2c037a04925515fdd6ea85ea14a682d0e79931f5e9f5d07b6dbfc6ba12f9e858`,
+  where it was `sha256:f37a335e82bca302e955fa39f9dfe28f1be618f016f8a2b56318e5a5111afc26`,
+  the first change to the record since it was introduced. After you upgrade,
+  `mgit doctor` can show a stated difference in its base/release row for a
+  repository whose guest base was composed from the earlier image. Nothing
+  breaks: the base you have keeps working. To match the release, run
+  `mgit sandbox base from` with no reference: it composes `debian:12` at the
+  digest this release was tested with, and the row clears. A repository whose
+  base came from a different image, for example a Go image, keeps that image:
+  recompose it from its own source with `mgit sandbox base from <source>`, in
+  which case the row stays a stated difference by design, or keep the base as
+  it is. The container end-to-end check pins the same digest (MGIT-305,
+  MGIT-313).
 - `mgit sandbox launch` now gives the guest a repository of its own: the
   delivered files as a single base commit, with none of the host's history.
   `git status`, `git diff` and `git rev-parse HEAD` work in the guest, and the
@@ -47,6 +294,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WORKFLOWS.md`) now show `mgit commit -a`; without `-a` or `mgit add` a
   commit records nothing, and the `mgit squash` after it fails with "task not
   found".
+
+### Release engineering
+
+- The guest verification tools (Go, a Java runtime, the model checker,
+  linters, Node) are pinned by publisher checksum and fetched by release and
+  asset name; `build-guest-base.sh --print-plan` prints the plan for the
+  glibc guest base (the Debian slim image by digest, with pinned `git` and
+  `make`), and `repin-guest-debs.sh` re-pins those packages from signed
+  bookworm and bookworm-security indexes, with a check that fails on a newer
+  security version or a perl-base mismatch. The pinned package locks are not
+  re-pinned in this release.
+- The pull request text check is judged by the base branch's copy of its
+  tool, reads private IPv6 literals, and keeps checking human edit history
+  while skipping only automatic dependency-update description revisions.
+- CI: the pinned actions move to their current major versions and are
+  proposed weekly for update, and the macOS libkrun job lints the files only
+  it builds.
+- The release workflow installs `cosign` only after GoReleaser has run, and a
+  step before GoReleaser fails the job if a `cosign` is already on the PATH.
+  GoReleaser's action checks the checksum of the GoReleaser it downloads and
+  skips its signature check, because no `cosign` is present at that point. The
+  previous order stopped the 0.7.4 release, which was tagged and never
+  released, because the `cosign` it installed could not read GoReleaser's
+  signature bundle (MGIT-311).
+- Release checks: the Homebrew formula is compared with `brew/mgit.rb` before a
+  tag (a missing `version` or `sha256` line counts as drift) and now also on
+  every CI run (an unreachable tap skips loudly instead of failing), the fetch
+  guard's timeout watchdog no longer outlives it, and the build stand-in's
+  post-copy check and the bundle verifier's negative control each have a test
+  that fails when the check is removed.
+- The deleted metadata-based patch renderer (`ExportToGitPatch`) had no caller
+  and could emit an empty patch that applied to nothing; exports use only the
+  real tree diff, and a guard test keeps it deleted (MGIT-114).
+- Tests: `cmd/mgit` tests cannot reach the developer's repository or guest-base
+  cache (asserted); the sandbox host root from a linked worktree is pinned;
+  a reviewer checklist for tests that assert their environment is added to
+  the docs.
 
 ## [0.7.3] - 2026-10-11
 

@@ -15,7 +15,7 @@ import (
 
 // newRestoreForEnv builds a RestoreService against the shared test env.
 func newRestoreForEnv(env *testEnv) *RestoreService {
-	return NewRestoreService(env.repo, env.cs, env.repo.Root())
+	return NewRestoreService(env.repo, env.cs, env.repo.Root(), env.idx)
 }
 
 // TestRestoreAll_RecoversWholeCheckpoint is the MGIT-55 core: one command

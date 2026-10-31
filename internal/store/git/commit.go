@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -134,6 +136,11 @@ func (cs *CommitStore) buildTreeFromStaging() (plumbing.Hash, error) {
 		return plumbing.ZeroHash, err
 	}
 
+	generated, err := cs.repo.generatedSet()
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+
 	// Every entry is judged against HEAD as it is, before any is applied.
 	if err := cs.repo.checkStagedEntries(staged, files); err != nil {
 		return plumbing.ZeroHash, err
@@ -154,6 +161,18 @@ func (cs *CommitStore) buildTreeFromStaging() (plumbing.Hash, error) {
 				continue
 			}
 			return plumbing.ZeroHash, err
+		}
+		// A file mgit generated into this worktree is committed without mgit's
+		// block, which is specific to this worktree and host; the working copy
+		// keeps it. Staging by name is the only way such a file reaches here.
+		// Refs: MGIT-126, MGIT-80
+		// A file that is NOTHING BUT the block (AGENTS.md, .envrc) has no user
+		// content to keep; naming it is a statement that mgit's file is meant to
+		// land (MGIT-80), so it is committed as it is.
+		if generated[rel] && mode != filemode.Symlink {
+			if stripped := StripGeneratedBlock(content); len(bytes.TrimSpace(stripped)) > 0 {
+				content = stripped
+			}
 		}
 		blobHash, err := writeBlob(cs.repo.repo.Storer, content)
 		if err != nil {
@@ -185,6 +204,27 @@ func (cs *CommitStore) GetCommit(_ context.Context, hash string) (*model.Commit,
 		return nil, fmt.Errorf("%w: %s", model.ErrCommitNotFound, hash)
 	}
 	return commitFromGitObject(obj), nil
+}
+
+// Parents returns every parent hash of a commit, in order: none for a root,
+// two or more for a merge. GetCommit keeps only the first parent in
+// model.Commit, so a walk of history that must not skip a merged-in branch
+// reads them here. A commit that cannot be read yields ErrCommitNotFound.
+// Refs: MGIT-323.5
+func (cs *CommitStore) Parents(_ context.Context, hash string) ([]string, error) {
+	h, err := cs.resolveCommitHash(hash)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := cs.repo.repo.CommitObject(h)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", model.ErrCommitNotFound, hash)
+	}
+	parents := make([]string, 0, len(obj.ParentHashes))
+	for _, p := range obj.ParentHashes {
+		parents = append(parents, p.String())
+	}
+	return parents, nil
 }
 
 // resolveCommitHash resolves a full or abbreviated hex commit-hash reference to

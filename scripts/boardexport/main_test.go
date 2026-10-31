@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -24,6 +25,8 @@ func TestTheCommittedBoardCarriesNoAgentIdentities(t *testing.T) {
 	assert.Zero(t, assignees, "nodes still name who claimed them")
 	assert.Zero(t, agents, "the agents section still lists identities")
 	assert.Zero(t, sessions, "the sessions section still lists identities")
+	assert.Empty(t, textLeaks(d), "the committed board's text names a working role, another product's ticket or a personal path (MGIT-327.6)")
+	assert.Zero(t, agentWritten(d), "nodes still carry agent-written notes: cut the board with scripts/boardexport, never commit a raw tracker export (MGIT-327.1)")
 	for _, n := range d.Nodes {
 		assert.Contains(t, []string{"", "cli", "mcp"}, n.Creator,
 			"%s names who filed it: a creator is the interface (cli, mcp), never an identity (MGIT-264)", n.ID)
@@ -225,4 +228,222 @@ func TestRun_ACreatorThatNamesSomeoneIsAnIdentity(t *testing.T) {
 	assert.Equal(t, "mcp", got.Nodes[1].Creator, "an interface name is not an identity and stays")
 	assert.Equal(t, d.Nodes[0].ContentHash, got.Nodes[0].ContentHash, "content is untouched")
 	require.NoError(t, run(board, board, true), "after the rewrite, -check passes")
+}
+
+// SCHEMA 2.0.0 CARRIES AGENT-WRITTEN TEXT THE PUBLIC BOARD MUST NOT PUBLISH.
+// The tracker's 2.0.0 export adds three per-node fields: annotations and
+// activity, which hold what lanes and reviewers wrote about a ticket (names,
+// verdicts, internal paths), and previous_status. The public board is cut
+// without them. Refs: MGIT-327.1
+
+// fixtureV2 is a board as the 2.0.0 tracker writes it: notes on a node.
+func fixtureV2(t *testing.T) *exportData {
+	t.Helper()
+	d := fixture(t)
+	d.SchemaVersion = "2.0.0"
+	d.Nodes[0].PreviousStatus = "in_progress"
+	d.Nodes[0].Annotations = []json.RawMessage{json.RawMessage(
+		`{"id":"a1","author":"some-agent-01","text":"a lane wrote this","created_at":"c","resolved":false}`)}
+	d.Nodes[0].Activity = []json.RawMessage{json.RawMessage(
+		`{"id":"act-1","type":"claim","author":"some-agent-01","text":"Claimed by some-agent-01","created_at":"c"}`)}
+	sum, err := checksum(d)
+	require.NoError(t, err)
+	d.Checksum = sum
+	return d
+}
+
+func TestLoad_ReadsASchema2BoardWithNodeNotes(t *testing.T) {
+	raw, err := encode(fixtureV2(t))
+	require.NoError(t, err)
+	d, err := load(raw)
+	require.NoError(t, err, "a 2.0.0 board reproduces byte for byte and its checksum verifies")
+	assert.Len(t, d.Nodes[0].Annotations, 1)
+	assert.Len(t, d.Nodes[0].Activity, 1)
+	assert.Equal(t, "in_progress", d.Nodes[0].PreviousStatus)
+}
+
+func TestRedact_DropsTheAgentWrittenNodeFieldsAndKeepsTheBoardVerifiable(t *testing.T) {
+	d := fixtureV2(t)
+	title, hash := d.Nodes[0].Title, d.Nodes[0].ContentHash
+
+	redact(d)
+
+	for _, n := range d.Nodes {
+		assert.Empty(t, n.Annotations, n.ID)
+		assert.Empty(t, n.Activity, n.ID)
+		assert.Empty(t, n.PreviousStatus, n.ID)
+	}
+	assert.Equal(t, title, d.Nodes[0].Title, "the public text of a ticket is untouched")
+	assert.Equal(t, hash, d.Nodes[0].ContentHash, "node integrity is untouched")
+	raw, err := encode(d)
+	require.NoError(t, err)
+	_, err = load(raw)
+	require.NoError(t, err, "the public board is reproducible and its checksum verifies")
+	assert.NotContains(t, string(raw), "some-agent-01", "no name the dropped fields carried is left anywhere")
+}
+
+func TestRun_CheckFailsWhileANodeCarriesAgentWrittenNotes(t *testing.T) {
+	for name, strip := range map[string]func(d *exportData){
+		"annotations":     func(d *exportData) { d.Nodes[0].Activity, d.Nodes[0].PreviousStatus = nil, "" },
+		"activity":        func(d *exportData) { d.Nodes[0].Annotations, d.Nodes[0].PreviousStatus = nil, "" },
+		"previous status": func(d *exportData) { d.Nodes[0].Annotations, d.Nodes[0].Activity = nil, nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := fixtureV2(t)
+			// No identity is left, so only the notes can fail the check.
+			d.Nodes[0].Assignee, d.Agents, d.Sessions = "", nil, nil
+			strip(d)
+			sum, err := checksum(d)
+			require.NoError(t, err)
+			d.Checksum = sum
+			raw, err := encode(d)
+			require.NoError(t, err)
+			board := filepath.Join(t.TempDir(), "tasks.json")
+			require.NoError(t, os.WriteFile(board, raw, 0o600))
+
+			err = run(board, board, true)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "agent-written")
+		})
+	}
+}
+
+func TestRun_RewritesASchema2BoardToAPublicOne(t *testing.T) {
+	raw, err := encode(fixtureV2(t))
+	require.NoError(t, err)
+	board := filepath.Join(t.TempDir(), "tasks.json")
+	require.NoError(t, os.WriteFile(board, raw, 0o600))
+
+	require.Error(t, run(board, board, true))
+	require.NoError(t, run(board, board, false))
+	require.NoError(t, run(board, board, true), "after the rewrite, check mode passes")
+	out, err := os.ReadFile(board) //nolint:gosec // G304: test-only; board is this test's own temp file
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), `"annotations"`)
+	assert.NotContains(t, string(out), `"activity"`)
+	assert.NotContains(t, string(out), `"previous_status"`)
+}
+
+// THE PUBLIC BOARD'S TEXT NAMES NO WORKING ROLE, NO OTHER PRODUCT'S TICKET
+// AND NO PERSON'S PATH. Titles, descriptions, prompts, acceptance and labels
+// are public, and the export shipped once with a lane name, a sibling
+// product's ticket id and a home-directory path in them while the board text
+// report found 0 hits. -check now refuses those shapes, by node and field
+// and class, never echoing the text. Refs: MGIT-327.6
+
+func withText(t *testing.T, field, text string) *exportData {
+	t.Helper()
+	d := fixture(t)
+	d.Nodes[0].Assignee, d.Agents, d.Sessions = "", nil, nil
+	switch field {
+	case "title":
+		d.Nodes[0].Title = text
+	case "description":
+		d.Nodes[0].Description = text
+	case "prompt":
+		d.Nodes[0].Prompt = text
+	case "acceptance":
+		d.Nodes[0].Acceptance = text
+	case "labels":
+		d.Nodes[0].Labels = text
+	}
+	sum, err := checksum(d)
+	require.NoError(t, err)
+	d.Checksum = sum
+	return d
+}
+
+func TestTextLeaks_NamesTheNodeFieldAndClassOfEachShape(t *testing.T) {
+	tests := []struct {
+		name, field, text, class string
+	}{
+		{"a reviewer lane", "description", "Found by reviewer-mgit on a PR", "working role"},
+		{"a numbered reviewer lane", "acceptance", "PASS from reviewer-2", "working role"},
+		{"a builder lane", "description", "Found by mgit-2 while pushing", "working role"},
+		{"a builder lane at the start", "title", "mgit-2: pushing", "working role"},
+		{"a linux lane", "prompt", "owner mgit-linux-35", "working role"},
+		{"an older builder lane", "description", "told go-agent-2 first", "working role"},
+		{"a sibling ticket", "title", "FEAT-6.39: a thing", "another product's ticket"},
+		{"a sibling coordination ticket", "description", "see HSWE-20.5", "another product's ticket"},
+		{"a home path on macOS", "description", "runs /Users/someone/.local/bin/mgit", "personal path"},
+		{"a home path on Linux", "description", "in /home/someone/work", "personal path"},
+		{"a capitalised reviewer lane", "description", "Reviewer-mgit's live check", "working role"},
+		{"a development checkout", "prompt", "a clone of mgit-dev", "checkout name"},
+		{"a sibling product checkout", "description", "the swe-go-2 tree", "checkout name"},
+		{"a bracketed reviewer lane", "description", "[reviewer-mgit]", "working role"},
+		{"a bold reviewer lane", "description", "**reviewer-mgit** found it", "working role"},
+		{"an underscored reviewer lane", "description", "_reviewer-mgit_", "working role"},
+		{"a reviewer lane then punctuation", "description", "reviewer-mgit!", "working role"},
+		{"a reviewer lane then a slash", "description", "reviewer-mgit/", "working role"},
+		{"another reviewer lane", "description", "reviewer-glm said", "working role"},
+		{"a hex reviewer lane", "description", "reviewer-4f said", "working role"},
+		{"a capitalised builder lane", "description", "Mgit-2 said", "working role"},
+		{"a builder lane with a unicode hyphen", "description", "mgit\u20112 asked", "working role"},
+		{"a review session", "description", "session mgit-review-d4", "working role"},
+		{"a review tree", "description", "the mgit-review tree", "working role"},
+		{"a session name", "description", "swe-fc asked", "working role"},
+		{"a watcher lane", "description", "Reported by the watcher lane", "working role"},
+		{"the merger", "description", "the merger merged", "working role"},
+		{"the frontier", "description", "the frontier ruled", "working role"},
+		{"the desk", "description", "the desk agreed", "working role"},
+		{"a ruling id", "description", "ruling R-H339", "internal ruling id"},
+		{"a lowercase sibling ticket", "description", "feat-3.2 lowercase", "another product's ticket"},
+		{"a spaced sibling ticket", "description", "FEAT 3.2", "another product's ticket"},
+		{"a sibling ticket prefix", "description", "SWE-3", "another product's ticket"},
+		{"a Windows home path", "description", `C:\Users\someone\x`, "personal path"},
+		{"a bare Users directory", "description", "/Users", "personal path"},
+		{"a workspace path", "description", "~/workspace/swe/x", "personal path"},
+		{"a person's name", "description", "vimal wrote this", "person name"},
+		{"a capitalised lab path", "description", "Frontier/lanes", "lab path"},
+		{"a rulings path", "description", "rulings.d/x", "lab path"},
+		{"a dogfood path", "description", "dogfood/FEEDBACK", "lab path"},
+		{"a capitalised placeholder is a name", "description", "/home/Agent/x", "personal path"},
+		{"a suffixed development checkout", "description", "the mgit-dev-1f tree", "checkout name"},
+		{"a possessive reviewer lane", "description", "reviewer-2's call", "working role"},
+		{"a lab evidence path", "description", "evidence/MGIT-317/correction/x.txt", "lab path"},
+		{"a lane log path", "description", "see lanes/log/a.md", "lab path"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			leaks := textLeaks(withText(t, tt.field, tt.text))
+			require.Len(t, leaks, 1, "%v", leaks)
+			assert.Contains(t, leaks[0], "MGIT-1")
+			assert.Contains(t, leaks[0], tt.field)
+			assert.Contains(t, leaks[0], tt.class)
+			assert.NotContains(t, leaks[0], tt.text, "the report never echoes the text")
+		})
+	}
+}
+
+func TestTextLeaks_AllowsWhatIsPublicByDesign(t *testing.T) {
+	for _, text := range []string{
+		"MGIT-317 and FR-17.17 and ADR-012 and the example task id MTIX-30.6",
+		"the reviewer-verdict-at-head check",
+		"a placeholder path /home/user/repo/worktrees/task and /home/runner/work/_temp",
+		"~/.local/bin/mgit and ~/Library/Caches/mgit",
+		"branch fix/mgit-168-symlink-delete, scratch /tmp/mgit-98-wt and T/mgit-501/ab12/d.sock and /tmp/mgit-0/x/v1024.sock",
+		"both autonomous and reviewer-directed use, and the reviewer-verdict-at-head check",
+		"a bug repro under /var/folders/ab/T/ and /private/tmp/x, module github.com/astutic/mgit",
+		"Found by the reviewer, fixed by the builder; the lead decides",
+	} {
+		assert.Empty(t, textLeaks(withText(t, "description", text)), text)
+	}
+}
+
+func TestRun_CheckAndRewriteRefuseABoardWhoseTextLeaks(t *testing.T) {
+	d := withText(t, "description", "Found by reviewer-mgit")
+	raw, err := encode(d)
+	require.NoError(t, err)
+	board := filepath.Join(t.TempDir(), "tasks.json")
+	require.NoError(t, os.WriteFile(board, raw, 0o600))
+
+	err = run(board, board, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "public text")
+	err = run(board, board, false)
+	require.Error(t, err, "the export refuses to write a board whose text leaks")
+	assert.Contains(t, err.Error(), "public text")
+	after, readErr := os.ReadFile(board) //nolint:gosec // G304: test-only; board is this test's own temp file
+	require.NoError(t, readErr)
+	assert.Equal(t, raw, after, "nothing is written")
 }

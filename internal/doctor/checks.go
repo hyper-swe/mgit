@@ -160,8 +160,19 @@ func (c BaseReleaseCheck) Run(context.Context) Result {
 		r.Summary = "the composed base cannot be compared with a release-tested one: this build records no release guest base"
 		return r
 	}
-	const remedy = "recompose from the release's base with `mgit sandbox base from` (no reference), " +
-		"or keep this image knowingly — this row then stays a stated difference"
+	// The no-reference compose switches the repository to the release's tested
+	// image, which may lack a toolchain the repository's own image carries
+	// (a Go image recomposed to plain debian fails setup with "go: not found").
+	// So a repository with a recorded source is pointed back at that source
+	// first. Refs: MGIT-300
+	const switches = "the no-reference form `mgit sandbox base from` switches this repository to the release's " +
+		"tested image, which may lack the toolchain this repository's image carries"
+	remedy := "recompose from the release's tested image with `mgit sandbox base from` only if it has what this " +
+		"repository needs (" + switches + "), or keep this image knowingly — this row then stays a stated difference"
+	if id.SourceRef != "" {
+		remedy = "recompose from this repository's own recorded source with `mgit sandbox base from " + id.SourceRef +
+			"`; " + switches + ". Or keep this image knowingly — this row then stays a stated difference"
+	}
 	relTag, relDigest := guestbase.SourceTag(id.ReleaseRef), guestbase.SourceDigest(id.ReleaseRef)
 	srcTag, srcDigest := guestbase.SourceTag(id.SourceRef), guestbase.SourceDigest(id.SourceRef)
 	switch {
@@ -182,9 +193,16 @@ func (c BaseReleaseCheck) Run(context.Context) Result {
 			"the release record pins the image index", composedOrUnrecorded(id.Composed))
 		r.Summary = fmt.Sprintf("the guest base (composed by mgit %s from %s@%s) cannot be compared with the base this "+
 			"release was smoke-tested with (%s@%s): composes before 0.6.8 recorded the platform manifest, not the image "+
-			"index — recompose with `mgit sandbox base from` to compare", composedOrUnrecorded(id.Composed), srcTag, srcDigest, relTag, relDigest)
+			"index — %s to compare", composedOrUnrecorded(id.Composed), srcTag, srcDigest, relTag, relDigest, recomposeToCompare(id))
 	case srcTag == relTag:
-		r.Status, r.Remedy = StatusDiffers, remedy
+		// The recorded source is the same image name at another digest: for a base
+		// composed with no reference that is the release image of its time, so the
+		// recorded-source remedy would pin the old image again and the row would
+		// never clear. The no-reference form is the way forward, and the toolchain
+		// warning does not apply because the image name is the same. Refs: MGIT-313
+		r.Status = StatusDiffers
+		r.Remedy = "recompose with `mgit sandbox base from` with no reference: it composes " + relTag + " at " + relDigest +
+			", the image this release was smoke-tested with. Or keep this image knowingly — this row then stays a stated difference"
 		r.Summary = fmt.Sprintf("the guest base was composed from %s@%s but this release was smoke-tested with "+
 			"%s@%s — the same tag pointed at different bytes, so the guest userspace is not the one this "+
 			"release was tested with", srcTag, srcDigest, relTag, relDigest)
@@ -484,4 +502,14 @@ func resolvedRoot(p string) string {
 		return resolved
 	}
 	return p
+}
+
+// recomposeToCompare is the pre-0.6.8 row's way forward: the repository's own
+// recorded source when there is one, so the row never steers a repository onto
+// the no-reference form, which switches it to the release's image. Refs: MGIT-300
+func recomposeToCompare(id BaseIdentity) string {
+	if id.SourceRef != "" {
+		return "recompose from its own recorded source with `mgit sandbox base from " + id.SourceRef + "`"
+	}
+	return "recompose with `mgit sandbox base from <image>`"
 }

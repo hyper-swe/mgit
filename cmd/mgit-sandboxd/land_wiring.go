@@ -81,10 +81,11 @@ func buildLandService(w landWiring) (sandboxd.SandboxLander, func() error, error
 
 	// The Lander is the ONLY shared-store writer on the land path; it is
 	// reachable only through the orchestrator below.
+	projection := &landProjection{repoRoot: repoRoot, resolver: w.resolver, idx: mainIdx, clock: w.clock}
 	lander := land.NewLander(
 		land.NewStoreImporter(repo),
 		mainIdx, // *index.Store satisfies land.CommitAppender (AppendTaskCommits)
-		land.NewStoreBrancher(gitstore.NewMergeStore(repo)),
+		lockedProjection{projection},
 	)
 	parents := land.NewPoolAwareParentResolver(land.NewHostParentTreeResolver(repo))
 	// The per-pool ceiling is the single enforcement point for one pool's host
@@ -101,7 +102,7 @@ func buildLandService(w landWiring) (sandboxd.SandboxLander, func() error, error
 	// microvm.GuestDialer, so the land channel is identical across backends.
 	channel := sandboxd.NewLandChannel(w.peerBinder, w.landDialer, poolLimits, w.logger)
 
-	orch, err := service.NewLandOrchestrator(channel, attestor, lander, parents, w.events, w.policy, poolLimits, w.clock)
+	orch, err := service.NewLandOrchestrator(channel, attestor, guardedLandPersister{lander, projection}, parents, w.events, w.policy, poolLimits, w.clock)
 	if err != nil {
 		_ = closer()
 		return nil, nil, fmt.Errorf("wire land orchestrator: %w", err)
@@ -121,18 +122,28 @@ func buildLandService(w landWiring) (sandboxd.SandboxLander, func() error, error
 		_ = closer()
 		return nil, nil, fmt.Errorf("wire land service: %w", err)
 	}
-	return landAdapter{svc: landSvc}, closer, nil
+	return landAdapter{svc: landSvc, projection: projection}, closer, nil
 }
 
 // landAdapter adapts service.LandService's result to the daemon's
 // SandboxLander contract.
-type landAdapter struct{ svc *service.LandService }
+type landSummaryService interface {
+	Land(context.Context, string) (*service.LandSummary, error)
+}
+
+type landAdapter struct {
+	svc        landSummaryService
+	projection *landProjection
+}
 
 // Land routes a task land through the verified land service.
 func (a landAdapter) Land(ctx context.Context, taskID string) (int, string, error) {
 	s, err := a.svc.Land(ctx, taskID)
 	if err != nil {
 		return 0, "", err
+	}
+	if err := a.projection.Check(ctx, taskID); err != nil {
+		return 0, "", fmt.Errorf("sandbox land: %w", err)
 	}
 	return s.Commits, s.Branch, nil
 }
@@ -162,4 +173,22 @@ type slogKeyAuditor struct{ logger *slog.Logger }
 func (a slogKeyAuditor) RecordKeyChange(_ context.Context, detail string) error {
 	a.logger.Warn("attestation key changed", "event", "attestation_key", "detail", detail)
 	return nil
+}
+
+// The operation lock spans object import, append + pending intent, native
+// publication/read-back and final delivery. The inner brancher must not take
+// the same non-reentrant lock a second time.
+type guardedLandPersister struct {
+	service.LandPersister
+	projection *landProjection
+}
+
+func (p guardedLandPersister) Land(ctx context.Context, task string, pool []land.Object, commits []land.LandedCommit) error {
+	return p.projection.guard(func() error { return p.LandPersister.Land(ctx, task, pool, commits) })
+}
+
+type lockedProjection struct{ p *landProjection }
+
+func (p lockedProjection) FastForward(ctx context.Context, task, tip string) error {
+	return p.p.fastForwardLocked(ctx, task, tip)
 }

@@ -15,6 +15,15 @@ on:
   # PR -- added specifically to give the new libkrun-linux job (below) its
   # first real run, since push/pull_request alone never fire on this branch.
   workflow_dispatch:
+    inputs:
+      # brew-install-no-libkrun resolves hyper-swe/tap from this branch of
+      # hyper-swe/homebrew-tap instead of its default branch, so a formula
+      # change in both repositories can be proved before either merges.
+      # Refs: MGIT-306
+      tap_branch:
+        description: "hyper-swe/homebrew-tap branch for the brew install check (empty: the tap's default branch)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -35,6 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -80,6 +91,25 @@ jobs:
           bash scripts/sandbox-image/guest-debs-check-selftest.sh
           bash scripts/sandbox-image/guest-debs-repin-selftest.sh
           bash scripts/sandbox-image/guest-debs-gpg-selftest.sh --require
+
+      # The Homebrew tap rewrites only the version and sha256 lines of its
+      # formula, so the rest of it drifts from brew/mgit.rb unless something
+      # compares them. The self-test is offline; the live check skips loudly
+      # (exit 0, NOT CHECKED) when the tap cannot be fetched, so a network blip
+      # does not turn CI red, and the release checklist runs it with --require
+      # before a tag. Refs: MGIT-67
+      # A dispatch can name the tap branch to compare against, so a formula
+      # change in both repositories is proved before either merges. Refs: MGIT-306
+      - name: Tap formula — the check's own refusals, then the live tap
+        env:
+          MGIT_TAP_BRANCH: ${{ inputs.tap_branch }}
+        run: |
+          bash scripts/ci/check-tap-formula-selftest.sh
+          if [ -n "$MGIT_TAP_BRANCH" ]; then
+            bash scripts/ci/check-tap-formula.sh --tap-url "https://raw.githubusercontent.com/hyper-swe/homebrew-tap/${MGIT_TAP_BRANCH}/Formula/mgit.rb"
+          else
+            bash scripts/ci/check-tap-formula.sh
+          fi
 
       # Every build tool and action on a reproducible path is pinned, or its
       # float is declared at the site with a reason. The self-test proves the
@@ -283,7 +313,15 @@ jobs:
       - name: Assert installed Go version
         run: bash scripts/ci/assert-go-version.sh
 
+      # The formula depends on hyper-swe/tap/libkrunfw, so the check takes the
+      # one documented setup step, `brew trust hyper-swe/tap`, and proves
+      # libkrunfw arrives. Trust does not tap, so the check also runs
+      # `brew tap hyper-swe/tap`: its default branch on a pull request, or the
+      # branch a dispatch names.
+      # Refs: MGIT-306
       - name: Install mgit from the repo formula on a libkrun-free runner
+        env:
+          MGIT_TAP_BRANCH: ${{ inputs.tap_branch }}
         run: scripts/brew-install-no-libkrun.sh
 
   # The macOS job above is the ONLY thing that compiled the libkrun cgo
@@ -419,3 +457,48 @@ jobs:
           LIBRARY_PATH: /usr/local/lib64
           LD_LIBRARY_PATH: /usr/local/lib64
         run: go test -buildvcs=false -tags libkrun ./cmd/mgit-sandboxd/ -count=1
+
+  # The free hosted arm64 runner exposes no /dev/kvm (probe run 40688736659),
+  # so no guest boots here; everything else about linux/arm64 that needs no
+  # KVM runs on the same runner: the build, the test suite and the
+  # vulnerability scan. The tests that boot a VM cannot run without KVM; they
+  # skip, and the step after the tests lists every skip with its reason, so a
+  # skip is read and not assumed. The arm64 boot leg waits on a host that has
+  # KVM.
+  # Refs: MGIT-230.5.2
+  test-linux-arm64:
+    name: Test (linux/arm64, no KVM)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Assert installed Go version
+        run: bash scripts/ci/assert-go-version.sh
+
+      - name: Build every package
+        run: go build ./...
+
+      - name: Run tests (VM tests skip without KVM)
+        run: |
+          set -o pipefail
+          go test ./... -count=1 -json | tee "$RUNNER_TEMP/arm64-test.json"
+
+      # go test -json carries each skip's reason with its test, subtests
+      # included; the script prints them, and any failed test's output.
+      - name: Skipped and failed tests, with reasons
+        if: always()
+        run: python3 scripts/ci/list-go-skips.py < "$RUNNER_TEMP/arm64-test.json"
+
+      - name: Run vulnerability check
+        run: |
+          # pin-exempt and fetch-guarded exactly as in the Test job; see there.
+            # pin-exempt: govulncheck floats on purpose — a pinned scanner stops finding new vulnerabilities; the fetch is guarded (MGIT-143) and the float is a recorded decision (MGIT-179)
+          bash scripts/ci/guard-fetch.sh -t 120 -l govulncheck-install \
+            -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
+            go install golang.org/x/vuln/cmd/govulncheck@latest
+          python3 scripts/ci/check-go-toolchain.py
+          govulncheck ./...

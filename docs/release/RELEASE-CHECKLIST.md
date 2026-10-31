@@ -189,6 +189,17 @@ composed from anything else.
    `.goreleaser.yaml`'s `release.header` (the actual release-notes text) if
    it isn't there yet — that file is out of scope for this checklist edit,
    but the notes it produces are user-facing and easy to forget.
+1b. **Pre-tag gate: the tap formula body.** Run
+   `bash scripts/ci/check-tap-formula.sh --require` and tag nothing while it
+   exits non-zero. It fetches the live `Formula/mgit.rb` from
+   `hyper-swe/homebrew-tap` and compares everything except the `version` and
+   four `sha256` lines (which the tap's own workflow rewrites) with
+   `brew/mgit.rb`. Exit 1 prints the diff and the remedy (copy the body over,
+   below). Exit 3 means the tap could not be fetched, so the formula was NOT
+   CHECKED; that is a failure for a tag, never a pass. Without `--require` an
+   unfetchable tap prints SKIPPED and exits 0, which is for CI that must not go
+   red on a network blip. The decision to detect rather than generate the tap
+   body, and why, is recorded in the script's header.
 2. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`. This triggers
    `release.yml` (preflight → e2e gate → macOS release build+sign → GoReleaser).
 3. **Homebrew tap: version + checksums are automatic; the formula body is
@@ -216,7 +227,8 @@ composed from anything else.
               <(grep -v 'sha256\|version "' brew/mgit.rb)
          ```
          An empty diff means no manual sync is needed for this release. It
-         was empty on 2026-08-10.
+         was empty on 2026-08-10. `scripts/ci/check-tap-formula.sh` now does
+         this comparison (step 1b).
          - The formerly-missing `libexec.install "guest"` (MGIT-65) is
            present in the live formula, so a `brew install`-ed mgit CAN
            compose a guest base.
@@ -335,16 +347,15 @@ composed from anything else.
    automates.** libkrun gates its net-device API behind an opt-in build flag,
    and mgit requires an explicit NIC in every mode — without one libkrun falls
    back to TSI and the guest gets full host egress, so `mgit-sandboxd` refuses
-   to start. The `libkrun/krun` tap passes `NET=1` today, but that is a
-   THIRD-PARTY build flag: if the formula ever drops it, every Mac install
-   breaks. The script checks this; the manual equivalent, and what to run when
+   to start. The macOS archive's libkrun is built here with `NET=1`
+   (`scripts/release/build-darwin-sandboxd.sh`); the script checks this. The
+   manual equivalent, run in the extracted macOS archive, and what to run when
    a user reports the capability refusal, is:
    ```
-   brew tap libkrun/krun
-   brew trust libkrun/krun   # required: Homebrew refuses to load an untrusted tap
-   brew install libkrun
-   nm -gU "$(brew --prefix libkrun)/lib/libkrun.dylib" | grep krun_add_net_unixgram
+   nm -gU lib/libkrun.1.dylib | grep krun_add_net_unixgram
    ```
+   The archive carries no libkrunfw (`verify-darwin-sandboxd.sh` refuses one);
+   libkrunfw comes from `hyper-swe/tap/libkrunfw`. Refs: MGIT-306
    A match is required. `make check-libkrun-net` performs the same check at
    build time, and mgit-sandboxd re-verifies it at startup and refuses closed.
    Refs: MGIT-61.14
@@ -383,3 +394,15 @@ go build ./... && go test ./internal/sandboxd/... -count=1
 Refs: ADR-010, SEC-04, FR-17.8
 
 Refs: MGIT-48, MGIT-44, MGIT-61.2
+
+## libkrunfw source obligations
+
+libkrunfw carries a GPL-2.0-only kernel, so every release that ships a
+libkrunfw binary, bottle or tarball owes its complete corresponding source.
+
+- [ ] Never delete a release, or its source assets, that carried a libkrunfw
+      binary, bottle or tarball for at least three years after it was last
+      offered.
+- [ ] Keep swe@hyperswe.com monitored, and answer source requests within days.
+- [ ] When the libkrunfw pin changes, publish the new source set before or
+      with the first binary.

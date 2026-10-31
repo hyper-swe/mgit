@@ -301,10 +301,23 @@ jobs:
           tarball="$HOME/.cache/mgit-libkrun/linux-$LIBKRUNFW_KERNEL_VERSION.tar.xz"
           echo "$LIBKRUNFW_KERNEL_SHA256  $tarball" | sha256sum -c -
           cp "$tarball" "$src/libkrunfw-$LIBKRUNFW_VERSION-kernel-linux-$LIBKRUNFW_KERNEL_VERSION.tar.xz"
-          git -C "$RUNNER_TEMP/libkrun-src/libkrunfw" archive --format=tar.gz \
-            --prefix="libkrunfw-$LIBKRUNFW_VERSION/" -o "$src/libkrunfw-$LIBKRUNFW_VERSION-source.tar.gz" HEAD
+          # libkrunfw's source archive is the tap release's file, byte for byte,
+          # checked against its pin: one file, one digest, on both releases.
+          # Refs: MGIT-306
+          libkrunfw_src="$RUNNER_TEMP/libkrunfw-source.tar.gz"
+          bash scripts/ci/guard-fetch.sh -t 120 -l libkrunfw-source -c "rm -f '$libkrunfw_src'" -- \
+            curl -fsSL -o "$libkrunfw_src" "$LIBKRUNFW_SOURCE_URL"
+          echo "$LIBKRUNFW_SOURCE_SHA256  $libkrunfw_src" | sha256sum -c -
+          cp "$libkrunfw_src" "$src/libkrunfw-$LIBKRUNFW_VERSION-source.tar.gz"
           git -C "$RUNNER_TEMP/libkrun-src/libkrun" archive --format=tar.gz \
             --prefix="libkrun-$LIBKRUN_VERSION/" -o "$src/libkrun-$LIBKRUN_VERSION-source.tar.gz" HEAD
+          # The prebuilt kernel image the macOS libkrunfw is built from, verified
+          # against the pin and published beside the kernel source. Refs: MGIT-306
+          prebuilt="$RUNNER_TEMP/libkrunfw-prebuilt-aarch64.tgz"
+          bash scripts/ci/guard-fetch.sh -t 120 -l libkrunfw-prebuilt -c "rm -f '$prebuilt'" -- \
+            curl -fsSL -o "$prebuilt" "$LIBKRUNFW_PREBUILT_URL"
+          echo "$LIBKRUNFW_PREBUILT_SHA256  $prebuilt" | sha256sum -c -
+          cp "$prebuilt" "$src/libkrunfw-$LIBKRUNFW_VERSION-prebuilt-aarch64.tgz"
           ls -l "$src"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -318,6 +331,75 @@ jobs:
         with:
           name: linux-sources
           path: ${{ runner.temp }}/dist-sources/
+          if-no-files-found: error
+
+  # The macOS libkrunfw tarball install.sh's opt-in step downloads, assembled
+  # for every pull request by scripts/release/build-darwin-libkrunfw.sh from
+  # upstream's prebuilt kernel image (checked against its pin) and smoke-tested
+  # by linking a program against the library it holds. A release run uploads
+  # it for the release to publish beside the source, under the signed
+  # checksums. Refs: MGIT-306
+  darwin-libkrunfw:
+    name: macOS libkrunfw tarball (arm64)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch upstream's prebuilt kernel image
+        run: |
+          . scripts/sandbox-image/pins.env
+          bash scripts/ci/guard-fetch.sh -t 120 -l libkrunfw-prebuilt -c "rm -f '$RUNNER_TEMP/libkrunfw-prebuilt-aarch64.tgz'" -- \
+            curl -fsSL -o "$RUNNER_TEMP/libkrunfw-prebuilt-aarch64.tgz" "$LIBKRUNFW_PREBUILT_URL"
+
+      - name: Assemble the tarball
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then tag="$GITHUB_REF_NAME"; else tag="v0.0.0-ci.$GITHUB_RUN_ID"; fi
+          bash scripts/release/build-darwin-libkrunfw.sh \
+            "$RUNNER_TEMP/libkrunfw-prebuilt-aarch64.tgz" "$RUNNER_TEMP/dist-libkrunfw" "$tag"
+
+      - name: The tarball holds a library a program can link, and the notices
+        run: |
+          . scripts/sandbox-image/pins.env
+          ver="${LIBKRUNFW_VERSION#v}"
+          tarball="$RUNNER_TEMP/dist-libkrunfw/libkrunfw_${ver}_darwin_arm64.tar.gz"
+          # Exactly the five files: a stray entry (macOS tar's ._ AppleDouble
+          # files, for one) fails the job.
+          want="LICENSE-GPL-2.0-only LICENSE-LGPL-2.1-only NOTICE.txt SOURCE-OFFER.txt libkrunfw.5.dylib"
+          # python's reader, not tar -t: macOS tar folds the ._ entries into the
+          # file they belong to and never lists them.
+          got="$(python3 -I -m tarfile -l "$tarball" | sed 's/ *$//' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+          test "$got" = "$want" || { echo "FATAL: the tarball holds: $got"; exit 1; }
+          x="$RUNNER_TEMP/libkrunfw-check"; mkdir -p "$x"
+          tar -xzf "$RUNNER_TEMP/dist-libkrunfw/libkrunfw_${ver}_darwin_arm64.tar.gz" -C "$x"
+          for f in libkrunfw.5.dylib LICENSE-GPL-2.0-only LICENSE-LGPL-2.1-only NOTICE.txt SOURCE-OFFER.txt; do
+            test -f "$x/$f" || { echo "FATAL: the tarball has no $f"; exit 1; }
+          done
+          # Load it the way libkrun does on a user's machine: dlopen by leaf
+          # name, found through DYLD_FALLBACK_LIBRARY_PATH, which the daemon
+          # sets to the directories that hold libkrunfw (childspawn.go). The
+          # library's install name is the bare leaf name, which is what that
+          # lookup uses, so nothing is rewritten.
+          cat >"$x/t.c" <<'CSRC'
+          #include <dlfcn.h>
+          #include <stdio.h>
+          int main(void) {
+            void *h = dlopen("libkrunfw.5.dylib", RTLD_NOW);
+            if (!h) { fprintf(stderr, "%s\n", dlerror()); return 1; }
+            int (*v)(void) = (int (*)(void))dlsym(h, "krunfw_get_version");
+            if (!v) { fprintf(stderr, "%s\n", dlerror()); return 1; }
+            printf("%d\n", v());
+            return 0;
+          }
+          CSRC
+          cc "$x/t.c" -o "$x/t"
+          test "$(DYLD_FALLBACK_LIBRARY_PATH="$x" "$x/t")" = 5 || { echo "FATAL: libkrunfw.5.dylib did not load by leaf name or its ABI version is not 5"; exit 1; }
+          grep -q "linux-$LIBKRUNFW_KERNEL_VERSION" "$x/SOURCE-OFFER.txt"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.ref_type == 'tag'
+        with:
+          name: darwin-libkrunfw
+          path: ${{ runner.temp }}/dist-libkrunfw/
           if-no-files-found: error
 
   # The macOS sandbox daemon, built and verified for every pull request by
@@ -1062,6 +1144,6 @@ jobs:
         env:
           # The image this release vouches for (release-base.json); it carries
           # /bin/sh and coreutils, which the e2e needs. Refs: MGIT-273, MGIT-219
-          MGIT_E2E_CONTAINER_IMAGE: debian:12@sha256:f37a335e82bca302e955fa39f9dfe28f1be618f016f8a2b56318e5a5111afc26
+          MGIT_E2E_CONTAINER_IMAGE: debian:12@sha256:2c037a04925515fdd6ea85ea14a682d0e79931f5e9f5d07b6dbfc6ba12f9e858
         run: |
           go test -run 'TestE2E_Container' ./internal/sandboxd/backend/container/ -count=1 -v

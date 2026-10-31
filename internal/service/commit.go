@@ -289,3 +289,13 @@ func autoMessage(taskID string, diffs []model.FileDiff) string {
 	}
 	return fmt.Sprintf("%d files changed", len(diffs))
 }
+
+// RequireContentSource resolves a source before CLI preparatory mutations (for
+// example cherry-pick --onto checkout), not only before the final commit.
+func (s *CommitService) RequireContentSource(ctx context.Context, hash string) error {
+	c, err := s.commitStore.GetCommit(ctx, hash)
+	if err != nil {
+		return err
+	}
+	return s.indexStore.RequireContentCommit(ctx, c.CommitID)
+}

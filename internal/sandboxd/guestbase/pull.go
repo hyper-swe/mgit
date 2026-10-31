@@ -257,17 +257,25 @@ func hostOCIArch() string {
 // fetchManifest GETs one manifest and returns it with its digest.
 func (c *client) fetchManifest(ctx context.Context, ref Ref, target string) (manifestDoc, string, error) {
 	url := fmt.Sprintf("%s://%s/v2/%s/manifests/%s", c.scheme, ref.Registry, ref.Repository, target)
-	body, err := c.get(ctx, url, ref, []string{
+	resp, err := c.getResponse(ctx, url, ref, []string{
 		mediaTypeOCIIndex, mediaTypeOCIManifest, mediaTypeDockerList, mediaTypeDockerManifest,
 	})
 	if err != nil {
 		return manifestDoc{}, "", err
 	}
-	defer func() { _ = body.Close() }()
+	defer func() { _ = resp.Body.Close() }()
 
-	raw, err := io.ReadAll(io.LimitReader(body, 32<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
 		return manifestDoc{}, "", fmt.Errorf("guest base: read manifest for %s: %w", ref, err)
+	}
+	var doc manifestDoc
+	if err := json.Unmarshal(raw, &doc); err != nil || !doc.isManifest() {
+		host := ref.Registry
+		if resp.Request != nil && resp.Request.URL != nil {
+			host = resp.Request.URL.Host
+		}
+		return manifestDoc{}, "", fmt.Errorf("guest base: registry %s returned HTTP %s: response is not a supported image manifest", host, resp.Status)
 	}
 	sum := sha256.Sum256(raw)
 	digest := "sha256:" + hex.EncodeToString(sum[:])
@@ -278,11 +286,21 @@ func (c *client) fetchManifest(ctx context.Context, ref Ref, target string) (man
 			"guest base: manifest for %s hashes to %s, requested %s", ref, digest, target)
 	}
 
-	var doc manifestDoc
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return manifestDoc{}, "", fmt.Errorf("guest base: parse manifest for %s: %w", ref, err)
-	}
 	return doc, digest, nil
+}
+
+// isManifest rejects registry error objects and landing pages before their
+// bytes can be misreported as a manifest digest mismatch.
+func (doc manifestDoc) isManifest() bool {
+	if doc.SchemaVersion != 2 {
+		return false
+	}
+	switch doc.MediaType {
+	case "", mediaTypeOCIIndex, mediaTypeOCIManifest, mediaTypeDockerList, mediaTypeDockerManifest:
+	default:
+		return false
+	}
+	return doc.Manifests != nil || (doc.Layers != nil && doc.Config.Digest != "")
 }
 
 // extractLayer streams one layer blob, verifying its digest as it reads, and
@@ -325,6 +343,16 @@ func (c *client) extractLayer(ctx context.Context, ref Ref, layer descriptor, de
 // get performs an authenticated GET, following a registry's bearer-token
 // challenge once.
 func (c *client) get(ctx context.Context, url string, ref Ref, accept []string) (io.ReadCloser, error) {
+	resp, err := c.getResponse(ctx, url, ref, accept)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Body, nil
+}
+
+// getResponse preserves the successful response's status and serving host
+// for callers that validate the response format. The caller closes its body.
+func (c *client) getResponse(ctx context.Context, url string, ref Ref, accept []string) (*http.Response, error) {
 	resp, err := c.do(ctx, url, accept)
 	if err != nil {
 		return nil, err
@@ -343,7 +371,7 @@ func (c *client) get(ctx context.Context, url string, ref Ref, accept []string) 
 		_ = resp.Body.Close()
 		return nil, fmt.Errorf("guest base: %s returned %s", url, resp.Status)
 	}
-	return resp.Body, nil
+	return resp, nil
 }
 
 // do issues one request with the current token, if any.

@@ -118,13 +118,21 @@ guarded_bounded() {
 	set +m
 
 	{
-		sleep "$secs"
+		# The sleep is tracked so the guard can end it: killing only this
+		# subshell left the sleep running with the caller's stdout open, so a
+		# caller capturing the guard's output blocked for the full timeout.
+		# Refs: MGIT-299
+		# The trap comes BEFORE the sleep: a TERM that lands between the two would
+		# otherwise end this subshell and leave the sleep running.
+		trap 'kill $(jobs -p) 2>/dev/null; exit 0' TERM
+		sleep "$secs" &
+		wait $!
 		kill -0 "$pid" 2>/dev/null || exit 0
 		: >"$marker"
 		kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
 		sleep 5
 		kill -KILL -"$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null
-	} 2>/dev/null &
+	} >/dev/null 2>&1 &
 	killer=$!
 
 	if wait "$pid" 2>/dev/null; then rc=0; else rc=$?; fi

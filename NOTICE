@@ -1,6 +1,6 @@
-Copyright 2025-2026 HyperSWE
+Copyright 2025-2026 Astutic Artificial Intelligence Private Limited
 
-This product includes software developed by HyperSWE.
+This product includes software developed by Astutic Artificial Intelligence Private Limited.
 
 Licensed under the Apache License, Version 2.0.
 
@@ -15,3 +15,9 @@ Third-party dependencies and their licenses:
   mark3labs/mcp-go        MIT
   golang.org/x/sync       BSD-3-Clause
   golang.org/x/crypto     BSD-3-Clause
+  libkrun                 Apache-2.0
+  libkrunfw               LGPL-2.1-only (glue), GPL-2.0-only (Linux kernel)
+
+For release archives that bundle these libraries, see THIRD_PARTY/ for license
+texts and notices. THIRD_PARTY/SOURCES.txt records their versions and build
+details. The corresponding source is provided as release assets.

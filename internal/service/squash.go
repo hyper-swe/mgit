@@ -73,7 +73,7 @@ func (s *SquashService) WithAudit(a *AuditService) *SquashService {
 // branch parented off the task's base. It does NOT advance the integration
 // branch and does NOT remove the originals: per the append-only law (FR-12)
 // the micro-commits remain the audit trail and the squash is the task's clean,
-// exportable deliverable (consumable via ExportToGitPatch / `git am`). The
+// exportable deliverable (consumable via GitFormatPatch / `git am`). The
 // squash is indexed and audited like any commit. Refs: FR-7, FR-12, MGIT-22
 func (s *SquashService) SquashTask(ctx context.Context, req SquashRequest) (*model.Commit, error) {
 	plan, err := s.planSquash(ctx, req)
@@ -124,7 +124,11 @@ func (s *SquashService) SquashTask(ctx context.Context, req SquashRequest) (*mod
 	squashCommit.ParentID = plan.base
 
 	// Index the squash commit
-	position := len(plan.hashes)
+	raw, err := s.indexStore.GetTaskCommits(ctx, req.TaskID)
+	if err != nil {
+		return nil, fmt.Errorf("squash ledger position: %w", err)
+	}
+	position := len(raw)
 	err = s.indexStore.AddCommitToTask(ctx, req.TaskID, hash, squashCommit.ContentHash, "mgit-squash", position)
 	if err != nil {
 		return nil, fmt.Errorf("squash task %s: index squash commit: %w", req.TaskID, err)
@@ -157,7 +161,7 @@ type squashPlan struct {
 // fork base and builds the squash message — without creating anything.
 // Refs: FR-7, MGIT-22, MGIT-112
 func (s *SquashService) planSquash(ctx context.Context, req SquashRequest) (*squashPlan, error) {
-	records, err := s.indexStore.GetTaskCommits(ctx, req.TaskID)
+	records, err := s.indexStore.GetContentCommits(ctx, req.TaskID)
 	if err != nil {
 		return nil, fmt.Errorf("squash task %s: get commits: %w", req.TaskID, err)
 	}
@@ -229,67 +233,8 @@ func (s *SquashService) logAudit(c *model.Commit, taskID string, n int) error {
 	})
 }
 
-// ExportToGitPatch renders a squash commit's model.FileDiff METADATA as
-// format-patch-shaped text. The first line of the message is prefixed with
-// "[squashed]" per FR-7 / MGIT-4.2.2.
-//
-// DO NOT USE IT FOR A DELIVERY PATCH. It is not a git-apply-compatible
-// renderer and never was: it emits `--- a/<path>` for an added file where git
-// requires `/dev/null`, and its `@@` line numbers come from display-oriented
-// hunks (changeHunks always starts at line 1). Worse, it renders whatever is
-// in c.FileDiffs — which is EMPTY on a dry-run squash, so it silently produced
-// a well-formed patch with no hunks at all. That was MGIT-112: `git apply
-// --allow-empty` accepted the result, exited 0 and changed nothing.
-//
-// Every patch that leaves mgit now goes through GitFormatPatch (for a real
-// squash commit) or PreviewGitPatch (for a read), both of which diff real
-// trees through go-git's own unified encoder. This method has no production
-// caller left and is retained only for its unit tests; see MGIT-114 to delete
-// it. Refs: FR-7, MGIT-4.2.2, MGIT-112
-func (s *SquashService) ExportToGitPatch(c *model.Commit) string {
-	if c == nil {
-		return ""
-	}
-	author, err := s.PatchAuthor()
-	if err != nil {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString(s.mboxHeader(c, author))
-
-	// Per-file diff section. Each file gets a "diff --git" header so the
-	// output is recognizable to git am / git apply.
-	for _, d := range c.FileDiffs {
-		fmt.Fprintf(&b, "diff --git a/%s b/%s\n", d.Path, d.Path)
-		switch d.Operation {
-		case model.DiffAdded:
-			fmt.Fprintf(&b, "new file mode 100644\n")
-		case model.DiffDeleted:
-			fmt.Fprintf(&b, "deleted file mode 100644\n")
-		}
-		if d.OldHash != "" || d.NewHash != "" {
-			fmt.Fprintf(&b, "index %s..%s\n", shortPatchHash(d.OldHash), shortPatchHash(d.NewHash))
-		}
-		fmt.Fprintf(&b, "--- a/%s\n", d.Path)
-		fmt.Fprintf(&b, "+++ b/%s\n", d.Path)
-		for _, h := range d.Hunks {
-			fmt.Fprintf(&b, "@@ -%d,%d +%d,%d @@\n",
-				h.LineStart, h.LinesRemoved, h.LineStart, h.LinesAdded)
-			if h.Content != "" {
-				b.WriteString(h.Content)
-				if !strings.HasSuffix(h.Content, "\n") {
-					b.WriteString("\n")
-				}
-			}
-		}
-	}
-
-	b.WriteString("-- \nmgit\n")
-	return b.String()
-}
-
 // mboxHeader renders the git format-patch mbox preamble (From/From:/Date/
-// Subject + optional body + the "---" separator) shared by ExportToGitPatch and
+// Subject + optional body + the "---" separator) used by
 // GitFormatPatch. The subject is prefixed with [squashed] per FR-7. Refs: FR-7
 func (s *SquashService) mboxHeader(c *model.Commit, author gitstore.AuthorIdentity) string {
 	subject, body := splitMessage(c.Message)
@@ -345,8 +290,7 @@ func (s *SquashService) mboxHeader(c *model.Commit, author gitstore.AuthorIdenti
 // GitFormatPatch renders a squash commit as a git format-patch whose body is
 // produced by go-git's own unified-diff encoder (DiffStore.PatchBetween) — so
 // it is git-am/git-apply compatible with real content, the working mgit->git
-// delivery bridge. Unlike ExportToGitPatch (which renders model.FileDiff
-// metadata, for synthetic/unit commits), this computes the real net tree diff
+// delivery bridge. This computes the real net tree diff
 // from the squash commit's parent (the task base) to the squash commit, so
 // c.CommitID must be set (SquashTask sets it). Refs: FR-7, MGIT-33
 func (s *SquashService) GitFormatPatch(ctx context.Context, c *model.Commit) (string, error) {
@@ -385,17 +329,6 @@ func splitMessage(msg string) (subject, body string) {
 		return strings.TrimSpace(msg), ""
 	}
 	return strings.TrimSpace(msg[:idx]), strings.TrimLeft(msg[idx+1:], "\n")
-}
-
-// shortPatchHash returns an 8-char prefix or "00000000" if empty.
-func shortPatchHash(h string) string {
-	if h == "" {
-		return "00000000"
-	}
-	if len(h) <= 8 {
-		return h
-	}
-	return h[:8]
 }
 
 // mergeDiffs consolidates file diffs, keeping the last operation per path.

@@ -50,7 +50,7 @@ permissions:
   statuses: write
 
 jobs:
-  reviewer-verdict-at-head:
+  publish-reviewer-verdict:
     # a comment on a plain issue is not a verdict on anything
     if: github.event_name != 'issue_comment' || github.event.issue.pull_request
     runs-on: ubuntu-latest

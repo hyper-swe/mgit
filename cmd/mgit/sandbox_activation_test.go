@@ -40,7 +40,8 @@ func TestDaemonFailureDetail_NamesTheMissingLibraryAndHowToGetIt(t *testing.T) {
 			log: "dyld[95534]: Library not loaded: /opt/homebrew/opt/libkrun/lib/libkrun.1.dylib\n" +
 				"  Referenced from: <1D9BC4F8> /usr/local/bin/mgit-sandboxd\n" +
 				"  Reason: tried: '/opt/homebrew/opt/libkrun/lib/libkrun.1.dylib' (no such file)\n",
-			want: []string{"libkrun", "brew install", "brew trust libkrun/krun", "INSTALL-SANDBOX"},
+			want:    []string{"libkrun", "brew trust hyper-swe/tap", "brew upgrade hyper-swe/tap/mgit", "INSTALL-SANDBOX"},
+			notWant: []string{"libkrun/krun"},
 		},
 		{
 			// Carry a patched libkrun in the macOS build; fixes MGIT-225.
@@ -84,38 +85,38 @@ func TestDaemonFailureDetail_NamesTheMissingLibraryAndHowToGetIt(t *testing.T) {
 
 // THE REMEDY MUST BE A COMMAND THAT ACTUALLY RUNS.
 //
-// The libkrun hint used to read `brew tap libkrun/krun && brew install
-// libkrun`, which fails on a fresh Mac: Homebrew refuses to LOAD a formula
-// from an untrusted third-party tap, and `libkrun` alone in ARGV does not
-// satisfy its explicit-request escape hatch (the formula's full name is
-// `libkrun/krun/libkrun`). Naming the fully-qualified formula instead is no
-// better — libkrun itself depends on libkrunfw from the same untrusted tap,
-// and nothing in ARGV can whitelist a transitive dependency. `brew trust
-// libkrun/krun` is the only step that unblocks the whole tap, so it has to
-// come first and it has to be in the message. Both facts were established on
-// a Homebrew prefix with libkrun genuinely absent. Refs: MGIT-75, MGIT-61.15
+// libkrunfw comes from mgit's own tap now, as a dependency of the mgit
+// formula. Homebrew trusts a formula named on the command line, but it
+// refuses to load that formula's DEPENDENCY from a tap nobody trusted, and
+// nothing in ARGV can name a dependency for it. `brew trust hyper-swe/tap`
+// is the step that clears it, so it comes first and it has to be in the
+// message. The old hint sent users to the libkrun/krun tap, which mgit no
+// longer uses. Refs: MGIT-306, MGIT-75, MGIT-61.15
 func TestMissingLibraryRemedy_LibkrunHintTrustsTheTapBeforeInstalling(t *testing.T) {
-	got := missingLibraryRemedy("libkrun.1.dylib", "", "darwin")
+	got := missingLibraryRemedy("libkrunfw.5.dylib", "", "darwin")
 
-	trustAt := strings.Index(got, "brew trust libkrun/krun")
+	trustAt := strings.Index(got, "brew trust hyper-swe/tap")
 	require.NotEqual(t, -1, trustAt,
-		"the hint must name `brew trust libkrun/krun`; without it every command it "+
-			"suggests dies on Homebrew's untrusted-tap gate, got %q", got)
+		"the hint must name `brew trust hyper-swe/tap`; without it the libkrunfw "+
+			"dependency dies on Homebrew's untrusted-tap gate, got %q", got)
 
-	installAt := strings.Index(got, "brew install")
-	require.NotEqual(t, -1, installAt, "the hint must still name the install command, got %q", got)
-	assert.Less(t, trustAt, installAt,
-		"trust must be suggested BEFORE install; the reverse order fails on a fresh Mac")
+	upgradeAt := strings.Index(got, "brew upgrade hyper-swe/tap/mgit")
+	require.NotEqual(t, -1, upgradeAt, "the hint must name the upgrade command, got %q", got)
+	assert.Less(t, trustAt, upgradeAt,
+		"trust must be suggested BEFORE the upgrade; the reverse order fails on a fresh Mac")
+	assert.Contains(t, got, "brew install hyper-swe/tap/libkrunfw",
+		"the hint must name the direct install for an mgit that is already current")
+	assert.Contains(t, got, "MGIT_SANDBOX=1", "the hint must name the installer's opt-in step")
+	assert.NotContains(t, got, "libkrun/krun", "mgit no longer uses the libkrun/krun tap")
 }
 
-// libkrunfw is a dependency of libkrun from the same untrusted tap, so a hint
-// that trusts only the single libkrun formula (`brew trust --formula
-// libkrun/krun/libkrun`) still fails. Whole-tap trust is the one that works.
+// libkrunfw is a dependency from the tap, and per-formula trust does not
+// cover a dependency. Whole-tap trust is the one that works.
 func TestMissingLibraryRemedy_LibkrunHintTrustsTheWholeTapNotOneFormula(t *testing.T) {
 	got := missingLibraryRemedy("libkrun.so.1", "", "darwin")
 
 	assert.NotContains(t, got, "brew trust --formula",
-		"per-formula trust does not cover libkrun's own libkrunfw dependency, got %q", got)
+		"per-formula trust does not cover the libkrunfw dependency, got %q", got)
 }
 
 // The activation path reads the same loader words as doctor's row, so an old

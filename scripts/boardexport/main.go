@@ -40,6 +40,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 )
 
 // exportData mirrors the tracker's export (mtix internal/store/sqlite
@@ -86,6 +89,14 @@ type exportNode struct {
 	DeferUntil  string  `json:"defer_until,omitempty"`
 	DeletedAt   string  `json:"deleted_at,omitempty"`
 	UID         string  `json:"uid,omitempty"`
+	// Schema 2.0.0 adds three per-node fields, in this order. Annotations and
+	// activity hold what lanes and reviewers wrote about a ticket; they are
+	// kept as raw JSON because the public board never carries them, and this
+	// mirror only has to reproduce them to prove the file before dropping
+	// them. Refs: MGIT-327.1
+	PreviousStatus string            `json:"previous_status,omitempty"`
+	Annotations    []json.RawMessage `json:"annotations,omitempty"`
+	Activity       []json.RawMessage `json:"activity,omitempty"`
 }
 
 type exportDep struct {
@@ -170,6 +181,134 @@ func identities(d *exportData) (assignees, agents, sessions int) {
 	return assignees, len(d.Agents), len(d.Sessions)
 }
 
+// agentWritten counts the nodes that still carry agent-written fields: notes
+// and activity written by lanes and reviewers, and the status a node came
+// from. The public board carries none of them. Refs: MGIT-327.1
+func agentWritten(d *exportData) int {
+	n := 0
+	for _, node := range d.Nodes {
+		if len(node.Annotations) > 0 || len(node.Activity) > 0 || node.PreviousStatus != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// The shapes the public text must not carry. Titles, descriptions, prompts,
+// acceptance and labels are public by design, but a working role's name, a
+// sibling product's ticket id or a person's home path is not something the
+// project publishes; the board text report's hashed lists did not know these
+// shapes, and an export shipped with all three while reporting 0 hits. The
+// checks are shapes, not a list of names, and report the class only, never the
+// text. Refs: MGIT-327.6
+var (
+	// B and A bound a name: it stands alone, not inside a branch
+	// (fix/mgit-168), a scratch directory (/tmp/mgit-98-wt) or a per-user
+	// socket directory (T/mgit-501), which contain the same letters. Any
+	// other character, markdown and punctuation included, ends a name.
+	reviewerRe = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9-])reviewer-([a-z0-9]+)(?:[^A-Za-z0-9-]|$)`)
+	laneRe     = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9-])(?:mgit-linux(?:-\d+)?|go-agent(?:-\d+)?|mgit-review(?:-[a-z0-9]+)?)(?:[^A-Za-z0-9-]|$)`)
+	digitLane  = regexp.MustCompile(`(?:^|[^A-Za-z0-9/._-])[Mm]git-\d(?:[^A-Za-z0-9/-]|$)`)
+	sessionRe  = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9/._-])swe-([a-z]{2})(?:[^A-Za-z0-9/-]|$)`)
+	roleWords  = regexp.MustCompile(`(?i)\bthe (?:merger|frontier|desk)\b|\b(?:watcher|pi|merger|frontier|desk) lane\b`)
+	rulingRe   = regexp.MustCompile(`\bR-H\d+`)
+	ticketRe   = regexp.MustCompile(`(?i)\b(?:FEAT|HSWE|PROJ|SWE)[- ]\d`)
+	macPath    = regexp.MustCompile(`/Users\b|[A-Za-z]:\\Users\\|~/workspace|/tmp/claude-\d+`)
+	homePath   = regexp.MustCompile(`/home/([A-Za-z0-9._-]+)`)
+	labRe      = regexp.MustCompile(`(?i)\b(?:lanes|frontier|dogfood|rulings\.d)/|\bevidence/[A-Z]+-\d`)
+	personRe   = regexp.MustCompile(`(?i)\bvimal\b`)
+	// A checkout is where the working agents build; its name is not public.
+	checkoutRe = regexp.MustCompile(`(?i)\bmgit-dev(?:-[a-z0-9]+)*\b|\bswe-go\b(?:-[\w]+)*`)
+)
+
+// nonRoleReviewers are hyphenated words that start "reviewer-" and are plain
+// public terms: the CI check "reviewer-verdict-at-head" and "reviewer-directed".
+var nonRoleReviewers = map[string]bool{"verdict": true, "directed": true}
+
+// hyphens are the Unicode dashes folded to '-' before matching, so a lane name
+// cannot be spelled around the check.
+var hyphens = strings.NewReplacer("\u2010", "-", "\u2011", "-", "\u2012", "-", "\u2013", "-", "\u2014", "-", "\u2015", "-", "\u2212", "-")
+
+// placeholderHomes are the home-directory names that stand for "a user" in
+// examples and CI paths, not a person.
+var placeholderHomes = map[string]bool{
+	"user": true, "username": true, "runner": true, "you": true, "name": true,
+	"alice": true, "bob": true, "me": true, "example": true, "agent": true,
+}
+
+// leakClasses names the classes found in one field's text, never the text.
+func leakClasses(text string) []string {
+	text = hyphens.Replace(text)
+	var out []string
+	role := laneRe.MatchString(text) || digitLane.MatchString(text) || roleWords.MatchString(text)
+	for _, m := range reviewerRe.FindAllStringSubmatch(text, -1) {
+		if !nonRoleReviewers[strings.ToLower(m[1])] {
+			role = true
+		}
+	}
+	for _, m := range sessionRe.FindAllStringSubmatch(text, -1) {
+		if strings.ToLower(m[1]) != "go" {
+			role = true
+		}
+	}
+	if role {
+		out = append(out, "working role")
+	}
+	if rulingRe.MatchString(text) {
+		out = append(out, "internal ruling id")
+	}
+	if ticketRe.MatchString(text) {
+		out = append(out, "another product's ticket")
+	}
+	personal := macPath.MatchString(text)
+	for _, m := range homePath.FindAllStringSubmatch(text, -1) {
+		if !placeholderHomes[m[1]] {
+			personal = true
+		}
+	}
+	if personal {
+		out = append(out, "personal path")
+	}
+	if labRe.MatchString(text) {
+		out = append(out, "lab path")
+	}
+	if personRe.MatchString(text) {
+		out = append(out, "person name")
+	}
+	if checkoutRe.MatchString(text) {
+		out = append(out, "checkout name")
+	}
+	return out
+}
+
+// textLeaks reports, by node, field and class, each place the public text
+// names a working role, an internal ruling, another product's ticket, a
+// checkout, a person or a personal or lab path. It never returns the text.
+func textLeaks(d *exportData) []string {
+	var out []string
+	for _, n := range d.Nodes {
+		for _, f := range []struct{ name, text string }{
+			{"title", n.Title}, {"description", n.Description}, {"prompt", n.Prompt},
+			{"acceptance", n.Acceptance}, {"labels", n.Labels},
+		} {
+			for _, class := range leakClasses(f.text) {
+				out = append(out, fmt.Sprintf("%s %s: %s", n.ID, f.name, class))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// leakError turns the reports into the refusal both modes print.
+func leakError(leaks []string) error {
+	shown := leaks
+	if len(shown) > 12 {
+		shown = shown[:12]
+	}
+	return fmt.Errorf("the board's public text names a working role, an internal ruling, another product's ticket, a checkout, a person or a personal path in %d places (reword them in the tracker, then export again): %s", len(leaks), strings.Join(shown, "; "))
+}
+
 // creatorNamesSomeone reports whether a node's creator is an identity rather
 // than the interface it was filed through. The tracker writes "cli" or "mcp"
 // by default, but takes --assign or the filer's author identity
@@ -208,6 +347,9 @@ func redact(d *exportData) int {
 		if creatorNamesSomeone(d.Nodes[i].Creator) {
 			d.Nodes[i].Creator = ""
 		}
+		// Schema 2.0.0: what lanes and reviewers wrote about a ticket is not
+		// public. The title, description, prompt and acceptance are, and stay.
+		d.Nodes[i].Annotations, d.Nodes[i].Activity, d.Nodes[i].PreviousStatus = nil, nil, ""
 	}
 	d.Agents, d.Sessions = nil, nil
 	// The inputs are strings and numbers that just decoded, so encoding
@@ -244,9 +386,16 @@ func run(in, out string, check bool) error {
 	}
 	a, g, s := identities(d)
 	c := namedCreators(d)
+	w := agentWritten(d)
 	if check {
 		if a+g+s+c > 0 {
 			return fmt.Errorf("the board names identities: %d assigned nodes, %d creators naming someone, %d agent rows, %d session rows", a, c, g, s)
+		}
+		if leaks := textLeaks(d); len(leaks) > 0 {
+			return leakError(leaks)
+		}
+		if w > 0 {
+			return fmt.Errorf("the board carries agent-written fields on %d nodes (annotations, activity or a previous status): the public board is cut without them", w)
 		}
 		fmt.Println("boardexport: the board names no identities and its checksum verifies")
 		return nil
@@ -254,6 +403,9 @@ func run(in, out string, check bool) error {
 	if info, statErr := os.Stat(filepath.Join(filepath.Dir(out), "data")); statErr == nil && info.IsDir() {
 		return fmt.Errorf("REFUSING: %s sits beside a live tracker database (%s): the tracker would auto-import this board in REPLACE mode and lose the database's assignees, agents and annotations. Cut board exports in a fresh worktree",
 			out, filepath.Join(filepath.Dir(out), "data"))
+	}
+	if leaks := textLeaks(d); len(leaks) > 0 {
+		return leakError(leaks)
 	}
 	body, blanked, err := rewrite(d, redact)
 	if err != nil {
@@ -266,7 +418,7 @@ func run(in, out string, check bool) error {
 	if err := os.Rename(tmp, out); err != nil {
 		return fmt.Errorf("replace the board: %w", err)
 	}
-	fmt.Printf("boardexport: blanked %d assignees and %d creators, removed %d agent rows and %d session rows; checksum %s\n", blanked, c, g, s, d.Checksum)
+	fmt.Printf("boardexport: blanked %d assignees and %d creators, removed %d agent rows, %d session rows and the agent-written fields of %d nodes; checksum %s\n", blanked, c, g, s, w, d.Checksum)
 	return nil
 }
 

@@ -151,13 +151,20 @@ test-race:
 test-cover:
 	@rm -f $(COVER_OUT)
 	@echo "mode: set" > $(COVER_OUT)
-	@for pkg in $$(go list ./internal/...); do \
-		go test -coverprofile=/tmp/mgit_cov_tmp.out -count=1 $$pkg 2>/dev/null; \
-		if [ -f /tmp/mgit_cov_tmp.out ]; then \
-			tail -n +2 /tmp/mgit_cov_tmp.out >> $(COVER_OUT); \
+	@tmp=$$(mktemp -d "$${TMPDIR:-/tmp}/mgitcov.XXXXXX") || { echo "test-cover: cannot make a scratch directory" >&2; exit 1; }; \
+	failed=""; \
+	for pkg in $$(go list ./internal/...); do \
+		if ! go test -coverprofile="$$tmp/cov.out" -count=1 $$pkg; then \
+			failed="$$failed $$pkg"; \
 		fi; \
-	done
-	@go tool cover -func=$(COVER_OUT) | tail -1
+		if [ -f "$$tmp/cov.out" ]; then \
+			tail -n +2 "$$tmp/cov.out" >> $(COVER_OUT); \
+			rm -f "$$tmp/cov.out"; \
+		fi; \
+	done; \
+	find "$$tmp" -type f -delete; find "$$tmp" -depth -type d -empty -delete; \
+	go tool cover -func=$(COVER_OUT) | tail -1; \
+	if [ -n "$$failed" ]; then echo "test-cover: failing packages:$$failed" >&2; exit 1; fi
 
 ## lint: Run golangci-lint per .golangci.yml
 # Looks like a bare invocation with no PKG_CONFIG_PATH, but golangci-lint

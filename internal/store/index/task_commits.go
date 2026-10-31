@@ -34,6 +34,9 @@ type TaskCommitInsert struct {
 	AgentID     string
 	Position    int
 	SandboxID   string // empty = unsandboxed (stored as NULL)
+	// Origin is host-established, never decoded from guest or bundle metadata.
+	Origin           string
+	GuestContentHash string
 }
 
 // insertTaskCommitTx inserts one task_commits row within an existing
@@ -49,9 +52,21 @@ func insertTaskCommitTx(ctx context.Context, tx *sql.Tx, in TaskCommitInsert, no
 	if in.SandboxID != "" {
 		sandboxID = in.SandboxID
 	}
-	if _, err := tx.ExecContext(ctx, insertSQL,
-		in.TaskID, in.CommitHash, in.ContentHash, in.AgentID, in.Position, now, sandboxID); err != nil {
+	result, err := tx.ExecContext(ctx, insertSQL,
+		in.TaskID, in.CommitHash, in.ContentHash, in.AgentID, in.Position, now, sandboxID)
+	if err != nil {
 		return fmt.Errorf("insert task_commit %s: %w", in.CommitHash, err)
+	}
+	if in.Origin != "" {
+		id, err := result.LastInsertId()
+		if err != nil {
+			return err
+		}
+		state := AdmissionPending
+		if in.Origin == OriginHost {
+			state = AdmissionDelivered
+		}
+		return insertAdmission(ctx, tx, CommitRecord{ID: id, TaskID: in.TaskID, CommitHash: in.CommitHash, ContentHash: in.ContentHash}, in.Origin, state, in.GuestContentHash, now)
 	}
 	return nil
 }
@@ -90,7 +105,7 @@ func (s *Store) AppendTaskCommits(ctx context.Context, ins []TaskCommitInsert) e
 func (s *Store) AddCommitToTask(ctx context.Context, taskID, commitHash, contentHash, agentID string, position int) error {
 	return s.AppendTaskCommit(ctx, TaskCommitInsert{
 		TaskID: taskID, CommitHash: commitHash, ContentHash: contentHash,
-		AgentID: agentID, Position: position,
+		AgentID: agentID, Position: position, Origin: OriginHost,
 	})
 }
 

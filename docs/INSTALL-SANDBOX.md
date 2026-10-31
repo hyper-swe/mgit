@@ -35,6 +35,26 @@ do — the backends are not interchangeable:
 | artifact export (`sandbox export`) | yes | yes | **refused** |
 | guest can write outside `/tmp`, `/etc`, its worktree and its home | yes | **no** (upstream, MGIT-89) | yes |
 
+**Interactive sessions: interactive sessions in a guest are unsupported on
+every backend in this build.** `mgit sandbox exec` carries no stdin (the
+request has no stdin field) and gives the guest no TTY, and `mgit sandbox shell`
+is refused on every backend with "interactive shell requires the KVM guest PTY
+transport; use `mgit sandbox exec` for non-interactive commands" (measured on
+0.7.5 with libkrun; the refusal is unconditional in the client). Run one-shot
+commands with `mgit sandbox exec` or `mgit run`, and for an agent session use
+the host-routed shell: `mgit work --sandbox` wires the agent's shell to the
+task's worktree on the host, and for the routed agent families (Claude Code
+and Codex, where hooks rewrite every shell call) routes its commands into the
+guest; other harnesses are advisory only (`--require-routing` refuses them).
+Serving the PTY transport is tracked as MGIT-320, not built.
+
+**Where an agent runs: agents stay on the host by design.** The guest has no
+`mtix` and no credentials, and in allowlist mode it can never reach the host's
+loopback or private ranges (`egress/ipclass.go`): the guest cannot reach the
+host's inbox, so nothing in a guest can wait on a wake. An agent keeps its loop
+and its credentials on the host and sends commands into the guest. A host
+bridge that runs one `sandbox exec` turn per wake is not built (MGIT-321).
+
 **Which one you have:** `mgit-sandboxd --vmm` prints the VMM the daemon links
 and where its libraries resolved, and `mgit doctor`'s `daemon/vmm` row says the
 same. The Linux release archives carry the libkrun daemon from the first
@@ -132,7 +152,8 @@ from source, with the pinned versions, is `scripts/sandbox-image/build-libkrun.s
 
 ## Platform prerequisites
 
-- **Linux:** `/dev/kvm` present and read-writable by your user, and glibc
+- **Linux:** `/dev/kvm` present and read-writable by your user (`mgit doctor`'s
+  `host/kvm` row opens it and says plainly when it is absent or refused), and glibc
   2.31 or newer (Ubuntu 20.04, Debian 11 and later). Nothing else: the release
   archive carries libkrun and libkrunfw in `lib/` beside `mgit-sandboxd`, and
   the daemon finds them there by itself (no `LD_LIBRARY_PATH`, no package to
@@ -146,8 +167,9 @@ from source, with the pinned versions, is `scripts/sandbox-image/build-libkrun.s
   Homebrew bottle are already signed; see the go-install caveat below). The
   release archive carries libkrun in `lib/` beside `mgit-sandboxd` (install.sh
   and Homebrew put it in `<prefix>/lib/mgit`); keep them together.
-  **libkrunfw, the guest kernel library, is not installed with mgit**; you
-  install it yourself, once, as the [step below](#installing-libkrun-on-macos).
+  **libkrunfw, the guest kernel library, is never part of mgit's archive**: it
+  comes from mgit's own Homebrew tap or from the curl installer's opt-in step
+  ([below](#installing-libkrunfw-on-macos)).
   Intel Macs are not supported for the sandbox — they run core mgit only.
 
   The older Virtualization.framework backend (vzf, macOS 13+) remains in the
@@ -156,48 +178,78 @@ from source, with the pinned versions, is `scripts/sandbox-image/build-libkrun.s
 - **Windows and everything else:** no sandbox backend yet (epic MGIT-12); core
   mgit runs without containment.
 
-### Installing libkrun on macOS
+### Installing libkrunfw on macOS
 
-libkrunfw, which the daemon's libkrun loads the guest kernel from, comes with
-the libkrun formula of a third-party Homebrew tap, and Homebrew will not load a
-formula from a tap you have not trusted. Trust it first, then install (the
-daemon keeps using the libkrun beside it):
+libkrunfw is the library the daemon's libkrun loads the guest kernel from. It
+is a separate library under its own licenses, LGPL-2.1-only for the library
+code and GPL-2.0-only for the bundled Linux kernel and the patches applied to
+it. On macOS it is a separate install, not part of mgit's release archive. You get it in one of two ways.
+
+**With Homebrew.** The mgit formula depends on `hyper-swe/tap/libkrunfw`, from
+the same tap as mgit. Trust the tap once, then install mgit:
 
 ```bash
-brew tap libkrun/krun
-brew trust libkrun/krun
-brew install libkrun
+brew trust hyper-swe/tap
+brew install hyper-swe/tap/mgit
 ```
 
-**All three commands are needed, in that order.** `brew install libkrun` on
-its own fails with *"Refusing to load formula libkrun/krun/libkrun from
-untrusted tap"*, and so does the fully-qualified `brew install
-libkrun/krun/libkrun` — one step later, on `libkrunfw`, which libkrun itself
-depends on from the same tap and which no command-line argument can whitelist.
-Whole-tap `brew trust` is what clears both.
+**Trust comes first.** Homebrew trusts a formula you name on the command line,
+but it refuses to load that formula's dependencies from a tap you have not
+trusted, and it resolves dependencies before it fetches anything. Without the
+trust step the install stops before it installs anything. If mgit is already
+installed, `brew upgrade hyper-swe/tap/mgit` brings libkrunfw with it, and
+`brew install hyper-swe/tap/libkrunfw` installs it on its own. The libkrunfw
+keg holds both license texts, a notice and the source offer.
 
-> **Why mgit does not install it for you.** It used to try: the formula
-> declared libkrun as a dependency, and because Homebrew resolves dependencies
-> before it fetches anything, `brew install hyper-swe/tap/mgit` aborted on the
-> untrusted tap and installed *nothing at all* — not even core mgit, which
-> never links libkrun. Core mgit is CGO-free and needs no hypervisor, so the
-> trust decision about a third-party VMM now belongs to the people who
-> actually want a sandbox. Refs: MGIT-75
+If you installed libkrunfw from another tap before, uninstall it first:
+both formulas link `libkrunfw.5.dylib` into the Homebrew prefix.
+
+**With the curl installer.** Run it with `MGIT_SANDBOX=1`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hyper-swe/mgit/main/install.sh | MGIT_SANDBOX=1 sh
+```
+
+After it installs mgit, the installer shows libkrunfw's name, version,
+licenses and source, and asks before it downloads anything. If you answer
+yes, it downloads libkrunfw as a separate file, checks it against that
+download's `checksums.txt`, and installs it beside libkrun in
+`<prefix>/lib/mgit`, with its license texts, notice and source offer in
+`<prefix>/share/mgit/THIRD_PARTY/libkrunfw/`. With no terminal to ask on, set
+`MGIT_LIBKRUNFW_ACCEPT=yes` (or `no`). Without `MGIT_SANDBOX=1` the installer
+fetches nothing beyond mgit's own archive.
+
+By default the installer downloads libkrunfw from the same release as the
+mgit archive it just installed, where `libkrunfw_5.5.0_darwin_arm64.tar.gz`
+and its `checksums.txt` are published. To use a mirror instead, set
+`MGIT_LIBKRUNFW_BASE` to a location that holds those two files. A
+curl-installed daemon also finds a Homebrew libkrunfw, so Homebrew works as
+well.
+
+> **Why mgit depends only on its own tap.** The formula once depended on
+> libkrun from a third-party tap. Homebrew resolves dependencies before it
+> fetches anything, so for a user who had not trusted that tap,
+> `brew install hyper-swe/tap/mgit` installed *nothing at all*, not even core
+> mgit, which never links libkrun. Refs: MGIT-75. libkrunfw now comes from the
+> tap you install mgit from, and the one `brew trust hyper-swe/tap` step covers
+> it. Refs: MGIT-306
+
+The daemon looks for libkrunfw beside itself first (`lib/`, or
+`<prefix>/lib/mgit` for an installed layout), then in the Homebrew prefix
+(`/opt/homebrew/lib`) and the system library directories.
 
 If you skip this step and try to start a sandbox anyway, nothing silently
 degrades: libkrun cannot load libkrunfw, so no guest boots, and `mgit doctor`'s
-`daemon/vmm` row says so together with the three commands above.
+`daemon/vmm` row says so together with the commands above.
 
 **If the sandbox stops starting on a machine where it used to work**, check
-that libkrunfw is still installed: its tap is one Homebrew refuses to load
-until trusted, so it can look like an orphan to `brew autoremove`. `mgit
-doctor` names it — the `daemon/vmm` row reports where libkrun and libkrunfw
-resolved — and `daemon/loads` names a library the loader refused outright.
-To see it yourself:
+that libkrunfw is still installed. `mgit doctor` names it: the `daemon/vmm` row
+reports where libkrun and libkrunfw resolved, and `daemon/loads` names a
+library the loader refused outright. To check it yourself:
 
 ```bash
-brew list --versions libkrunfw     # is it installed?
-brew install libkrun               # reinstalls it with the libkrun formula
+brew list --versions libkrunfw            # is it installed?
+brew install hyper-swe/tap/libkrunfw      # installs it again
 ```
 
 Core mgit is unaffected throughout: only the daemon links these libraries.
@@ -225,27 +277,28 @@ Check the library you have:
 ```bash
 # macOS (the release archive's bundled copy)
 nm -gU lib/libkrun.1.dylib | grep krun_add_net_unixgram
-# macOS (a source build's Homebrew libkrun)
-nm -gU "$(brew --prefix libkrun)/lib/libkrun.dylib" | grep krun_add_net_unixgram
+# macOS (a libkrun you built for a source build of the daemon)
+nm -gU /path/to/your/libkrun.dylib | grep krun_add_net_unixgram
 # Linux (the release archive's bundled copy)
 nm -D lib/libkrun.so.1 | grep krun_add_net_unixgram
 ```
 
 A match means networking is enabled. If there is none, rebuild libkrun with
 `make NET=1` (upstream `containers/libkrun`), or install a package that enables
-it. The Homebrew `libkrun/krun` tap passes `NET=1` explicitly, so the brew path
-is covered.
+it. mgit's Homebrew tap carries no libkrun: the libkrun the release ships is
+the one Homebrew installs with mgit.
 
 ### Building mgit-sandboxd from source on macOS
 
-A source build links Homebrew's libkrun; the release's daemon is built by
+A source build links a libkrun you provide (built with `make NET=1`, as above,
+and visible to pkg-config); the release's daemon is built by
 `scripts/release/build-darwin-sandboxd.sh` with its own libkrun beside it.
 Because libkrun is linked rather than tag-gated, cgo must find its
-pkg-config. `make` derives this automatically from Homebrew; a raw `go build`
-needs it exported:
+pkg-config. `make` derives this from a Homebrew libkrun when one is
+installed; a raw `go build` needs it exported:
 
 ```bash
-export PKG_CONFIG_PATH="$(brew --prefix libkrun)/lib/pkgconfig"
+export PKG_CONFIG_PATH="/path/to/your/libkrun/prefix/lib/pkgconfig"
 go build ./cmd/mgit-sandboxd/
 ```
 
@@ -260,16 +313,18 @@ CGO_ENABLED=0 go build ./cmd/mgit/
 ### Homebrew (recommended)
 
 ```bash
+brew trust hyper-swe/tap      # once; on Apple silicon macOS, for libkrunfw
 brew install hyper-swe/tap/mgit
 ```
 
-Needs no other tap and no `brew trust`. Installs `mgit` and, on Linux and
-macOS arm64, `mgit-sandboxd` alongside it. The macOS bottle is signed with
-both the hypervisor (libkrun) and virtualization (vzf) entitlements.
+Installs `mgit` and, on Linux and macOS arm64, `mgit-sandboxd` alongside it.
+The macOS bottle is signed with both the hypervisor (libkrun) and
+virtualization (vzf) entitlements.
 
-On macOS this gets you core mgit, the daemon and its libkrun, but **not**
-libkrunfw — install it separately ([above](#installing-libkrun-on-macos))
-when you want the sandbox.
+On Apple silicon macOS this also installs libkrunfw from the same tap
+([above](#installing-libkrunfw-on-macos)), which is why the tap is trusted
+first. On Linux and Intel macOS the formula has no dependency, and the trust
+step changes nothing.
 
 Whether a brew install is affected by the Gatekeeper quarantine issue below
 is not yet verified — see the note in "Release archive".
@@ -479,6 +534,23 @@ entry and says what changed, naming both digests — it never replaces the old
 one. Every composition is appended to `.mgit/sandbox/base-provenance.jsonl`,
 which `images.lock` cannot express because it holds one entry per name.
 
+Keeping the old cache entry does not keep its reference launchable in this
+repository. `images.lock` holds one current signed pin per name. A fresh boot
+using the previous pin is refused and names both digests and the replacement
+`--image` reference to use when relaunching. The old bytes are not deleted and
+the signature and content checks still apply to the current pin.
+
+Before switching that pin, recompose warns on stderr when a recorded sandbox
+or worktree binding still names the old reference. Existing registrations are
+not rewritten, and an already running VM is not restarted. Use the printed
+remove-then-launch commands only when ready to replace the old sandbox: removal
+tears down that sandbox, including a running VM. For example,
+`mgit sandbox remove TASK && mgit sandbox launch --task-id TASK --worktree PATH --image base@sha256:DIGEST`
+(substitute the printed task, worktree and current digest). Simply launching
+again without removal is refused because that task is already bound. A sandbox
+that has not booted yet still holds its original pin. If the registry cannot
+be read, the warning says that its old-reference users cannot be determined.
+
 **The digest is the identity; the tag is documentation.** A release RECORDS
 the guest base image it was smoke-tested with — image name and digest, in
 `internal/sandboxd/guestbase/release-base.json`, embedded in the binary — and
@@ -511,7 +583,7 @@ record and states a mismatch as a **difference**, never as ok:
 ```
 ok    base/release  — the guest base is the image this release was smoke-tested with: registry-1.docker.io/library/debian:12@sha256:9a2b…
 DIFF  base/release  — the guest base was composed from registry-1.docker.io/library/golang:1.26-bookworm@sha256:37a6… but this release was smoke-tested with registry-1.docker.io/library/debian:12@sha256:9a2b… — a different image, so the guest userspace is not the one this release was tested with
-      remedy: recompose from the release's base with `mgit sandbox base from` (no reference), or keep this image knowingly — this row then stays a stated difference
+      remedy: recompose from this repository's own recorded source with `mgit sandbox base from registry-1.docker.io/library/golang:1.26-bookworm@sha256:37a6…`; the no-reference form `mgit sandbox base from` switches this repository to the release's tested image, which may lack the toolchain this repository's image carries. Or keep this image knowingly — this row then stays a stated difference
 ```
 
 A `DIFF` is neither a pass nor a failure of the exit code: it is a stated

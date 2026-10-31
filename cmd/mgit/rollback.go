@@ -64,9 +64,10 @@ func rollbackCmd() *cobra.Command {
 			}
 
 			revert, err := app.Rollback.RollbackTask(ctx, service.RollbackRequest{
-				TaskID: taskID,
-				Reason: reason,
-				DryRun: dryRun,
+				TaskID:     taskID,
+				SourceHash: commitHash,
+				Reason:     reason,
+				DryRun:     dryRun,
 			})
 			if err != nil {
 				return fmt.Errorf("rollback: %w", err)

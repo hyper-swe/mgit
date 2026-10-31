@@ -281,20 +281,25 @@ func TestBrewFormula_InstallsTheGuestBinaries(t *testing.T) {
 // tap-qualified (`user/tap/formula`) — i.e. any dependency Homebrew has to
 // reach outside homebrew/core to resolve. Homebrew/core dependencies are bare
 // names and stay legal.
-var thirdPartyDependsOnRe = regexp.MustCompile(`depends_on\s+"[^"/]+/[^"/]+/[^"]+"`)
+var thirdPartyDependsOnRe = regexp.MustCompile(`depends_on\s+"([^"/]+/[^"/]+)/[^"]+"`)
 
-// findThirdPartyDependsOn returns the first tap-qualified `depends_on` in
-// Ruby CODE, or "" when there is none. Comment lines are skipped: the formula
-// documents the removed dependency verbatim so it is not reintroduced by
-// someone who does not know why it went, and a check that cannot tell a
-// warning from the thing it warns about is useless.
+// ownTap is the maintainers' own tap: the one tap the formula may depend on,
+// because the one documented setup step (`brew trust hyper-swe/tap`) covers
+// it. Refs: MGIT-306
+const ownTap = "hyper-swe/tap"
+
+// findThirdPartyDependsOn returns the first `depends_on` in Ruby CODE that
+// names a tap other than ownTap, or "" when there is none. Comment lines are
+// skipped: the formula documents the removed dependency verbatim so it is not
+// reintroduced by someone who does not know why it went, and a check that
+// cannot tell a warning from the thing it warns about is useless.
 func findThirdPartyDependsOn(formula string) string {
 	for _, line := range strings.Split(formula, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
-		if got := thirdPartyDependsOnRe.FindString(line); got != "" {
-			return got
+		if m := thirdPartyDependsOnRe.FindStringSubmatch(line); len(m) == 2 && m[1] != ownTap {
+			return m[0]
 		}
 	}
 	return ""
@@ -362,6 +367,16 @@ func TestFindThirdPartyDependsOn(t *testing.T) {
 			want:    "",
 		},
 		{
+			name:    "the_maintainers_own_tap_is_fine",
+			formula: "  on_macos do\n    depends_on \"hyper-swe/tap/libkrunfw\"\n  end\n",
+			want:    "",
+		},
+		{
+			name:    "a_tap_whose_name_only_starts_like_ours_is_third_party",
+			formula: "  depends_on \"hyper-swe/tapx/libkrunfw\"\n",
+			want:    `depends_on "hyper-swe/tapx/libkrunfw"`,
+		},
+		{
 			name:    "homebrew_core_dependency_is_fine",
 			formula: "  depends_on \"openssl@3\"\n",
 			want:    "",
@@ -381,26 +396,48 @@ func TestFindThirdPartyDependsOn(t *testing.T) {
 	}
 }
 
-// TestBrewFormula_CaveatsGiveAWorkingSandboxActivation checks the other half
-// of the MGIT-75 fix: dropping the dependency is only correct if the sandbox
-// stays discoverable, and the activation it points at has to be a sequence
-// that actually runs. `brew install libkrun` on its own does not — the tap
-// must be trusted first. Refs: MGIT-75
+// TestBrewFormula_DependsOnLibkrunfwFromItsOwnTapOnAppleSilicon: the macOS
+// archive carries libkrun but never libkrunfw, so the formula brings
+// libkrunfw from the maintainers' own tap, on Apple silicon macOS only (the
+// sandbox has no other macOS backend, and the Linux archive carries its own).
+// Refs: MGIT-306
+func TestBrewFormula_DependsOnLibkrunfwFromItsOwnTapOnAppleSilicon(t *testing.T) {
+	formula := readRepoFile(t, "brew/mgit.rb")
+	re := regexp.MustCompile(`(?m)^  on_macos do\n(?:.*\n)*?    on_arm do\n(?:.*\n)*?      depends_on "hyper-swe/tap/libkrunfw"\n`)
+	assert.Regexp(t, re, formula,
+		"the formula must declare depends_on \"hyper-swe/tap/libkrunfw\" inside on_macos/on_arm")
+	assert.Equal(t, 1, strings.Count(formula, `depends_on "hyper-swe/tap/libkrunfw"`),
+		"exactly one libkrunfw dependency, on macOS arm64")
+}
+
+// TestBrewFormula_CaveatsGiveAWorkingSandboxActivation: the sandbox
+// activation the caveats point at has to be a sequence that actually runs.
+// Homebrew trusts a formula named on the command line but refuses its
+// dependency from a tap nobody trusted, so the tap must be trusted before
+// the install. The caveats no longer send anyone to the libkrun/krun tap.
+// Refs: MGIT-306, MGIT-75
 func TestBrewFormula_CaveatsGiveAWorkingSandboxActivation(t *testing.T) {
 	formula := readRepoFile(t, "brew/mgit.rb")
-
-	trustAt := strings.Index(formula, "brew trust libkrun/krun")
-	if trustAt == -1 {
-		t.Fatal("the caveats must name `brew trust libkrun/krun`: without it the libkrun " +
-			"install they suggest fails on Homebrew's untrusted-tap gate")
+	caveats, ok := cutSection(formula, "  def caveats", "\n  end\n")
+	if !ok {
+		t.Fatal("the formula must have caveats")
 	}
-	installAt := strings.Index(formula, "brew install libkrun")
+
+	trustAt := strings.Index(caveats, "brew trust hyper-swe/tap")
+	if trustAt == -1 {
+		t.Fatal("the caveats must name `brew trust hyper-swe/tap`: without it the libkrunfw " +
+			"dependency fails on Homebrew's untrusted-tap gate")
+	}
+	installAt := strings.Index(caveats, "brew install hyper-swe/tap/mgit")
 	if installAt == -1 {
-		t.Fatal("the caveats must still name the libkrun install command")
+		t.Fatal("the caveats must name the install command")
 	}
 	if trustAt > installAt {
-		t.Error("the caveats must tell the user to trust the tap BEFORE installing libkrun; " +
-			"the reverse order is the failure this task exists to fix")
+		t.Error("the caveats must tell the user to trust the tap BEFORE installing; " +
+			"the reverse order fails on a fresh Mac")
+	}
+	if strings.Contains(caveats, "libkrun/krun") {
+		t.Error("the caveats must not send users to the libkrun/krun tap; libkrunfw comes from hyper-swe/tap")
 	}
 }
 
@@ -446,12 +483,73 @@ func TestCIWorkflow_ProvesTheBrewInstallOnALibkrunFreeRunner(t *testing.T) {
 	if !strings.Contains(script, `"$BREW" install "$FORMULA"`) {
 		t.Error("the check must run a REAL brew install of the formula")
 	}
+	// The formula now depends on libkrunfw from hyper-swe/tap. The check takes
+	// the one documented setup step, and only that: it proves libkrunfw was
+	// absent, trusts the tap, and proves libkrunfw arrived. Refs: MGIT-306
+	if _, found := findInCode(script, `"$BREW" list --versions libkrunfw`); !found {
+		t.Error("the check must prove libkrunfw is absent before the install")
+	}
+	if _, found := findInCode(script, `"$BREW" trust hyper-swe/tap`); !found {
+		t.Error("the check must take the documented setup step, `brew trust hyper-swe/tap`")
+	}
+	if _, found := findInCode(script, "lib/libkrunfw.5.dylib"); !found {
+		t.Error("the check must prove libkrunfw is linked where the sandbox looks")
+	}
+	for _, bypass := range []string{"HOMEBREW_NO_REQUIRE_TAP_TRUST", "brew trust libkrun/krun"} {
+		if line, found := findInCode(script, bypass); found {
+			t.Errorf("the check must not use %s (%q): a user takes only the documented step", bypass, line)
+		}
+		if strings.Contains(job, bypass) {
+			t.Errorf("the job must not use %s", bypass)
+		}
+	}
 	// --dry-run is what passed while the bug was live: it never has to fetch,
 	// so on a machine with the dependency satisfied it resolves nothing. The
 	// script explains that in prose, so only executable lines are checked.
 	if line, found := findInCode(script, "--dry-run"); found {
 		t.Errorf("the check must not use `brew install --dry-run` (%q); that is the "+
 			"command that reported success while the install was broken", line)
+	}
+}
+
+// The tap must be tapped whether or not a branch is named. On a pull request
+// MGIT_TAP_BRANCH is empty, and `brew trust` alone does not tap: brew then
+// reports "No available formula hyper-swe/tap/libkrunfw" on every attempt.
+// So the `brew tap` of hyper-swe/tap must come before the branch condition,
+// not inside it. Refs: MGIT-306
+func TestBrewInstallCheck_TapsTheOwnTapWhetherOrNotABranchIsNamed(t *testing.T) {
+	script := readRepoFile(t, checkScript)
+	var lines []string
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		lines = append(lines, trimmed)
+	}
+	index := func(needle string, from int) int {
+		for i := from; i < len(lines); i++ {
+			if strings.Contains(lines[i], needle) {
+				return i
+			}
+		}
+		return -1
+	}
+	trust := index(`"$BREW" trust hyper-swe/tap`, 0)
+	if trust < 0 {
+		t.Fatal("the check must take the documented setup step, `brew trust hyper-swe/tap`")
+	}
+	branch := index(`if [ -n "$TAP_BRANCH" ]`, trust)
+	if branch < 0 {
+		t.Fatal("the check must still resolve a named tap branch after the trust step")
+	}
+	tap := index(`"$BREW" tap "$OWN_TAP"`, trust)
+	if tap < 0 {
+		t.Fatal("the check must tap hyper-swe/tap after trusting it")
+	}
+	if tap > branch {
+		t.Error("`brew tap hyper-swe/tap` is inside the MGIT_TAP_BRANCH condition, so a run " +
+			"with no branch named never taps it and libkrunfw cannot resolve")
 	}
 }
 

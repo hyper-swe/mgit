@@ -95,6 +95,14 @@ If a linked worktree points to a missing Git directory, checkpoints refuse rathe
 than proceed without exclusions. Restore the directory and run `git worktree repair`,
 or recreate the worktree, before retrying.
 
+If a base has already absorbed an untracked path, repair it by excluding the
+path and running one explicit capture (`mgit work <path> --task-id <ID>
+--include-uncommitted`, which also creates a task worktree). The capture appends
+a new base commit without the path. Tasks created earlier keep
+the base they forked from, so they still contain it. A path that Git tracks and
+the working tree still holds can't be repaired this way: the next capture adds
+it back.
+
 <p align="center">
   <a href="#why-this-exists">Why</a> &middot;
   <a href="#how-containment-works">Containment</a> &middot;
@@ -199,10 +207,11 @@ It also sidesteps a macOS trap that a browser download cannot: see [Why not just
 **Homebrew** (macOS / Linux):
 
 ```bash
+brew trust hyper-swe/tap
 brew install hyper-swe/tap/mgit
 ```
 
-One command, no other taps and no `brew trust` — the [sandbox](#enable-the-sandbox) layer has its own prerequisites, and none of them are needed to install or use core mgit.
+No other tap is needed. On Apple silicon macOS the formula also installs libkrunfw, the [sandbox](#enable-the-sandbox)'s guest kernel library, from the same tap, and Homebrew loads a dependency only from a tap you trust, so trust the tap first. On Linux and Intel macOS the trust step changes nothing. Core mgit needs none of the sandbox's prerequisites.
 
 **Go**:
 
@@ -332,15 +341,14 @@ by test in `scripts/e2e/libkrun_linux_column.sh`.
 
 The sandbox needs a second host binary, `mgit-sandboxd`, and a guest base. On Linux and macOS arm64, Homebrew and the release archives install `mgit-sandboxd` next to `mgit` automatically; you can also `go install github.com/hyper-swe/mgit/cmd/mgit-sandboxd@latest`, but on Linux that builds the firecracker daemon, which boots only a kernel + rootfs image and refuses `sandbox sync` and `sandbox export`: use the release archive for the agent loop ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md)).
 
-- **macOS** requires Apple Silicon (arm64), macOS 14+, and **libkrunfw**, the guest kernel library, which is *not* installed with mgit — it comes with the libkrun formula of a third-party Homebrew tap, and Homebrew will not load a formula from a tap you have not trusted. All three commands are needed, in this order:
+- **macOS** requires Apple Silicon (arm64), macOS 14+, and **libkrunfw**, the guest kernel library. libkrunfw is a separate library under its own licenses (LGPL-2.1-only AND GPL-2.0-only), and on macOS it is a separate install, not part of mgit's archive. With Homebrew, it comes from mgit's own tap with mgit:
 
   ```bash
-  brew tap libkrun/krun
-  brew trust libkrun/krun
-  brew install libkrun
+  brew trust hyper-swe/tap
+  brew install hyper-swe/tap/mgit
   ```
 
-  `brew install libkrun` on its own fails, and so does the fully-qualified name — see [docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#installing-libkrun-on-macos) for why, and for why mgit no longer tries to install it for you. The release/brew daemon carries its own libkrun in `lib/` beside it — keep them together — and is code-signed with the hypervisor entitlement (a `go install`-ed daemon links Homebrew's libkrun, is unsigned and must be signed locally).
+  With the curl installer, add `MGIT_SANDBOX=1`: after it installs mgit, it names libkrunfw's licenses and source and asks before it downloads libkrunfw as a separate file ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#installing-libkrunfw-on-macos) has the details, including the default download location and the `MGIT_LIBKRUNFW_BASE` override). The release/brew daemon carries its own libkrun in `lib/` beside it — keep them together — and is code-signed with the hypervisor entitlement (a `go install`-ed daemon links a libkrun you provide, is unsigned and must be signed locally).
 - **Linux** requires `/dev/kvm` (read-writable by your user) and glibc 2.31+, and nothing else: the release archive carries libkrun and libkrunfw in `lib/` beside `mgit-sandboxd`, so extract the whole archive and keep them together. The kernel inside libkrunfw is GPL-2.0; its source is published with every release that bundles it ([docs/INSTALL-SANDBOX.md](docs/INSTALL-SANDBOX.md#the-linux-archive-and-what-it-carries)).
 - **Windows and Intel macOS** have no sandbox backend yet; core mgit runs without it.
 
@@ -421,7 +429,7 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 | Command | Description |
 |---------|-------------|
 | `mgit work PATH --task-id ID [--sandbox]` | Start an agent on a task: task-bound worktree + agent-shell wiring + optional sandbox |
-| `mgit worktree add PATH --task-id ID [--branch]` | Create an isolated worktree without the agent-shell wiring |
+| `mgit worktree add PATH --task-id ID [--branch]` | Create an isolated worktree without the agent-shell wiring. `--branch` takes an existing branch, or `task/<id>` (the only branch mgit creates); any other new name is refused |
 | `mgit worktree list [--porcelain]` | List active worktrees; a row whose directory is gone is marked `prunable` and the listing says to run `worktree prune`; `--json` carries it as a field |
 | `mgit worktree remove PATH [--force]` | Remove a worktree |
 | `mgit worktree prune [--dry-run]` | Remove stale worktree metadata |
@@ -437,7 +445,7 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 | `mgit sandbox launch --task-id ID --worktree PATH --image REF` | Register a sandbox for a task (the microVM boots on first use, and fails closed if its guest never comes up). Records the owning repository in `PATH/.mgit/sandbox-owner`, so mgit commands run from inside PATH reach this repository's daemon rather than a phantom repository of PATH's own |
 | `… --cpus N --memory-mb N --disk-quota-mb N` | Size this sandbox (also on `mgit work`). Unset takes the host policy default; above the policy's per-sandbox maximum the launch is **refused naming the limit**, never silently reduced |
 | `mgit sandbox exec --task-id ID -- <command>` | Execute one command in the task's sandbox as the daemon's own user inside the guest (so does `mgit run`); `--as-root` escalates one command to root, audited. When the guest cannot confirm the identity it ran as — a base composed before v0.6.7, or the container backend, which does not switch — the verb says `guest exec identity UNVERIFIED` on stderr (MGIT-151) |
-| `mgit sandbox shell --task-id ID` | Attach an interactive session (confined-agent mode) |
+| `mgit sandbox shell --task-id ID` | Attach an interactive session (confined-agent mode); unsupported on every backend in this build, where it is refused: use `mgit sandbox exec`, or `mgit work --sandbox` for an agent session (see docs/INSTALL-SANDBOX.md) |
 | `mgit sandbox land --task-id ID` | Pull + host-verify + land the sandbox's changes |
 | `mgit sandbox sync --task-id ID [--dry-run] [--force]` | Re-stage the host worktree into the running guest; `--dry-run` reports what would change (and every conflict) without touching it. A path only the guest changed is kept (a sync carries host changes); `--force` overwrites paths both sides changed. To discard a guest-only edit, change that path on the host and sync, or `sandbox remove --force` and relaunch (MGIT-193) |
 | `mgit sandbox status ID` / `list` / `remove ID` | Inspect or tear down sandboxes |

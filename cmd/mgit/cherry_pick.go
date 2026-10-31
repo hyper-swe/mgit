@@ -40,6 +40,10 @@ func cherryPickCmd() *cobra.Command {
 				return fmt.Errorf("cannot cherry-pick --onto from a linked worktree (bound to task %s)", app.BoundTask)
 			}
 
+			if err := app.Commit.RequireContentSource(ctx, args[0]); err != nil {
+				return fmt.Errorf("cherry-pick source: %w", err)
+			}
+
 			// --onto: switch to the target branch via the CHECKOUT service so the
 			// working tree is materialized to the target (and dirty trees are
 			// blocked) — a bare ref switch would leave disk reflecting the old

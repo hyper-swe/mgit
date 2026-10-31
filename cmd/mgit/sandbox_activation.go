@@ -110,23 +110,14 @@ func missingLibrary(log string) string {
 // links it because the backend package is CGO- and build-tag-gated: on a host
 // where this diagnosis matters, that package is exactly what failed to load.
 //
-// This hint is now the ONLY thing standing between a macOS user and a
-// sandbox: the brew formula deliberately no longer declares libkrun as a
-// dependency, because a third-party-tap dependency aborts the whole install
-// for everyone who does not already have it (MGIT-75). That makes getting
-// these commands right load-bearing, and the obvious ones do not work:
-//
-//   - `brew install libkrun` fails. Homebrew refuses to load a formula from
-//     an untrusted third-party tap, and the bare name `libkrun` does not
-//     match the formula's full name for its explicit-request escape hatch.
-//   - `brew install libkrun/krun/libkrun` fails too, one step later, on
-//     libkrunfw — libkrun's own dependency from the same tap. A transitive
-//     dependency cannot be named on the command line at all.
-//
-// Whole-tap `brew trust` is the only step that clears both, so it comes
-// first. All of this was established on a Homebrew prefix where libkrun was
-// genuinely absent; on a machine that already has it, none of these commands
-// has to load anything and they all appear to work.
+// On macOS the release's daemon carries libkrun in lib/, and libkrunfw comes
+// from the maintainers' own tap, hyper-swe/tap, as a dependency of the mgit
+// formula (the archive never carries it), or from install.sh's opt-in step.
+// Homebrew trusts a formula named on the command line, but it refuses to load
+// that formula's dependency from a tap nobody trusted, and no command-line
+// argument can name a dependency for it. Whole-tap `brew trust` is the step
+// that clears it, so it comes first. The libkrun/krun tap this hint used to
+// name is no longer part of the install. Refs: MGIT-306, MGIT-75
 //
 // On Linux none of that applies: the release archive carries libkrun and
 // libkrunfw beside the daemon, so the Linux remedy names where this daemon
@@ -149,14 +140,17 @@ func missingLibraryRemedy(lib, daemonPath, goos string) string {
 	if goos == "linux" {
 		return detail + linuxLibraryRemedy(lib, daemonPath) + "Full prerequisites: docs/INSTALL-SANDBOX.md"
 	}
-	// libkrunfw ships as a dependency of the libkrun formula, so one sequence
-	// covers either name.
+	// One sequence covers either name: upgrading mgit brings the release's
+	// libkrun and the libkrunfw dependency together.
 	if strings.HasPrefix(lib, "libkrun") {
-		detail += "Install the microVM hypervisor that runs your sandboxes (mgit does not\n" +
-			"install it for you — it is a third-party tap you have to trust first):\n" +
-			"  brew tap libkrun/krun\n" +
-			"  brew trust libkrun/krun\n" +
-			"  brew install libkrun\n"
+		detail += "mgit-sandboxd from the release carries libkrun in lib/ beside it. libkrunfw,\n" +
+			"the guest kernel library, comes from mgit's own Homebrew tap. Trust the tap,\n" +
+			"then upgrade mgit, which installs libkrunfw with it:\n" +
+			"  brew trust hyper-swe/tap\n" +
+			"  brew upgrade hyper-swe/tap/mgit\n" +
+			"If mgit is already current, install libkrunfw on its own:\n" +
+			"  brew install hyper-swe/tap/libkrunfw\n" +
+			"If you installed mgit with install.sh, run it again with MGIT_SANDBOX=1.\n"
 	}
 	return detail + "Full prerequisites: docs/INSTALL-SANDBOX.md"
 }
