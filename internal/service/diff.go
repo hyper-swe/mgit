@@ -188,3 +188,67 @@ func shortHash(h string) string {
 	}
 	return h[:8]
 }
+
+// TaskStepDiff is one delivered step of a task and the files it changed.
+type TaskStepDiff struct {
+	Record index.CommitRecord
+	Files  []model.FileDiff
+}
+
+// DiffTaskSteps returns the task's delivered steps in recorded order, each
+// with the files it changed relative to the step before it. The first step is
+// compared with its parent, the task's pinned fork base, the same base
+// DiffTask uses. A step that was retained but not delivered is not listed and
+// is never used as a comparison point, so a later step's files are measured
+// against the previous delivered step. Unlike DiffCommits it can list the
+// first step, whose parent is not itself a task commit. Refs: MGIT-297
+func (s *DiffService) DiffTaskSteps(ctx context.Context, taskID string) ([]TaskStepDiff, error) {
+	records, err := s.indexStore.GetContentCommits(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("diff task steps %s: get commits: %w", taskID, err)
+	}
+	if len(records) == 0 {
+		return nil, fmt.Errorf("diff task steps %s: %w", taskID, model.ErrTaskNotFound)
+	}
+	steps := make([]TaskStepDiff, 0, len(records))
+	for i, rec := range records {
+		commit, err := s.commitStore.GetCommit(ctx, rec.CommitHash)
+		if err != nil {
+			return nil, fmt.Errorf("diff task steps %s: step %d: %w", taskID, rec.Position, err)
+		}
+		var before string
+		if i == 0 {
+			if err := assertPinnedForkBase(ctx, s.indexStore, taskID, commit.ParentID); err != nil {
+				return nil, fmt.Errorf("diff task steps %s: %w", taskID, err)
+			}
+			// With no pinned base the check above passes, so also refuse a
+			// parent that is, or is built on, an undelivered land commit:
+			// the document would name it. Refs: MGIT-297
+			if commit.ParentID != "" {
+				if err := requireDeliverableHistory(ctx, s.indexStore, s.commitStore, commit.ParentID); err != nil {
+					return nil, fmt.Errorf("diff task steps %s: the first step is not known to be built on delivered history; its file list cannot be given without risking a description of an undelivered commit: %w",
+						taskID, model.ErrVerificationFailed)
+				}
+			}
+			before = commit.ParentID
+		} else {
+			// Each step is compared with the previous delivered step, so its
+			// git parent must be that step. A step built on a commit that was
+			// retained but not delivered would list that commit's files and
+			// blob ids under it, which DiffTask leaves out, so it is refused.
+			if commit.ParentID != records[i-1].CommitHash {
+				return nil, fmt.Errorf("diff task steps %s: step %d is built on a commit that was not delivered; its file list cannot be given without describing that commit: %w",
+					taskID, rec.Position, model.ErrVerificationFailed)
+			}
+			before = records[i-1].CommitHash
+		}
+		files := []model.FileDiff{}
+		if before != "" {
+			if files, err = s.diffStore.DiffCommits(ctx, before, rec.CommitHash); err != nil {
+				return nil, fmt.Errorf("diff task steps %s: step %d: %w", taskID, rec.Position, err)
+			}
+		}
+		steps = append(steps, TaskStepDiff{Record: rec, Files: files})
+	}
+	return steps, nil
+}
