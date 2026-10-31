@@ -33,7 +33,7 @@ Top level
 |---|---|---|
 | `schema_version` | integer | The format version. Always first. |
 | `task_id` | string | The task exported. |
-| `steps` | array of step | The task's micro-commits, in the order mgit recorded them. `[]` when there are none. |
+| `steps` | array of step | The task's delivered micro-commits, in the order mgit recorded them. A commit that mgit retained but did not deliver is not listed. |
 | `audit` | array of audit record | The task's audit-trail entries, oldest first. `[]` when there are none. |
 
 Step
@@ -48,8 +48,8 @@ Step
 | `created_at` | string | When the step was recorded, UTC, RFC 3339. |
 | `sandbox_id` | string, optional | The sandbox the step came from. Absent for a step recorded outside a sandbox. |
 | `commit_type` | string, optional | `normal`, `rollback`, `squash`, `merge` or `system`. |
-| `message` | string, optional | The commit message as recorded. A rollback's revert step is a step like any other, and its message carries the text given to `--reason`. |
-| `files` | array of file | The paths the step changed relative to its parent. `[]` when none. |
+| `message` | string, optional | The commit message as recorded. A rollback's revert step is a step like any other, and its message carries the text given to `--reason`. Absent when you export with `--omit-messages`. |
+| `files` | array of file | The paths the step changed compared with the previous listed step. For the first step, the comparison is with the task's fork base. `[]` when none. |
 
 File
 
@@ -71,15 +71,29 @@ Audit record
 | `commit_id` | string, optional | The commit the operation produced or acted on. |
 | `details` | string, optional | Present only for `SQUASH`, whose text mgit writes itself. |
 
+## Leave out step messages
+
+To export a document without any step message, add `--omit-messages`:
+
+```
+mgit export --task-id <id> --format history --omit-messages
+```
+
+Every step then has no `message` field, so neither commit messages nor rollback reasons
+are in the document. Everything else is unchanged, and `schema_version` stays the same
+because `message` is an optional field. The flag applies to `--format history` only; mgit
+refuses it with any other format.
+
 ## What it carries and what it leaves out
 
 The document is built from a fixed field list, so nothing is added by accident.
 
-It does carry every step's `message`. That includes the revert step a rollback records,
+By default, it does carry every step's `message`. That includes the revert step a rollback records,
 whose message holds the rollback reason as typed, so **a secret typed into a message or
 a `--reason` is in the export**. The same text is already shown by `mgit log`, written
 into the audit log, and included by `mgit squash --to-git` in the patch's commit message.
-Treat the export like those: do not put credentials in a commit message or a reason.
+Treat the export like those: do not put credentials in a commit message or a reason, or
+export with `--omit-messages`.
 
 It does not carry commit metadata, signatures, session ids, file contents or hunks,
 absolute host paths, or the `details` of an audit record other than the squash line.

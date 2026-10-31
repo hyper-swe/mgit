@@ -188,3 +188,50 @@ func shortHash(h string) string {
 	}
 	return h[:8]
 }
+
+// TaskStepDiff is one delivered step of a task and the files it changed.
+type TaskStepDiff struct {
+	Record index.CommitRecord
+	Files  []model.FileDiff
+}
+
+// DiffTaskSteps returns the task's delivered steps in recorded order, each
+// with the files it changed relative to the step before it. The first step is
+// compared with its parent, the task's pinned fork base, the same base
+// DiffTask uses. A step that was retained but not delivered is not listed and
+// is never used as a comparison point, so a later step's files are measured
+// against the previous delivered step. Unlike DiffCommits it can list the
+// first step, whose parent is not itself a task commit. Refs: MGIT-297
+func (s *DiffService) DiffTaskSteps(ctx context.Context, taskID string) ([]TaskStepDiff, error) {
+	records, err := s.indexStore.GetContentCommits(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("diff task steps %s: get commits: %w", taskID, err)
+	}
+	if len(records) == 0 {
+		return nil, fmt.Errorf("diff task steps %s: %w", taskID, model.ErrTaskNotFound)
+	}
+	steps := make([]TaskStepDiff, 0, len(records))
+	for i, rec := range records {
+		var before string
+		if i == 0 {
+			first, err := s.commitStore.GetCommit(ctx, rec.CommitHash)
+			if err != nil {
+				return nil, fmt.Errorf("diff task steps %s: get first commit: %w", taskID, err)
+			}
+			if err := assertPinnedForkBase(ctx, s.indexStore, taskID, first.ParentID); err != nil {
+				return nil, fmt.Errorf("diff task steps %s: %w", taskID, err)
+			}
+			before = first.ParentID
+		} else {
+			before = records[i-1].CommitHash
+		}
+		files := []model.FileDiff{}
+		if before != "" {
+			if files, err = s.diffStore.DiffCommits(ctx, before, rec.CommitHash); err != nil {
+				return nil, fmt.Errorf("diff task steps %s: step %d: %w", taskID, rec.Position, err)
+			}
+		}
+		steps = append(steps, TaskStepDiff{Record: rec, Files: files})
+	}
+	return steps, nil
+}

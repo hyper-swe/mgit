@@ -134,24 +134,21 @@ func buildExportPayload(ctx context.Context, app *App, format, taskID string, om
 // document described in docs/history-export.md. It is a READ like the other
 // formats. Refs: MGIT-297
 func exportHistory(ctx context.Context, app *App, taskID string, omitMessages bool) (exportPayload, error) {
-	records, err := app.Commit.GetTaskCommits(ctx, taskID)
+	// Only delivered steps are listed, and each one's files come from the
+	// admitted-content reader, so the document never describes content that
+	// was retained but not delivered. Refs: MGIT-297
+	delivered, err := app.Diff.DiffTaskSteps(ctx, taskID)
 	if err != nil {
 		return exportPayload{}, fmt.Errorf("export history: %w", err)
 	}
-	steps := make([]historyexport.Step, 0, len(records))
-	for _, rec := range records {
-		c, err := app.Commit.GetCommit(ctx, rec.CommitHash)
+	steps := make([]historyexport.Step, 0, len(delivered))
+	for _, d := range delivered {
+		c, err := app.Commit.GetCommit(ctx, d.Record.CommitHash)
 		if err != nil {
-			return exportPayload{}, fmt.Errorf("export history: read step %d (%s): %w", rec.Position, rec.CommitHash, err)
+			return exportPayload{}, fmt.Errorf("export history: read step %d (%s): %w", d.Record.Position, d.Record.CommitHash, err)
 		}
-		// GetCommit does not carry the step's file changes; they are the
-		// difference between the step and its parent.
-		if c.ParentID != "" {
-			if c.FileDiffs, err = app.Diff.DiffCommits(ctx, c.ParentID, rec.CommitHash); err != nil {
-				return exportPayload{}, fmt.Errorf("export history: files of step %d (%s): %w", rec.Position, rec.CommitHash, err)
-			}
-		}
-		step := historyexport.FromRecord(rec, c)
+		c.FileDiffs = d.Files
+		step := historyexport.FromRecord(d.Record, c)
 		if omitMessages {
 			step.Message = "" // the field is omitted from the document when empty
 		}
