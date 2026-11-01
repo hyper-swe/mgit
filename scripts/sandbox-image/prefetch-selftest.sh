@@ -4,7 +4,7 @@
 #
 # The server answers every plain GET with the full Content-Length and then
 # closes after the first CUT bytes — the shape of the 2026-08-23 mirror that
-# cut linux-6.12.91.tar.xz at 68.0 M of 141 M on every attempt — and serves a
+# cut linux-6.12.109.tar.xz at 68.0 M of 141 M on every attempt — and serves a
 # Range request fully. So a fetch that resumes completes on its second request,
 # and a fetch that restarts from zero never completes: the ONLY difference
 # between the two runs below is `-C -`. A third run serves the wrong bytes

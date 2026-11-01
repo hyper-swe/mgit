@@ -220,7 +220,7 @@ download's `checksums.txt`, and installs it beside libkrun in
 fetches nothing beyond mgit's own archive.
 
 By default the installer downloads libkrunfw from the same release as the
-mgit archive it just installed, where `libkrunfw_5.5.0_darwin_arm64.tar.gz`
+mgit archive it just installed, where `libkrunfw_5.6.2_darwin_arm64.tar.gz`
 and its `checksums.txt` are published. To use a mirror instead, set
 `MGIT_LIBKRUNFW_BASE` to a location that holds those two files. A
 curl-installed daemon also finds a Homebrew libkrunfw, so Homebrew works as

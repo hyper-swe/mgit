@@ -13,7 +13,7 @@
 # "krun_set_workdir: libkrun error -95" — measured 2026-08-11, CI run
 # 31482480288. Nothing about Linux was wrong; the library was simply a
 # different library from the one macOS is validated against. Pinning to the
-# versions Homebrew ships (libkrun 1.19.4 / libkrunfw 5.5.0) is what makes the
+# versions Homebrew shipped then (libkrun 1.19.4 / libkrunfw 5.5.0; libkrunfw has since moved to 5.6.2, MGIT-306.2) is what makes the
 # Linux column comparable to the macOS one instead of a race against upstream.
 #
 # Usage:  sudo scripts/sandbox-image/build-libkrun.sh [PREFIX]
