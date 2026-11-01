@@ -12,19 +12,19 @@ import (
 // prebuilt asset. The offer names that release and a contact address.
 // Refs: MGIT-306
 
-const libkrunfwPrebuiltSHA256 = "5bfae6efee63dbdf04a8fac2a69d772d9f900af2f54c4429b4acdfd6d86b9979"
+const libkrunfwPrebuiltSHA256 = "adef6739cc3bda2a1b57f04c08ccbfdf206a6c831d76b32de1beddc0e7984e86"
 
 // The libkrunfw source archive is one file with one digest: the tap release
-// libkrunfw-5.5.0 publishes it, and every mgit release attaches those exact
+// libkrunfw-5.6.2 publishes it, and every mgit release attaches those exact
 // bytes instead of building its own. Refs: MGIT-306
-const libkrunfwSourceSHA256 = "b0cbf1450269c80aea1dccbf440011deb2762a098b338c234079a6ef06456ead"
+const libkrunfwSourceSHA256 = "df45d649fcbd07a4d0ca03fa836b2f640fdcf9b40187f3eb7023259c6e83d582"
 
 const libkrunfwSourceContact = "swe@hyperswe.com"
 
 func TestPins_RecordTheLibkrunfwPrebuiltAssetAndItsDigest(t *testing.T) {
 	pins := readRepoFile(t, "scripts/sandbox-image/pins.env")
 	assert.Contains(t, pins, "LIBKRUNFW_PREBUILT_SHA256="+libkrunfwPrebuiltSHA256)
-	assert.Contains(t, pins, "LIBKRUNFW_PREBUILT_URL=https://github.com/containers/libkrunfw/releases/download/v5.5.0/libkrunfw-prebuilt-aarch64.tgz")
+	assert.Contains(t, pins, "LIBKRUNFW_PREBUILT_URL=https://github.com/containers/libkrunfw/releases/download/v5.6.2/libkrunfw-prebuilt-aarch64.tgz")
 }
 
 func TestE2EWorkflow_TheSourceAssetsHoldTheVerifiedPrebuiltKernelAsset(t *testing.T) {
@@ -54,7 +54,7 @@ func TestSourceOffers_NameTheReleaseAssetsAndTheContact(t *testing.T) {
 func TestPins_RecordTheOneLibkrunfwSourceArchiveAndItsDigest(t *testing.T) {
 	pins := readRepoFile(t, "scripts/sandbox-image/pins.env")
 	assert.Contains(t, pins, "LIBKRUNFW_SOURCE_SHA256="+libkrunfwSourceSHA256)
-	assert.Contains(t, pins, "LIBKRUNFW_SOURCE_URL=https://github.com/hyper-swe/homebrew-tap/releases/download/libkrunfw-5.5.0/libkrunfw-v5.5.0-source.tar.gz")
+	assert.Contains(t, pins, "LIBKRUNFW_SOURCE_URL=https://github.com/hyper-swe/homebrew-tap/releases/download/libkrunfw-5.6.2/libkrunfw-v5.6.2-source.tar.gz")
 }
 
 func TestE2EWorkflow_TheLibkrunfwSourceIsTheTapReleasesFileCheckedAgainstItsPin(t *testing.T) {

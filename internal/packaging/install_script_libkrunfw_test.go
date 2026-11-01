@@ -25,7 +25,7 @@ import (
 // source, verifies its checksum, and installs it beside libkrun in
 // <prefix>/lib/mgit with its notices. Refs: MGIT-306
 
-const libkrunfwTestVersion = "5.5.0"
+const libkrunfwTestVersion = "5.6.2"
 
 // libkrunfwNotices are the files the opt-in tarball carries beside the dylib.
 var libkrunfwNotices = []string{"LICENSE-GPL-2.0-only", "LICENSE-LGPL-2.1-only", "NOTICE.txt", "SOURCE-OFFER.txt"}
@@ -122,7 +122,7 @@ func TestInstallScript_MacOS_SandboxEnabledAndAccepted_InstallsLibkrunfwBesideLi
 	for _, want := range []string{
 		"libkrunfw " + libkrunfwTestVersion,
 		"https://github.com/libkrun/libkrunfw/releases/tag/v" + libkrunfwTestVersion,
-		"https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.91.tar.xz",
+		"https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.109.tar.xz",
 	} {
 		assert.Contains(t, out[:fetch], want, "the notice before the download must name %q", want)
 	}
