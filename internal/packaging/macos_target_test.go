@@ -14,22 +14,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// macos-14 images are retired and browned out; every macOS job runs on the
-// pinned supported image instead.
-func TestWorkflows_NoMacOS14Runner(t *testing.T) {
+// Every macOS job runs on the one supported image the project moved to
+// (the move is made once), never an older one that is retired or browned out.
+func TestWorkflows_MacOSJobsRunOnMacOS26(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join(repoRoot(t), ".github", "workflows", "*.yml"))
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
+	seen := 0
 	for _, f := range files {
 		b, err := os.ReadFile(f) //nolint:gosec // repo workflow files
 		require.NoError(t, err)
 		for i, line := range strings.Split(string(b), "\n") {
-			assert.NotContainsf(t, line, "macos-14", "%s:%d runs on a retired runner image", filepath.Base(f), i+1)
+			if strings.Contains(line, "runs-on:") && strings.Contains(line, "macos-") {
+				seen++
+				assert.Containsf(t, line, "runs-on: macos-26", "%s:%d is not on the supported macOS image", filepath.Base(f), i+1)
+			}
 		}
 	}
+	assert.Equal(t, 6, seen, "the six macOS jobs")
 }
 
-// A binary built on macos-15 would default to a macOS 15 minimum and stop
+// A binary built on macos-26 would default to a macOS 26 minimum and stop
 // running on macOS 14. The build pins the target, keys cgo on it (Go's build
 // cache does not key on the environment variable), and verifies the result.
 func TestDarwinBuild_PinsTheDeploymentTarget(t *testing.T) {
