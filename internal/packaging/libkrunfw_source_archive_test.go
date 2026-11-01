@@ -75,3 +75,16 @@ func TestReleaseWorkflow_RequiresThePublishedLibkrunfwSourceToCarryThePinnedDige
 	assert.Contains(t, wf, `"^$LIBKRUNFW_SOURCE_SHA256  libkrunfw-$LIBKRUNFW_VERSION-source.tar.gz\$"`,
 		"the post-release check must require checksums.txt to list the libkrunfw source archive at the pinned digest")
 }
+
+// libkrunfw v5.6.2's Makefile installs into lib/<arch>-linux-gnu on a Debian
+// family system (v5.5.0 used lib64), so the Linux build, which looks in
+// $prefix/lib64, found no libkrunfw.so. The install step names the directory
+// itself, and the script checks the library landed there before it reports
+// success. Refs: MGIT-306.2
+func TestBuildLibkrun_LibkrunfwInstallsIntoLib64AndIsChecked(t *testing.T) {
+	sh := readRepoFile(t, "scripts/sandbox-image/build-libkrun.sh")
+	assert.Contains(t, sh, `make PREFIX="$prefix" LIBDIR_Linux=lib64 install`,
+		"libkrunfw's install must be told the lib64 directory the later steps read")
+	assert.Contains(t, sh, `"$libdir"/libkrunfw.so.*`,
+		"the script must check libkrunfw is under the libdir, not only libkrun")
+}
