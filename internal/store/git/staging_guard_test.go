@@ -166,6 +166,9 @@ func TestAssertNotOversized_ThisRepositoryRealContent_DoesNotFire(t *testing.T) 
 	_, thisFile, _, ok := runtime.Caller(0)
 	require.True(t, ok, "locate this test file to find the repository root")
 	root := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
+	if checkoutIsShallow(root) {
+		t.Skip("shallow checkout: git cannot say what is tracked, so the walk fails once any ignored file is present; CI checks out full history. Refs: MGIT-329.1")
+	}
 
 	r := &Repository{root: root}
 	files, err := r.listWorkingFiles()
@@ -222,4 +225,26 @@ func TestOversizedError_Message_IsSingleSelfContainedRefusal(t *testing.T) {
 	assert.True(t, strings.HasPrefix(msg, model.ErrFileTooLarge.Error()),
 		"the sentinel must lead the message: %s", msg)
 	assert.Contains(t, msg, "build/mgit is 20.7 MB (limit 5.0 MB)")
+}
+
+// A shallow checkout cannot say what the repository tracks, so the real-content
+// walk fails there as soon as any ignored file sits in the tree, and other
+// tests leave such files behind: the verdict then depends on which tests ran
+// alongside. The checkout is named up front instead. Refs: MGIT-329.1
+func TestCheckoutIsShallow_ShallowMarker_Detected(t *testing.T) {
+	full := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(full, ".git"), 0o750))
+	assert.False(t, checkoutIsShallow(full), "a checkout with no shallow marker is full")
+
+	shallow := t.TempDir()
+	plantUnreadableGit(t, shallow)
+	assert.True(t, checkoutIsShallow(shallow), "a .git/shallow marker means a shallow checkout")
+
+	assert.False(t, checkoutIsShallow(t.TempDir()), "no .git at all is not reported as shallow")
+}
+
+// checkoutIsShallow reports whether root's git carries a shallow marker.
+func checkoutIsShallow(root string) bool {
+	_, err := os.Stat(filepath.Join(root, ".git", "shallow"))
+	return err == nil
 }
