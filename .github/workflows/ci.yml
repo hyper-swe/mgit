@@ -219,7 +219,7 @@ jobs:
   # comment for why). Refs: ADR-010, MGIT-61.8
   libkrun:
     name: libkrun backend (tagged build, macOS)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -302,7 +302,7 @@ jobs:
   # Refs: MGIT-75, MGIT-69, MGIT-70
   brew-install-no-libkrun:
     name: brew install without libkrun (first-hour macOS install)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

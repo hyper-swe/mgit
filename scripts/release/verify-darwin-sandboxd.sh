@@ -50,6 +50,16 @@ for d in $(otool -L "$krun" | tail -n +2 | awk '{print $1}'); do
 done
 pass "libkrun.1.dylib is @rpath/libkrun.1.dylib and links only the system"
 
+# A binary built on a newer runner image defaults its minimum to that image's
+# macOS. The shipped files must still start on the oldest supported macOS.
+# Refs: HSWE-17.7.4
+here="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/sandbox-image/pins.env
+. "$here/../sandbox-image/pins.env"
+: "${MACOS_MIN_VERSION:?pins.env must define MACOS_MIN_VERSION}"
+bash "$here/macho-min-check.sh" "$MACOS_MIN_VERSION" "$daemon" "$krun" || fail "a shipped file needs a newer macOS than $MACOS_MIN_VERSION"
+pass "mgit-sandboxd and libkrun.1.dylib run on macOS $MACOS_MIN_VERSION and later"
+
 nm -gU "$krun" | grep -q ' _krun_add_net_unixgram$' ||
 	fail "libkrun.1.dylib was built WITHOUT networking (no krun_add_net_unixgram): every guest would fall back to TSI"
 pass "libkrun exports krun_add_net_unixgram (built with NET=1)"
