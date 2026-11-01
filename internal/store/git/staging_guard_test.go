@@ -166,6 +166,9 @@ func TestAssertNotOversized_ThisRepositoryRealContent_DoesNotFire(t *testing.T) 
 	_, thisFile, _, ok := runtime.Caller(0)
 	require.True(t, ok, "locate this test file to find the repository root")
 	root := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
+	if checkoutIsShallow(root) {
+		t.Skip("shallow checkout: git cannot say what is tracked, so the walk fails once any ignored file is present; CI checks out full history. Refs: MGIT-329.1")
+	}
 
 	r := &Repository{root: root}
 	files, err := r.listWorkingFiles()
@@ -238,4 +241,10 @@ func TestCheckoutIsShallow_ShallowMarker_Detected(t *testing.T) {
 	assert.True(t, checkoutIsShallow(shallow), "a .git/shallow marker means a shallow checkout")
 
 	assert.False(t, checkoutIsShallow(t.TempDir()), "no .git at all is not reported as shallow")
+}
+
+// checkoutIsShallow reports whether root's git carries a shallow marker.
+func checkoutIsShallow(root string) bool {
+	_, err := os.Stat(filepath.Join(root, ".git", "shallow"))
+	return err == nil
 }
