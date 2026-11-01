@@ -701,7 +701,7 @@ func (m *Manager) execUntilTheGuestAnswers(
 
 // execOnce performs a single dial-and-run exchange.
 func (m *Manager) execOnce(
-	ctx context.Context, id string, req model.ExecRequest,
+	ctx context.Context, id string, req model.ExecRequest, probe ...*probeSink,
 ) (execwire.Result, []byte, []byte, error) {
 	conn, err := m.dialGuestReady(ctx, id)
 	if err != nil {
@@ -711,9 +711,31 @@ func (m *Manager) execOnce(
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
+	if len(probe) > 0 {
+		// The readiness probe: output goes to a capped sink, never to memory.
+		result, err := guestexec.Run(conn, req, probe[0], probe[0])
+		return result, nil, nil, err
+	}
 	var stdout, stderr bytes.Buffer
 	result, err := guestexec.Run(conn, req, &stdout, &stderr)
 	return result, stdout.Bytes(), stderr.Bytes(), err
+}
+
+// probeSink discards the guest's output to the readiness probe while counting
+// it, and fails the write that passes the cap, which aborts the read. It holds
+// nothing, so a flood is never accumulated. Refs: HSWE-17.7.2
+type probeSink struct {
+	bytes, frames int
+}
+
+func (p *probeSink) Write(b []byte) (int, error) {
+	p.frames++
+	p.bytes += len(b)
+	if p.bytes > probeOutputCapBytes || p.frames > probeFrameCap {
+		return 0, fmt.Errorf("%w: the guest sent more than %d KiB in answer to the readiness probe "+
+			"and was refused (a probe reply is a few bytes)", model.ErrGuestProbeOutput, probeOutputCapBytes>>10)
+	}
+	return len(b), nil
 }
 
 // isSilentDisconnect reports whether the guest dropped the connection having
@@ -791,6 +813,14 @@ func dropSuspect(err error) string {
 	return " (suspect: the guest process exited or crashed mid-command; the guest matched this " +
 		"daemon's exec protocol at launch, so this is not version skew)"
 }
+
+// The readiness probe's reply is a refusal of a few bytes. These bound what the
+// host will read in answer to it; a guest sending more is refused by name.
+// Refs: HSWE-17.7.2
+const (
+	probeOutputCapBytes = 64 << 10 // total stdout+stderr bytes
+	probeFrameCap       = 256      // output frames, empty ones included
+)
 
 // maxGuestBuildChars bounds the guest-supplied build string quoted in an error.
 const maxGuestBuildChars = 64
@@ -871,8 +901,11 @@ func (m *Manager) awaitGuestServing(ctx context.Context, id string) error {
 		// accepts the connection and says nothing cannot hold the launch past
 		// the readiness window whatever the caller's context allows.
 		probeCtx, cancel := context.WithTimeout(ctx, m.cfg.GuestReadyTimeout)
-		result, _, _, err := m.execOnce(probeCtx, id, req)
+		result, _, _, err := m.execOnce(probeCtx, id, req, &probeSink{})
 		cancel()
+		if errors.Is(err, model.ErrGuestProbeOutput) {
+			return err // final, never retried
+		}
 		// READY means the GUEST answered: either it ran the probe (it will not)
 		// or, as expected, it replied refusing to. Anything else — a dial that
 		// never reaches a listener, a silent disconnect, a mangled frame — is
