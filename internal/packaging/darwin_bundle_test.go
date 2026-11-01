@@ -112,7 +112,7 @@ func TestDarwinAssembler_BuildsThePatchedLibkrunAndVerifiesItsOutput(t *testing.
 func TestE2EWorkflow_BuildsTheDarwinDaemonOnMacOS(t *testing.T) {
 	job := jobBlock(t, readRepoFile(t, ".github/workflows/e2e.yml"), "darwin-sandboxd")
 	for _, want := range []string{
-		"runs-on: macos-14",
+		"runs-on: macos-15",
 		"fetch-depth: 0",
 		`v="${GITHUB_REF_NAME#v}"`,
 		"scripts/release/build-darwin-sandboxd.sh",

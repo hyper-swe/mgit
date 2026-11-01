@@ -1,0 +1,157 @@
+package packaging
+
+// The macOS runner image and the deployment target of what it builds.
+// Refs: HSWE-17.7.4
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// macos-14 images are retired and browned out; every macOS job runs on the
+// pinned supported image instead.
+func TestWorkflows_NoMacOS14Runner(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join(repoRoot(t), ".github", "workflows", "*.yml"))
+	require.NoError(t, err)
+	require.NotEmpty(t, files)
+	for _, f := range files {
+		b, err := os.ReadFile(f) //nolint:gosec // repo workflow files
+		require.NoError(t, err)
+		for i, line := range strings.Split(string(b), "\n") {
+			assert.NotContainsf(t, line, "macos-14", "%s:%d runs on a retired runner image", filepath.Base(f), i+1)
+		}
+	}
+}
+
+// A binary built on macos-15 would default to a macOS 15 minimum and stop
+// running on macOS 14. The build pins the target, keys cgo on it (Go's build
+// cache does not key on the environment variable), and verifies the result.
+func TestDarwinBuild_PinsTheDeploymentTarget(t *testing.T) {
+	pins := readRepoFile(t, "scripts/sandbox-image/pins.env")
+	assert.Equal(t, "14.0", pinValue(t, pins, "MACOS_MIN_VERSION"))
+	build := readRepoFile(t, "scripts/release/build-darwin-sandboxd.sh")
+	for _, want := range []string{
+		`MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN_VERSION"`,
+		`-mmacosx-version-min=$MACOS_MIN_VERSION`,
+		"CGO_CFLAGS", "CGO_LDFLAGS",
+		"macho-min-check.sh",
+		"link-warning-check.sh",
+	} {
+		assert.Contains(t, build, want)
+	}
+	fw := readRepoFile(t, "scripts/release/build-darwin-libkrunfw.sh")
+	assert.Contains(t, fw, `MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN_VERSION"`)
+	assert.Contains(t, fw, "macho-min-check.sh")
+	verify := readRepoFile(t, "scripts/release/verify-darwin-sandboxd.sh")
+	assert.Contains(t, verify, "macho-min-check.sh", "the verifier checks the shipped files, not only the build")
+}
+
+// fakeOtool installs an otool that prints the given load commands for -l.
+func fakeOtool(t *testing.T, loadCommands string) string {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\ncat <<'EOF'\n" + loadCommands + "\nEOF\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "otool"), []byte(script), 0o755)) //nolint:gosec // test stub
+	return dir
+}
+
+func runMinCheck(t *testing.T, loadCommands string) (string, error) {
+	t.Helper()
+	bin := fakeOtool(t, loadCommands)
+	file := filepath.Join(t.TempDir(), "x")
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0o600))
+	cmd := exec.Command("bash", filepath.Join(repoRoot(t), "scripts", "release", "macho-min-check.sh"), "14.0", file) //nolint:gosec // repo script
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func buildVersion(minos string) string {
+	return "Load command 9\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n platform 1\n    minos " + minos + "\n      sdk 15.2\n"
+}
+
+func TestMachoMinCheck(t *testing.T) {
+	passes := map[string]string{
+		"exactly the minimum": buildVersion("14.0"),
+		"older than minimum":  buildVersion("11.0"),
+		"old-style version":   "Load command 9\n      cmd LC_VERSION_MIN_MACOSX\n  cmdsize 16\n  version 13.0\n      sdk 14.0\n",
+	}
+	for name, lc := range passes {
+		t.Run("pass/"+name, func(t *testing.T) {
+			out, err := runMinCheck(t, lc)
+			assert.NoError(t, err, out)
+		})
+	}
+	fails := map[string]string{
+		"newer than the minimum": buildVersion("15.0"),
+		"patch newer":            buildVersion("14.0.1"),
+		"no minimum recorded":    "Load command 1\n      cmd LC_SEGMENT_64\n",
+	}
+	for name, lc := range fails {
+		t.Run("fail/"+name, func(t *testing.T) {
+			out, err := runMinCheck(t, lc)
+			assert.Error(t, err, out)
+		})
+	}
+}
+
+func runLinkCheck(t *testing.T, log string) (string, error) {
+	t.Helper()
+	f := filepath.Join(t.TempDir(), "link.log")
+	require.NoError(t, os.WriteFile(f, []byte(log), 0o600))
+	out, err := exec.Command("bash", filepath.Join(repoRoot(t), "scripts", "release", "link-warning-check.sh"), f).CombinedOutput() //nolint:gosec // repo script
+	return string(out), err
+}
+
+// The real text Apple's ld prints, one line, as captured from a link of a
+// macOS 15 object against a macOS 14 target.
+const realLdWarning = "# github.com/hyper-swe/mgit/cmd/mgit-sandboxd\n" +
+	"ld: warning: object file (/tmp/go-link-123/000004.o) was built for newer 'macOS' version (15.0) than being linked (14.0)\n"
+
+func TestLinkWarningCheck(t *testing.T) {
+	t.Run("fails on the real ld warning", func(t *testing.T) {
+		out, err := runLinkCheck(t, realLdWarning)
+		assert.Error(t, err, out)
+	})
+	t.Run("fails when the warning wraps across lines", func(t *testing.T) {
+		out, err := runLinkCheck(t, "ld: warning: object file (a.o) was built for newer 'macOS' version (15.0)\n  than being linked (14.0)\n")
+		assert.Error(t, err, out)
+	})
+	t.Run("passes a clean link log", func(t *testing.T) {
+		out, err := runLinkCheck(t, "# github.com/hyper-swe/mgit/cmd/mgit-sandboxd\nld: warning: ignoring duplicate libraries: '-lobjc'\n")
+		assert.NoError(t, err, out)
+	})
+}
+
+// Setting CGO_CFLAGS / CGO_LDFLAGS replaces Go's default "-O2 -g", so the pinned
+// values must carry them or the shipped daemon's C is unoptimised and has no
+// debug info.
+func TestDarwinBuild_KeepsGosDefaultCgoOptimisation(t *testing.T) {
+	build := readRepoFile(t, "scripts/release/build-darwin-sandboxd.sh")
+	assert.Contains(t, build, `CGO_CFLAGS="-O2 -g -mmacosx-version-min=$MACOS_MIN_VERSION"`)
+	assert.Contains(t, build, `CGO_LDFLAGS="-O2 -g -mmacosx-version-min=$MACOS_MIN_VERSION `)
+}
+
+// The checks only protect the release if the build actually runs them, and a
+// commented-out call keeps every other test green. Each must be a live line.
+func TestDarwinBuild_RunsItsChecks(t *testing.T) {
+	build := readRepoFile(t, "scripts/release/build-darwin-sandboxd.sh")
+	live := map[string]bool{}
+	for _, line := range strings.Split(build, "\n") {
+		if l := strings.TrimSpace(line); !strings.HasPrefix(l, "#") {
+			live[l] = true
+		}
+	}
+	for _, want := range []string{
+		`bash "$here/link-warning-check.sh" "$work/link.log"`,
+		`bash "$here/macho-min-check.sh" "$MACOS_MIN_VERSION" "$out/mgit-sandboxd" "$out/lib/libkrun.1.dylib"`,
+	} {
+		assert.Truef(t, live[want], "the build must run %s as a live line", want)
+	}
+}
