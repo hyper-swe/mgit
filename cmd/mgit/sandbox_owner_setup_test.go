@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,7 +20,7 @@ import (
 
 func TestOwnerSetupRealCLIRefusal(t *testing.T) {
 	bin := buildMgitTestBinary(t)
-	for _, verb := range []string{"base from", "image add"} {
+	for _, verb := range []string{"base from", "image add", "image install", "image install remote", "image init"} {
 		for _, marker := range []string{"linked", "sandbox"} {
 			for _, trust := range []bool{false, true} {
 				name := verb + "/" + marker + "/absent-trust"
@@ -37,6 +39,7 @@ func TestOwnerSetupRealCLIRefusal(t *testing.T) {
 					require.NoError(t, os.Mkdir(nested, 0o700))
 					kernel, rootfs := writeImageFiles(t)
 					bins := fakeGuestBins(t)
+					bundle := ownerSetupBundle(t)
 					cache := os.Getenv("MGIT_BASE_CACHE")
 					var requests atomic.Int64
 					srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -44,7 +47,7 @@ func TestOwnerSetupRealCLIRefusal(t *testing.T) {
 						http.Error(w, "unexpected registry request", http.StatusForbidden)
 					}))
 					defer srv.Close()
-					roots := []string{repo, wt, cache, filepath.Dir(kernel), bins}
+					roots := []string{repo, wt, cache, filepath.Dir(kernel), bins, bundle}
 					before := make([]map[string]string, len(roots))
 					for i, root := range roots {
 						before[i] = baseOwnerSnapshot(t, root)
@@ -54,6 +57,14 @@ func TestOwnerSetupRealCLIRefusal(t *testing.T) {
 						if verb == "base from" {
 							args = []string{"sandbox", "base", "from", strings.TrimPrefix(srv.URL, "http://") + "/acme/base:test", "--plain-http", "--guest-bin-dir", bins, "--json"}
 						}
+						switch verb {
+						case "image install":
+							args = []string{"sandbox", "image", "install", "--from", bundle, "--json"}
+						case "image install remote":
+							args = []string{"sandbox", "image", "install", "--from", srv.URL, "--json"}
+						case "image init":
+							args = []string{"sandbox", "image", "init"}
+						}
 						ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 						cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // test-built binary and fixture arguments
 						cmd.Dir = cwd
@@ -62,7 +73,7 @@ func TestOwnerSetupRealCLIRefusal(t *testing.T) {
 						assert.Error(t, err)
 						assert.Contains(t, string(output), canonicalPath(repo))
 						assert.Contains(t, string(output), canonicalPath(wt))
-						assert.Contains(t, string(output), "run `mgit sandbox "+verb+"`")
+						assert.Contains(t, string(output), "run `mgit sandbox "+strings.TrimSuffix(verb, " remote")+"`")
 						assert.NotContains(t, string(output), "image_ref")
 						assert.Zero(t, requests.Load(), "refusal must precede registry traffic")
 						for i, root := range roots {
@@ -90,8 +101,13 @@ func TestOwnerSetupExplicitOwner(t *testing.T) {
 				cwd = filepath.Join(t.TempDir(), "alias")
 				require.NoError(t, os.Symlink(repo, cwd))
 			}
+			_, err = runImage(t, cwd, "init")
+			require.NoError(t, err)
+			out, err := runImage(t, cwd, "install", "--from", ownerSetupBundle(t), "--json")
+			require.NoError(t, err)
+			assert.Contains(t, out, "image_ref")
 			kernel, rootfs := writeImageFiles(t)
-			out, err := runImage(t, cwd, "add", "--name", "control", "--kernel", kernel, "--rootfs", rootfs, "--json")
+			out, err = runImage(t, cwd, "add", "--name", "control", "--kernel", kernel, "--rootfs", rootfs, "--json")
 			require.NoError(t, err)
 			assert.Contains(t, out, "image_ref")
 			srv, ref := fakeImageServer(t, map[string]string{"bin/sh": "#!/bin/sh", "etc/os-release": "ID=alpine"})
@@ -101,4 +117,15 @@ func TestOwnerSetupExplicitOwner(t *testing.T) {
 			assert.Contains(t, out, "image_ref")
 		})
 	}
+}
+
+func ownerSetupBundle(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	kernel, rootfs := []byte("fixture-kernel"), []byte("fixture-rootfs")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "vmlinux"), kernel, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rootfs"), rootfs, 0o600))
+	manifest := fmt.Sprintf(`{"schema":1,"images":{%q:{"kernel":"vmlinux","rootfs":"rootfs","kernel_sha256":%q,"rootfs_sha256":%q}}}`, runtime.GOOS+"/"+runtime.GOARCH, sha256Hex(kernel), sha256Hex(rootfs))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(manifest), 0o600))
+	return dir
 }
