@@ -95,7 +95,7 @@ func sandboxBaseSetCmd() *cobra.Command {
 // bring-your-own contract — which is also why a tree inside the repository is
 // refused rather than quietly relocated. Refs: MGIT-61.15, MGIT-147
 func setRepoGuestBase(cmd *cobra.Command, dir string, opts composeOptions) (ref, baseDir string, err error) {
-	hostRoot, err := baseSetHostRoot()
+	hostRoot, err := ownerSetupHostRoot("base set")
 	if err != nil {
 		return "", "", err
 	}
@@ -143,9 +143,9 @@ func setRepoGuestBase(cmd *cobra.Command, dir string, opts composeOptions) (ref,
 	return ref, baseDir, nil
 }
 
-// baseSetHostRoot prevents an indirect worktree operation from changing the
+// ownerSetupHostRoot prevents an indirect setup operation from changing the
 // shared owner's pin. Other sandbox commands retain their owner routing.
-func baseSetHostRoot() (string, error) {
+func ownerSetupHostRoot(operation string) (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -160,7 +160,7 @@ func baseSetHostRoot() (string, error) {
 	}
 	root, owner = canonicalPath(root), canonicalPath(owner)
 	if root != owner {
-		return "", fmt.Errorf("base set: %q belongs to owner repository %q; the guest base pin is shared. No changes made; run `mgit sandbox base set` from the owner repository %q", root, owner, owner)
+		return "", fmt.Errorf("%s: %q belongs to owner repository %q; the guest image pin is shared. No changes made; run `mgit sandbox %s` from the owner repository %q", operation, root, owner, operation, owner)
 	}
 	return filepath.Join(owner, ".mgit", "sandbox"), nil
 }
@@ -231,7 +231,8 @@ func sandboxBaseFromCmd() *cobra.Command {
 		Long: "Pulls a public OCI image, composes its layers into a guest base in this\n" +
 			"machine's base cache, injects mgit and mgit-guest, then pins the composed\n" +
 			"tree by content digest and signs that digest into this repo's images.lock.\n" +
-			"No base bytes are written inside the repository.\n\n" +
+			"No base bytes are written inside the repository. Run from the owning\n" +
+			"repository or an ordinary subdirectory, not a linked worktree or sandbox-owned directory.\n\n" +
 			"With no reference, the base this release was smoke-tested with is composed,\n" +
 			"pulled BY DIGEST: every host that recomposes under this release gets the\n" +
 			"same bytes, whatever the tag points at today. `mgit sandbox base resolve`\n" +
@@ -255,6 +256,9 @@ func sandboxBaseFromCmd() *cobra.Command {
 			"the base contains.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := ownerSetupHostRoot("base from"); err != nil {
+				return err
+			}
 			opts := composeOptions{name: name, guestBinDir: guestBinDir, plainHTTP: plainHTTP}
 			refArg, err := composeRefOrRelease(cmd, args)
 			if err != nil {
@@ -423,7 +427,7 @@ type composeEnv struct {
 // openComposeEnv resolves that environment, migrating an older mgit's in-tree
 // base out of the repository on the way. Refs: MGIT-147, MGIT-65, FR-17.38
 func openComposeEnv(cmd *cobra.Command) (composeEnv, error) {
-	hostRoot, err := sandboxHostRoot()
+	hostRoot, err := ownerSetupHostRoot("base from")
 	if err != nil {
 		return composeEnv{}, err
 	}

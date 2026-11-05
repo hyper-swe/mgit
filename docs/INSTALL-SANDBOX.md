@@ -660,6 +660,14 @@ guest base with `mgit sandbox base from <image>`
 Run the command it names, then launch again. The protocol number changes only
 when the two ends can no longer talk, so most upgrades need no recompose.
 
+### Repository context for image setup
+
+Run `sandbox base from`, `sandbox base set`, and `sandbox image add` from the
+owning repository or one of its ordinary subdirectories. These commands
+change a shared repository pin. From a linked worktree or sandbox-owned
+directory they refuse before modifying files or contacting an image registry,
+and name the owner repository to run them from.
+
 ### Bring your own directory
 
 If you already have a Linux userspace tree — debootstrap output, an unpacked
