@@ -187,6 +187,9 @@ func sandboxLaunchCmd(connect connectFunc) *cobra.Command {
 			if _, err := model.ParseTaskID(task); err != nil {
 				return err
 			}
+			if err := sandboxPlatformRefusal(sandboxHostOS); err != nil {
+				return err
+			}
 			if image == "" {
 				var err error
 				if image, err = repoGuestBaseRef(cmd.OutOrStdout()); err != nil {

@@ -284,6 +284,11 @@ func productionSandboxConnect(ctx context.Context) (sandboxClient, error) {
 // serve (`mgit serve --project`): keying the daemon on ITS cwd would address a
 // different repo's sandboxes, or none. Refs: MGIT-57, MGIT-60, MGIT-76
 func sandboxConnectFor(ctx context.Context, dir string) (sandboxClient, error) {
+	// First, before any repository or daemon lookup: on a platform with no
+	// backend the reason is the answer, not a later "daemon not found".
+	if err := sandboxPlatformRefusal(sandboxHostOS); err != nil {
+		return nil, err
+	}
 	// Resolve the OWNING repo, not the raw directory: from inside a linked
 	// worktree (whose .mgit is a directory holding only the marker + shims) the
 	// sandbox daemon, socket key, and host root all belong to the SHARED PARENT
