@@ -11,6 +11,14 @@ import (
 // same named refusal after that crossing without treating every handshake
 // error as a diagnosed version mismatch.
 func isGuestVersionSkew(err error) bool {
-	return err != nil && (errors.Is(err, model.ErrGuestVersionSkew) ||
-		strings.Contains(err.Error(), model.ErrGuestVersionSkew.Error()))
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, model.ErrGuestVersionSkew) {
+		return true
+	}
+	// Console output is evidence to display, not the daemon's diagnosis.
+	// A guest can print the same sentence during an unrelated launch failure.
+	cause, _, _ := strings.Cut(err.Error(), "guest console (tail):")
+	return strings.Contains(cause, model.ErrGuestVersionSkew.Error())
 }

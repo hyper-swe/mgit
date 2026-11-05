@@ -54,6 +54,9 @@ func TestGuestHandshakeRealCLI(t *testing.T) {
 		{"old_guest", guestHandshakeRefusal, false},
 		{"other_protocol", "libkrun launch: " + model.ErrGuestVersionSkew.Error() + ": the guest speaks exec protocol 99 (this daemon speaks 1); recompose this repository's guest base with `mgit sandbox base from <image>`", false},
 		{"unknown", "an unknown handshake failure", true},
+		{"unknown_tail_only", "libkrun launch: unexplained failure\nguest console (tail):\n" + model.ErrGuestVersionSkew.Error(), true},
+		{"ordinary_tail", "libkrun launch: unexplained failure\nguest console (tail):\nordinary output", true},
+		{"never_served_tail_only", model.ErrGuestNotServing.Error() + "\nguest console (tail):\n" + model.ErrGuestVersionSkew.Error(), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newRepo(t)
@@ -98,6 +101,9 @@ func TestGuestHandshakeRealCLI(t *testing.T) {
 				assert.Contains(t, string(output), tc.failure)
 				if tc.unidentified {
 					assert.Contains(t, string(output), "could not identify")
+					if tc.name == "never_served_tail_only" {
+						assert.Contains(t, string(output), "the guest never started")
+					}
 				} else {
 					assert.NotContains(t, string(output), "could not identify")
 					assert.NotContains(t, string(output), "stopped answering mid-command")
