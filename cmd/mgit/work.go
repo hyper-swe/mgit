@@ -214,7 +214,11 @@ func workSetup(ctx context.Context, out io.Writer, deps workDeps, opts workOptio
 		_, _ = fmt.Fprintf(out, "Wired agent routing (CLAUDE.md + .claude/settings.json -> mgit run)\n")
 	}
 	// One machine-parseable line stating containment status (MGIT-47).
-	_, _ = fmt.Fprintln(out, agentadapter.ContainmentStatusLine(posture))
+	if contained && sandboxPlatformRefusal(sandboxHostOS) != nil {
+		_, _ = fmt.Fprintln(out, "Containment: requested — sandbox unavailable on this platform; commands routed through `mgit run` fail closed")
+	} else {
+		_, _ = fmt.Fprintln(out, agentadapter.ContainmentStatusLine(posture))
+	}
 
 	// Containment status describes the GUEST. It says nothing about whether a
 	// given agent can step around it, and printing it alone is what let an

@@ -8,7 +8,9 @@
    `ErrSandboxBackendUnavailable`.
 3. Run `mgit work <new-path> --task-id T-2 --sandbox`, also without `--image`.
    The worktree and routing setup still succeed. The sandbox launch reports
-   the unavailable backend, not instructions to compose a guest base.
+   the unavailable backend, not instructions to compose a guest base. The
+   containment status says the sandbox is unavailable on this platform; it does
+   not tell the user to launch it there.
 4. Commands that connect to the sandbox daemon also report the unavailable
    backend. Repository, image, base and daemon-management commands are not
    covered by this refusal. Version control commands remain available.

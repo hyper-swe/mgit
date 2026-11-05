@@ -35,7 +35,7 @@ func TestSandboxPlatformRefusal_ByPlatform(t *testing.T) {
 			assert.ErrorIs(t, err, model.ErrSandboxBackendUnavailable)
 			assert.Contains(t, err.Error(), "not available on Windows yet")
 			assert.Contains(t, err.Error(), "no sandbox backend for Windows")
-			assert.Contains(t, err.Error(), "docs/adr/017-windows-wsl2-sandbox.md")
+			assert.NotContains(t, err.Error(), "docs/adr/")
 		})
 	}
 }
@@ -84,6 +84,11 @@ func TestSandboxWindowsCommands_NoGuestBase(t *testing.T) {
 			assert.NotContains(t, out, "this repo has no guest base")
 			assert.NotContains(t, out, "sandbox base from")
 			assert.NotContains(t, out, "binary not found")
+			assert.NotContains(t, out, "docs/adr/")
+			if verb == "work" {
+				assert.NotContains(t, out, "until you launch it")
+				assert.Contains(t, out, "Containment: requested — sandbox unavailable on this platform")
+			}
 		})
 	}
 }

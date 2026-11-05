@@ -25,7 +25,6 @@ func sandboxPlatformRefusal(goos string) error {
 	return fmt.Errorf("%w: the sandbox is not available on Windows yet. "+
 		"mgit has no sandbox backend for Windows, so it cannot confine task work there. "+
 		"Version control commands work as usual. Run sandboxed work on Linux or macOS (Apple silicon). "+
-		"Do not run untrusted code directly on this host instead. "+
-		"The plan for Windows is in docs/adr/017-windows-wsl2-sandbox.md",
+		"Do not run untrusted code directly on this host instead.",
 		model.ErrSandboxBackendUnavailable)
 }
