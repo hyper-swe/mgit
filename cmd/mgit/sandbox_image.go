@@ -146,12 +146,13 @@ func sandboxImageAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add --name <n> --kernel <vmlinux> --rootfs <rootfs> [--cmdline <args>]",
 		Short: "Register and sign a guest image into images.lock",
+		Long:  "Register a shared guest image from the owning repository or an ordinary\nsubdirectory. Linked worktrees and sandbox-owned directories must run this\ncommand from their owner repository.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if name == "" || kernel == "" || rootfs == "" {
 				return fmt.Errorf("--name, --kernel and --rootfs are required")
 			}
-			hostRoot, err := sandboxHostRoot()
+			hostRoot, err := ownerSetupHostRoot("image add")
 			if err != nil {
 				return err
 			}

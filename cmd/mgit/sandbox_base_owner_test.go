@@ -21,7 +21,7 @@ import (
 func baseOwnerSnapshot(t *testing.T, root string) map[string]string {
 	t.Helper()
 	result := map[string]string{}
-	require.NoError(t, filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	require.NoError(t, filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error { //nolint:gosec // G703: all roots are test-owned temporary fixtures
 		if err != nil {
 			return err
 		}
