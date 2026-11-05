@@ -66,6 +66,10 @@ const (
 	// guest lost mid-command with a memory-cap advisory (MGIT-136).
 	// Refs: MGIT-136, MGIT-118
 	phaseVersionSkew
+	// phaseGuestVersionSkew: the daemon reached a guest whose exec protocol
+	// is incompatible. The error already names the cause and recompose step;
+	// this is not a CLI/daemon mismatch or an unidentified guest failure.
+	phaseGuestVersionSkew
 	// phaseAdmissionRefused: the HOST refused to admit the sandbox against its
 	// aggregate ceiling, so no VM was ever attempted. Neither the workload nor
 	// in-guest memory is implicated — there was no guest — and the fix is host
@@ -158,6 +162,8 @@ func classifyGuestFailure(err error, ent entitlementState) guestFailure {
 		return guestFailure{phase: phaseLayoutRefused}
 	case isBaseUnbootable(err):
 		return guestFailure{phase: phaseBaseUnbootable}
+	case isGuestVersionSkew(err):
+		return guestFailure{phase: phaseGuestVersionSkew}
 	}
 	// A launch step that failed before a guest existed is decided by WHICH step
 	// failed, ahead of the lost-guest markers: the image store's own errors can
@@ -375,6 +381,10 @@ func writeGuestFailure(w io.Writer, info *model.SandboxInfo, f guestFailure) {
 	switch f.phase {
 	case phaseVersionSkew:
 		writeVersionSkew(w)
+	case phaseGuestVersionSkew:
+		// The printed error already contains the guest/daemon mismatch and
+		// recovery. A second diagnosis would contradict that known cause.
+		return
 	case phaseDaemonStalled:
 		writeDaemonStall(w, info)
 	case phaseAdmissionRefused:
