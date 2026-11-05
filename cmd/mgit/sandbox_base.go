@@ -66,6 +66,7 @@ func sandboxBaseSetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set <dir>",
 		Short: "Use a directory as this repo's guest base (validates, injects mgit, pins and signs it)",
+		Long:  "Register a directory as the shared guest base for this repository.\nRun from the owning repository or one of its ordinary subdirectories, not\nfrom a linked worktree or sandbox-owned directory.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, baseDir, err := setRepoGuestBase(cmd, args[0], opts)
@@ -94,6 +95,10 @@ func sandboxBaseSetCmd() *cobra.Command {
 // bring-your-own contract — which is also why a tree inside the repository is
 // refused rather than quietly relocated. Refs: MGIT-61.15, MGIT-147
 func setRepoGuestBase(cmd *cobra.Command, dir string, opts composeOptions) (ref, baseDir string, err error) {
+	hostRoot, err := baseSetHostRoot()
+	if err != nil {
+		return "", "", err
+	}
 	baseDir, err = filepath.Abs(dir)
 	if err != nil {
 		return "", "", fmt.Errorf("base set: %w", err)
@@ -103,10 +108,6 @@ func setRepoGuestBase(cmd *cobra.Command, dir string, opts composeOptions) (ref,
 	// the repository could name a tree inside it. Refs: MGIT-227
 	if baseDir, err = filepath.EvalSymlinks(baseDir); err != nil {
 		return "", "", fmt.Errorf("base set: %w", err)
-	}
-	hostRoot, err := sandboxHostRoot()
-	if err != nil {
-		return "", "", err
 	}
 	if err := refuseInRepoBaseTree(baseDir, hostRoot); err != nil {
 		return "", "", err
@@ -140,6 +141,28 @@ func setRepoGuestBase(cmd *cobra.Command, dir string, opts composeOptions) (ref,
 		return "", "", fmt.Errorf("base set: %w", err)
 	}
 	return ref, baseDir, nil
+}
+
+// baseSetHostRoot prevents an indirect worktree operation from changing the
+// shared owner's pin. Other sandbox commands retain their owner routing.
+func baseSetHostRoot() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	root, err := findRepoRoot(cwd)
+	if err != nil {
+		return "", err
+	}
+	owner, err := sandboxRepoRoot(cwd)
+	if err != nil {
+		return "", err
+	}
+	root, owner = canonicalPath(root), canonicalPath(owner)
+	if root != owner {
+		return "", fmt.Errorf("base set: %q belongs to owner repository %q; the guest base pin is shared. No changes made; run `mgit sandbox base set` from the owner repository %q", root, owner, owner)
+	}
+	return filepath.Join(owner, ".mgit", "sandbox"), nil
 }
 
 // validateBaseTree rejects a tree that could not boot, naming what is missing

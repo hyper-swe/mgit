@@ -669,6 +669,11 @@ container export, anything — register it directly:
 mgit sandbox base set /path/to/rootfs-tree
 ```
 
+Run this from the owning repository or an ordinary subdirectory of it. The
+base pin is shared by that repository’s sandboxes. From a linked worktree or
+a sandbox-owned directory, `base set` refuses before making changes and names
+the owner repository to run it from.
+
 Unlike `base from`, this does not write into the tree beyond injecting the two
 mgit binaries: it is yours, so a tree missing the mount points the supervisor
 needs (`/proc`, `/dev`, `/tmp`, `/mnt`) is reported rather than silently
