@@ -223,8 +223,8 @@ fi
 #
 # The tarball holds, at its top level: libkrunfw.5.dylib, LICENSE-GPL-2.0-only,
 # LICENSE-LGPL-2.1-only, NOTICE.txt and SOURCE-OFFER.txt.
-LIBKRUNFW_VERSION="5.5.0"
-LIBKRUNFW_KERNEL="linux-6.12.91"
+LIBKRUNFW_VERSION="5.6.2"
+LIBKRUNFW_KERNEL="linux-6.12.109"
 LIBKRUNFW_SOURCE="https://github.com/libkrun/libkrunfw/releases/tag/v$LIBKRUNFW_VERSION"
 LIBKRUNFW_KERNEL_SOURCE="https://cdn.kernel.org/pub/linux/kernel/v6.x/$LIBKRUNFW_KERNEL.tar.xz"
 # The tarball and its checksums.txt are published in the same mgit release as

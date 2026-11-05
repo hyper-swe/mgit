@@ -38,14 +38,14 @@ func TestSourceOfferScript_NamesTheCanonicalSourceTheBuildStepsAndTheReleaseTag(
 	out, err := runRepoScript(t, repoRoot(t), "libkrunfw-source-offer.sh", nil, "v9.9.9")
 	require.NoError(t, err, "%s", out)
 	for _, want := range []string{
-		"https://github.com/libkrun/libkrunfw/releases/tag/v5.5.0",
+		"https://github.com/libkrun/libkrunfw/releases/tag/v5.6.2",
 		"We apply no patches of our own.",
 		"sha256 " + libkrunfwPrebuiltSHA256,
 		"https://github.com/hyper-swe/mgit/blob/v9.9.9/scripts/release/build-darwin-libkrunfw.sh",
 		"https://github.com/hyper-swe/mgit/releases/tag/v9.9.9",
-		"libkrunfw-v5.5.0-kernel-linux-6.12.91.tar.xz",
-		"libkrunfw-v5.5.0-source.tar.gz",
-		"libkrunfw-v5.5.0-prebuilt-aarch64.tgz (object code, for reference)",
+		"libkrunfw-v5.6.2-kernel-linux-6.12.109.tar.xz",
+		"libkrunfw-v5.6.2-source.tar.gz",
+		"libkrunfw-v5.6.2-prebuilt-aarch64.tgz (object code, for reference)",
 		"write to " + libkrunfwSourceContact,
 		"open to anyone who has this binary",
 	} {
@@ -100,7 +100,7 @@ func scriptTree(t *testing.T, sha string) string {
 	for _, s := range []string{"build-darwin-libkrunfw.sh", "libkrunfw-source-offer.sh", "macho-min-check.sh"} {
 		require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "release", s), []byte(readRepoFile(t, "scripts/release/"+s)), 0o700)) //nolint:gosec // a t.TempDir path
 	}
-	pins := "MACOS_MIN_VERSION=14.0\nLIBKRUNFW_VERSION=v5.5.0\nLIBKRUNFW_KERNEL_VERSION=6.12.91\nLIBKRUNFW_KERNEL_URL=https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.91.tar.xz\nLIBKRUNFW_PREBUILT_SHA256=" + sha + "\n"
+	pins := "MACOS_MIN_VERSION=14.0\nLIBKRUNFW_VERSION=v5.6.2\nLIBKRUNFW_KERNEL_VERSION=6.12.109\nLIBKRUNFW_KERNEL_URL=https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.109.tar.xz\nLIBKRUNFW_PREBUILT_SHA256=" + sha + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "sandbox-image", "pins.env"), []byte(pins), 0o600))
 	return root
 }
