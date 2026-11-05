@@ -160,7 +160,7 @@ func ownerSetupHostRoot(operation string) (string, error) {
 	}
 	root, owner = canonicalPath(root), canonicalPath(owner)
 	if root != owner {
-		return "", fmt.Errorf("%s: %q belongs to owner repository %q; the guest image pin is shared. No changes made; run `mgit sandbox %s` from the owner repository %q", operation, root, owner, operation, owner)
+		return "", fmt.Errorf("%s: %q belongs to owner repository %q; the guest image configuration is shared. No changes made; run `mgit sandbox %s` from the owner repository %q", operation, root, owner, operation, owner)
 	}
 	return filepath.Join(owner, ".mgit", "sandbox"), nil
 }

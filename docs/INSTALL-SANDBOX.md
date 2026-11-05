@@ -662,9 +662,10 @@ when the two ends can no longer talk, so most upgrades need no recompose.
 
 ### Repository context for image setup
 
-Run `sandbox base from`, `sandbox base set`, and `sandbox image add` from the
-owning repository or one of its ordinary subdirectories. These commands
-change a shared repository pin. From a linked worktree or sandbox-owned
+Run `sandbox base from`, `sandbox base set`, `sandbox image add`,
+`sandbox image install`, and `sandbox image init` from the owning repository
+or one of its ordinary subdirectories. The first four change a shared
+repository pin; `image init` generates or rotates its shared signing trust. From a linked worktree or sandbox-owned
 directory they refuse before modifying files or contacting an image registry,
 and name the owner repository to run them from.
 

@@ -58,6 +58,7 @@ func sandboxImageInstallCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install [--from <dir-or-url>] [--name base]",
 		Short: "Fetch, verify, and register a shipped guest image (activates the sandbox)",
+		Long:  "Fetch, verify, and register a shared guest image from the owning repository\nor an ordinary subdirectory. Linked worktrees and sandbox-owned directories\nmust run this command from their owner repository.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return installImage(cmd.Context(), cmd.OutOrStdout(), imageInstallArgs{
@@ -87,7 +88,7 @@ type imageInstallArgs struct {
 // the same 404 from an explicit --from is only that source's answer.
 // Refs: MGIT-61.1, MGIT-61.2, MGIT-234
 func installImage(ctx context.Context, w io.Writer, a imageInstallArgs) error {
-	hostRoot, err := sandboxHostRoot()
+	hostRoot, err := ownerSetupHostRoot("image install")
 	if err != nil {
 		return err
 	}
@@ -121,9 +122,10 @@ func sandboxImageInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Generate (or rotate) the image-signing trust root",
+		Long:  "Generate or rotate the shared image-signing trust root from the owning\nrepository or an ordinary subdirectory. Linked worktrees and sandbox-owned\ndirectories must run this command from their owner repository.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			hostRoot, err := sandboxHostRoot()
+			hostRoot, err := ownerSetupHostRoot("image init")
 			if err != nil {
 				return err
 			}
