@@ -261,6 +261,10 @@ func recordGeneratedScaffolding(out io.Writer, deps workDeps, worktreePath strin
 // CLAUDE.md env block is regenerated to the live network posture (MGIT-11.11.2).
 // Refs: MGIT-34, NFR-17.6
 func launchWorkSandbox(ctx context.Context, out io.Writer, deps workDeps, opts workOptions, wt *model.WorktreeInfo) {
+	if err := sandboxPlatformRefusal(sandboxHostOS); err != nil {
+		_, _ = fmt.Fprintf(out, "sandbox not launched: %v\n", err)
+		return
+	}
 	image := opts.Image
 	if image == "" {
 		// No --image means "this repo's base" — the digest is the base's, not

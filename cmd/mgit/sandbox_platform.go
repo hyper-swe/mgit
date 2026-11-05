@@ -12,10 +12,11 @@ import (
 var sandboxHostOS = runtime.GOOS
 
 // sandboxPlatformRefusal returns the reason the sandbox cannot run on goos, or
-// nil when a backend exists for it. Windows has no backend yet, so every
-// command that needs the sandbox stops here with the reason, before it looks
-// for a repository or a daemon. It never falls back to running the work on the
-// host. The error wraps ErrSandboxBackendUnavailable so callers classify it
+// nil when a backend exists for it. Daemon connections and sandbox launch
+// paths check this before resolving a guest base or contacting a daemon.
+// Repository, image and base management do not require a daemon connection.
+// It never falls back to running task work on the host.
+// The error wraps ErrSandboxBackendUnavailable so callers classify it
 // like any other missing backend. Refs: FR-17.15, ADR-006
 func sandboxPlatformRefusal(goos string) error {
 	if goos != "windows" {

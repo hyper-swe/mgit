@@ -1,16 +1,19 @@
-# The sandbox commands on Windows say they are not available yet
+# Sandbox launch on Windows reports an unavailable backend
 
-1. A user runs `mgit sandbox launch --task-id T-1` on Windows.
-2. Before: the command looked for the repository, then for `mgit-sandboxd`, and
-   failed with "mgit-sandboxd binary not found". That reads as a broken install.
-3. After: the command stops first and says the sandbox is not available on
-   Windows yet, that mgit has no sandbox backend for Windows, that version
-   control commands work, that sandboxed work needs Linux or macOS (Apple
-   silicon), that untrusted code must not be run directly on the host instead,
-   and where the plan is (`docs/adr/017-windows-wsl2-sandbox.md`).
-4. The error wraps `ErrSandboxBackendUnavailable`, so it is classified like any
-   other missing backend.
-5. Linux and macOS are unchanged.
+1. In an initialized repository without a guest base, run
+   `mgit sandbox launch --task-id T-1 --worktree <path>` on Windows, without
+   `--image`.
+2. The command reports that the sandbox is not available on Windows. It does
+   not look up a guest base or contact a daemon. The error wraps
+   `ErrSandboxBackendUnavailable`.
+3. Run `mgit work <new-path> --task-id T-2 --sandbox`, also without `--image`.
+   The worktree and routing setup still succeed. The sandbox launch reports
+   the unavailable backend, not instructions to compose a guest base.
+4. Commands that connect to the sandbox daemon also report the unavailable
+   backend. Repository, image, base and daemon-management commands are not
+   covered by this refusal. Version control commands remain available.
+5. Linux and macOS behavior is unchanged.
 
-Checked by `TestSandboxPlatformRefusal_ByPlatform` and
-`TestSandboxConnectFor_OnWindows_ReportsUnavailableBeforeAnythingElse`.
+Checked through the production command tree by
+`TestSandboxWindowsCommands_NoGuestBase`, with the host platform set to Windows
+in the test. This is not a test on a Windows host.
