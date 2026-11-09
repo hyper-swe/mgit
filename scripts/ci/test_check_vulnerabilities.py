@@ -1,5 +1,7 @@
 """Offline refusal tests for the scan policy."""
 import copy
+import contextlib
+import io
 import datetime
 import importlib.util
 import json
@@ -20,7 +22,7 @@ MODULE = "github.com/labstack/echo/v4"
 def stream(findings):
     messages = [{"config": {"protocol_version": "v1.0.0", "scan_level": "symbol", "scan_mode": "source"}},
                 {"SBOM": {"modules": [{"path": MODULE, "version": "v4.16.3"}], "roots": ["github.com/hyper-swe/mgit"]}}]
-    messages.extend({"finding": {"osv": advisory, "trace": [{"module": module, "version": version}]}}
+    messages.extend({"finding": {"osv": advisory, "trace": [{"module": module, "version": version, "package": module + "/example", "function": "Called"}]}}
                     for advisory, module, version in findings)
     return "\n".join(json.dumps(m) for m in messages)
 
@@ -48,6 +50,22 @@ class PolicyTests(unittest.TestCase):
 
     def test_unexcepted_finding_is_red(self):
         self.assertTrue(self.check(stream(self.findings + [("GO-2099-9999", MODULE, "v4.16.3")])))
+
+    def test_non_called_findings_are_green_and_logged(self):
+        for package in (None, "example.org/module/pkg"):
+            frame = {"module": "example.org/module", "version": "v1.2.3"}
+            if package is not None:
+                frame["package"] = package
+            data = stream(self.findings) + "\n" + json.dumps({"finding": {"osv": "GO-2099-9999", "trace": [frame]}})
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual([], self.check(data))
+            self.assertIn("GO-2099-9999", output.getvalue())
+            self.assertIn("example.org/module v1.2.3", output.getvalue())
+            self.assertIn("package" if package else "module", output.getvalue())
+        # The same unexcepted advisory is blocking as soon as it is called.
+        called = stream(self.findings + [("GO-2099-9999", MODULE, "v4.16.3")])
+        self.assertTrue(self.check(called))
 
     def test_other_module_or_version_is_red(self):
         for module, version in [(MODULE, "v4.16.2"), (MODULE, "v4.16.4"), (MODULE, ""),
