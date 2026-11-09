@@ -4,6 +4,10 @@ import datetime
 import importlib.util
 import json
 import pathlib
+import os
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -84,6 +88,28 @@ class PolicyTests(unittest.TestCase):
         rules = copy.deepcopy(self.rules)
         rules["exceptions"][0]["expires"] = "never"
         self.assertTrue(self.check(rules=rules))
+
+    def test_real_cli_preserves_scanner_failure_and_rejects_findings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            target = root / "scripts/ci"
+            target.mkdir(parents=True)
+            shutil.copyfile(HERE / "check-vulnerabilities.py", target / "check-vulnerabilities.py")
+            rules = copy.deepcopy(self.rules)
+            for rule in rules["exceptions"]:
+                rule["expires"] = (datetime.datetime.now(datetime.timezone.utc).date() + datetime.timedelta(days=1)).isoformat()
+            (target / "vulnerability-exceptions.json").write_text(json.dumps(rules))
+            scanner = root / "govulncheck"
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"])
+            cases = [(stream(self.findings), 0, 0),
+                     (stream(self.findings + [("GO-2099-9999", MODULE, "v4.16.3")]), 0, 1),
+                     (stream(self.findings), 1, 1), (stream(self.findings), 3, 1),
+                     ("", 0, 1), (stream(self.findings) + "{", 0, 1)]
+            for data, status, want in cases:
+                scanner.write_text("#!/bin/sh\n[ \"$*\" = \"-json ./...\" ] || exit 90\ncat <<'DATA'\n" + data + "\nDATA\nexit " + str(status) + "\n")
+                scanner.chmod(0o755)
+                result = subprocess.run(["python3", str(target / "check-vulnerabilities.py")], env=env, capture_output=True, text=True)
+                self.assertEqual(want, result.returncode, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
