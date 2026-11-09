@@ -72,7 +72,7 @@ jobs:
             -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
             go install golang.org/x/vuln/cmd/govulncheck@latest
           python3 scripts/ci/check-go-toolchain.py
-          govulncheck ./...
+          python3 scripts/ci/check-vulnerabilities.py
 
       # Every third-party fetch reachable from CI is guarded or a declared
       # exception carrying its reason. This is the tripwire that keeps that
@@ -81,6 +81,7 @@ jobs:
       # against a fetch that errors, one that hangs, and one that leaves a
       # corrupt artifact behind. Refs: MGIT-143
       - name: Fetch guard — inventory + the guard's own three clauses
+        if: ${{ !cancelled() }}
         run: |
           bash scripts/ci/fetch-inventory.sh
           bash scripts/ci/guard-fetch-selftest.sh
@@ -101,6 +102,7 @@ jobs:
       # A dispatch can name the tap branch to compare against, so a formula
       # change in both repositories is proved before either merges. Refs: MGIT-306
       - name: Tap formula — the check's own refusals, then the live tap
+        if: ${{ !cancelled() }}
         env:
           MGIT_TAP_BRANCH: ${{ inputs.tap_branch }}
         run: |
@@ -116,6 +118,7 @@ jobs:
       # check refuses each floating shape before its pass means anything.
       # Refs: MGIT-180, MGIT-179
       - name: Pinned tools — the tree, then the check's own refusals
+        if: ${{ !cancelled() }}
         run: |
           bash scripts/ci/check-pinned-tools.sh
           bash scripts/ci/check-pinned-tools-selftest.sh
@@ -128,6 +131,7 @@ jobs:
       # shape a cut may have, and reports a check that cannot run as a loud
       # failure rather than a pass. Refs: MGIT-209
       - name: Release preflight — the check's own refusals
+        if: ${{ !cancelled() }}
         run: bash scripts/ci/release-preflight-selftest.sh
 
       # Every target the release ships compiles on every PR, so a platform
@@ -501,4 +505,4 @@ jobs:
             -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
             go install golang.org/x/vuln/cmd/govulncheck@latest
           python3 scripts/ci/check-go-toolchain.py
-          govulncheck ./...
+          python3 scripts/ci/check-vulnerabilities.py

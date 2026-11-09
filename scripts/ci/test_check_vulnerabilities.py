@@ -63,6 +63,12 @@ class PolicyTests(unittest.TestCase):
             sbom, findings = rest.split('\n', 1)
             self.assertTrue(self.check(first + '\n' + sbom.replace(old, new) + '\n' + findings))
 
+    def test_v5_alongside_v4_revokes_exception(self):
+        data = stream(self.findings).replace('"roots":', '"modules_extra": [], "roots":')
+        messages = [json.loads(line) for line in data.splitlines()]
+        messages[1]["SBOM"]["modules"].append({"path": "github.com/labstack/echo/v5", "version": "v5.0.0"})
+        self.assertTrue(self.check("\n".join(json.dumps(m) for m in messages)))
+
     def test_incomplete_or_malformed_scan_fails_closed(self):
         for data in ["", "{}", "not json", stream([]) + '{', '{"finding": {}}',
                      stream([]).replace('"symbol"', '"package"'),
