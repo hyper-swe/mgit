@@ -65,7 +65,7 @@ jobs:
           bash scripts/ci/guard-fetch.sh -t 120 -l govulncheck-install \
             -c none:'the module cache writes each download to a temp path and renames it only after verifying the checksum, so a failed fetch leaves nothing behind for the next attempt to trip over' -- \
             go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          python3 scripts/ci/check-vulnerabilities.py
 
       - name: Test coverage
         run: make test-cover
