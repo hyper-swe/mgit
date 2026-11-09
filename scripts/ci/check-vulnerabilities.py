@@ -58,6 +58,13 @@ def evaluate(data, rules, today):
             finding = message["finding"]
             frame = finding["trace"][0]
             key = (finding["osv"], frame["module"], frame.get("version", ""))
+            function = frame.get("function", "")
+            if not isinstance(function, str):
+                raise ValueError("invalid finding function")
+            if not function:
+                level = "package" if frame.get("package") else "module"
+                print("Non-called " + level + " finding (informational): " + " ".join(key))
+                continue
             if key not in allowed:
                 failures.append("unexcepted finding: " + " ".join(key))
         return failures
