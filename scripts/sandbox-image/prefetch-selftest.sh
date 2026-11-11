@@ -29,12 +29,21 @@ assert_contains() { grep -q -- "$2" "$1" && ok "$3" || { echo "--- output was:" 
 # read", newer says "end of response with N bytes missing". Match the code.
 TRUNCATED_RE='curl: \(18\)'
 assert_matches() { grep -Eq -- "$2" "$1" && ok "$3" || { echo "--- output was:" >&2; cat "$1" >&2; bad "$3 (expected to match: $2)"; }; }
+assert_not_matches() { grep -Eq -- "$2" "$1" && bad "$3 (matched: $2)" || ok "$3"; }
 
 echo "== prefetch self-test =="
 for wording in "curl: (18) transfer closed with 2097152 bytes remaining to read" \
 	"curl: (18) end of response with 2097152 bytes missing"; do
 	printf '%s\n' "$wording" > "$WORK/wording"
 	assert_matches "$WORK/wording" "$TRUNCATED_RE" "the truncation pattern accepts: $wording"
+done
+# ...and rejects other curl failures, so the case cannot pass on a timeout, a
+# refused connection, or an empty log.
+for wording in "curl: (28) Operation timed out after 30000 milliseconds" \
+	"curl: (180) some other failure" "curl: (7) Failed to connect to 127.0.0.1" \
+	"curl: (1) Unsupported protocol" ""; do
+	printf '%s\n' "$wording" > "$WORK/wording"
+	assert_not_matches "$WORK/wording" "$TRUNCATED_RE" "the truncation pattern rejects: '$wording'"
 done
 head -c 3145728 /dev/urandom > "$WORK/good.bin"   # 3 MiB, cut at 1 MiB
 head -c 3145728 /dev/urandom > "$WORK/wrong.bin"
