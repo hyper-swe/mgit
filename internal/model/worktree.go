@@ -33,6 +33,11 @@ type WorktreeInfo struct {
 	// default). Reported at creation, never stored. Refs: MGIT-283
 	UncommittedPaths    []string `json:"uncommitted_paths,omitempty"`
 	UncommittedIncluded bool     `json:"uncommitted_included,omitempty"`
+	// SkippedNestedStores names, sorted and once each, the `.mgit` folders
+	// committed below the project root whose contents were left out of this
+	// NEW worktree's base: another store's data, not the project's content.
+	// Reported at creation, never stored.
+	SkippedNestedStores []string `json:"skipped_nested_stores,omitempty"`
 }
 
 // Validate checks that the WorktreeInfo has required fields.

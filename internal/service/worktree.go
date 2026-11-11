@@ -139,6 +139,7 @@ func (s *WorktreeService) claim(ctx context.Context, opts model.WorktreeAddOptio
 			CreatedAt:           s.clock(),
 			UncommittedPaths:    report.paths,
 			UncommittedIncluded: report.included,
+			SkippedNestedStores: report.skipped,
 		}
 		// Register in SQLite (UNIQUE constraints enforce isolation) BEFORE touching
 		// disk, so a duplicate path/task/branch is rejected without materializing
@@ -221,14 +222,14 @@ func (s *WorktreeService) resolveForkBase(ctx context.Context, opts model.Worktr
 	if opts.IncludeUncommitted {
 		return s.forkWithUncommitted(ctx, opts.TaskID, report)
 	}
-	base, uncommitted, ok, err := s.sync.CommittedForkBase(ctx)
+	base, uncommitted, skipped, ok, err := s.sync.CommittedForkBase(ctx)
 	if err != nil {
 		return "", fmt.Errorf("fork base: %w", err)
 	}
 	if !ok { // no git commit to build from: the mgit base is the base
 		return s.branchAtHead(ctx, opts.TaskID)
 	}
-	report.paths = uncommitted
+	report.paths, report.skipped = uncommitted, skipped
 	br, err := s.branch.CreateBranchAt(ctx, opts.TaskID, base)
 	if err != nil {
 		return "", fmt.Errorf("create branch at fork base: %w", err)
@@ -241,6 +242,7 @@ func (s *WorktreeService) resolveForkBase(ctx context.Context, opts model.Worktr
 type forkReport struct {
 	paths    []string
 	included bool
+	skipped  []string
 }
 
 // forkWithUncommitted is the opt-in of ADR-008 §2 as amended: the checkout's

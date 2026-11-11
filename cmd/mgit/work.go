@@ -192,6 +192,7 @@ func workSetup(ctx context.Context, out io.Writer, deps workDeps, opts workOptio
 	}
 	_, _ = fmt.Fprintf(out, "Created worktree %s -> task %s (branch %s)\n", wt.Path, wt.TaskID, wt.Branch)
 	reportUncommitted(deps.warnings(), wt)
+	reportSkippedStores(deps.warnings(), wt)
 
 	// Containment posture for a freshly created worktree: nothing is bound yet,
 	// so it is Pending when --sandbox was requested (we install fail-closed
