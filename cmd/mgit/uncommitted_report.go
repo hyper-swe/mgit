@@ -27,3 +27,13 @@ func reportUncommitted(w io.Writer, wt *model.WorktreeInfo) {
 	_, _ = fmt.Fprintf(w, "Left out of the task's base (uncommitted in this checkout; the task starts from git's "+
 		"committed tree, pass --include-uncommitted to capture them):\n%s\n", list)
 }
+
+// reportSkippedStores names, on w, each nested `.mgit` folder whose committed
+// contents were left out of a NEW task's base, one line per folder. It prints
+// the folder's path only, never anything inside it. Nothing is printed when
+// none was skipped.
+func reportSkippedStores(w io.Writer, wt *model.WorktreeInfo) {
+	for _, folder := range wt.SkippedNestedStores {
+		_, _ = fmt.Fprintf(w, "Skipped nested snapshot data in %s\n", folder)
+	}
+}

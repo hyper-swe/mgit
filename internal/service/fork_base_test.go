@@ -17,8 +17,8 @@ func TestCommittedForkBase_NoGitCommit_NotOK(t *testing.T) {
 	env := setupTestEnv(t)
 	for _, readErr := range []error{gitref.ErrNoGit, gitref.ErrDetachedOrUnborn} {
 		svc := NewSyncService(env.repo, env.wt, env.cs, "", fixedClock()).
-			withCommittedFilesReader(func(string) ([]gitref.CommittedFile, string, error) { return nil, "", readErr })
-		base, uncommitted, ok, err := svc.CommittedForkBase(context.Background())
+			withCommittedFilesReader(func(string) (gitref.CommittedSnapshot, error) { return gitref.CommittedSnapshot{}, readErr })
+		base, uncommitted, _, ok, err := svc.CommittedForkBase(context.Background())
 		require.NoError(t, err)
 		assert.False(t, ok)
 		assert.Empty(t, base)
@@ -31,10 +31,10 @@ func TestCommittedForkBase_NoGitCommit_NotOK(t *testing.T) {
 func TestCommittedForkBase_GitUnreadable_Errors(t *testing.T) {
 	env := setupTestEnv(t)
 	svc := NewSyncService(env.repo, env.wt, env.cs, "", fixedClock()).
-		withCommittedFilesReader(func(string) ([]gitref.CommittedFile, string, error) {
-			return nil, "", errors.New("corrupt pack")
+		withCommittedFilesReader(func(string) (gitref.CommittedSnapshot, error) {
+			return gitref.CommittedSnapshot{}, errors.New("corrupt pack")
 		})
-	_, _, _, err := svc.CommittedForkBase(context.Background())
+	_, _, _, _, err := svc.CommittedForkBase(context.Background())
 	require.Error(t, err)
 }
 
@@ -45,12 +45,14 @@ func TestCommittedForkBase_TreeIsTheCommittedFilesAndNoBranchMoves(t *testing.T)
 	before, err := env.repo.Head()
 	require.NoError(t, err)
 	svc := NewSyncService(env.repo, env.wt, env.cs, "", fixedClock()).
-		withCommittedFilesReader(func(string) ([]gitref.CommittedFile, string, error) {
-			return []gitref.CommittedFile{{Path: "a.go", Mode: 0o100644, Content: []byte("package a\n")}},
-				"0123456789abcdef", nil
+		withCommittedFilesReader(func(string) (gitref.CommittedSnapshot, error) {
+			return gitref.CommittedSnapshot{
+				Files: []gitref.CommittedFile{{Path: "a.go", Mode: 0o100644, Content: []byte("package a\n")}},
+				Head:  "0123456789abcdef",
+			}, nil
 		})
 
-	base, _, ok, err := svc.CommittedForkBase(context.Background())
+	base, _, _, ok, err := svc.CommittedForkBase(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	after, err := env.repo.Head()
