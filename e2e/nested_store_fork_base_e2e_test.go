@@ -39,6 +39,7 @@ func nestedStoreProject(t *testing.T) (bin, repo string) {
 
 func assertNestedStoreLeftOut(t *testing.T, out, wt string) {
 	t.Helper()
+	t.Logf("mgit output:\n%s", out)
 	assert.Equal(t, 1, strings.Count(out, "Skipped nested snapshot data in archive/.mgit\n"), out)
 	assert.Equal(t, 1, strings.Count(out, "Skipped nested snapshot data in a/b/c/.mgit\n"), out)
 	assert.Equal(t, 2, strings.Count(out, "Skipped nested snapshot data"), "one line per folder: %s", out)
