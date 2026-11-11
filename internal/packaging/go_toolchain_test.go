@@ -15,9 +15,9 @@ func TestLinuxPrereqs_GoToolchainFromModule(t *testing.T) {
 		name, module, override, want string
 		bad                          bool
 	}{
-		{"module_default", "go 1.26.10\n", "", "go1.26.10.linux-amd64.tar.gz", false},
+		{"module_default", "go 1.26.11\n", "", "go1.26.11.linux-amd64.tar.gz", false},
 		{"module_changed", "go 1.27.2\n", "", "go1.27.2.linux-amd64.tar.gz", false},
-		{"override", "go 1.26.10\n", "1.27.1", "go1.27.1.linux-amd64.tar.gz", false},
+		{"override", "go 1.26.11\n", "1.27.1", "go1.27.1.linux-amd64.tar.gz", false},
 		{"missing", "module fixture\n", "", "", true},
 		{"invalid", "go NOT_A_VERSION\n", "", "", true},
 	} {
@@ -66,9 +66,9 @@ func TestGoToolchain_InventoryRejectsDriftAndExtraExemption(t *testing.T) {
 		name, path, text string
 		bad, extra       bool
 	}{
-		{"conflicting_directives", "go.mod", "go 1.26.0\ntoolchain go1.26.10\n", true, false},
-		{"equal_directives", "go.mod", "go 1.26.10\ntoolchain go1.26.10\n", false, false},
-		{"match", ".github/workflows/ci.yml", "go-version: \"1.26.10\"\n", false, false},
+		{"conflicting_directives", "go.mod", "go 1.26.0\ntoolchain go1.26.11\n", true, false},
+		{"equal_directives", "go.mod", "go 1.26.11\ntoolchain go1.26.11\n", false, false},
+		{"match", ".github/workflows/ci.yml", "go-version: \"1.26.11\"\n", false, false},
 		{"visible_release_hold", ".github/workflows/release.yml", "go-version: \"1.26.6\"\n", !held, false},
 		{"previous_patch", ".github/workflows/ci.yml", "go-version: \"1.26.9\"\n", true, false},
 		{"workflow", ".github/workflows/ci.yml", "go-version: \"1.26.6\"\n", true, false},
@@ -95,7 +95,7 @@ func TestGoToolchain_InventoryRejectsDriftAndExtraExemption(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			write("go.mod", "go 1.26.10\n")
+			write("go.mod", "go 1.26.11\n")
 			script := readRepoFile(t, "scripts/ci/check-go-toolchain.py")
 			if tc.extra {
 				lines := strings.Split(script, "\n")
