@@ -251,3 +251,20 @@ func TestCommittedForkBase_RootStoreAndTerminalMgitFile_StillRefused(t *testing.
 		})
 	}
 }
+
+// The folder that holds a store is matched as a whole folder: a committed
+// folder whose name merely starts with the same letters is another folder, and
+// its unchanged files are not reported as uncommitted.
+func TestCommittedForkBase_SiblingFolderSharingTheStoreFoldersPrefix_IsNotUncommitted(t *testing.T) {
+	env := setupTestEnv(t)
+	commitProject(t, env, map[string]string{
+		"archive/keep.go":    "package archive\n",
+		"archive/.mgit/obj1": "store bytes\n",
+		"archive2/x.go":      "package archive2\n",
+	})
+
+	base, uncommitted := forkFromGit(t, env)
+
+	assert.True(t, hasFile(t, env, base, "archive2/x.go"))
+	assert.Empty(t, uncommitted, "archive2 is an ordinary folder, on disk and unchanged")
+}

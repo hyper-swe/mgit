@@ -109,6 +109,7 @@ func TestNestedMgitFolder(t *testing.T) {
 		{"a/.mgitish/x", "", false},
 		{"a/x.mgit/y", "", false},
 		{"main.go", "", false},
+		{"a/.git/config", "", false}, // a nested .git is not this rule's
 	}
 	for _, tc := range tests {
 		t.Run(tc.path, func(t *testing.T) {
