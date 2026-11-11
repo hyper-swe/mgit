@@ -24,7 +24,18 @@ ok() { echo "  PASS: $*"; }
 bad() { echo "  FAIL: $*" >&2; exit 1; }
 assert_contains() { grep -q -- "$2" "$1" && ok "$3" || { echo "--- output was:" >&2; cat "$1" >&2; bad "$3 (expected to see: $2)"; }; }
 
+# curl exit 18 is "partial file". The prefix `curl: (18)` is stable; the words
+# after it are not: older curl says "transfer closed with N bytes remaining to
+# read", newer says "end of response with N bytes missing". Match the code.
+TRUNCATED_RE='curl: \(18\)'
+assert_matches() { grep -Eq -- "$2" "$1" && ok "$3" || { echo "--- output was:" >&2; cat "$1" >&2; bad "$3 (expected to match: $2)"; }; }
+
 echo "== prefetch self-test =="
+for wording in "curl: (18) transfer closed with 2097152 bytes remaining to read" \
+	"curl: (18) end of response with 2097152 bytes missing"; do
+	printf '%s\n' "$wording" > "$WORK/wording"
+	assert_matches "$WORK/wording" "$TRUNCATED_RE" "the truncation pattern accepts: $wording"
+done
 head -c 3145728 /dev/urandom > "$WORK/good.bin"   # 3 MiB, cut at 1 MiB
 head -c 3145728 /dev/urandom > "$WORK/wrong.bin"
 want="$(prefetch_sha256_of "$WORK/good.bin")"
@@ -76,7 +87,7 @@ out="$WORK/noresume.log"
 PREFETCH_NO_RESUME=1 prefetch_verified "$base/good.bin" "$want" "$WORK/out2/good.bin" 30 >"$out" 2>&1
 rc=$?
 [ "$rc" -ne 0 ] && ok "2: exit $rc — the fetch failed, as the runs did" || { cat "$out" >&2; bad "2: unexpectedly succeeded without resume"; }
-assert_contains "$out" "transfer closed" "2: curl reported the truncation each time"
+assert_matches "$out" "$TRUNCATED_RE" "2: curl reported the truncation each time (exit 18)"
 [ ! -f "$WORK/out2/good.bin" ] && ok "2: no file was left at the destination" || bad "2: a file was left at the destination"
 grep -q "^range " "$WORK/requests" && bad "2: a Range request was sent without resume" || ok "2: every request restarted from zero ($(grep -c . "$WORK/requests") requests, none ranged) — the difference between the runs is the resume alone"
 
