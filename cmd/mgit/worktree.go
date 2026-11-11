@@ -56,6 +56,7 @@ func worktreeCmd() *cobra.Command {
 			}
 			_, _ = fmt.Fprintf(os.Stdout, "Created worktree %s -> task %s (branch %s)\n", wt.Path, wt.TaskID, wt.Branch)
 			reportUncommitted(os.Stderr, wt)
+			reportSkippedStores(os.Stderr, wt)
 			// `worktree add` is plumbing (mirrors `git worktree add`) and launches
 			// no sandbox, so the honest-open posture applies: no fail-closed routing
 			// wiring is installed. Use `mgit work --sandbox` for containment. MGIT-47

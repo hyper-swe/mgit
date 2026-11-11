@@ -2,6 +2,8 @@ package gitref
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/go-git/go-billy/v5/osfs"
 	gogit "github.com/go-git/go-git/v5"
@@ -88,28 +90,72 @@ type CommittedFile struct {
 }
 
 // CommittedFiles returns, READ-ONLY, every file git has committed at the
-// project's local HEAD with its mode and content, and the HEAD commit id. It
-// is what a new task's fork-base is built from (MGIT-283): the task starts
-// from what git has committed, never from the checkout's uncommitted state.
+// project's local HEAD with its mode and content, and the HEAD commit id.
 // Errors mirror CommittedBlobs. Refs: MGIT-283, ADR-008 §2,§6
 func CommittedFiles(projectRoot string) ([]CommittedFile, string, error) {
+	files, _, head, err := readCommittedFiles(projectRoot, false)
+	return files, head, err
+}
+
+// CommittedSnapshot is git's committed tree as a new task's fork-base takes
+// it: every committed file except the contents of a store nested in the
+// project, and the folders that were left out.
+type CommittedSnapshot struct {
+	// Files are the committed files that belong to the project, with content.
+	Files []CommittedFile
+	// Skipped names, sorted and once each, every nested `.mgit` folder whose
+	// committed contents were left out, as a project-relative path.
+	Skipped []string
+	// Head is the git HEAD commit id.
+	Head string
+}
+
+// CommittedSnapshotFiles reads git's committed tree the way a new task's
+// fork-base is built from it (MGIT-283). It is CommittedFiles with one
+// narrowing: a `.mgit` directory below the project root is another store's
+// data, not this project's content, so its files are neither read nor
+// returned, and the folder is named in Skipped. Everything beside it stays.
+// The root `.mgit`, a nested `.git`, a name that merely starts with `.mgit`,
+// and a committed file or link that is itself named `.mgit` are not touched
+// by this rule. Refs: MGIT-283, ADR-008 §2,§6
+func CommittedSnapshotFiles(projectRoot string) (CommittedSnapshot, error) {
+	files, skipped, head, err := readCommittedFiles(projectRoot, true)
+	if err != nil {
+		return CommittedSnapshot{}, err
+	}
+	return CommittedSnapshot{Files: files, Skipped: skipped, Head: head}, nil
+}
+
+// readCommittedFiles lists the tree's files with content. With skipNested, the
+// files under a nested `.mgit` directory are dropped before their content is
+// read.
+func readCommittedFiles(projectRoot string, skipNested bool) (files []CommittedFile, skipped []string, head string, err error) {
 	gitDir, err := resolveGitDir(projectRoot)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	if err := assertSupportedState(gitDir); err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	local, err := resolveHead(gitDir)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	tree, err := headTree(gitDir, local.HeadCommit)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
-	var files []CommittedFile
+	seen := map[string]bool{}
 	if err := tree.Files().ForEach(func(f *object.File) error {
+		if skipNested {
+			if folder, ok := nestedMgitFolder(f.Name); ok {
+				if !seen[folder] {
+					seen[folder] = true
+					skipped = append(skipped, folder)
+				}
+				return nil
+			}
+		}
 		content, err := f.Contents()
 		if err != nil {
 			return err
@@ -117,7 +163,22 @@ func CommittedFiles(projectRoot string) ([]CommittedFile, string, error) {
 		files = append(files, CommittedFile{Path: f.Name, Mode: f.Mode, Content: []byte(content)})
 		return nil
 	}); err != nil {
-		return nil, "", fmt.Errorf("%w: read git HEAD tree: %w", ErrUnsupportedGitState, err)
+		return nil, nil, "", fmt.Errorf("%w: read git HEAD tree: %w", ErrUnsupportedGitState, err)
 	}
-	return files, local.HeadCommit, nil
+	sort.Strings(skipped)
+	return files, skipped, local.HeadCommit, nil
+}
+
+// nestedMgitFolder reports the nested `.mgit` directory a committed file path
+// lies under: a `.mgit` component below the root that has something inside it.
+// The component must be a whole directory name at depth one or more, so the
+// root `.mgit`, `.mgitish` and a final component named `.mgit` do not match.
+func nestedMgitFolder(path string) (string, bool) {
+	parts := strings.Split(path, "/")
+	for i := 1; i < len(parts)-1; i++ {
+		if parts[i] == ".mgit" {
+			return strings.Join(parts[:i+1], "/"), true
+		}
+	}
+	return "", false
 }

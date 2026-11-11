@@ -85,7 +85,7 @@ func NewSyncService(repo *gitstore.Repository, ws *gitstore.WorktreeStore, cs *g
 		commitStore:        cs,
 		readLocal:          gitref.ReadLocalState,
 		readCommitted:      gitref.CommittedBlobs,
-		readCommittedFiles: gitref.CommittedFiles,
+		readCommittedFiles: gitref.CommittedSnapshotFiles,
 		clock:              clock,
 		boundTask:          boundTask,
 	}

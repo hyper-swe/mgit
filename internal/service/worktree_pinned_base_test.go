@@ -27,7 +27,7 @@ func newWorktreeSvcWithSync(env *testEnv, gitHead string) *WorktreeService {
 func newWorktreeSvcOverEmptyGit(env *testEnv) *WorktreeService {
 	sync := newSyncService(env, "head-A", "").
 		withCommittedReader(func(string) (map[string]string, error) { return map[string]string{}, nil }).
-		withCommittedFilesReader(func(string) ([]gitref.CommittedFile, string, error) { return nil, "head-A", nil })
+		withCommittedFilesReader(func(string) (gitref.CommittedSnapshot, error) { return gitref.CommittedSnapshot{Head: "head-A"}, nil })
 	return NewWorktreeService(env.idx, env.branch, env.wt, fixedClock()).WithSync(sync, env.repo, env.cs)
 }
 
