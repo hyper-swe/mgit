@@ -17,7 +17,7 @@ func TestE2E_GoToolchain_PatchedCompilerMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := info.GoVersion
-	if !version.IsValid(v) || version.Compare(v, "go1.26.10") < 0 ||
+	if !version.IsValid(v) || version.Compare(v, "go1.26.11") < 0 ||
 		(version.Compare(v, "go1.27") >= 0 && version.Compare(v, "go1.27.3") < 0) {
 		t.Fatalf("CLI compiler %s is affected by GO-2026-6809", v)
 	}
