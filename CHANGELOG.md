@@ -16,11 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Build and guest verification toolchains use Go 1.26.11, which fixes
-  [GO-2026-6859](https://pkg.go.dev/vuln/GO-2026-6859) in `net/http`
-  (HTTP/1 server crash from a `MaxBytesReader` header race). The guest archive
-  checksums match the Go publisher's Linux amd64 and arm64 archives.
-  Vulnerability checks remain enabled without exclusions.
+- Build and guest verification toolchains use Go 1.26.11, which includes a
+  security fix in the Go standard library. The guest archive checksums match
+  the Go publisher's Linux amd64 and arm64 archives. Scanning remains enabled
+  without exclusions.
 - On Apple silicon macOS, the Homebrew formula depends on
   `hyper-swe/tap/libkrunfw`, the sandbox's guest kernel library, from mgit's
   own tap. Run `brew trust hyper-swe/tap` once, then `brew install
