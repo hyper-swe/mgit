@@ -1,9 +1,9 @@
 # HSWE-17.80.4.2: `--env-name` sets a named variable in the guest
 
-1. A caller has a variable `BUILD_TOKEN` in its environment and runs
-   `mgit run --env-name BUILD_TOKEN -- ./build.sh` (or
-   `mgit sandbox exec --task-id T --env-name BUILD_TOKEN -- ./build.sh`).
-2. The command runs in the guest with `BUILD_TOKEN` set to the caller's value.
+1. A caller has a variable `BUILD_MODE` in its environment and runs
+   `mgit run --env-name BUILD_MODE -- ./build.sh` (or
+   `mgit sandbox exec --task-id T --env-name BUILD_MODE -- ./build.sh`).
+2. The command runs in the guest with `BUILD_MODE` set to the caller's value.
    Only the named variables are passed; the rest of the caller's environment is
    not.
 3. A variable that is not set, is empty, has an invalid name, is named twice, is
