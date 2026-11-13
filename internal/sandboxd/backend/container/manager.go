@@ -555,7 +555,12 @@ func envFilePayload(env []string) ([]byte, error) {
 	var b []byte
 	for _, e := range env {
 		k, _, ok := strings.Cut(e, "=")
-		if !ok || k == "" || strings.HasPrefix(k, "#") || strings.TrimSpace(k) != k {
+		if !ok {
+			// With no "=" the whole entry is the only text there is, and it may
+			// be a value: say what was refused, never the entry.
+			return nil, fmt.Errorf("an environment entry has no name part, which this backend cannot pass")
+		}
+		if k == "" || strings.HasPrefix(k, "#") || strings.TrimSpace(k) != k {
 			return nil, fmt.Errorf("variable %q has a name this backend cannot pass", k)
 		}
 		if strings.ContainsAny(e, "\r\n") {

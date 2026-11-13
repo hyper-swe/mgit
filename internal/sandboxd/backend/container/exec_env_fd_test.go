@@ -79,3 +79,15 @@ func TestContainer_Exec_UnreadableNamesAreRefused(t *testing.T) {
 		})
 	}
 }
+
+// TestContainer_Exec_EntryWithoutEqualsIsNotEchoed verifies an entry that is
+// only a value, with no name part, never appears in the refusal.
+func TestContainer_Exec_EntryWithoutEqualsIsNotEchoed(t *testing.T) {
+	runner, mgr, id := launchedForExec(t)
+
+	_, err := mgr.Exec(context.Background(), id, model.ExecRequest{Command: []string{"true"}, Env: []string{execEnvMarker}})
+
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), execEnvMarker)
+	assert.Empty(t, runner.callsFor("exec"))
+}
