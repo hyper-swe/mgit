@@ -21,6 +21,7 @@
 package container
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -46,6 +47,9 @@ import (
 // podman). Faked in tests; PodmanRunner is the real implementation.
 type Runner interface {
 	run(ctx context.Context, args ...string) ([]byte, error)
+	// runWithFD is run with data readable by the runtime on file descriptor 3
+	// (/dev/fd/3), so the data is never part of the runtime's command line.
+	runWithFD(ctx context.Context, data []byte, args ...string) ([]byte, error)
 }
 
 // Config wires the manager's dependencies.
@@ -348,9 +352,16 @@ func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*
 	// Explicit per-exec env injections only (FR-17.17); the host
 	// environment is never inherited — podman exec does not forward it,
 	// and dropping req.Env would silently lose a task's injected creds.
+	// The variables are handed to the runtime on a file descriptor, never as
+	// arguments, so a value is not part of any process's command line.
 	args := []string{"exec"}
-	for _, env := range req.Env {
-		args = append(args, "--env", env)
+	var envFile []byte
+	if len(req.Env) > 0 {
+		envFile, err = envFilePayload(req.Env)
+		if err != nil {
+			return nil, fmt.Errorf("container exec: %w", err)
+		}
+		args = append(args, "--env-file", "/dev/fd/3")
 	}
 	// Run as the identity the daemon chose (RunAs; the service decides it —
 	// the unprivileged daemon identity, or root for an audited --as-root).
@@ -364,7 +375,12 @@ func (m *Manager) Exec(ctx context.Context, id string, req model.ExecRequest) (*
 	}
 	args = append(args, sb.name)
 	args = append(args, req.Command...)
-	out, err := m.cfg.Runner.run(ctx, args...)
+	var out []byte
+	if envFile != nil {
+		out, err = m.cfg.Runner.runWithFD(ctx, envFile, args...)
+	} else {
+		out, err = m.cfg.Runner.run(ctx, args...)
+	}
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -532,6 +548,22 @@ func imageDigest(imageRef string) string {
 	return ""
 }
 
+// envFilePayload renders per-exec variables as an env-file. The file format
+// is one KEY=VALUE per line, so a value holding a line break cannot be passed;
+// that is refused by variable name, never by showing the value.
+func envFilePayload(env []string) ([]byte, error) {
+	var b []byte
+	for _, e := range env {
+		if strings.ContainsAny(e, "\r\n") {
+			k, _, _ := strings.Cut(e, "=")
+			return nil, fmt.Errorf("variable %s holds a line break, which this backend cannot pass", k)
+		}
+		b = append(b, e...)
+		b = append(b, '\n')
+	}
+	return b, nil
+}
+
 // PodmanRunner executes rootless podman. The container runtime binary
 // is COTS, assessed per FR-17.30/FR-17.31.
 type PodmanRunner struct{}
@@ -543,4 +575,34 @@ func (PodmanRunner) run(ctx context.Context, args ...string) ([]byte, error) {
 		return out, fmt.Errorf("podman %s: %w", args[0], err)
 	}
 	return out, nil
+}
+
+// runWithFD invokes podman with data readable on file descriptor 3.
+func (PodmanRunner) runWithFD(ctx context.Context, data []byte, args ...string) ([]byte, error) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("podman %s: %w", args[0], err)
+	}
+	cmd := exec.CommandContext(ctx, "podman", args...) //nolint:gosec // argv built from validated options, no shell
+	cmd.ExtraFiles = []*os.File{r}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Start(); err != nil {
+		_ = r.Close()
+		_ = w.Close()
+		return nil, fmt.Errorf("podman %s: %w", args[0], err)
+	}
+	_ = r.Close()
+	go func() {
+		_, _ = w.Write(data)
+		_ = w.Close()
+	}()
+	if err := cmd.Wait(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitErr.Stderr = stderr.Bytes()
+		}
+		return stdout.Bytes(), fmt.Errorf("podman %s: %w", args[0], err)
+	}
+	return stdout.Bytes(), nil
 }

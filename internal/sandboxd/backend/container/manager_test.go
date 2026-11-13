@@ -24,6 +24,8 @@ import (
 type fakeRunner struct {
 	mu    sync.Mutex
 	calls [][]string
+	// fds holds the data handed to a call on file descriptor 3, by call.
+	fds [][]byte
 	// results maps the first argument (subcommand) to scripted output.
 	results map[string]struct {
 		out []byte
@@ -46,6 +48,13 @@ func (r *fakeRunner) run(_ context.Context, args ...string) ([]byte, error) {
 		return []byte("true\n"), nil
 	}
 	return nil, nil
+}
+
+func (r *fakeRunner) runWithFD(ctx context.Context, data []byte, args ...string) ([]byte, error) {
+	r.mu.Lock()
+	r.fds = append(r.fds, data)
+	r.mu.Unlock()
+	return r.run(ctx, args...)
 }
 
 func (r *fakeRunner) callsFor(sub string) [][]string {

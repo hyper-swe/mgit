@@ -13,4 +13,7 @@
    and nothing else, without looking up a task or starting a daemon. Any other
    format is an error. A caller that gets an error, or no such line, treats the
    flag as unsupported.
-5. Unchanged: `--env KEY=VALUE` behaves as before.
+5. On the container backend, the variables reach the runtime on a file
+   descriptor, so a value is not part of the runtime's command line. A value
+   holding a line break cannot be carried this way and is refused by variable name.
+6. Unchanged: `--env KEY=VALUE` behaves as before.
