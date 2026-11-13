@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A security fix in how a guest command is started. `mgit run` and `mgit sandbox
+  exec` take `--env-name NAME` (repeatable), which sets the named variable from
+  mgit's own environment in the guest, and `mgit run --capabilities=json`
+  reports the features this mgit supports. Refs: HSWE-17.80.4.2
 - Build and guest verification toolchains use Go 1.26.11, which includes a
   security fix in the Go standard library. The guest archive checksums match
   the Go publisher's Linux amd64 and arm64 archives. Scanning remains enabled

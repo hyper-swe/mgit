@@ -17,7 +17,7 @@ import (
 // output and propagating the guest exit code.
 func sandboxExecCmd(connect connectFunc) *cobra.Command {
 	var task string
-	var env []string
+	var env, envNames []string
 	var timeout time.Duration
 	var asRoot bool
 	cmd := &cobra.Command{
@@ -37,6 +37,11 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if task == "" {
 				return printErr(cmd.ErrOrStderr(), fmt.Errorf("--task-id is required"))
+			}
+			// Resolved before any connection: a refused request starts nothing.
+			env, err := takeEnvNames(envNames, env)
+			if err != nil {
+				return printErr(cmd.ErrOrStderr(), err)
 			}
 			cl, err := connect(cmd.Context())
 			if err != nil {
@@ -65,6 +70,7 @@ func sandboxExecCmd(connect connectFunc) *cobra.Command {
 		},
 	}
 	bindTaskIDFlag(cmd, &task, "task ID whose sandbox runs the command (required)")
+	bindEnvNameFlag(cmd, &envNames)
 	cmd.Flags().StringArrayVar(&env, "env", nil, "explicit KEY=VALUE injected into the guest (repeatable; host env is never forwarded)")
 	bindExecTimeoutFlag(cmd, &timeout)
 	bindAsRootFlag(cmd, &asRoot)
