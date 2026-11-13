@@ -21,7 +21,7 @@ func TestPodmanRunner_RunWithFD_DeliversDataOnDescriptorThree(t *testing.T) {
 	dir := t.TempDir()
 	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >&2\nwhile [ $# -gt 0 ]; do\n" +
 		"  if [ \"$1\" = --env-file ]; then cat \"$2\"; fi\n  shift\ndone\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "podman"), []byte(script), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "podman"), []byte(script), 0o700)) //nolint:gosec // a stand-in runtime script in a test temp dir must be executable
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	for _, size := range []int{10, 300 << 10} {
