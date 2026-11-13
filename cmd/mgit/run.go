@@ -32,12 +32,13 @@ func runCmd() *cobra.Command {
 // fail-closed by construction (NFR-17.6), the property the seamless
 // agent-integration hooks (MGIT-11.11.1, .3) rely on.
 func newRunCmd(connect connectFunc, getwd func() (string, error)) *cobra.Command {
-	var env []string
+	var env, envNames []string
+	var capabilities string
 	var asRoot bool
 	var check bool
 	var timeout time.Duration
 	cmd := &cobra.Command{
-		Use:   "run [--env KEY=VALUE]... -- <command> [args...]",
+		Use:   "run [--env KEY=VALUE]... [--env-name NAME]... -- <command> [args...]",
 		Short: "Run a command in the current worktree's task sandbox (fail-closed)",
 		Long: "Routes a command into the microVM sandbox bound to the current " +
 			"worktree's task. If no sandbox is bound or the daemon is unavailable, " +
@@ -47,16 +48,29 @@ func newRunCmd(connect connectFunc, getwd func() (string, error)) *cobra.Command
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if capabilities != "" {
+				if err := writeCapabilities(cmd.OutOrStdout(), capabilities); err != nil {
+					return printRunErr(cmd.ErrOrStderr(), err)
+				}
+				return nil
+			}
 			if check {
 				return runCheck(cmd, connect, getwd)
 			}
 			if len(args) == 0 {
 				return printRunErr(cmd.ErrOrStderr(), fmt.Errorf("a command is required (mgit run -- <command>)"))
 			}
-			return runExec(cmd, connect, getwd, args, env, timeout, asRoot)
+			// Resolved before any connection: a refused request starts nothing.
+			all, err := takeEnvNames(envNames, env)
+			if err != nil {
+				return printRunErr(cmd.ErrOrStderr(), err)
+			}
+			return runExec(cmd, connect, getwd, args, all, timeout, asRoot)
 		},
 	}
 	cmd.Flags().StringArrayVar(&env, "env", nil, "explicit KEY=VALUE injected into the guest (repeatable; host env is never forwarded)")
+	bindEnvNameFlag(cmd, &envNames)
+	cmd.Flags().StringVar(&capabilities, "capabilities", "", "print the features this mgit supports in the given format (json) and exit")
 	cmd.Flags().BoolVar(&check, "check", false, "report whether a sandbox is available for the current worktree, without executing")
 	bindExecTimeoutFlag(cmd, &timeout)
 	bindAsRootFlag(cmd, &asRoot)
