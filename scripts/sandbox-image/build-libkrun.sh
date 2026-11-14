@@ -13,7 +13,7 @@
 # "krun_set_workdir: libkrun error -95" — measured 2026-08-11, CI run
 # 31482480288. Nothing about Linux was wrong; the library was simply a
 # different library from the one macOS is validated against. Pinning to the
-# versions Homebrew ships (libkrun 1.19.4 / libkrunfw 5.5.0) is what makes the
+# versions Homebrew shipped then (libkrun 1.19.4 / libkrunfw 5.5.0; libkrunfw has since moved to 5.6.2, MGIT-306.2) is what makes the
 # Linux column comparable to the macOS one instead of a race against upstream.
 #
 # Usage:  sudo scripts/sandbox-image/build-libkrun.sh [PREFIX]
@@ -201,7 +201,9 @@ prefetch_kernel_tarball "$work/libkrunfw"
 	-c none:'the kernel tarball is pre-fetched and digest-verified before make runs (MGIT-188), so nothing make fetches can be left truncated; already-built objects are kept on purpose' -- \
 	sh -c "cd '$work/libkrunfw' && make -j'$jobs'"
 save_kernel_tarball "$work/libkrunfw"
-(cd "$work/libkrunfw" && make PREFIX="$prefix" install)
+# libkrunfw v5.6.2 installs into lib/<arch>-linux-gnu on a Debian family system
+# (v5.5.0 used lib64); everything after this reads lib64, so name it. Refs: MGIT-306.2
+(cd "$work/libkrunfw" && make PREFIX="$prefix" LIBDIR_Linux=lib64 install)
 ldconfig
 
 echo "== libkrun $LIBKRUN_VERSION (NET=1) =="
@@ -237,6 +239,8 @@ libdir="$prefix/lib64"
 [ -d "$libdir" ] || libdir="$prefix/lib"
 so="$(ls "$libdir"/libkrun.so.* 2>/dev/null | head -1 || true)"
 [ -n "$so" ] || { echo "FATAL: no libkrun.so.* under $libdir after install" >&2; exit 1; }
+fwso="$(ls "$libdir"/libkrunfw.so.* 2>/dev/null | head -1 || true)"
+[ -n "$fwso" ] || { echo "FATAL: no libkrunfw.so.* under $libdir after install" >&2; exit 1; }
 
 # The networking symbols must be present. A libkrun built without them links
 # and loads fine and only fails at VM configuration time, where the error names

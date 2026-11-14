@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **libkrunfw moves from 5.5.0 to 5.6.2** (guest kernel linux-6.12.91 becomes
+  linux-6.12.109). The pins, the install script's notice, the source offer and
+  the macOS tarball name all follow the one pin. Refs: MGIT-306.2
+
 ### Documentation
 
 - **repairing a base that absorbed an untracked path**. The README now says to
