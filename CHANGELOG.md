@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-06
+
+`linux_arm64` is build-verified and not boot-verified: its build, tests and
+vulnerability scan run in CI; mgit's release checks do not boot an arm64 guest.
+
+### Added
+
+- `mgit export --task-id <id> --format history` exports a versioned JSON
+  document of a task's delivered steps and audit records. Add `--omit-messages`
+  to leave every step's message out, including recorded rollback reasons.
+  Other export formats are unchanged. Refs: MGIT-297
+
+### Fixed
+
+- Sandbox launch checks the guest's exec protocol and refuses guests that
+  predate the handshake or speak an incompatible protocol, with a command to
+  recompose the guest base. A silent guest has a bounded readiness check.
+  Refs: MGIT-158
+- On Windows, sandbox launch reports the unavailable backend before looking
+  up a guest base. `work --sandbox` creates the worktree and routing files,
+  then reports that the sandbox was not launched. (#347)
+- `sandbox base set`, `sandbox base from`, `sandbox image add`,
+  `sandbox image install` and `sandbox image init` refuse to run from linked
+  worktrees or sandbox-owned directories before changing shared configuration.
+  Run these commands from the owning repository; its subdirectories and
+  symlink aliases remain supported. (#350, #351, #352)
+
 ### Documentation
 
 - **repairing a base that absorbed an untracked path**. The README now says to
