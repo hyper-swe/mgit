@@ -55,10 +55,9 @@ vulnerability scan run in CI; mgit's release checks do not boot an arm64 guest.
 ### Changed
 
 - A security fix.
-- Build and guest verification toolchains use Go 1.26.11, which includes a
-  security fix in the Go standard library. The guest archive checksums match
-  the Go publisher's Linux amd64 and arm64 archives. Scanning remains enabled
-  without exclusions.
+- Build and guest verification toolchains use Go 1.26.11. The guest archive
+  checksums match the Go publisher's Linux amd64 and arm64 archives.
+- Dependency updates: `echo` v4.16.3 and `go-colorable` v0.1.15.
 - On Apple silicon macOS, the Homebrew formula depends on
   `hyper-swe/tap/libkrunfw`, the sandbox's guest kernel library, from mgit's
   own tap. Run `brew trust hyper-swe/tap` once, then `brew install
