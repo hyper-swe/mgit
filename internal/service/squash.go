@@ -186,7 +186,7 @@ func (s *SquashService) planSquash(ctx context.Context, req SquashRequest) (*squ
 		allDiffs = append(allDiffs, c.FileDiffs...)
 		// The summary may leave the store (--to-git, export), so it carries what
 		// was written, not mgit's own task tag. Refs: MGIT-228
-		summaries = append(summaries, fmt.Sprintf("- %s: %s", c.ShortID(), withoutTaskTag(c.Message)))
+		summaries = append(summaries, fmt.Sprintf("- %s: %s", c.ShortID(), squashSummaryText(c, rec.AgentID, i)))
 	}
 
 	// ADR-008 §4: a task's net change is computed against its PINNED fork-base.
@@ -216,6 +216,20 @@ func (s *SquashService) planSquash(ctx context.Context, req SquashRequest) (*squ
 		plan.message = plan.message + "\n\n" + strings.Join(summaries, "\n")
 	}
 	return plan, nil
+}
+
+// squashSummaryText is what the generated squash message says about one step.
+// A rollback is named by its place in the task and nothing else: the reason
+// given to `mgit rollback` stays in the revert commit and the audit trail, and
+// never reaches the user's git through --to-git or `export --format git`.
+// position counts from 0, as in the history export.
+func squashSummaryText(c *model.Commit, ledgerAgent string, position int) string {
+	// The git object does not keep the commit type, so the ledger's record of
+	// who made the step is what says it is a rollback.
+	if ledgerAgent == rollbackAgentID {
+		return fmt.Sprintf("rolled back step %d", position)
+	}
+	return withoutTaskTag(c.Message)
 }
 
 // logAudit appends a SQUASH entry to the audit trail. No-op when no

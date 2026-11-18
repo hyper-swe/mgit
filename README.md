@@ -415,8 +415,8 @@ All commands support `--json` for structured output. `mgit run` and `mgit sandbo
 
 | Command | Description |
 |---------|-------------|
-| `mgit squash --task-id ID [--to-git \| --to-main]` | Consolidate micro-commits into one. `-m MSG` inline, or `-F FILE` / `-F -` to read the message verbatim from a file or stdin; a message you supply is recorded exactly as given, with nothing appended |
-| `mgit rollback --task-id ID [--commit HASH]` | Revert a task: an append-only revert commit that also restores the working tree (a step's hash resolves its task) |
+| `mgit squash --task-id ID [--to-git \| --to-main]` | Consolidate micro-commits into one. `-m MSG` inline, or `-F FILE` / `-F -` to read the message verbatim from a file or stdin; a message you supply is recorded exactly as given, with nothing appended. In a message mgit generates, a rollback appears only as `rolled back step N` |
+| `mgit rollback --task-id ID [--commit HASH] [--reason TEXT]` | Revert a task: an append-only revert commit that also restores the working tree (a step's hash resolves its task). The reason is kept in the revert commit and in `mgit audit`; a squash or git export never repeats it |
 | `mgit verify [--task-id ID] [--fix]` | Verify commit chain and index integrity |
 | `mgit audit [--task-id ID] [--since --until]` | View the audit trail |
 | `mgit export --task-id ID --format json\|git\|audit-log` | Export task data. A pure read: creates no squash commit, writes no audit record. `--format git` yields the same hunks as `squash --to-git`; a task whose net change is genuinely empty prints an explanatory note on stderr and no patch, rather than an empty one |

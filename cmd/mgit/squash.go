@@ -28,7 +28,9 @@ func squashCmd() *cobra.Command {
 			"no shell involved. The two are mutually exclusive. A message you supply " +
 			"is recorded exactly as given — it is the message a reviewer reads in " +
 			"the user's own git after --to-git, so nothing is appended to it. With " +
-			"no message, mgit generates one summarizing the micro-commits.",
+			"no message, mgit generates one summarizing the micro-commits; a rollback " +
+			"in the task appears there only as \"rolled back step N\" (N counts from 0), " +
+			"and the reason given to `mgit rollback --reason` stays in the audit trail.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Past flag parsing, a failure is a runtime condition, not misuse:
 			// dumping the flag table after it buries the remedy. Refs: MGIT-77

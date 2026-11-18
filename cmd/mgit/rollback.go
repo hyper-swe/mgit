@@ -94,12 +94,14 @@ func rollbackCmd() *cobra.Command {
 	// service interpolates it into a generated single-line summary,
 	// `[MGIT:<task>] Revert: <reason> (<n> commits)`, so a multi-line reason
 	// would break that line's shape and a byte-identity promise would be a lie.
-	// It also never leaves the store — --to-git exports the SQUASH message, not
-	// a revert's — so the shell exposure that made squash urgent does not apply.
-	// A reason is one clause explaining a backout; it stays short text. If that
-	// ever proves wrong, bindMessageFlags/resolveMessage are one call away.
-	// Refs: FR-8.10, MGIT-106
-	cmd.Flags().StringVar(&reason, "reason", "", "Reason for rollback (short text, recorded in the revert commit's summary line)")
+	// It also stays in the store: the squash message mgit generates names a
+	// rollback only as "rolled back step N", so --to-git and `export --format
+	// git` never carry the reason. The reason lives in the revert commit and the
+	// audit trail. A reason is one clause explaining a backout; it stays short
+	// text. If that ever proves wrong, bindMessageFlags/resolveMessage are one
+	// call away.
+	// Refs: FR-8.10, MGIT-106, MGIT-329
+	cmd.Flags().StringVar(&reason, "reason", "", "Reason for rollback (short text). It is recorded in the revert commit and the audit trail (`mgit audit`); a squash or git export says only \"rolled back step N\"")
 	cmd.Flags().StringVar(&commitHash, "commit", "", "Rollback by specific commit hash (resolves task ID automatically)")
 	cmd.Flags().StringVar(&toCommit, "to-commit", "", "Alias for --commit")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview without making changes")
