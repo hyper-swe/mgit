@@ -12,6 +12,11 @@ import (
 	"github.com/hyper-swe/mgit/internal/store/index"
 )
 
+// rollbackAgentID is the agent a revert commit is recorded under in the task
+// ledger. A read of the ledger tells a rollback from any other step by it,
+// because the git object itself does not keep the commit type. Refs: MGIT-329
+const rollbackAgentID = "mgit-rollback"
+
 // RollbackRequest holds parameters for rolling back task commits.
 // Refs: FR-6
 type RollbackRequest struct {
@@ -160,7 +165,7 @@ func (s *RollbackService) RollbackTask(ctx context.Context, req RollbackRequest)
 		return nil, fmt.Errorf("rollback ledger position: %w", err)
 	}
 	position := len(raw)
-	err = s.indexStore.AddCommitToTask(ctx, req.TaskID, hash, revertCommit.ContentHash, "mgit-rollback", position)
+	err = s.indexStore.AddCommitToTask(ctx, req.TaskID, hash, revertCommit.ContentHash, rollbackAgentID, position)
 	if err != nil {
 		return nil, fmt.Errorf("rollback task %s: index revert commit: %w", req.TaskID, err)
 	}

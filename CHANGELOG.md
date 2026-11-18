@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The message mgit generates for `mgit squash` and `mgit export --format git`
+  now names a rollback only as `rolled back step N` (N counts from 0). The
+  reason given to `mgit rollback --reason` stays in the revert commit and in
+  `mgit audit`, and no longer reaches your git history. A message you supply is
+  still recorded exactly as given.
+
 ## [0.7.7] - 2026-11-18
 
 `linux_arm64` is build-verified and not boot-verified: its build, tests and
