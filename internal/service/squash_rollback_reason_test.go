@@ -2,11 +2,14 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	gitstore "github.com/hyper-swe/mgit/internal/store/git"
 )
 
 // The reason given to a rollback is recorded in the revert commit and in the
@@ -74,4 +77,31 @@ func TestTheRollbackReasonStaysInTheAuditTrailAndTheRevertCommit(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Contains(t, entries[0].Details, rollbackReasonText, "the audit trail keeps the reason")
+}
+
+// The step number is the rollback's place in the task's ledger, the same
+// number the history export gives that step, even when an earlier step was
+// retained but not delivered and so is left out of the squash.
+func TestRollbackStepNumberIsTheLedgerPositionWhenAnEarlierStepIsUndelivered(t *testing.T) {
+	e, _ := pendingContentFixtureOrder(t, true) // ledger position 0 is undelivered; position 1 is delivered
+	ctx := context.Background()
+	_, err := e.rollbk.RollbackTask(ctx, RollbackRequest{TaskID: "MGIT-323", Reason: rollbackReasonText})
+	require.NoError(t, err)
+	stageAndCommit(t, e, "MGIT-323", "after.txt", "after\n")
+
+	steps, err := NewDiffService(gitstore.NewDiffStore(e.repo), e.cs, e.idx).DiffTaskSteps(ctx, "MGIT-323")
+	require.NoError(t, err)
+	rollbackPos := -1
+	for _, st := range steps {
+		if st.Record.AgentID == rollbackAgentID {
+			rollbackPos = st.Record.Position
+		}
+	}
+	require.GreaterOrEqual(t, rollbackPos, 0, "the history listing has the rollback step")
+
+	dry, err := e.squash.SquashTask(ctx, SquashRequest{TaskID: "MGIT-323", DryRun: true})
+	require.NoError(t, err)
+	assert.Contains(t, dry.Message, fmt.Sprintf("rolled back step %d", rollbackPos),
+		"the squash names the rollback by the history export's position")
+	assert.NotContains(t, dry.Message, rollbackReasonText)
 }
