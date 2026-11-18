@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-11-18
+
+`linux_arm64` is build-verified and not boot-verified: its build, tests and
+vulnerability scan run in CI; mgit's release checks do not boot an arm64 guest.
+
+### Added
+
+- `mgit export --task-id <id> --format history` exports a versioned JSON
+  document of a task's delivered steps and audit records. Add `--omit-messages`
+  to leave every step's message out, including recorded rollback reasons.
+  Other export formats are unchanged. Refs: MGIT-297
+- `mgit run` and `mgit sandbox exec` accept `--env-name NAME` (repeatable) to
+  pass the named variable from mgit's own environment into the guest. `mgit run
+  --capabilities=json` prints the features this mgit supports.
+- Release archives carry the licence texts of the Go modules compiled into the
+  binaries, in `THIRD_PARTY_LICENSES.txt`. `NOTICE` names the copyright holder
+  as a legal entity. Refs: MGIT-306
+
+### Fixed
+
+- Sandbox launch checks the guest's exec protocol and refuses guests that
+  predate the handshake or speak an incompatible protocol, with a command to
+  recompose the guest base. A silent guest has a bounded readiness check. The
+  refusal no longer adds an unrelated failure or memory-cap hint. Refs: MGIT-158
+- The host caps what it reads in answer to the sandbox readiness probe. A guest
+  that sends more than 64 KiB, or more than 256 output frames, is refused with
+  the limit named.
+- A project whose Git history committed a `.mgit` folder below the root can
+  start a task. The base skips the files under that folder, and `mgit work`
+  and `mgit worktree add` name each skipped folder once on stderr.
+- On Windows, sandbox launch reports the unavailable backend before looking
+  up a guest base. `work --sandbox` creates the worktree and routing files,
+  then reports that the sandbox was not launched.
+- `sandbox base set`, `sandbox base from`, `sandbox image add`,
+  `sandbox image install` and `sandbox image init` refuse to run from linked
+  worktrees or sandbox-owned directories before changing shared configuration.
+  Run these commands from the owning repository; its subdirectories and
+  symlink aliases remain supported.
+- The darwin build supports macOS 14 or later, and the release checks fail the
+  build if its minimum macOS version rises above 14.
+
 ### Documentation
 
 - **repairing a base that absorbed an untracked path**. The README now says to
@@ -16,14 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- A security fix in how a guest command is started. `mgit run` and `mgit sandbox
-  exec` take `--env-name NAME` (repeatable), which sets the named variable from
-  mgit's own environment in the guest, and `mgit run --capabilities=json`
-  reports the features this mgit supports. Refs: HSWE-17.80.4.2
-- Build and guest verification toolchains use Go 1.26.11, which includes a
-  security fix in the Go standard library. The guest archive checksums match
-  the Go publisher's Linux amd64 and arm64 archives. Scanning remains enabled
-  without exclusions.
+- A security fix.
+- Build and guest verification toolchains use Go 1.26.11. The guest archive
+  checksums match the Go publisher's Linux amd64 and arm64 archives.
+- Dependency updates: `echo` v4.16.3 and `go-colorable` v0.1.15.
 - On Apple silicon macOS, the Homebrew formula depends on
   `hyper-swe/tap/libkrunfw`, the sandbox's guest kernel library, from mgit's
   own tap. Run `brew trust hyper-swe/tap` once, then `brew install
