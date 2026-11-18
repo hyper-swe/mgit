@@ -18,6 +18,9 @@ vulnerability scan run in CI; mgit's release checks do not boot an arm64 guest.
   document of a task's delivered steps and audit records. Add `--omit-messages`
   to leave every step's message out, including recorded rollback reasons.
   Other export formats are unchanged. Refs: MGIT-297
+- `mgit run` and `mgit sandbox exec` accept `--env-name NAME` (repeatable) to
+  pass the named variable from mgit's own environment into the guest. `mgit run
+  --capabilities=json` prints the features this mgit supports.
 - Release archives carry the licence texts of the Go modules compiled into the
   binaries, in `THIRD_PARTY_LICENSES.txt`. `NOTICE` names the copyright holder
   as a legal entity. Refs: MGIT-306
