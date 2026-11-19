@@ -14,7 +14,7 @@ import (
 // the baseline only inside mgit's own generated block must not stop a land:
 // mgit rewrote that block itself when the worktree was made and when the
 // sandbox launched. Any difference outside the block still refuses, and a path
-// that was never recorded as generated keeps the old behaviour. Refs: HSWE-45.2
+// that was never recorded as generated keeps the old behavior. Refs: HSWE-45.2
 const (
 	docOutside  = "# Project notes\n\nwritten by the user\n"
 	docOldBlock = "\n<!-- BEGIN mgit-sandbox (generated; do not edit) -->\nold posture\n<!-- END mgit-sandbox -->\n"
