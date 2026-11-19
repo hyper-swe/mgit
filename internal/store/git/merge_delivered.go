@@ -1,9 +1,11 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -102,6 +104,11 @@ func (m *MergeStore) FastForwardDelivered(ctx context.Context, branch, targetHas
 	for path := range target {
 		paths[path] = true
 	}
+	generated, err := m.generatedPathSet()
+	if err != nil {
+		return err
+	}
+	keep := map[string][]byte{} // generated docs that drifted only inside mgit's block
 	for path := range paths {
 		if err := validateRelPath(path); err != nil {
 			return err
@@ -129,10 +136,23 @@ func (m *MergeStore) FastForwardDelivered(ctx context.Context, branch, targetHas
 		if (was && actual == before) || (want && actual == after) {
 			continue
 		}
+		if generated[path] && was && want && m.blockOnlyDrift(content, actual, before, after) {
+			keep[path] = content
+			continue
+		}
 		return m.projectionConflict(path, target)
 	}
 	if err := NewWorktreeStore(m.repo).materializeCommit(plumbing.NewHash(targetHash), old); err != nil {
 		return err
+	}
+	// The block mgit wrote into the host doc is the current one; the content
+	// outside it is identical in all three versions, so the host file is put
+	// back exactly as it was. Refs: HSWE-45.2
+	for path, content := range keep {
+		abs := filepath.Join(m.repo.root, filepath.FromSlash(path))
+		if err := os.WriteFile(abs, content, 0o600); err != nil { //nolint:gosec // path validated against root above
+			return fmt.Errorf("native projection: keep generated %s: %w", path, err)
+		}
 	}
 	return advanceBranchRefCAS(m.repo.repo.Storer, refName, plumbing.NewHash(targetHash), cur.Hash())
 }
@@ -245,4 +265,53 @@ func (r *Repository) ProjectionRecoveryCheckpoint(path string) (string, *Project
 		return "", nil, entryErr
 	}
 	return head, entry, nil
+}
+
+// generatedPathSet reads the paths recorded as mgit-generated for the view's
+// worktree, so a land can tell mgit's own docs from the user's files.
+// Refs: HSWE-45.2
+func (m *MergeStore) generatedPathSet() (map[string]bool, error) {
+	paths, err := ReadGeneratedPaths(m.repo.root)
+	if err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		set[p] = true
+	}
+	return set, nil
+}
+
+// blockOnlyDrift reports whether a recorded generated doc differs from both
+// the HEAD and the guest-tip versions only inside mgit's own generated block:
+// the three versions must be regular files whose content outside the block is
+// identical. Any difference outside the block (a user's own edit) is not drift
+// and the land still refuses. Refs: HSWE-45.2
+func (m *MergeStore) blockOnlyDrift(host []byte, actual, before, after blobEntry) bool {
+	if actual.mode != filemode.Regular || before.mode != filemode.Regular || after.mode != filemode.Regular {
+		return false
+	}
+	head, err := m.blobBytes(before.hash)
+	if err != nil {
+		return false
+	}
+	tip, err := m.blobBytes(after.hash)
+	if err != nil {
+		return false
+	}
+	outside := StripGeneratedBlock(host)
+	return bytes.Equal(outside, StripGeneratedBlock(head)) && bytes.Equal(outside, StripGeneratedBlock(tip))
+}
+
+func (m *MergeStore) blobBytes(h plumbing.Hash) ([]byte, error) {
+	blob, err := m.repo.repo.BlobObject(h)
+	if err != nil {
+		return nil, err
+	}
+	r, err := blob.Reader()
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close() //nolint:errcheck // read-only blob reader
+	return io.ReadAll(r)
 }
