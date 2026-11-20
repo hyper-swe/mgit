@@ -334,6 +334,35 @@ var (
 
 **CGO containment:** macOS vz bindings (and possibly others) require CGO, which conflicts with mgit's pure-Go, CGO-free policy. Resolution: platform backends live in a separate `mgit-sandboxd` helper binary spoken to over local IPC. Core `mgit` stays CGO-free; the helper is per-platform and independently auditable. All new dependencies go through PACKAGE-APPROVAL-PROCESS.md before any code is written.
 
+### Declared Reduced Tier: Windows native confinement (amendment 2026-11-20)
+
+**Context.** ADR-006 supersedes the Windows row above with a Hyper-V-isolated Windows container. That tier needs a Windows Pro or Enterprise host with administrator rights. A Windows Home host, or a host with no virtualization firmware, has no VM tier today, so `mgit sandbox` refuses there. This amendment adds one tier for those hosts. It does not change any other platform and does not weaken ADR-005 for them.
+
+**Decision.** Add a backend, `winconfined`, that runs task work in an AppContainer (least-privilege variant where the toolchain allows it) inside a Job Object, on a staged copy of the worktree. It needs no administrator rights. It runs on the host kernel, so it is **not** a microVM and does **not** meet ADR-005 goal 2 (host OS unreachable) as written: a same-kernel escape is outside this ADR's non-goals, and this tier does not defend against one. It is therefore a **declared reduced tier**, and it is allowed only on the four conditions below. Each condition is a testable line; the test named is the one the build must carry.
+
+**R1. Declared everywhere (reduced, never silent).** Provisioning output, `mgit doctor`, the receipt/attestation of every sandbox, and the containment text given to the agent all say `reduced` for this tier, with the one-line reason "runs on the host kernel; not a VM".
+- Test: a `winconfined` sandbox renders the word `reduced` in provisioning, doctor, attestation and agent text; none of the four ever renders the VM-tier wording.
+- Test: the containment value for reduced is a new value, never the zero value; a call site that forgets to set it fails with an error and does not print the VM-tier wording.
+
+**R2. Never the default where a strong tier exists.** Tier selection picks a VM tier whenever one is available on the host. `winconfined` is chosen only when no VM tier is available (Windows Home, or no virtualization firmware), or when the user names it explicitly.
+- Test: with a VM tier reported available, selection never returns `winconfined` unless asked; with none available it returns `winconfined` and says why.
+- Test: an unavailable-everything host still refuses (fail closed); the task never runs on the host unconfined.
+
+**R3. Egress is limited to what the tier can enforce.** `winconfined` offers egress `none` and `open` only. `allowlist` (ADR-012, revoke kills established flows) is **not offered** on this tier until a filter keyed on the container identity is shown to restrict it to the host proxy. A request for `allowlist` on this tier is refused with that reason, never downgraded to `open`.
+- Test: `none` blocks all outbound connections from inside; `open` reaches the network; a request for `allowlist` returns a refusal naming the tier.
+- Test: a revoke of `open` ends the sandbox's established connections (the job is killed).
+
+**R4. Public text never presents this tier as equal to the guest-boundary sandbox.** README, help text, docs, release notes and doctor wording describe it as reduced isolation, state that it shares the host kernel, and do not use "microVM", "VM-isolated" or "guest boundary" for it.
+- Test: a docs/copy check fails if any page or help string that mentions `winconfined` also uses a VM-tier phrase for it, or lacks the word `reduced`.
+
+**Which hosts get it (Q6).** A Windows Home host without virtualization firmware gets this tier only. A host with a VM tier available is governed by R2.
+
+**What this tier keeps.** Task-bound provisioning, one task per sandbox, delivery as a staged copy through the existing staging rules (no live share of the real worktree, no escaping links, no `.git`/`.mgit`), sync and export, host-side land and signed receipts, fail-closed refusal, and removal that leaves no profile, ACL or directory behind.
+
+**What it gives up, stated plainly.** (a) The kernel boundary: a kernel or container escape reaches the user's session. (b) Ambient resources a container may read (system directories, pipes and endpoints open to all application packages) that a VM does not have; mitigated by the least-privilege variant and by denying the daemon's own endpoints to every container identity. (c) `allowlist` egress (R3). (d) Dependencies cannot be downloaded under `none`; they are seeded host-side before the run.
+
+**Review of the mandate.** For agent loops the rule "run sandboxed" is met in letter by this tier (a boundary exists, fail closed, no silent host run) and not in strength. Whether reduced counts as sandboxed for a given loop is the project owner's call per the ruling cited above; this amendment does not make it so by itself.
+
 ### Worktree Delivery (per-backend — amendment 2026-06-20, MGIT-11.6.4)
 
 FR-17.3 mandates that the guest see **only** the bound worktree's working-tree
@@ -498,3 +527,4 @@ Standards audit: AUDIT-FR17-SANDBOX-V1.md (3 P1 remediated). Security audit: AUD
 | 2026-06-12 | Initial proposal; P1/Critical remediations from AUDIT-FR17-SANDBOX-V1 (F-01..F-03) and AUDIT-FR17-SANDBOX-SECURITY-V1 (SEC-01..SEC-04) applied in-cycle |
 | 2026-06-12 | **Promoted Proposed → Accepted** (MGIT-11.1.3): criteria 1–2 met (FR-17/NFR-17 drafted; backend packages approved), criteria 3–11 encoded as binding FR-17/NFR-17 clauses with owning MGIT-11 tasks. Corrections in the same revision: stale task references from the pre-import MGIT-9 numbering rewritten to MGIT-11.x (the sandbox epic was imported into mtix as MGIT-11; MGIT-9 is the unrelated coverage sprint); policy.json and images.lock paths moved out of `.mgit/sandbox/` (worktree-resident, contradicted SEC-02) to the host config root per FR-17.13 |
 | 2026-06-20 | **Worktree-delivery amendment** (MGIT-11.6.4): recorded per-backend worktree delivery — vzf uses a live virtiofs share; firecracker (no virtiofs) uses **copy-and-land** via a per-VM writable ext4 `virtio-blk` image (`mke2fs -d`), with no live host-side write-back. Both satisfy FR-17.3 (identical-path, working-tree-only, isolation); live visibility is a vzf incidental, not a requirement. Decision: owner-approved 2026-06-20 |
+| 2026-11-20 | **Declared reduced tier** (Windows native confinement): adds `winconfined` for hosts with no VM tier, on the project owner's conditions of 2026-11-20 (declared reduced everywhere, never the default over a strong tier, never described as equal to the guest-boundary sandbox), plus egress limited to none/open (added in design review). |
