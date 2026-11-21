@@ -338,30 +338,30 @@ var (
 
 **Context.** ADR-006 supersedes the Windows row above with a Hyper-V-isolated Windows container. That tier needs a Windows Pro or Enterprise host with administrator rights. A Windows Home host, or a host with no virtualization firmware, has no VM tier today, so `mgit sandbox` refuses there. This amendment adds one tier for those hosts. It does not change any other platform and does not weaken ADR-005 for them.
 
-**Decision.** Add a backend, `winconfined`, that runs task work in an AppContainer (least-privilege variant where the toolchain allows it) inside a Job Object, on a staged copy of the worktree. It needs no administrator rights. It runs on the host kernel, so it is **not** a microVM and does **not** meet ADR-005 goal 2 (host OS unreachable) as written: a same-kernel escape is outside this ADR's non-goals, and this tier does not defend against one. It is therefore a **declared reduced tier**, and it is allowed only on the four conditions below. Each condition is a testable line; the test named is the one the build must carry.
+**Decision.** Add a backend, `winconfined`, that runs task work in an AppContainer (least-privilege variant where the toolchain allows it) inside a Job Object, on a staged copy of the worktree. It needs no administrator rights. It runs on the host kernel, so it is **not** a microVM and does **not** meet ADR-005 goal 2 (host OS unreachable) as written: a same-kernel escape is not excused by this ADR's non-goals, and this tier does not defend against one. It is therefore a **declared reduced tier**, and it is allowed only on the four conditions below. Each condition is a testable line; the test named is the one the build must carry.
 
 **R1. Declared everywhere (reduced, never silent).** Provisioning output, `mgit doctor`, the receipt/attestation of every sandbox, and the containment text given to the agent all say `reduced` for this tier, with the one-line reason "runs on the host kernel; not a VM".
 - Test: a `winconfined` sandbox renders the word `reduced` in provisioning, doctor, attestation and agent text; none of the four ever renders the VM-tier wording.
 - Test: the containment value for reduced is a new value, never the zero value; a call site that forgets to set it fails with an error and does not print the VM-tier wording.
 
-**R2. Never the default where a strong tier exists.** Tier selection picks a VM tier whenever one is available on the host. `winconfined` is chosen only when no VM tier is available (Windows Home, or no virtualization firmware), or when the user names it explicitly.
-- Test: with a VM tier reported available, selection never returns `winconfined` unless asked; with none available it returns `winconfined` and says why.
+**R2. Never selected automatically.** `winconfined` is used only on an explicit `--backend winconfined` together with `--acknowledge-reduced-isolation`, and the choice is recorded in the audit log. Tier selection never picks it on its own, on any host. On a host with no VM tier available (for example Windows Home, or no virtualization firmware), a request without both flags is refused with a message naming them.
+- Test: with a VM tier reported available, selection never returns `winconfined` unless both flags are given; with no VM tier available and no flags it refuses and names the flags; with both flags it runs and writes the audit record.
 - Test: an unavailable-everything host still refuses (fail closed); the task never runs on the host unconfined.
 
-**R3. Egress is limited to what the tier can enforce.** `winconfined` offers egress `none` and `open` only. `allowlist` (ADR-012, revoke kills established flows) is **not offered** on this tier until a filter keyed on the container identity is shown to restrict it to the host proxy. A request for `allowlist` on this tier is refused with that reason, never downgraded to `open`.
-- Test: `none` blocks all outbound connections from inside; `open` reaches the network; a request for `allowlist` returns a refusal naming the tier.
-- Test: a revoke of `open` ends the sandbox's established connections (the job is killed).
+**R3. Egress is limited to what the tier can enforce.** `winconfined` offers egress `none` and `open` only, and its default egress is `none`. `allowlist` (ADR-012, revoke kills established flows) is **not offered** on this tier until a filter keyed on the container identity is shown to restrict it to the host proxy. A request for `allowlist` on this tier is refused with that reason, never downgraded to `open`.
+- Test: a sandbox created with no egress setting has egress `none`; `none` blocks all outbound connections from inside; `open` reaches the network; a request for `allowlist` returns a refusal naming the tier.
+- Test: a revoke of `open` ends the sandbox's established connections and the sandbox itself keeps running, consistent with ADR-012.
 
 **R4. Public text never presents this tier as equal to the guest-boundary sandbox.** README, help text, docs, release notes and doctor wording describe it as reduced isolation, state that it shares the host kernel, and do not use "microVM", "VM-isolated" or "guest boundary" for it.
 - Test: a docs/copy check fails if any page or help string that mentions `winconfined` also uses a VM-tier phrase for it, or lacks the word `reduced`.
 
-**Which hosts get it (Q6).** A Windows Home host without virtualization firmware gets this tier only. A host with a VM tier available is governed by R2.
+**Which hosts get it.** A host with no VM tier available (for example Windows Home, or no virtualization firmware) can use this tier only under R2. A host with a VM tier available is governed by R2 as well.
 
 **What this tier keeps.** Task-bound provisioning, one task per sandbox, delivery as a staged copy through the existing staging rules (no live share of the real worktree, no escaping links, no `.git`/`.mgit`), sync and export, host-side land and signed receipts, fail-closed refusal, and removal that leaves no profile, ACL or directory behind.
 
 **What it gives up, stated plainly.** (a) The kernel boundary: a kernel or container escape reaches the user's session. (b) Ambient resources a container may read (system directories, pipes and endpoints open to all application packages) that a VM does not have; mitigated by the least-privilege variant and by denying the daemon's own endpoints to every container identity. (c) `allowlist` egress (R3). (d) Dependencies cannot be downloaded under `none`; they are seeded host-side before the run.
 
-**Review of the mandate.** For agent loops the rule "run sandboxed" is met in letter by this tier (a boundary exists, fail closed, no silent host run) and not in strength. Whether reduced counts as sandboxed for a given loop is the project owner's call per the ruling cited above; this amendment does not make it so by itself.
+**Review of the mandate.** For agent loops the rule "run sandboxed" is met in letter by this tier (a boundary exists, fail closed, no silent host run) and not in strength. Whether reduced counts as sandboxed for a given loop is the project owner's call, per the project owner's ruling of 2026-11-20; this amendment does not make it so by itself.
 
 ### Worktree Delivery (per-backend — amendment 2026-06-20, MGIT-11.6.4)
 
@@ -443,6 +443,7 @@ Session state is **derived** from the latest event per `sandbox_id`; lifecycle t
 | T7 resource abuse | CPU/mem/disk caps and TTL per VM, enforced by the VMM |
 | T8 config injection | Host-auto-executed paths (`.claude/**`, `.envrc`, `.git/hooks/**`, `.vscode/**`, agent rules files — configurable list) are mounted **read-only** into the guest; `land` flags/refuses guest modifications to the sensitive-path list (`ErrSensitivePathModified`) |
 | T9 lateral movement | Egress proxy denies RFC1918, link-local, and metadata endpoints by default in `allowlist` mode; DNS resolved host-side (no tunneling); LAN/metadata access requires an explicit, audited capability grant |
+| T10 same-kernel escape (`winconfined` only) | **Not mitigated.** The reduced tier shares the host kernel; the kernel boundary is given up (see Residual Risk 8) |
 
 ### Residual Risk — What This Feature Does NOT Mitigate
 
@@ -455,6 +456,7 @@ Stated explicitly so the boundary is never oversold:
 5. **Granted capabilities are real risk while granted**: a forwarded ssh-agent can sign for sandboxed code during the grant lifetime; an `open`-network sandbox can exfiltrate. Grants are deliberate, scoped, prompted, and audited — but they are the user accepting risk, and grant prompts must always display destination + requesting task (no "allow all" option) to limit the social-engineering surface.
 6. **Covert channels through allowlisted hosts** (encoding data into registry queries) and CPU side channels (Spectre-class) — narrowed by minimal allowlists and per-task VMs; not eliminated.
 7. **Vulnerable-but-honest code, license contamination, upstream-poisoned base images** beyond what digest pinning/signing detects.
+8. **The reduced tier gives up the kernel boundary.** On `winconfined` a kernel or container escape reaches the user's session; the tier is declared reduced for that reason and is never selected automatically.
 
 ---
 

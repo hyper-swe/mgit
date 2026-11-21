@@ -1,6 +1,6 @@
 # ADR-006: Host-Matching Sandbox Guests; Windows Backend via WCOW
 
-**Status:** Accepted
+**Status:** Accepted; hosts with no VM tier are covered by the declared reduced tier in ADR-005 (amendment 2026-11-20)
 **Date:** 2026-06-15
 **Refs:** ADR-005 (MicroVM Sandbox — this ADR refines its platform model), FR-17.15 (pluggable backend), FR-17.27 (vsock/HvSocket peer binding), FR-17.35 (control/land protocol), FR-17.39 (new — host-matching guest), FR-16 (Agent Worktrees)
 
