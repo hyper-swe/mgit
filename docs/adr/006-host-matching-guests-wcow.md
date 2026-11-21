@@ -1,6 +1,6 @@
 # ADR-006: Host-Matching Sandbox Guests; Windows Backend via WCOW
 
-**Status:** Accepted; hosts with no VM tier are covered by the declared reduced tier in ADR-005 (amendment 2026-11-20)
+**Status:** Accepted
 **Date:** 2026-06-15
 **Refs:** ADR-005 (MicroVM Sandbox — this ADR refines its platform model), FR-17.15 (pluggable backend), FR-17.27 (vsock/HvSocket peer binding), FR-17.35 (control/land protocol), FR-17.39 (new — host-matching guest), FR-16 (Agent Worktrees)
 
@@ -58,4 +58,4 @@ Full results: MGIT-11.5.3 annotations.
 
 ## Status of work
 
-- Decision recorded and validated by pilot (2026-06-15). Implementation is **deferred** behind a dedicated epic (MGIT-12 — "Windows-native sandbox backend (WCOW)"), to be picked up when there is developer demand for Windows-host support. Until then, Windows hosts are served by the audited reduced-isolation container fallback (FR-17, `--backend container --acknowledge-reduced-isolation`).
+- Decision recorded and validated by pilot (2026-06-15). Implementation is **deferred** behind a dedicated epic (MGIT-12 — "Windows-native sandbox backend (WCOW)"), to be picked up when there is developer demand for Windows-host support. Until then, a Windows host with no VM tier available is served by the declared reduced tier `winconfined` (ADR-005, amendment 2026-11-20), used only on explicit request with acknowledgement.
