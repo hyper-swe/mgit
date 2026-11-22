@@ -33,11 +33,18 @@ type env struct {
 	evidence     []byte
 }
 
+// setup is setupRaw with the write denial on, for the paths that expect a
+// verifiable attestation. The default is pinned by a test that uses setupRaw.
 func setup(t *testing.T) *env {
 	t.Helper()
 	old := reviewprep.WriteDenialEnforced
 	reviewprep.WriteDenialEnforced = true
 	t.Cleanup(func() { reviewprep.WriteDenialEnforced = old })
+	return setupRaw(t)
+}
+
+func setupRaw(t *testing.T) *env {
+	t.Helper()
 	root := t.TempDir()
 	if err := attest.GenerateKey(context.Background(), root, noAudit{}); err != nil {
 		t.Fatal(err)
@@ -252,5 +259,22 @@ func TestPrepareReview_MappingIDCannotLeaveTheMapDirectory(t *testing.T) {
 				t.Fatalf("lease left behind: %v", l)
 			}
 		})
+	}
+}
+
+// With the flag as shipped, the service issues an attestation that states
+// writes as possible; nothing here assigns the flag.
+func TestPrepareReview_DefaultAttestationStatesWritesPossible(t *testing.T) {
+	e := setupRaw(t)
+	raw, err := e.svc.PrepareReview(context.Background(), e.args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var att reviewprep.Attestation
+	if err := json.Unmarshal(raw, &att); err != nil {
+		t.Fatal(err)
+	}
+	if !att.Enforced.FilesystemWrites {
+		t.Fatalf("default attestation claims writes denied: %s", raw)
 	}
 }
