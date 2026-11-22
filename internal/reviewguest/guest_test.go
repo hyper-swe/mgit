@@ -117,7 +117,7 @@ func TestProvision_RefusesALeaseDirThatIsNotASealedDirectory(t *testing.T) {
 	if err := os.Symlink(s.LeaseDir, link); err != nil {
 		t.Fatal(err)
 	}
-	for name, p := range map[string]string{"relative": "lease", "missing": filepath.Join(s.LeaseDir, "nope"), "file": file, "symlink": link} {
+	for name, p := range map[string]string{"relative": "lease", "dot": ".", "missing": filepath.Join(s.LeaseDir, "nope"), "file": file, "symlink": link} {
 		m := &fakeMgr{backend: model.BackendKVM}
 		x := s
 		x.LeaseDir = p
