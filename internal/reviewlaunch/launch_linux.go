@@ -3,6 +3,7 @@
 package reviewlaunch
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -72,7 +73,7 @@ type sockFprog struct {
 }
 
 // Run launches the entrypoint under the profile and waits for it. It returns
-// the entrypoint's exit status (128+signal when killed). A *Refusal means the
+// the entrypoint's exit status (128+signal when killed). A *RefusalError means the
 // reviewer was not started.
 func Run(cfg Config) (int, error) {
 	if os.Getuid() == 0 && cfg.DropTo == nil {
@@ -99,13 +100,13 @@ func Run(cfg Config) (int, error) {
 	defer parentSock.Close()
 	defer statusR.Close()
 
-	cmd := exec.Command(self, stageArg, string(sc))
+	cmd := exec.CommandContext(context.Background(), self, stageArg, string(sc)) //nolint:gosec // re-executes this very binary as the stage
 	cmd.Env = []string{}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = cfg.Stdin, cfg.Stdout, cfg.Stderr
 	cmd.ExtraFiles = []*os.File{childSock, statusW}
 	err = cmd.Start()
-	childSock.Close()
-	statusW.Close()
+	_ = childSock.Close()
+	_ = statusW.Close()
 	if err != nil {
 		return 0, refuse(CodeLaunchFailed, "starting the stage: %v", err)
 	}
@@ -120,12 +121,12 @@ func Run(cfg Config) (int, error) {
 	}
 	waitErr := cmd.Wait()
 	if recvErr == nil {
-		syscall.Close(listener)
+		_ = syscall.Close(listener)
 		<-supDone
 	}
 	status, _ := io.ReadAll(statusR)
 	if len(status) > 0 {
-		var r Refusal
+		var r RefusalError
 		if json.Unmarshal(status, &r) == nil && r.Code != "" {
 			return 0, &r
 		}
@@ -170,7 +171,7 @@ func recvListener(sock int) (listener, entryFD int, err error) {
 func supervise(fd int, d *ExecDecider) {
 	for {
 		var req [80]byte
-		if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), ioctlNotifRecv, uintptr(unsafe.Pointer(&req[0]))); e != 0 {
+		if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), ioctlNotifRecv, uintptr(unsafe.Pointer(&req[0]))); e != 0 { //nolint:gosec // G103: kernel ABI structs are passed by pointer
 			if e == syscall.EINTR {
 				continue
 			}
@@ -190,7 +191,7 @@ func supervise(fd int, d *ExecDecider) {
 		} else {
 			binary.LittleEndian.PutUint32(resp[16:20], uint32(-int32(dec.Errno)))
 		}
-		syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), ioctlNotifSend, uintptr(unsafe.Pointer(&resp[0])))
+		_, _, _ = syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), ioctlNotifSend, uintptr(unsafe.Pointer(&resp[0]))) //nolint:gosec // G103: kernel ABI structs are passed by pointer
 	}
 }
 
@@ -212,12 +213,12 @@ func MaybeStage() bool {
 }
 
 func stageFail(status *os.File, err error) {
-	var r *Refusal
+	var r *RefusalError
 	if !errors.As(err, &r) {
-		r = &Refusal{Code: CodeLaunchFailed, Detail: err.Error()}
+		r = &RefusalError{Code: CodeLaunchFailed, Detail: err.Error()}
 	}
 	b, _ := json.Marshal(r)
-	status.Write(b)
+	_, _ = status.Write(b)
 	os.Exit(3)
 }
 
@@ -243,7 +244,7 @@ func stage(sc stageConfig, sock, status *os.File) error {
 			return err
 		}
 	}
-	prctl(prCapAmbient, capAmbientClear, 0)
+	_ = prctl(prCapAmbient, capAmbientClear, 0)
 	if e := prctl(prSetNoNewPrivs, 1, 0); e != nil {
 		return refuse(CodePolicyUnenforceable, "no_new_privs: %v", e)
 	}
@@ -256,7 +257,7 @@ func stage(sc stageConfig, sock, status *os.File) error {
 		nr = sysSeccompArm64
 	}
 	fp := sockFprog{Len: uint16(len(prog)), Filter: &prog[0]}
-	lfd, _, e := syscall.RawSyscall(uintptr(nr), seccompSetModeFilter, filterFlagListener, uintptr(unsafe.Pointer(&fp)))
+	lfd, _, e := syscall.RawSyscall(uintptr(nr), seccompSetModeFilter, filterFlagListener, uintptr(unsafe.Pointer(&fp))) //nolint:gosec // G103: kernel ABI structs are passed by pointer
 	if e != 0 {
 		return refuse(CodePolicyUnenforceable, "seccomp filter with user notification: %v", e)
 	}
@@ -279,8 +280,8 @@ func stage(sc stageConfig, sock, status *os.File) error {
 	}
 	envp := []*byte{nil}
 	empty := []byte{0}
-	_, _, e = syscall.Syscall6(uintptr(Syscalls(HostArch()).Execveat), uintptr(entryFD), uintptr(unsafe.Pointer(&empty[0])),
-		uintptr(unsafe.Pointer(&argvp[0])), uintptr(unsafe.Pointer(&envp[0])), uintptr(AtEmptyPath), 0)
+	_, _, e = syscall.Syscall6(uintptr(Syscalls(HostArch()).Execveat), uintptr(entryFD), uintptr(unsafe.Pointer(&empty[0])), //nolint:gosec // G103: kernel ABI structs are passed by pointer
+		uintptr(unsafe.Pointer(&argvp[0])), uintptr(unsafe.Pointer(&envp[0])), uintptr(AtEmptyPath), 0) //nolint:gosec // G103: pointers to live argv and envp arrays
 	return refuse(CodeLaunchFailed, "executing the entrypoint: %v", e)
 }
 

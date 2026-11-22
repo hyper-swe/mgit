@@ -58,7 +58,7 @@ func probe(mode string) {
 			fmt.Printf("second-exec: open %v\n", err)
 			return
 		}
-		_, _, e := syscall.Syscall6(uintptr(Syscalls(hostArch()).Execveat), f.Fd(), uintptr(unsafe.Pointer(&emptyStr[0])), 0, 0, uintptr(AtEmptyPath), 0)
+		_, _, e := syscall.Syscall6(uintptr(Syscalls(hostArch()).Execveat), f.Fd(), uintptr(unsafe.Pointer(&emptyStr[0])), 0, 0, uintptr(AtEmptyPath), 0) //nolint:gosec // G103: raw execveat in a probe
 		fmt.Printf("second-exec: %v\n", e)
 	case "thread":
 		done := make(chan struct{})
@@ -76,7 +76,7 @@ func stageBinary(t *testing.T) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(self)
+	b, err := os.ReadFile(self) //nolint:gosec // test: this test binary
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,12 +84,12 @@ func stageBinary(t *testing.T) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Remove(filepath.Join(dir, "entry")); os.Remove(dir) })
-	if err := os.Chmod(dir, 0o755); err != nil {
+	t.Cleanup(func() { _ = os.Remove(filepath.Join(dir, "entry")); _ = os.Remove(dir) })
+	if err := os.Chmod(dir, 0o755); err != nil { //nolint:gosec // test: the dropped identity must reach the binary
 		t.Fatal(err)
 	}
 	p := filepath.Join(dir, "entry")
-	if err := os.WriteFile(p, b, 0o755); err != nil {
+	if err := os.WriteFile(p, b, 0o755); err != nil { //nolint:gosec // test: an executable copy
 		t.Fatal(err)
 	}
 	return p, sum(b)
@@ -109,7 +109,7 @@ func runProbe(t *testing.T, mode string) (string, int, error) {
 
 func skipIfNoFilter(t *testing.T, err error) {
 	t.Helper()
-	var r *Refusal
+	var r *RefusalError
 	// Only a kernel that lacks the feature skips; any other refusal (a
 	// permission error, say) is the launcher failing and must fail the test.
 	if errors.As(err, &r) && r.Code == CodePolicyUnenforceable &&
@@ -176,7 +176,7 @@ func TestRun_HashMismatchStartsNothing(t *testing.T) {
 		cfg.DropTo = &Identity{UID: 65534, GID: 65534}
 	}
 	_, err := Run(cfg)
-	var r *Refusal
+	var r *RefusalError
 	if !errors.As(err, &r) || r.Code != CodeHashMismatch {
 		t.Fatalf("err %v, want HASH_MISMATCH", err)
 	}
@@ -191,7 +191,7 @@ func TestRun_RootWithoutIdentityIsRefused(t *testing.T) {
 	}
 	p, d := stageBinary(t)
 	_, err := Run(Config{Entrypoint: p, SHA256: d, Argv: []string{"--probe", "ok"}, Stdout: io.Discard, Stderr: io.Discard})
-	var r *Refusal
+	var r *RefusalError
 	if !errors.As(err, &r) || r.Code != CodePrivileged {
 		t.Fatalf("err %v, want PRIVILEGED", err)
 	}

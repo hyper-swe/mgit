@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"regexp"
@@ -25,7 +26,7 @@ func VerifyEntrypoint(f *os.File, want string) error {
 	h := sha256.New()
 	magic := make([]byte, 4)
 	n, err := io.ReadFull(io.TeeReader(f, h), magic)
-	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
 		return refuse(CodeLaunchFailed, "entrypoint is not readable: %v", err)
 	}
 	if _, err := io.Copy(h, f); err != nil {
@@ -43,7 +44,7 @@ func VerifyEntrypoint(f *os.File, want string) error {
 
 // RefusalJSON renders err as the mgit.review-error/v1 envelope for a launch
 // that did not start the reviewer. It carries no prompt, bundle or credential.
-func RefusalJSON(r *Refusal) []byte {
+func RefusalJSON(r *RefusalError) []byte {
 	b, _ := json.Marshal(struct {
 		Schema          string `json:"schema"`
 		Code            string `json:"code"`

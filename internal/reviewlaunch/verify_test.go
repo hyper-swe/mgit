@@ -13,14 +13,14 @@ import (
 func writeTemp(t *testing.T, content []byte) *os.File {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "entry")
-	if err := os.WriteFile(p, content, 0o755); err != nil {
+	if err := os.WriteFile(p, content, 0o755); err != nil { //nolint:gosec // test: an executable fixture
 		t.Fatal(err)
 	}
-	f, err := os.Open(p)
+	f, err := os.Open(p) //nolint:gosec // test: a scratch file
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { f.Close() })
+	t.Cleanup(func() { _ = f.Close() })
 	return f
 }
 
@@ -49,7 +49,7 @@ func TestVerifyEntrypoint_Refusals(t *testing.T) {
 			}
 			continue
 		}
-		var r *Refusal
+		var r *RefusalError
 		if !errors.As(err, &r) || r.Code != c.code {
 			t.Errorf("%s: err %v, want refusal %s", c.name, err, c.code)
 		}
@@ -57,7 +57,7 @@ func TestVerifyEntrypoint_Refusals(t *testing.T) {
 }
 
 func TestRefusalJSON_CarriesCodeAndNotStarted(t *testing.T) {
-	got := string(RefusalJSON(&Refusal{Code: CodeHashMismatch, Detail: "digest differs"}))
+	got := string(RefusalJSON(&RefusalError{Code: CodeHashMismatch, Detail: "digest differs"}))
 	for _, want := range []string{`"schema":"mgit.review-error/v1"`, `"code":"HASH_MISMATCH"`, `"phase":"launch"`, `"reviewer_started":false`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %s in %s", want, got)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -39,8 +40,9 @@ func reviewExec(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	code, err := reviewlaunch.Run(cfg)
 	if err != nil {
-		if r, ok := err.(*reviewlaunch.Refusal); ok {
-			stderr.Write(append(reviewlaunch.RefusalJSON(r), '\n'))
+		var r *reviewlaunch.RefusalError
+		if errors.As(err, &r) {
+			_, _ = stderr.Write(append(reviewlaunch.RefusalJSON(r), '\n'))
 			return 70
 		}
 		fmt.Fprintln(stderr, err)

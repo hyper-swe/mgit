@@ -170,7 +170,7 @@ func (d *ExecDecider) Decide(nr uint32, args [6]uint64) Decision {
 	return Decision{Allow: true}
 }
 
-// Refusal codes, named by the reviewer-ro/v1 contract (item 4).
+// RefusalError codes, named by the reviewer-ro/v1 contract (item 4).
 const (
 	CodeHashMismatch        = "HASH_MISMATCH"
 	CodeBadDigest           = "BAD_DIGEST"
@@ -181,15 +181,15 @@ const (
 	CodeProfileUnavailable  = "PROFILE_UNAVAILABLE"
 )
 
-// Refusal is a launch the launcher declined or could not carry out. The
+// RefusalError is a launch the launcher declined or could not carry out. The
 // reviewer was not started.
-type Refusal struct {
+type RefusalError struct {
 	Code   string `json:"code"`
 	Detail string `json:"detail"`
 }
 
-func (r *Refusal) Error() string { return "reviewlaunch: " + r.Code + ": " + r.Detail }
+func (r *RefusalError) Error() string { return "reviewlaunch: " + r.Code + ": " + r.Detail }
 
 func refuse(code, format string, a ...any) error {
-	return &Refusal{Code: code, Detail: fmt.Sprintf(format, a...)}
+	return &RefusalError{Code: code, Detail: fmt.Sprintf(format, a...)}
 }
