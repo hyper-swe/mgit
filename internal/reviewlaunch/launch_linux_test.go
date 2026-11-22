@@ -44,6 +44,12 @@ func probe(mode string) {
 				}
 			}
 		}
+	case "supervisor-mem":
+		f, err := os.OpenFile(fmt.Sprintf("/proc/%d/mem", os.Getppid()), os.O_RDWR, 0)
+		if err == nil {
+			_ = f.Close()
+		}
+		fmt.Printf("supervisor-mem: %v\n", err)
 	case "path-exec":
 		err := syscall.Exec("/bin/true", []string{"true"}, nil)
 		fmt.Printf("path-exec: %v\n", err)
@@ -194,5 +200,36 @@ func TestRun_RootWithoutIdentityIsRefused(t *testing.T) {
 	var r *RefusalError
 	if !errors.As(err, &r) || r.Code != CodePrivileged {
 		t.Fatalf("err %v, want PRIVILEGED", err)
+	}
+}
+
+// The supervisor decides which exec is allowed; a same-uid reviewer must not
+// be able to rewrite its memory through /proc or take its descriptors.
+func TestRun_SupervisorIsNotDumpable(t *testing.T) {
+	out, _, err := runProbe(t, "supervisor-mem")
+	skipIfNoFilter(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "supervisor-mem: open") || !strings.Contains(out, "permission denied") {
+		t.Fatalf("the reviewer could open the supervisor's memory: %q", out)
+	}
+	r1, _, e := syscall.RawSyscall(syscall.SYS_PRCTL, 3 /* PR_GET_DUMPABLE */, 0, 0)
+	if e != 0 || r1 != 0 {
+		t.Fatalf("supervisor dumpable=%d err=%v, want 0", r1, e)
+	}
+}
+
+func TestYamaScope_ReadsTheKernelValue(t *testing.T) {
+	got := YamaScope()
+	if got == "" {
+		t.Fatal("YamaScope returned empty; an unreadable value must say unknown")
+	}
+	if raw, err := os.ReadFile("/proc/sys/kernel/yama/ptrace_scope"); err == nil {
+		if want := strings.TrimSpace(string(raw)); got != want {
+			t.Fatalf("YamaScope=%q want %q", got, want)
+		}
+	} else if got != "unknown" {
+		t.Fatalf("no yama here, want unknown, got %q", got)
 	}
 }
