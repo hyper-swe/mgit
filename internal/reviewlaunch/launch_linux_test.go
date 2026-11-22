@@ -64,7 +64,7 @@ func probe(mode string) {
 			fmt.Printf("second-exec: open %v\n", err)
 			return
 		}
-		_, _, e := syscall.Syscall6(uintptr(Syscalls(hostArch()).Execveat), f.Fd(), uintptr(unsafe.Pointer(&emptyStr[0])), 0, 0, uintptr(AtEmptyPath), 0) //nolint:gosec // G103: raw execveat in a probe
+		_, _, e := syscall.Syscall6(uintptr(Syscalls(HostArch()).Execveat), f.Fd(), uintptr(unsafe.Pointer(&emptyStr[0])), 0, 0, uintptr(AtEmptyPath), 0) //nolint:gosec // G103: raw execveat in a probe
 		fmt.Printf("second-exec: %v\n", e)
 	case "thread":
 		done := make(chan struct{})

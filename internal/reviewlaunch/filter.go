@@ -40,8 +40,6 @@ func HostArch() Arch {
 	return ArchAmd64
 }
 
-func hostArch() Arch { return HostArch() }
-
 // AuditArch is the AUDIT_ARCH value the kernel reports for a.
 func AuditArch(a Arch) uint32 {
 	if a == ArchArm64 {
