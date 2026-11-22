@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -24,13 +25,13 @@ func TestMain(m *testing.M) {
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "--probe" {
-		probe(os.Args[2])
+		probe(os.Args[2], os.Args[3:])
 		return
 	}
 	os.Exit(m.Run())
 }
 
-func probe(mode string) {
+func probe(mode string, extra []string) {
 	switch mode {
 	case "ok":
 		fmt.Println("hello from the mapped entrypoint")
@@ -50,7 +51,7 @@ func probe(mode string) {
 		}
 		fmt.Printf("supervisor-mem: %v\n", err)
 	case "write-attempts":
-		dir := os.TempDir()
+		dir := extra[0]
 		marker := dir + "/review-marker"
 		report := func(name string, err error) { fmt.Printf("%s: %v\n", name, err) }
 		_, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE, 0o600)
@@ -72,7 +73,14 @@ func probe(mode string) {
 		ents, _ := os.ReadDir("/proc/self/fd")
 		for _, e := range ents {
 			target, _ := os.Readlink("/proc/self/fd/" + e.Name())
-			fmt.Printf("fd %s -> %s\n", e.Name(), target)
+			info, _ := os.ReadFile("/proc/self/fdinfo/" + e.Name())
+			flags := ""
+			for _, l := range strings.Split(string(info), "\n") {
+				if strings.HasPrefix(l, "flags:") {
+					flags = strings.TrimSpace(strings.TrimPrefix(l, "flags:"))
+				}
+			}
+			fmt.Printf("fd %s -> %s flags %s\n", e.Name(), target, flags)
 		}
 	case "path-exec":
 		err := syscall.Exec("/bin/true", []string{"true"}, nil)
@@ -127,11 +135,11 @@ func stageBinary(t *testing.T) (string, string) {
 	return p, sum(b)
 }
 
-func runProbe(t *testing.T, mode string) (string, int, error) {
+func runProbe(t *testing.T, mode string, extra ...string) (string, int, error) {
 	t.Helper()
 	p, d := stageBinary(t)
 	var out bytes.Buffer
-	cfg := Config{Entrypoint: p, SHA256: d, Argv: []string{"--probe", mode}, Stdout: &out, Stderr: io.Discard}
+	cfg := Config{Entrypoint: p, SHA256: d, Argv: append([]string{"--probe", mode}, extra...), Stdout: &out, Stderr: io.Discard}
 	if os.Getuid() == 0 {
 		cfg.DropTo = &Identity{UID: 65534, GID: 65534}
 	}
@@ -261,7 +269,7 @@ func TestYamaScope_ReadsTheKernelValue(t *testing.T) {
 }
 
 func TestRun_FileWritesAreDenied(t *testing.T) {
-	out, _, err := runProbe(t, "write-attempts")
+	out, _, err := runProbe(t, "write-attempts", t.TempDir())
 	skipIfNoFilter(t, err)
 	if err != nil {
 		t.Fatal(err)
@@ -305,16 +313,19 @@ func TestRun_HoldsNoFileDescriptorsBeyondStandardStreams(t *testing.T) {
 	}
 	seen := 0
 	for _, l := range strings.Split(out, "\n") {
-		var fd, target string
-		if _, e := fmt.Sscanf(l, "fd %s -> %s", &fd, &target); e != nil {
+		var fd, target, flagWord, flags string
+		if n, _ := fmt.Sscanf(l, "fd %s -> %s %s %s", &fd, &target, &flagWord, &flags); n < 4 {
 			continue
 		}
 		seen++
-		if fd == "0" || fd == "1" || fd == "2" {
+		if fd == "0" || fd == "1" || fd == "2" || strings.HasPrefix(target, "anon_inode:") {
 			continue
 		}
-		if !strings.HasPrefix(target, "anon_inode:") && !strings.HasPrefix(target, "/proc/") {
-			t.Errorf("descriptor %s -> %s is a path to something the program could write", fd, target)
+		// Every other descriptor is read-only: access mode bits (the low two
+		// bits of the octal flags) are zero.
+		v, err := strconv.ParseUint(flags, 8, 64)
+		if err != nil || v&3 != 0 {
+			t.Errorf("descriptor %s -> %s has flags %s: it is not read-only", fd, target, flags)
 		}
 	}
 	if seen < 3 {
