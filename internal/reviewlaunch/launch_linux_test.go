@@ -393,3 +393,47 @@ func TestRun_MessageQueueCreateIsRefused(t *testing.T) {
 		t.Fatalf("message queue creation was not refused: %q", out)
 	}
 }
+
+// The launcher must not start a program with descriptors it could not mark.
+func TestCloseInherited_RefusesWhenNothingCanMarkThem(t *testing.T) {
+	restore := stubFDHooks()
+	defer restore()
+	closeRangeCall = func(_, _, _ uintptr) error { return syscall.ENOSYS }
+	listFDs = func() ([]string, error) { return nil, errors.New("no /proc") }
+	err := closeInherited()
+	var r *RefusalError
+	if !errors.As(err, &r) || r.Code != CodePolicyUnenforceable {
+		t.Fatalf("closeInherited with both ways broken: %v, want a POLICY_UNENFORCEABLE refusal", err)
+	}
+}
+
+// The first descriptor marked is exactly 5: 0-2 are the caller's streams, 3
+// and 4 the launcher's own.
+func TestCloseInherited_StartsAtExactlyFive(t *testing.T) {
+	restore := stubFDHooks()
+	defer restore()
+	var first, flags uintptr
+	closeRangeCall = func(f, _, fl uintptr) error { first, flags = f, fl; return nil }
+	if err := closeInherited(); err != nil {
+		t.Fatal(err)
+	}
+	if first != 5 || flags != 1<<2 {
+		t.Fatalf("close_range started at %d flags %#x, want 5 and CLOSE_RANGE_CLOEXEC", first, flags)
+	}
+	// The same boundary on the fallback path.
+	closeRangeCall = func(_, _, _ uintptr) error { return syscall.ENOSYS }
+	listFDs = func() ([]string, error) { return []string{"0", "2", "3", "4", "5", "6", "x"}, nil }
+	var marked []int
+	setCloexec = func(fd int) { marked = append(marked, fd) }
+	if err := closeInherited(); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(marked) != "[5 6]" {
+		t.Fatalf("fallback marked %v, want [5 6]", marked)
+	}
+}
+
+func stubFDHooks() func() {
+	a, b, c := closeRangeCall, listFDs, setCloexec
+	return func() { closeRangeCall, listFDs, setCloexec = a, b, c }
+}
