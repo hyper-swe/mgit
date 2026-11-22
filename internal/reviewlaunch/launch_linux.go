@@ -234,6 +234,9 @@ func stageFail(status *os.File, err error) {
 func stage(sc stageConfig, sock, status *os.File) error {
 	syscall.CloseOnExec(3)
 	syscall.CloseOnExec(4)
+	// Whatever else the caller left open (a CI runner's or a supervising
+	// shell's descriptors) must not follow the program through the exec.
+	closeInherited()
 	f, err := os.Open(sc.Entrypoint)
 	if err != nil {
 		return refuse(CodeLaunchFailed, "cannot open the entrypoint: %v", err)
@@ -339,4 +342,29 @@ func pathIsEmpty(pid uint32, ptr uint64) bool {
 	var b [1]byte
 	n, err := f.ReadAt(b[:], int64(ptr)) //nolint:gosec // G115: a user pointer fits int64 on 64-bit targets
 	return err == nil && n == 1 && b[0] == 0
+}
+
+// sysCloseRange is close_range(2); the number is the same on both architectures.
+const (
+	sysCloseRange     = 436
+	closeRangeCloexec = 1 << 2
+	firstInheritedFD  = 5 // 0-2 are the caller's streams, 3 and 4 the launcher's own
+	maxFD             = ^uint(0)
+)
+
+// closeInherited marks every descriptor from firstInheritedFD up close-on-exec.
+// Where close_range is missing it walks /proc/self/fd instead.
+func closeInherited() {
+	if _, _, e := syscall.RawSyscall(sysCloseRange, firstInheritedFD, uintptr(maxFD), closeRangeCloexec); e == 0 {
+		return
+	}
+	ents, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return
+	}
+	for _, ent := range ents {
+		if n, err := strconv.Atoi(ent.Name()); err == nil && n >= firstInheritedFD {
+			syscall.CloseOnExec(n)
+		}
+	}
 }
