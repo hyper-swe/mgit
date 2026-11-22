@@ -183,7 +183,8 @@ func supervise(fd int, d *ExecDecider) {
 		for i := range args {
 			args[i] = binary.LittleEndian.Uint64(req[32+8*i:])
 		}
-		dec := d.Decide(nr, args)
+		pid := binary.LittleEndian.Uint32(req[8:12])
+		dec := d.Decide(nr, args, pathIsEmpty(pid, args[1]))
 		var resp [24]byte
 		binary.LittleEndian.PutUint64(resp[0:8], id)
 		if dec.Allow {
@@ -315,4 +316,18 @@ func dropPrivileges(id Identity) error {
 		return refuse(CodePolicyUnenforceable, "setuid: %v", err)
 	}
 	return nil
+}
+
+// pathIsEmpty reads one byte at ptr in the stopped process and reports
+// whether it is NUL. The stopped caller is the stage's exec thread; nothing
+// else writes that buffer.
+func pathIsEmpty(pid uint32, ptr uint64) bool {
+	f, err := os.Open("/proc/" + strconv.FormatUint(uint64(pid), 10) + "/mem") //nolint:gosec // the pid comes from the kernel notification
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	var b [1]byte
+	n, err := f.ReadAt(b[:], int64(ptr)) //nolint:gosec // G115: a user pointer fits int64 on 64-bit targets
+	return err == nil && n == 1 && b[0] == 0
 }

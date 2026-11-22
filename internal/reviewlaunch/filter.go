@@ -115,6 +115,11 @@ func BuildFilter(a Arch) ([]Insn, error) {
 		ins(opRet, 0, 0, RetKillProcess),
 		ins(opLdAbs, 0, 0, 0), // seccomp_data.nr
 	}
+	if a == ArchAmd64 {
+		// x32 syscalls report the same audit arch with bit 30 set in the
+		// number and would slip past every exact-number rule below.
+		f = append(f, ins(opJset, 0, 1, 0x40000000), ins(opRet, 0, 0, RetKillProcess))
+	}
 	verdict := func(nr, v uint32) {
 		f = append(f, ins(opJeq, 0, 1, nr), ins(opRet, 0, 0, v))
 	}
@@ -157,10 +162,12 @@ func NewExecDecider(fd int, a Arch) *ExecDecider {
 }
 
 // Decide answers a notification for syscall nr with raw argument registers.
+// pathEmpty says the path argument points at an empty string; with a
+// non-empty path execveat ignores the descriptor and runs something else.
 // Only a matching call uses up the one exec.
-func (d *ExecDecider) Decide(nr uint32, args [6]uint64) Decision {
+func (d *ExecDecider) Decide(nr uint32, args [6]uint64, pathEmpty bool) Decision {
 	deny := Decision{Errno: int(errnoPerm)}
-	if nr != d.execveat || d.used {
+	if nr != d.execveat || d.used || !pathEmpty {
 		return deny
 	}
 	if uint64(uint32(args[0])) != d.fd || args[4]&AtEmptyPath == 0 {
