@@ -89,6 +89,15 @@ func TestFilter_PerSyscallVerdicts(t *testing.T) {
 				t.Errorf("%v %s: verdict %#x, want %#x", arch, r.name, got, r.want)
 			}
 		}
+		if arch == ArchAmd64 {
+			// x32 syscalls carry the same audit arch with bit 30 set in the
+			// number; none may reach the allow rule.
+			for _, nr := range []uint32{0x40000000 | n.Execve, 0x40000000 | 520, 0x40000000 | 545, 0x40000000} {
+				if got := evalBPF(t, prog, AuditArch(arch), nr, [6]uint64{}); got != RetKillProcess {
+					t.Errorf("amd64 x32 nr %#x: verdict %#x, want kill", nr, got)
+				}
+			}
+		}
 		// A foreign ABI (the 32-bit compat table on amd64) must not slip
 		// past number-based rules.
 		if got := evalBPF(t, prog, 0x40000003, n.Read, [6]uint64{}); got != RetKillProcess {
