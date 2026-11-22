@@ -227,3 +227,30 @@ func TestNew_FailsClosedWithoutAKey(t *testing.T) {
 		t.Fatal("a service without the host key was created")
 	}
 }
+
+// The mapping id names a file under the map directory and nothing else. An id
+// that walks out of it would let a caller-written record be attested, so the
+// service refuses it whatever the protocol layer checked first.
+func TestPrepareReview_MappingIDCannotLeaveTheMapDirectory(t *testing.T) {
+	for _, id := range []string{"../other/pi-v1", "other/../pi-v1", "a/b", ".hidden", "..", "", "pi-v1/", "x\x00y"} {
+		t.Run(id, func(t *testing.T) {
+			e := setup(t)
+			m := reviewprep.Mapping{
+				Schema: reviewprep.MapSchema, ID: id, BindingSHA256: strings.Repeat("b", 64), ImageDigest: image,
+				GuestEntrypoint: "/opt/r/bin/r", EntrypointSHA256: strings.Repeat("e", 64), EgressPolicyID: "none",
+			}
+			writeJSON(t, filepath.Join(e.root, "review", "other", "pi-v1.json"), m)
+			e.args.MappingID = id
+			raw, err := e.svc.PrepareReview(context.Background(), e.args)
+			if raw != nil {
+				t.Fatalf("a caller-written map was attested: %s", raw)
+			}
+			if got := code(t, err); got != "MAPPING_MISMATCH" {
+				t.Fatalf("code %s", got)
+			}
+			if l := leases(t, e.root); len(l) != 0 {
+				t.Fatalf("lease left behind: %v", l)
+			}
+		})
+	}
+}
