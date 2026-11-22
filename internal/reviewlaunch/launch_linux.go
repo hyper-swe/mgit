@@ -82,6 +82,13 @@ func Run(cfg Config) (int, error) {
 	if !strings.HasPrefix(cfg.Entrypoint, "/") {
 		return 0, refuse(CodeLaunchFailed, "entrypoint path must be absolute")
 	}
+	// The supervisor judges which exec is allowed. A same-uid reviewer must
+	// not reach its memory or descriptors through /proc or pidfd_getfd, which
+	// a seccomp filter on ptrace alone does not cover; a non-dumpable process
+	// is refused by the same access check.
+	if err := prctl(prSetDumpable, 0, 0); err != nil {
+		return 0, refuse(CodePolicyUnenforceable, "making the supervisor non-dumpable: %v", err)
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return 0, refuse(CodeLaunchFailed, "cannot locate the launcher image: %v", err)
@@ -285,6 +292,8 @@ func stage(sc stageConfig, sock, status *os.File) error {
 		uintptr(unsafe.Pointer(&argvp[0])), uintptr(unsafe.Pointer(&envp[0])), uintptr(AtEmptyPath), 0) //nolint:gosec // G103: pointers to live argv and envp arrays
 	return refuse(CodeLaunchFailed, "executing the entrypoint: %v", e)
 }
+
+const prSetDumpable = 4
 
 func prctl(opt, a, b uintptr) error {
 	if _, _, e := syscall.RawSyscall6(syscall.SYS_PRCTL, opt, a, b, 0, 0, 0); e != 0 {

@@ -15,5 +15,8 @@
 5. Before: nothing prevented the program from starting a shell, a second program or a child.
 6. After: the program runs, its threads work, and a path exec, a fork and an exec by descriptor each fail with
    "operation not permitted". The program sees an empty environment.
-7. Not here: the sealed read-only bundle, the signed attestation, leases, egress and credentials (later
+7. The launcher process, which judges the one allowed exec, makes itself non-dumpable before it starts the
+   program, so a same-user program cannot reach its memory or descriptors through `/proc`. The guest's
+   `ptrace_scope` is readable (`YamaScope`) so a receipt can record it.
+8. Not here: the sealed read-only bundle, the signed attestation, leases, egress and credentials (later
    slices), and an arm64 run (the filter table is tested for arm64; the guest run is amd64).
