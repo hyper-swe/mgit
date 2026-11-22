@@ -14,8 +14,8 @@ import (
 // SandboxInfo's last_boot_failure (MGIT-231); 4 was the sync-verify verb
 // (MGIT-164). Refs: MGIT-136, MGIT-231, FEAT-6.114.1
 func TestProtocolVersion_IsPinned(t *testing.T) {
-	assert.Equal(t, 6, ProtocolVersion,
+	assert.Equal(t, 7, ProtocolVersion,
 		"ProtocolVersion moved — name the verb or shape that justifies it here, and in handshake.go's history")
-	assert.True(t, Compatible(6))
-	assert.False(t, Compatible(5), "the previous version must be refused, not tolerated")
+	assert.True(t, Compatible(7))
+	assert.False(t, Compatible(6), "the previous version must be refused, not tolerated")
 }
