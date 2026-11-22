@@ -29,7 +29,9 @@
 9. The attestation is short-lived (at most 15 minutes), the evidence is one JSON object of at most 1 MiB (a
    scalar, an array or null is refused), and the launch always goes through the launcher with the attested
    digest, since only the digest of the entrypoint is signed, not its path.
-10. The control protocol is now version 7, so an older daemon is refused at the handshake instead of answering
+10. The attestation reports only what the launcher enforces: until the launcher denies file changes, the
+    attestation states writes as possible and a client that requires the profile refuses it.
+11. The control protocol is now version 7, so an older daemon is refused at the handshake instead of answering
     "invalid request".
-11. Not here (later slices): the guest kind and bundle delivery into a guest, lease use at run, the binding map
+12. Not here (later slices): the guest kind and bundle delivery into a guest, lease use at run, the binding map
     installer, egress and credentials (R2c, R3, R4).

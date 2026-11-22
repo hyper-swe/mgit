@@ -124,6 +124,12 @@ type Attestation struct {
 	Signature              []byte    `json:"signature"`
 }
 
+// WriteDenialEnforced says whether the launcher this build ships denies file
+// changes. The attestation reports only what the launcher enforces, so until
+// that is true the attestation states writes as possible and a client that
+// requires the profile refuses it. The slice that lands the denial sets it.
+var WriteDenialEnforced = false
+
 // policyText names every restriction the profile enforces. Its digest rides
 // in the attestation, so a change to the policy is a visible change.
 const policyText = "reviewer-ro/v1|detached-guest|bundle=sealed-ro|fs-writes=false|additional-exec=false|host-mounts=false|no_new_privs|empty-caps|exec-by-fd-once|cwd=/review"
@@ -245,7 +251,7 @@ func Prepare(r Request, m Mapping, bundle []byte, s *Signer, now time.Time, ttl 
 		BundleSHA256:           r.BundleDigest,
 		Cwd:                    Cwd,
 		CapabilityPolicyDigest: PolicyDigest(),
-		Enforced:               Enforced{DetachedGuest: true, Bundle: "sealed-ro"},
+		Enforced:               Enforced{DetachedGuest: true, Bundle: "sealed-ro", FilesystemWrites: !WriteDenialEnforced},
 		EgressPolicyID:         m.EgressPolicyID,
 		CredentialRef:          m.CredentialRef,
 	}
@@ -276,7 +282,7 @@ func Verify(a *Attestation, r Request, pub ed25519.PublicKey, now time.Time) err
 	}
 	e := a.Enforced
 	if !e.DetachedGuest || e.Bundle != "sealed-ro" || e.FilesystemWrites || e.AdditionalExec || e.HostMounts {
-		return bad("enforced policy is weaker than the profile")
+		return bad("the attested policy is not the profile")
 	}
 	if a.Cwd != Cwd || a.CapabilityPolicyDigest != PolicyDigest() {
 		return bad("policy does not match the profile")

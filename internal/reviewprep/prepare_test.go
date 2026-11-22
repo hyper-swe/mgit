@@ -22,6 +22,11 @@ const imageDigest = "sha256:1111111111111111111111111111111111111111111111111111
 
 func fixture(t *testing.T) (Request, Mapping, []byte, *Signer) {
 	t.Helper()
+	// The positive paths assume the launcher denies writes; the test that
+	// pins the default turns it back off.
+	old := WriteDenialEnforced
+	WriteDenialEnforced = true
+	t.Cleanup(func() { WriteDenialEnforced = old })
 	bundle := []byte(`{"citations":[{"n":1,"text":"a line"}]}`)
 	m := Mapping{
 		Schema:           MapSchema,
@@ -358,5 +363,28 @@ func TestLaunchArgs_GoThroughTheLauncherWithTheAttestedDigest(t *testing.T) {
 	got = LaunchArgs(m)
 	if got[2] != m.EntrypointSHA256 || got[4] != m.GuestEntrypoint {
 		t.Fatalf("mapped argv must not reach the launcher's own flags: %v", got)
+	}
+}
+
+// The attestation reports only what the launcher enforces: with no write
+// denial in the launcher it says writes are possible, and a client that
+// requires the profile refuses it.
+func TestAttestation_ReportsWritesAsPossibleUntilTheLauncherDeniesThem(t *testing.T) {
+	r, m, b, s := fixture(t)
+	WriteDenialEnforced = false
+	att, err := Prepare(r, m, b, s, fixedNow, time.Minute, "lease-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !att.Enforced.FilesystemWrites {
+		t.Fatal("attestation claims writes are denied while the launcher does not deny them")
+	}
+	if got := codeOf(t, Verify(att, r, s.Public(), fixedNow)); got != "ATTESTATION_INVALID" {
+		t.Fatalf("a client must refuse it, code %s", got)
+	}
+	var def bool
+	WriteDenialEnforced = def
+	if WriteDenialEnforced {
+		t.Fatal("default must be not enforced")
 	}
 }

@@ -35,6 +35,9 @@ type env struct {
 
 func setup(t *testing.T) *env {
 	t.Helper()
+	old := reviewprep.WriteDenialEnforced
+	reviewprep.WriteDenialEnforced = true
+	t.Cleanup(func() { reviewprep.WriteDenialEnforced = old })
 	root := t.TempDir()
 	if err := attest.GenerateKey(context.Background(), root, noAudit{}); err != nil {
 		t.Fatal(err)
