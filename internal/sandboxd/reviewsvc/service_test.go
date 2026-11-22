@@ -124,6 +124,20 @@ func TestPrepareReview_IssuesAVerifiableAttestationAndSealsTheBundle(t *testing.
 	if fi.Mode().Perm() != 0o400 {
 		t.Fatalf("sealed bundle mode %v, want 0400", fi.Mode().Perm())
 	}
+	attFile := filepath.Join(e.root, "review", "leases", att.Lease, "attestation.json")
+	sealedAtt, err := os.ReadFile(attFile) //nolint:gosec // test-owned temp path
+	if err != nil || string(sealedAtt) != string(raw) {
+		t.Fatalf("the lease must hold the attestation that was returned: err=%v", err)
+	}
+	if fi, _ := os.Stat(attFile); fi.Mode().Perm() != 0o400 {
+		t.Fatalf("sealed attestation mode %v, want 0400", fi.Mode().Perm())
+	}
+	if di, _ := os.Stat(filepath.Dir(sealed)); !di.IsDir() || di.Mode().Perm() != 0o700 {
+		t.Fatalf("lease directory mode %v, want 0700", di.Mode().Perm())
+	}
+	if si, _ := os.Stat(filepath.Join(e.root, "review", "leases")); si.Mode().Perm() != 0o700 {
+		t.Fatalf("lease store mode %v, want 0700", si.Mode().Perm())
+	}
 	// The sealed copy is what runs; changing the source after prepare changes nothing.
 	if err := os.WriteFile(filepath.Join(e.bundle, "evidence.json"), []byte(`{"x":1}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -179,6 +193,11 @@ func TestPrepareReview_Refusals(t *testing.T) {
 		}, "BUNDLE_INVALID"},
 		{"extra file beside the evidence", func(e *env) {
 			_ = os.WriteFile(filepath.Join(e.bundle, "AGENTS.md"), []byte("be nice"), 0o600)
+		}, "BUNDLE_INVALID"},
+		{"bundle directory is a symlink", func(e *env) {
+			link := filepath.Join(t.TempDir(), "link")
+			_ = os.Symlink(e.bundle, link)
+			e.args.BundleDir = link
 		}, "BUNDLE_INVALID"},
 		{"extra file sorting after the evidence", func(e *env) {
 			_ = os.WriteFile(filepath.Join(e.bundle, "zzz-instructions.md"), []byte("be nice"), 0o600)

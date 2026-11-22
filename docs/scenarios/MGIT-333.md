@@ -11,12 +11,13 @@
    (ATTESTATION_INVALID). No attestation is returned on a refusal; the envelope never carries bundle bytes.
 3. On success the attestation carries nonce, lease, expiry, profile, image, mapping, binding, entrypoint,
    canonical argv and exact bundle digests, cwd `/review`, the capability policy digest and the enforced block
-   (detached guest, sealed read-only bundle, no writes, no further exec, no host mounts). Egress policy and
+   (detached guest, sealed read-only bundle, whether file writes are denied, no further exec, no host mounts). Egress policy and
    credential reference are ids only; no secret value exists in it.
 4. `Verify` is the client side: it refuses a wrong key, a changed field, an expired attestation, any
    requested identity that differs, or an enforced block weaker than the profile.
 5. Before: nothing checked a review request or attested a launch.
-6. After: both directions are table-tested, every signed field is covered by a tamper case.
+6. After: both directions are table-tested, every signed field is covered by a tamper case. The capability policy
+   text, and so its digest, states writes as not denied until the launcher denies them.
 7. `mgit sandbox review prepare --profile reviewer-ro/v1 --image <name>@sha256:<digest> --mapping <id>
    --binding-digest <sha256> --bundle <dir> --bundle-digest <sha256> --nonce <random> --format json` asks the
    daemon for this. Success prints only the attestation on standard output. A refusal prints the error envelope

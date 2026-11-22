@@ -130,12 +130,19 @@ type Attestation struct {
 // requires the profile refuses it. The slice that lands the denial sets it.
 var WriteDenialEnforced = false
 
-// policyText names every restriction the profile enforces. Its digest rides
-// in the attestation, so a change to the policy is a visible change.
-const policyText = "reviewer-ro/v1|detached-guest|bundle=sealed-ro|fs-writes=false|additional-exec=false|host-mounts=false|no_new_privs|empty-caps|exec-by-fd-once|cwd=/review"
+// policyText names every restriction the profile enforces in this build. Its
+// digest rides in the attestation, so a change to the policy is a visible
+// change, and the text says what the launcher does today.
+func policyText() string {
+	writes := "fs-writes=not-denied"
+	if WriteDenialEnforced {
+		writes = "fs-writes=denied"
+	}
+	return "reviewer-ro/v1|detached-guest|bundle=sealed-ro|" + writes + "|additional-exec=false|host-mounts=false|no_new_privs|empty-caps|exec-by-fd-once|cwd=/review"
+}
 
 // PolicyDigest is the hex sha256 of the profile's policy text.
-func PolicyDigest() string { return hexSum([]byte(policyText)) }
+func PolicyDigest() string { return hexSum([]byte(policyText())) }
 
 func hexSum(b []byte) string {
 	h := sha256.Sum256(b)

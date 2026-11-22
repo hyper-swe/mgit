@@ -249,12 +249,20 @@ func TestVerify_JSONRoundTrip(t *testing.T) {
 	}
 }
 
-func TestPolicyDigest_IsStableAndPinned(t *testing.T) {
+func TestPolicyDigest_IsPinnedForBothStates(t *testing.T) {
 	// The digest is what a client compares against; a change to the policy
-	// must be a visible, deliberate change to this literal.
-	const want = "3cc4b3c4338fab12dc13e9e92779471b62d03f3683a514aa913dedbfd562936a"
-	if got := PolicyDigest(); got != want {
-		t.Fatalf("policy digest %s, want %s", got, want)
+	// must be a visible, deliberate change to these literals. The text says
+	// what the launcher does: writes not denied until the denial lands.
+	old := WriteDenialEnforced
+	t.Cleanup(func() { WriteDenialEnforced = old })
+	for denied, want := range map[bool]string{
+		true:  "81bdcf6ab19e001cd9c87b55cc4076e1611091c5224d784652c9ac8ebc5d5d4e",
+		false: "54ac35fa41403840798ba12999f7a39510ab82877db2da62a41b0190e42a426a",
+	} {
+		WriteDenialEnforced = denied
+		if got := PolicyDigest(); got != want {
+			t.Fatalf("denied=%v: policy digest %s, want %s", denied, got, want)
+		}
 	}
 }
 
