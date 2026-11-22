@@ -50,6 +50,25 @@ func probe(mode string) {
 			_ = f.Close()
 		}
 		fmt.Printf("supervisor-mem: %v\n", err)
+	case "write-attempts":
+		dir := os.TempDir()
+		marker := dir + "/review-marker"
+		report := func(name string, err error) { fmt.Printf("%s: %v\n", name, err) }
+		_, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE, 0o600)
+		report("create", err)
+		report("mkdir", os.Mkdir(dir+"/review-dir", 0o700))
+		report("symlink", os.Symlink("/etc/passwd", dir+"/review-link"))
+		report("rename", os.Rename("/proc/self/exe", dir+"/review-moved"))
+		report("remove", os.Remove("/etc/hostname"))
+		report("truncate", os.Truncate("/etc/hostname", 0))
+		report("chmod", os.Chmod("/etc/hostname", 0o777))
+		_, err = os.ReadFile("/etc/hostname")
+		report("read", err)
+		_, err = os.OpenFile("/etc/hostname", os.O_RDONLY, 0)
+		report("open-read", err)
+		_, statErr := os.Stat(marker)
+		report("marker-exists", statErr)
+		fmt.Println("stdout still works")
 	case "path-exec":
 		err := syscall.Exec("/bin/true", []string{"true"}, nil)
 		fmt.Printf("path-exec: %v\n", err)
@@ -232,4 +251,35 @@ func TestYamaScope_ReadsTheKernelValue(t *testing.T) {
 	} else if got != "unknown" {
 		t.Fatalf("no yama here, want unknown, got %q", got)
 	}
+}
+
+func TestRun_FileWritesAreDenied(t *testing.T) {
+	out, _, err := runProbe(t, "write-attempts")
+	skipIfNoFilter(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"create", "mkdir", "symlink", "rename", "remove", "truncate", "chmod"} {
+		if !strings.Contains(out, name+": ") || !strings.Contains(lineOf(out, name+": "), "operation not permitted") {
+			t.Errorf("%s was not refused with EPERM:\n%s", name, out)
+		}
+	}
+	if !strings.Contains(lineOf(out, "read: "), "<nil>") || !strings.Contains(lineOf(out, "open-read: "), "<nil>") {
+		t.Errorf("reading must still work:\n%s", out)
+	}
+	if !strings.Contains(lineOf(out, "marker-exists: "), "no such file") {
+		t.Errorf("a marker file exists after a refused create:\n%s", out)
+	}
+	if !strings.Contains(out, "stdout still works") {
+		t.Errorf("stdout is broken:\n%s", out)
+	}
+}
+
+func lineOf(out, prefix string) string {
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, prefix) {
+			return l
+		}
+	}
+	return ""
 }
