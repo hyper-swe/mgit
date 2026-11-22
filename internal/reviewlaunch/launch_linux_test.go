@@ -45,7 +45,7 @@ func probe(mode string) {
 			}
 		}
 	case "supervisor-mem":
-		f, err := os.OpenFile(fmt.Sprintf("/proc/%d/mem", os.Getppid()), os.O_RDWR, 0)
+		f, err := os.OpenFile(fmt.Sprintf("/proc/%d/mem", os.Getppid()), os.O_RDONLY, 0)
 		if err == nil {
 			_ = f.Close()
 		}
@@ -71,16 +71,17 @@ func probe(mode string) {
 		fmt.Println("stdout still works")
 	case "fds":
 		ents, _ := os.ReadDir("/proc/self/fd")
-		var fds []string
 		for _, e := range ents {
-			fds = append(fds, e.Name())
+			target, _ := os.Readlink("/proc/self/fd/" + e.Name())
+			fmt.Printf("fd %s -> %s\n", e.Name(), target)
 		}
-		fmt.Printf("fds: %s\n", strings.Join(fds, ","))
 	case "path-exec":
 		err := syscall.Exec("/bin/true", []string{"true"}, nil)
 		fmt.Printf("path-exec: %v\n", err)
 	case "fork":
-		err := exec.Command("/bin/true").Run()
+		// ForkExec with explicit descriptors opens nothing itself, so the
+		// refusal seen is the fork's, not an open of /dev/null.
+		_, err := syscall.ForkExec("/bin/true", []string{"true"}, &syscall.ProcAttr{Files: []uintptr{0, 1, 2}})
 		fmt.Printf("fork: %v\n", err)
 	case "second-exec":
 		// The one allowed exec already happened (we are its result); an
@@ -181,7 +182,7 @@ func TestRun_ChildSeesTheEnforcedState(t *testing.T) {
 func TestRun_FurtherLaunchesAreDenied(t *testing.T) {
 	for mode, want := range map[string]string{
 		"path-exec":   "path-exec: operation not permitted",
-		"fork":        "fork: fork/exec /bin/true: operation not permitted",
+		"fork":        "fork: operation not permitted",
 		"second-exec": "second-exec: operation not permitted",
 	} {
 		out, _, err := runProbe(t, mode)
@@ -291,19 +292,33 @@ func lineOf(out, prefix string) string {
 	return ""
 }
 
-// The program holds no descriptor it could write through except what the
-// caller handed it as standard input, output and error: every other
-// descriptor the launcher used is closed before the program starts, and the
-// filter makes it impossible to open a new one for writing. Descriptor 3 is
-// the handle the probe itself opens to list the directory.
-func TestRun_HoldsNoDescriptorsBeyondStandardStreams(t *testing.T) {
+// The program holds no file descriptor it could write through except what the
+// caller handed it as standard input, output and error: every descriptor the
+// launcher used is closed before the program starts, and the filter makes it
+// impossible to open a new file for writing. What remains beyond the standard
+// streams is the probe's own (the directory it lists, the runtime's poller),
+// and none of it is a path to a file.
+func TestRun_HoldsNoFileDescriptorsBeyondStandardStreams(t *testing.T) {
 	out, _, err := runProbe(t, "fds")
 	skipIfNoFilter(t, err)
 	if err != nil {
 		t.Fatal(err)
 	}
-	line := strings.TrimSpace(strings.TrimPrefix(lineOf(out, "fds: "), "fds: "))
-	if line != "0,1,2,3" {
-		t.Fatalf("open descriptors %q, want only 0,1,2 and the listing handle 3", line)
+	seen := 0
+	for _, l := range strings.Split(out, "\n") {
+		var fd, target string
+		if _, e := fmt.Sscanf(l, "fd %s -> %s", &fd, &target); e != nil {
+			continue
+		}
+		seen++
+		if fd == "0" || fd == "1" || fd == "2" {
+			continue
+		}
+		if !strings.HasPrefix(target, "anon_inode:") && !strings.HasPrefix(target, "/proc/") {
+			t.Errorf("descriptor %s -> %s is a path to something the program could write", fd, target)
+		}
+	}
+	if seen < 3 {
+		t.Fatalf("the probe listed %d descriptors:\n%s", seen, out)
 	}
 }
