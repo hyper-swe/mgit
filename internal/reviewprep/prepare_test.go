@@ -143,9 +143,9 @@ func TestPrepare_Refusals(t *testing.T) {
 }
 
 func TestPrepare_RefusalEnvelopeLeaksNothing(t *testing.T) {
-	r, m, b, s := fixture(t)
+	r, m, _, s := fixture(t)
 	r.BundleDigest = strings.Repeat("0", 64)
-	b = []byte(`{"secret":"TOPSECRETBUNDLE"}`)
+	b := []byte(`{"secret":"TOPSECRETBUNDLE"}`)
 	_, err := Prepare(r, m, b, s, fixedNow, time.Minute, "lease-1")
 	var e *Error
 	if !errors.As(err, &e) {
@@ -245,8 +245,11 @@ func TestVerify_JSONRoundTrip(t *testing.T) {
 }
 
 func TestPolicyDigest_IsStableAndPinned(t *testing.T) {
-	if PolicyDigest() != PolicyDigest() || len(PolicyDigest()) != 64 {
-		t.Fatal("policy digest must be a stable sha256")
+	// The digest is what a client compares against; a change to the policy
+	// must be a visible, deliberate change to this literal.
+	const want = "3cc4b3c4338fab12dc13e9e92779471b62d03f3683a514aa913dedbfd562936a"
+	if got := PolicyDigest(); got != want {
+		t.Fatalf("policy digest %s, want %s", got, want)
 	}
 }
 
@@ -286,5 +289,26 @@ func TestVerify_ValidlySignedButWeakerPolicyIsRefused(t *testing.T) {
 				t.Fatalf("code %s", got)
 			}
 		})
+	}
+}
+
+func TestPrepare_NoArgvAttestsTheEmptyArray(t *testing.T) {
+	r, m, b, s := fixture(t)
+	m.Argv = nil
+	att, err := Prepare(r, m, b, s, fixedNow, time.Minute, "lease-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := sum([]byte(`[]`)); att.ArgvSHA256 != want {
+		t.Fatalf("argv digest %s want %s", att.ArgvSHA256, want)
+	}
+}
+
+func TestPrepare_NonPositiveTTLIsRefused(t *testing.T) {
+	r, m, b, s := fixture(t)
+	for _, ttl := range []time.Duration{0, -time.Second} {
+		if _, err := Prepare(r, m, b, s, fixedNow, ttl, "lease-1"); err == nil {
+			t.Fatalf("ttl %v accepted", ttl)
+		}
 	}
 }
