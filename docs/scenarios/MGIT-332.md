@@ -18,5 +18,14 @@
 7. The launcher process, which judges the one allowed exec, makes itself non-dumpable before it starts the
    program, so a same-user program cannot reach its memory or descriptors through `/proc`. The guest's
    `ptrace_scope` is readable (`YamaScope`) so a receipt can record it.
-8. Not here: the sealed read-only bundle, the signed attestation, leases, egress and credentials (later
+8. The profile also refuses file changes: every call that creates, changes or removes a file, directory, link,
+   attribute or mount fails with "operation not permitted", an open for writing, creating, truncating or
+   appending fails the same way (read-only opens work), and the calls that would route around that (a rewritten
+   open, a ring submission, the mount calls) are refused or answered "not implemented". The program starts
+   with no descriptor beyond the standard streams except read-only ones and the runtime's own. Standard output
+   and error still work.
+9. Left open on purpose: writing to a descriptor the caller handed in as standard output or error, and
+   connecting to a unix socket the user may already open; both are decisions of the caller and the guest's
+   network policy, not of the launcher.
+10. Not here: the sealed read-only bundle, the signed attestation, leases, egress and credentials (later
    slices), and an arm64 run (the filter table is tested for arm64; the guest run is amd64).

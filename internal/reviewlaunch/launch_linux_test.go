@@ -31,6 +31,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+//nolint:gosec // the probe deliberately attempts the writes and launches the profile must refuse
 func probe(mode string, extra []string) {
 	switch mode {
 	case "ok":

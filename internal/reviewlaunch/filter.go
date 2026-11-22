@@ -155,9 +155,9 @@ func BuildFilter(a Arch) ([]Insn, error) {
 		)
 	}
 	if n.Open != 0 {
-		openRule(n.Open, 16+8*1) // open(path, flags, mode)
+		openRule(n.Open, 16+8*1) // flags is the second argument
 	}
-	openRule(n.Openat, 16+8*2) // openat(dirfd, path, flags, mode)
+	openRule(n.Openat, 16+8*2) // flags is the third argument
 	f = append(f,
 		ins(opJeq, 0, 4, n.Clone),
 		ins(opLdAbs, 0, 0, 16), // args[0] low word: the clone flags

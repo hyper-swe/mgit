@@ -128,3 +128,15 @@ func checkNumbers(t *testing.T, a Arch, want map[string]uint32) {
 		t.Errorf("%v open %d, platform %d", a, n.Open, w)
 	}
 }
+
+// openat2 takes its flags in a struct the filter cannot read, so it answers
+// "not implemented" (a library then falls back to openat, which is judged);
+// the number is the literal the kernel uses on both architectures.
+func TestFilter_Openat2IsNotImplemented(t *testing.T) {
+	for _, arch := range []Arch{ArchAmd64, ArchArm64} {
+		prog, _ := BuildFilter(arch)
+		if got := evalBPF(t, prog, AuditArch(arch), 437, [6]uint64{}); got != errnoVerdict(38) {
+			t.Errorf("%v openat2: verdict %#x, want ENOSYS", arch, got)
+		}
+	}
+}
