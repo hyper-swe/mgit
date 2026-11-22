@@ -24,8 +24,13 @@
    open, a ring submission, the mount calls) are refused or answered "not implemented". The program starts
    with no descriptor beyond the standard streams except read-only ones and the runtime's own. Standard output
    and error still work.
-9. Left open on purpose: writing to a descriptor the caller handed in as standard output or error, and
+9. Syscalls the profile does not know yet answer "not implemented", so a call the kernel adds later is not
+   allowed by omission. `ioctl` is an allowlist of terminal and descriptor requests, so a read-only descriptor
+   cannot be used to change a file's flags or attributes. Message queues, System V shared memory, queues and
+   semaphores, and the descriptor-taking process calls are refused. A descriptor the caller left open is
+   closed to the program, including a writable or append-mode one.
+10. Left open on purpose: writing to a descriptor the caller handed in as standard output or error, and
    connecting to a unix socket the user may already open; both are decisions of the caller and the guest's
    network policy, not of the launcher.
-10. Not here: the sealed read-only bundle, the signed attestation, leases, egress and credentials (later
+11. Not here: the sealed read-only bundle, the signed attestation, leases, egress and credentials (later
    slices), and an arm64 run (the filter table is tested for arm64; the guest run is amd64).
