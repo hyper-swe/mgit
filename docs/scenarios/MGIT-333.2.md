@@ -19,5 +19,7 @@
    exit status and output kept. Any other exit status is the reviewer's own.
 7. Before: there was no way to start a guest for a review, so the launcher and the sealed bundle had no host-side
    caller. After: they have one, and a backend that could carry a write back is refused up front.
-8. Not here: the review-run verb and leases (the next slice), the binding-map installer, egress and credentials. The
+8. On the firecracker live job, a real guest is provisioned through `Provision`: the same program, as the same user, creates
+   a file when run directly and cannot when run through the launcher, and a wrong digest is refused with HASH_MISMATCH.
+9. Not here: the review-run verb and leases (the next slice), the binding-map installer, egress and credentials. The
    box guest proof, with a marker-file control, is recorded in the pull request.

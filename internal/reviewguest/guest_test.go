@@ -153,7 +153,7 @@ func TestRun_GoesThroughTheLauncherAsRootWithTheDigestAndNoEnvironment(t *testin
 		t.Fatal(err)
 	}
 	r := m.execs[0]
-	want := []string{"mgit-guest", "review-exec", "--sha256", sha, "--uid", "65534", "--gid", "65534", "--dir", g.LeaseDir, "--", "/usr/bin/reviewer", "--json", "-x"}
+	want := []string{"/sbin/mgit-guest", "review-exec", "--sha256", sha, "--uid", "65534", "--gid", "65534", "--dir", g.LeaseDir, "--", "/usr/bin/reviewer", "--json", "-x"}
 	if !reflect.DeepEqual(r.Command, want) {
 		t.Fatalf("command %q", r.Command)
 	}

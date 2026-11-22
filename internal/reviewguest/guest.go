@@ -28,6 +28,9 @@ import (
 // delivery is not shown to be a copy; each is refused rather than assumed.
 const launchTimeBackend = model.BackendKVM
 
+// guestBinary is where the guest image installs the launcher.
+const guestBinary = "/sbin/mgit-guest"
+
 var hexDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // Spec is what Provision needs.
@@ -103,7 +106,7 @@ func (g *Guest) Run(ctx context.Context, e Entry) (*model.ExecResult, error) {
 	if !hexDigest.MatchString(e.SHA256) || !filepath.IsAbs(e.Path) {
 		return nil, refuse(reviewprep.CodeMappingMismatch, "the entrypoint needs a sha256 digest and an absolute path")
 	}
-	cmd := []string{"mgit-guest", "review-exec", "--sha256", e.SHA256,
+	cmd := []string{guestBinary, "review-exec", "--sha256", e.SHA256,
 		"--uid", strconv.Itoa(g.uid), "--gid", strconv.Itoa(g.gid), "--dir", g.LeaseDir, "--", e.Path}
 	cmd = append(cmd, e.Argv...)
 	res, err := g.mgr.Exec(ctx, g.ID, model.ExecRequest{Command: cmd, Dir: g.LeaseDir, AsRoot: true})
