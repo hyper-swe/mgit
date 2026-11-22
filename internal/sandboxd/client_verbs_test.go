@@ -238,6 +238,11 @@ func TestClient_OptionalVerbs_ReportThemselvesUnservedWhenUnwired(t *testing.T) 
 			_, err := client.Land(ctx, "MGIT-1")
 			return err
 		},
+		controlproto.KindReviewPrepare: func() error {
+			_, err := client.ReviewPrepare(ctx, controlproto.ReviewPrepareArgs{Profile: "reviewer-ro/v1",
+				Image: "r@sha256:x", MappingID: "m", BindingDigest: "b", BundleDir: "/tmp/e", BundleDigest: "d", Nonce: "nonce-0123456789abcdef"})
+			return err
+		},
 		controlproto.KindSyncVerify: func() error {
 			_, err := client.VerifyGuestView(ctx, "MGIT-1")
 			return err
@@ -297,13 +302,14 @@ func TestClient_PolicyRefusal_IsTheWorkedExampleTheOthersOwe(t *testing.T) {
 // kindNames labels the optional verbs for subtest output. The KINDS come from
 // controlproto's own constants above; only the human label lives here.
 var kindNames = map[byte]string{
-	controlproto.KindSyncVerify: "sync_verify",
-	controlproto.KindGrants:     "grants",
-	controlproto.KindGrant:      "grant",
-	controlproto.KindPolicySet:  "policy_set",
-	controlproto.KindPolicyShow: "policy_show",
-	controlproto.KindExport:     "export",
-	controlproto.KindLand:       "land",
+	controlproto.KindSyncVerify:    "sync_verify",
+	controlproto.KindReviewPrepare: "review_prepare",
+	controlproto.KindGrants:        "grants",
+	controlproto.KindGrant:         "grant",
+	controlproto.KindPolicySet:     "policy_set",
+	controlproto.KindPolicyShow:    "policy_show",
+	controlproto.KindExport:        "export",
+	controlproto.KindLand:          "land",
 }
 
 // A verb whose task cannot be resolved fails with the resolution error, not

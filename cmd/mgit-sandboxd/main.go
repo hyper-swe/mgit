@@ -25,6 +25,7 @@ import (
 	"github.com/hyper-swe/mgit/internal/sandboxd"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/libkrun"
 	"github.com/hyper-swe/mgit/internal/sandboxd/hostmem"
+	"github.com/hyper-swe/mgit/internal/sandboxd/reviewsvc"
 	"github.com/hyper-swe/mgit/internal/service"
 )
 
@@ -253,6 +254,14 @@ func run(args []string, out, logSink io.Writer) int {
 		// export engine, and records the crossing in the append-only trail. A
 		// backend that cannot export reports that per call (MGIT-73).
 		dcfg.Exporter = svc
+		// Review prepare (MGIT-333): checks a review request and signs what
+		// would run. It needs the host signing key; without one the verb stays
+		// unserved rather than issuing anything unkeyed.
+		if rs, rerr := reviewsvc.New(opts.hostRoot, clock); rerr != nil {
+			logger.Warn("review prepare is not served", "reason", rerr.Error())
+		} else {
+			dcfg.ReviewPreparer = rs
+		}
 
 		// Wire host egress enforcement (allowlist proxy + restricted DNS) so
 		// the service starts/stops it across each allowlist sandbox's

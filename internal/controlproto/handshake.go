@@ -81,7 +81,11 @@ const (
 	// the repository it is given by default (FEAT-6.114.1). A request field
 	// is a wire change: a daemon from a 5 build would refuse the request
 	// as unknown, so the handshake names the restart instead.
-	ProtocolVersion = 6
+	//
+	// 7 adds the review-prepare verb (KindReviewPrepare, a ReviewPrepare
+	// field on request and response) that checks a review request and signs
+	// what would run (MGIT-333).
+	ProtocolVersion = 7
 
 	// LegacyProtocol names every mgit built before the handshake existed
 	// (0.5.x and earlier). Such a peer never states a version, so this number

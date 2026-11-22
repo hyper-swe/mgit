@@ -97,6 +97,20 @@ func GenerateKey(ctx context.Context, hostRoot string, audit KeyAuditor) error {
 	return nil
 }
 
+// LoadSigningKey reads the active host signing key for another host-side
+// signer (the review attestation). Absence or a malformed key is an error:
+// nothing is issued unkeyed. Refs: MGIT-333, FR-17.38
+func LoadSigningKey(hostRoot string) (ed25519.PrivateKey, error) {
+	b, err := os.ReadFile(filepath.Join(hostRoot, hostkey.TrustDirName, attestKeyFile)) //nolint:gosec // host-owned config path
+	if err != nil {
+		return nil, fmt.Errorf("attest: load signing key (run GenerateKey first): %w", err)
+	}
+	if len(b) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("attest: signing key is not a valid Ed25519 private key")
+	}
+	return ed25519.PrivateKey(b), nil
+}
+
 // Service is the host-side Attestor. It holds the active signing key and
 // every known public key (active + rotated) so it can verify by key_id.
 type Service struct {
