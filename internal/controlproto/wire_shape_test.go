@@ -37,6 +37,7 @@ import (
 var wireShapeDigests = map[int]string{
 	5: "44b0d5cc5d5864ff8909d342c04dcd3b413be3eb014565f6ea7f7536cac9e2a3",
 	6: "98cc5aa909cd52eb7688e6f1f1aec0aac704b624ebde996b56ce205be8177a4a",
+	7: "46b26359af592d886964c52af9b40b17eff7e51adcb92aa1b14a19d8107e66c8",
 }
 
 func TestWireShape_IsPinnedToProtocolVersion(t *testing.T) {

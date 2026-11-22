@@ -31,6 +31,11 @@ const (
 	Cwd = "/review"
 
 	minNonce = 16
+
+	// MaxTTL bounds how long an attestation (and so a lease) may live.
+	MaxTTL = 15 * time.Minute
+	// MaxBundleBytes bounds the sealed evidence document.
+	MaxBundleBytes = 1 << 20
 )
 
 // Refusal codes (contract item 4). All are pre-launch.
@@ -54,6 +59,10 @@ type Error struct {
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Detail }
+
+// Refuse builds a pre-launch refusal envelope for a caller that rejects a
+// request before Prepare can (an unreadable map, say).
+func Refuse(code, detail string) *Error { return refuse(code, detail) }
 
 func refuse(code, detail string) *Error {
 	return &Error{Schema: ErrorSchema, Code: code, Phase: "prepare", Detail: detail}
@@ -115,12 +124,25 @@ type Attestation struct {
 	Signature              []byte    `json:"signature"`
 }
 
-// policyText names every restriction the profile enforces. Its digest rides
-// in the attestation, so a change to the policy is a visible change.
-const policyText = "reviewer-ro/v1|detached-guest|bundle=sealed-ro|fs-writes=false|additional-exec=false|host-mounts=false|no_new_privs|empty-caps|exec-by-fd-once|cwd=/review"
+// WriteDenialEnforced says whether the launcher this build ships denies file
+// changes. The attestation reports only what the launcher enforces, so until
+// that is true the attestation states writes as possible and a client that
+// requires the profile refuses it. The slice that lands the denial sets it.
+var WriteDenialEnforced = false
+
+// policyText names every restriction the profile enforces in this build. Its
+// digest rides in the attestation, so a change to the policy is a visible
+// change, and the text says what the launcher does today.
+func policyText() string {
+	writes := "fs-writes=not-denied"
+	if WriteDenialEnforced {
+		writes = "fs-writes=denied"
+	}
+	return "reviewer-ro/v1|detached-guest|bundle=sealed-ro|" + writes + "|additional-exec=false|host-mounts=false|no_new_privs|empty-caps|exec-by-fd-once|cwd=/review"
+}
 
 // PolicyDigest is the hex sha256 of the profile's policy text.
-func PolicyDigest() string { return hexSum([]byte(policyText)) }
+func PolicyDigest() string { return hexSum([]byte(policyText())) }
 
 func hexSum(b []byte) string {
 	h := sha256.Sum256(b)
@@ -202,7 +224,7 @@ func Prepare(r Request, m Mapping, bundle []byte, s *Signer, now time.Time, ttl 
 	if want == "" || want != m.ImageDigest {
 		return nil, refuse(CodeImageMismatch, "image digest does not match the mapping")
 	}
-	if len(bundle) == 0 || !json.Valid(bundle) || !isHex64(r.BundleDigest) || hexSum(bundle) != r.BundleDigest {
+	if !isJSONObject(bundle) || !isHex64(r.BundleDigest) || hexSum(bundle) != r.BundleDigest {
 		return nil, refuse(CodeBundleInvalid, "bundle is not the declared evidence")
 	}
 	if !path.IsAbs(m.GuestEntrypoint) || path.Clean(m.GuestEntrypoint) != m.GuestEntrypoint || !isHex64(m.EntrypointSHA256) {
@@ -214,7 +236,7 @@ func Prepare(r Request, m Mapping, bundle []byte, s *Signer, now time.Time, ttl 
 	if len(r.Nonce) < minNonce {
 		return nil, refuse(CodeAttestationInvalid, "nonce is missing or too short")
 	}
-	if s == nil || lease == "" || ttl <= 0 {
+	if s == nil || lease == "" || ttl <= 0 || ttl > MaxTTL {
 		return nil, refuse(CodeAttestationInvalid, "attestation cannot be issued")
 	}
 	ad, err := argvDigest(m.Argv)
@@ -236,7 +258,7 @@ func Prepare(r Request, m Mapping, bundle []byte, s *Signer, now time.Time, ttl 
 		BundleSHA256:           r.BundleDigest,
 		Cwd:                    Cwd,
 		CapabilityPolicyDigest: PolicyDigest(),
-		Enforced:               Enforced{DetachedGuest: true, Bundle: "sealed-ro"},
+		Enforced:               Enforced{DetachedGuest: true, Bundle: "sealed-ro", FilesystemWrites: !WriteDenialEnforced},
 		EgressPolicyID:         m.EgressPolicyID,
 		CredentialRef:          m.CredentialRef,
 	}
@@ -267,7 +289,7 @@ func Verify(a *Attestation, r Request, pub ed25519.PublicKey, now time.Time) err
 	}
 	e := a.Enforced
 	if !e.DetachedGuest || e.Bundle != "sealed-ro" || e.FilesystemWrites || e.AdditionalExec || e.HostMounts {
-		return bad("enforced policy is weaker than the profile")
+		return bad("the attested policy is not the profile")
 	}
 	if a.Cwd != Cwd || a.CapabilityPolicyDigest != PolicyDigest() {
 		return bad("policy does not match the profile")
@@ -304,4 +326,26 @@ func payload(a *Attestation) []byte {
 		put(f)
 	}
 	return b.Bytes()
+}
+
+// isJSONObject reports whether b is one JSON object within the size cap. The
+// evidence is a document of records, so a scalar, an array or null is not it.
+func isJSONObject(b []byte) bool {
+	if len(b) == 0 || len(b) > MaxBundleBytes {
+		return false
+	}
+	var m map[string]json.RawMessage
+	return json.Unmarshal(b, &m) == nil && m != nil
+}
+
+// LaunchArgs is the argument vector the guest runs for a mapped entrypoint:
+// always through the launcher, which opens the file, checks its digest on that
+// open file and executes that descriptor. The attested path is not itself
+// signed, only its digest, so a bare exec of the path is never produced. The
+// mapped argv follows the entrypoint after `--`, where the launcher reads no
+// more flags.
+func LaunchArgs(m Mapping) []string {
+	out := make([]string, 0, 5+len(m.Argv))
+	out = append(out, "review-exec", "--sha256", m.EntrypointSHA256, "--", m.GuestEntrypoint)
+	return append(out, m.Argv...)
 }

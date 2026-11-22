@@ -20,7 +20,21 @@ func sum(b []byte) string {
 
 const imageDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 
+// shippedWriteDenial is the flag as the build ships it, read before any test
+// can change it.
+var shippedWriteDenial = WriteDenialEnforced
+
+// fixture is rawFixture with the write denial switched on for the positive
+// paths; the default is pinned separately, by tests that use rawFixture.
 func fixture(t *testing.T) (Request, Mapping, []byte, *Signer) {
+	t.Helper()
+	old := WriteDenialEnforced
+	WriteDenialEnforced = true
+	t.Cleanup(func() { WriteDenialEnforced = old })
+	return rawFixture(t)
+}
+
+func rawFixture(t *testing.T) (Request, Mapping, []byte, *Signer) {
 	t.Helper()
 	bundle := []byte(`{"citations":[{"n":1,"text":"a line"}]}`)
 	m := Mapping{
@@ -244,12 +258,20 @@ func TestVerify_JSONRoundTrip(t *testing.T) {
 	}
 }
 
-func TestPolicyDigest_IsStableAndPinned(t *testing.T) {
+func TestPolicyDigest_IsPinnedForBothStates(t *testing.T) {
 	// The digest is what a client compares against; a change to the policy
-	// must be a visible, deliberate change to this literal.
-	const want = "3cc4b3c4338fab12dc13e9e92779471b62d03f3683a514aa913dedbfd562936a"
-	if got := PolicyDigest(); got != want {
-		t.Fatalf("policy digest %s, want %s", got, want)
+	// must be a visible, deliberate change to these literals. The text says
+	// what the launcher does: writes not denied until the denial lands.
+	old := WriteDenialEnforced
+	t.Cleanup(func() { WriteDenialEnforced = old })
+	for denied, want := range map[bool]string{
+		true:  "81bdcf6ab19e001cd9c87b55cc4076e1611091c5224d784652c9ac8ebc5d5d4e",
+		false: "54ac35fa41403840798ba12999f7a39510ab82877db2da62a41b0190e42a426a",
+	} {
+		WriteDenialEnforced = denied
+		if got := PolicyDigest(); got != want {
+			t.Fatalf("denied=%v: policy digest %s, want %s", denied, got, want)
+		}
 	}
 }
 
@@ -310,5 +332,77 @@ func TestPrepare_NonPositiveTTLIsRefused(t *testing.T) {
 		if _, err := Prepare(r, m, b, s, fixedNow, ttl, "lease-1"); err == nil {
 			t.Fatalf("ttl %v accepted", ttl)
 		}
+	}
+}
+
+func TestPrepare_TTLIsCapped(t *testing.T) {
+	r, m, b, s := fixture(t)
+	if _, err := Prepare(r, m, b, s, fixedNow, MaxTTL, "lease-1"); err != nil {
+		t.Fatalf("the cap itself must be allowed: %v", err)
+	}
+	_, err := Prepare(r, m, b, s, fixedNow, MaxTTL+time.Second, "lease-1")
+	if got := codeOf(t, err); got != "ATTESTATION_INVALID" {
+		t.Fatalf("code %s", got)
+	}
+}
+
+// The evidence is a JSON object. A scalar, an array, null or a document past
+// the size cap is refused, whatever digest it carries.
+func TestPrepare_BundleMustBeABoundedObject(t *testing.T) {
+	big := []byte(`{"pad":"` + strings.Repeat("x", MaxBundleBytes) + `"}`)
+	for name, body := range map[string][]byte{
+		"string": []byte(`"x"`), "number": []byte(`5`), "null": []byte(`null`),
+		"true": []byte(`true`), "array": []byte(`[{}]`), "oversize": big,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, m, _, s := fixture(t)
+			r.BundleDigest = sum(body)
+			if got := codeOf(t, errOnly(Prepare(r, m, body, s, fixedNow, time.Minute, "lease-1"))); got != "BUNDLE_INVALID" {
+				t.Fatalf("code %s", got)
+			}
+		})
+	}
+}
+
+func errOnly(_ *Attestation, err error) error { return err }
+
+// The attested entrypoint path is not itself signed, only its digest, so the
+// launch always goes through the launcher, which opens the file, checks the
+// digest on that open file and executes that descriptor.
+func TestLaunchArgs_GoThroughTheLauncherWithTheAttestedDigest(t *testing.T) {
+	_, m, _, _ := fixture(t)
+	got := LaunchArgs(m)
+	want := []string{"review-exec", "--sha256", m.EntrypointSHA256, "--", m.GuestEntrypoint, "--json", "--offline"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("launch args %v want %v", got, want)
+	}
+	m.Argv = []string{"--sha256", "evil", "--"}
+	got = LaunchArgs(m)
+	if got[2] != m.EntrypointSHA256 || got[4] != m.GuestEntrypoint {
+		t.Fatalf("mapped argv must not reach the launcher's own flags: %v", got)
+	}
+}
+
+// The attestation reports only what the launcher enforces: with no write
+// denial in the launcher it says writes are possible, and a client that
+// requires the profile refuses it.
+// The attestation reports only what the launcher enforces. The build ships
+// with no write denial, so an attestation issued with the shipped default says
+// writes are possible, and a client that requires the profile refuses it. No
+// test assigns the flag here: the default is what is under test.
+func TestAttestation_DefaultReportsWritesAsPossible(t *testing.T) {
+	if shippedWriteDenial {
+		t.Fatal("WriteDenialEnforced ships true; it may only be set by the change that makes the launcher deny writes")
+	}
+	r, m, b, s := rawFixture(t)
+	att, err := Prepare(r, m, b, s, fixedNow, time.Minute, "lease-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !att.Enforced.FilesystemWrites {
+		t.Fatal("the default attestation claims writes are denied while the launcher does not deny them")
+	}
+	if got := codeOf(t, Verify(att, r, s.Public(), fixedNow)); got != "ATTESTATION_INVALID" {
+		t.Fatalf("a client must refuse it, code %s", got)
 	}
 }

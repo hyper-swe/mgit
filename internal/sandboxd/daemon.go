@@ -76,6 +76,9 @@ type Config struct {
 	// nil the verb reports itself unserved — the honest answer for a backend
 	// that cannot export rather than a silently weaker transfer. Refs: MGIT-73, ADR-011
 	Exporter ArtifactExporter
+	// ReviewPreparer serves the review-prepare verb (MGIT-333). When nil the
+	// verb reports itself unserved.
+	ReviewPreparer ReviewPreparer
 	// HeartbeatInterval is how often the daemon writes a liveness beat on an
 	// outstanding exec stream. Zero selects execwire.HeartbeatInterval — the
 	// cadence the client judges silence against — and it is overridable only
