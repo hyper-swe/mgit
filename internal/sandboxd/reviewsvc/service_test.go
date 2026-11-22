@@ -82,7 +82,7 @@ func code(t *testing.T, err error) string {
 func leases(t *testing.T, root string) []string {
 	t.Helper()
 	ents, _ := os.ReadDir(filepath.Join(root, "review", "leases"))
-	var out []string
+	out := make([]string, 0, len(ents))
 	for _, e := range ents {
 		out = append(out, e.Name())
 	}
@@ -113,7 +113,7 @@ func TestPrepareReview_IssuesAVerifiableAttestationAndSealsTheBundle(t *testing.
 		t.Fatalf("lease %q", att.Lease)
 	}
 	sealed := filepath.Join(e.root, "review", "leases", att.Lease, "evidence.json")
-	got, err := os.ReadFile(sealed)
+	got, err := os.ReadFile(sealed) //nolint:gosec // test-owned temp path
 	if err != nil || string(got) != string(e.evidence) {
 		t.Fatalf("sealed bundle %q err=%v", got, err)
 	}
@@ -125,7 +125,7 @@ func TestPrepareReview_IssuesAVerifiableAttestationAndSealsTheBundle(t *testing.
 	if err := os.WriteFile(filepath.Join(e.bundle, "evidence.json"), []byte(`{"x":1}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	again, _ := os.ReadFile(sealed)
+	again, _ := os.ReadFile(sealed) //nolint:gosec // test-owned temp path
 	if string(again) != string(e.evidence) {
 		t.Fatal("the sealed copy followed the source")
 	}
@@ -157,9 +157,9 @@ func TestPrepareReview_Refusals(t *testing.T) {
 		{"no such mapping", func(e *env) { e.args.MappingID = "nope" }, "MAPPING_MISMATCH"},
 		{"map has an unknown field", func(e *env) {
 			p := filepath.Join(e.root, "review", "maps", "pi-v1.json")
-			b, _ := os.ReadFile(p)
+			b, _ := os.ReadFile(p) //nolint:gosec // test-owned temp path
 			b = []byte(strings.Replace(string(b), `{`, `{"trust_all":true,`, 1))
-			_ = os.WriteFile(p, b, 0o600)
+			_ = os.WriteFile(p, b, 0o600) //nolint:gosec // test-owned temp path
 		}, "MAPPING_MISMATCH"},
 		{"map is a symlink", func(e *env) {
 			p := filepath.Join(e.root, "review", "maps", "pi-v1.json")

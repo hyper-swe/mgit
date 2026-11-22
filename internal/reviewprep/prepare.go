@@ -332,6 +332,7 @@ func isJSONObject(b []byte) bool {
 // mapped argv follows the entrypoint after `--`, where the launcher reads no
 // more flags.
 func LaunchArgs(m Mapping) []string {
-	out := []string{"review-exec", "--sha256", m.EntrypointSHA256, "--", m.GuestEntrypoint}
+	out := make([]string, 0, 5+len(m.Argv))
+	out = append(out, "review-exec", "--sha256", m.EntrypointSHA256, "--", m.GuestEntrypoint)
 	return append(out, m.Argv...)
 }
