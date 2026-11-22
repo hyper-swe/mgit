@@ -259,3 +259,32 @@ func TestSigner_RejectsBadKey(t *testing.T) {
 		t.Fatal("empty issuer accepted")
 	}
 }
+
+// A correctly signed attestation that states a weaker policy than the
+// profile is still refused: the signature proves who said it, not that it is
+// acceptable.
+func TestVerify_ValidlySignedButWeakerPolicyIsRefused(t *testing.T) {
+	weaken := map[string]func(*Attestation){
+		"writes":   func(a *Attestation) { a.Enforced.FilesystemWrites = true },
+		"exec":     func(a *Attestation) { a.Enforced.AdditionalExec = true },
+		"mounts":   func(a *Attestation) { a.Enforced.HostMounts = true },
+		"detached": func(a *Attestation) { a.Enforced.DetachedGuest = false },
+		"bundle":   func(a *Attestation) { a.Enforced.Bundle = "live" },
+		"cwd":      func(a *Attestation) { a.Cwd = "/" },
+		"policy":   func(a *Attestation) { a.CapabilityPolicyDigest = strings.Repeat("0", 64) },
+	}
+	for name, f := range weaken {
+		t.Run(name, func(t *testing.T) {
+			r, m, b, s := fixture(t)
+			att, err := Prepare(r, m, b, s, fixedNow, 5*time.Minute, "lease-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			f(att)
+			att.Signature = ed25519.Sign(s.priv, payload(att))
+			if got := codeOf(t, Verify(att, r, s.Public(), fixedNow)); got != "ATTESTATION_INVALID" {
+				t.Fatalf("code %s", got)
+			}
+		})
+	}
+}
