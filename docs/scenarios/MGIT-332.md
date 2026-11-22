@@ -29,8 +29,11 @@
    cannot be used to change a file's flags or attributes. Message queues, System V shared memory, queues and
    semaphores, and the descriptor-taking process calls are refused. A descriptor the caller left open is
    closed to the program, including a writable or append-mode one.
-10. Left open on purpose: writing to a descriptor the caller handed in as standard output or error, and
+10. On a kernel older than 5.11, which cannot mark a whole range of descriptors at once, the launcher marks them
+    one by one from the directory of open descriptors. If neither works, the launcher refuses with
+    POLICY_UNENFORCEABLE and starts nothing.
+11. Left open on purpose: writing to a descriptor the caller handed in as standard output or error, and
    connecting to a unix socket the user may already open; both are decisions of the caller and the guest's
    network policy, not of the launcher.
-11. Not here: the sealed read-only bundle, the signed attestation, leases, egress and credentials (later
+12. Not here: the sealed read-only bundle, the signed attestation, leases, egress and credentials (later
    slices), and an arm64 run (the filter table is tested for arm64; the guest run is amd64).

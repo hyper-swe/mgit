@@ -236,7 +236,9 @@ func stage(sc stageConfig, sock, status *os.File) error {
 	syscall.CloseOnExec(4)
 	// Whatever else the caller left open (a CI runner's or a supervising
 	// shell's descriptors) must not follow the program through the exec.
-	closeInherited()
+	if err := closeInherited(); err != nil {
+		return err
+	}
 	f, err := os.Open(sc.Entrypoint)
 	if err != nil {
 		return refuse(CodeLaunchFailed, "cannot open the entrypoint: %v", err)
@@ -352,19 +354,44 @@ const (
 	maxFD             = ^uint(0)
 )
 
+// The three steps are variables only so a test can make each one fail.
+var (
+	closeRangeCall = func(first, last, flags uintptr) error {
+		if _, _, e := syscall.RawSyscall(sysCloseRange, first, last, flags); e != 0 {
+			return e
+		}
+		return nil
+	}
+	listFDs = func() ([]string, error) {
+		ents, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			return nil, err
+		}
+		names := make([]string, 0, len(ents))
+		for _, e := range ents {
+			names = append(names, e.Name())
+		}
+		return names, nil
+	}
+	setCloexec = syscall.CloseOnExec
+)
+
 // closeInherited marks every descriptor from firstInheritedFD up close-on-exec.
-// Where close_range is missing it walks /proc/self/fd instead.
-func closeInherited() {
-	if _, _, e := syscall.RawSyscall(sysCloseRange, firstInheritedFD, uintptr(maxFD), closeRangeCloexec); e == 0 {
-		return
+// Where close_range is missing (before Linux 5.11) it walks /proc/self/fd
+// instead. If neither works the launcher refuses: a program is never started
+// with descriptors that could not be marked.
+func closeInherited() error {
+	if err := closeRangeCall(firstInheritedFD, uintptr(maxFD), closeRangeCloexec); err == nil {
+		return nil
 	}
-	ents, err := os.ReadDir("/proc/self/fd")
+	names, err := listFDs()
 	if err != nil {
-		return
+		return refuse(CodePolicyUnenforceable, "cannot mark inherited descriptors close-on-exec: %v", err)
 	}
-	for _, ent := range ents {
-		if n, err := strconv.Atoi(ent.Name()); err == nil && n >= firstInheritedFD {
-			syscall.CloseOnExec(n)
+	for _, name := range names {
+		if n, err := strconv.Atoi(name); err == nil && n >= firstInheritedFD {
+			setCloexec(n)
 		}
 	}
+	return nil
 }
