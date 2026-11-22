@@ -86,14 +86,15 @@ type SyscallNumbers struct {
 	Read, Write                uint32
 	Execve, Execveat           uint32
 	Clone, Clone3, Fork, Vfork uint32
+	Ptrace, ProcessVMWritev    uint32
 }
 
 // Syscalls returns the table for a.
 func Syscalls(a Arch) SyscallNumbers {
 	if a == ArchArm64 {
-		return SyscallNumbers{Read: 63, Write: 64, Execve: 221, Execveat: 281, Clone: 220, Clone3: 435}
+		return SyscallNumbers{Read: 63, Write: 64, Execve: 221, Execveat: 281, Clone: 220, Clone3: 435, Ptrace: 117, ProcessVMWritev: 271}
 	}
-	return SyscallNumbers{Read: 0, Write: 1, Execve: 59, Execveat: 322, Clone: 56, Clone3: 435, Fork: 57, Vfork: 58}
+	return SyscallNumbers{Read: 0, Write: 1, Execve: 59, Execveat: 322, Clone: 56, Clone3: 435, Fork: 57, Vfork: 58, Ptrace: 101, ProcessVMWritev: 311}
 }
 
 func ins(code uint16, jt, jf uint8, k uint32) Insn { return Insn{code, jt, jf, k} }
@@ -126,6 +127,9 @@ func BuildFilter(a Arch) ([]Insn, error) {
 	verdict(n.Execve, RetErrno|errnoPerm)
 	verdict(n.Execveat, RetUserNotif)
 	verdict(n.Clone3, RetErrno|errnoNosys)
+	// A same-uid peer must not drive another process through the debugger interface.
+	verdict(n.Ptrace, RetErrno|errnoPerm)
+	verdict(n.ProcessVMWritev, RetErrno|errnoPerm)
 	if a == ArchAmd64 {
 		verdict(n.Fork, RetErrno|errnoPerm)
 		verdict(n.Vfork, RetErrno|errnoPerm)
