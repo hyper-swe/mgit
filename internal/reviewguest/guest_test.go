@@ -76,7 +76,7 @@ func TestProvision_LaunchesTheLeaseDirWithNoNetworkAndNoRepo(t *testing.T) {
 		t.Fatalf("id=%q launches=%d", g.ID, len(m.launched))
 	}
 	o := m.launched[0]
-	if o.WorktreePath != s.LeaseDir || o.ImageRef != img || o.Network.Mode != model.NetworkModeNone || !o.NoGuestRepo || o.ConfineAgent || len(o.PublishPorts) != 0 {
+	if o.CPUs != ReviewCPUs || o.MemoryMB != ReviewMemoryMB || o.CPUs <= 0 || o.MemoryMB <= 0 || o.WorktreePath != s.LeaseDir || o.ImageRef != img || o.Network.Mode != model.NetworkModeNone || !o.NoGuestRepo || o.ConfineAgent || len(o.PublishPorts) != 0 {
 		t.Fatalf("launch options %+v", o)
 	}
 }
