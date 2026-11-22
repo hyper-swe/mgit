@@ -31,6 +31,11 @@ const (
 	Cwd = "/review"
 
 	minNonce = 16
+
+	// MaxTTL bounds how long an attestation (and so a lease) may live.
+	MaxTTL = 15 * time.Minute
+	// MaxBundleBytes bounds the sealed evidence document.
+	MaxBundleBytes = 1 << 20
 )
 
 // Refusal codes (contract item 4). All are pre-launch.
@@ -54,6 +59,10 @@ type Error struct {
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Detail }
+
+// Refuse builds a pre-launch refusal envelope for a caller that rejects a
+// request before Prepare can (an unreadable map, say).
+func Refuse(code, detail string) *Error { return refuse(code, detail) }
 
 func refuse(code, detail string) *Error {
 	return &Error{Schema: ErrorSchema, Code: code, Phase: "prepare", Detail: detail}
@@ -202,7 +211,7 @@ func Prepare(r Request, m Mapping, bundle []byte, s *Signer, now time.Time, ttl 
 	if want == "" || want != m.ImageDigest {
 		return nil, refuse(CodeImageMismatch, "image digest does not match the mapping")
 	}
-	if len(bundle) == 0 || !json.Valid(bundle) || !isHex64(r.BundleDigest) || hexSum(bundle) != r.BundleDigest {
+	if !isJSONObject(bundle) || !isHex64(r.BundleDigest) || hexSum(bundle) != r.BundleDigest {
 		return nil, refuse(CodeBundleInvalid, "bundle is not the declared evidence")
 	}
 	if !path.IsAbs(m.GuestEntrypoint) || path.Clean(m.GuestEntrypoint) != m.GuestEntrypoint || !isHex64(m.EntrypointSHA256) {
@@ -214,7 +223,7 @@ func Prepare(r Request, m Mapping, bundle []byte, s *Signer, now time.Time, ttl 
 	if len(r.Nonce) < minNonce {
 		return nil, refuse(CodeAttestationInvalid, "nonce is missing or too short")
 	}
-	if s == nil || lease == "" || ttl <= 0 {
+	if s == nil || lease == "" || ttl <= 0 || ttl > MaxTTL {
 		return nil, refuse(CodeAttestationInvalid, "attestation cannot be issued")
 	}
 	ad, err := argvDigest(m.Argv)
@@ -304,4 +313,25 @@ func payload(a *Attestation) []byte {
 		put(f)
 	}
 	return b.Bytes()
+}
+
+// isJSONObject reports whether b is one JSON object within the size cap. The
+// evidence is a document of records, so a scalar, an array or null is not it.
+func isJSONObject(b []byte) bool {
+	if len(b) == 0 || len(b) > MaxBundleBytes {
+		return false
+	}
+	var m map[string]json.RawMessage
+	return json.Unmarshal(b, &m) == nil && m != nil
+}
+
+// LaunchArgs is the argument vector the guest runs for a mapped entrypoint:
+// always through the launcher, which opens the file, checks its digest on that
+// open file and executes that descriptor. The attested path is not itself
+// signed, only its digest, so a bare exec of the path is never produced. The
+// mapped argv follows the entrypoint after `--`, where the launcher reads no
+// more flags.
+func LaunchArgs(m Mapping) []string {
+	out := []string{"review-exec", "--sha256", m.EntrypointSHA256, "--", m.GuestEntrypoint}
+	return append(out, m.Argv...)
 }
