@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -25,13 +25,14 @@ func TestMain(m *testing.M) {
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "--probe" {
-		probe(os.Args[2])
+		probe(os.Args[2], os.Args[3:])
 		return
 	}
 	os.Exit(m.Run())
 }
 
-func probe(mode string) {
+//nolint:gosec // the probe deliberately attempts the writes and launches the profile must refuse
+func probe(mode string, extra []string) {
 	switch mode {
 	case "ok":
 		fmt.Println("hello from the mapped entrypoint")
@@ -45,16 +46,63 @@ func probe(mode string) {
 			}
 		}
 	case "supervisor-mem":
-		f, err := os.OpenFile(fmt.Sprintf("/proc/%d/mem", os.Getppid()), os.O_RDWR, 0)
+		f, err := os.OpenFile(fmt.Sprintf("/proc/%d/mem", os.Getppid()), os.O_RDONLY, 0)
 		if err == nil {
 			_ = f.Close()
 		}
 		fmt.Printf("supervisor-mem: %v\n", err)
+	case "write-attempts":
+		dir := extra[0]
+		marker := dir + "/review-marker"
+		report := func(name string, err error) { fmt.Printf("%s: %v\n", name, err) }
+		_, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE, 0o600)
+		report("create", err)
+		report("mkdir", os.Mkdir(dir+"/review-dir", 0o700))
+		report("symlink", os.Symlink("/etc/passwd", dir+"/review-link"))
+		report("rename", os.Rename("/proc/self/exe", dir+"/review-moved"))
+		report("remove", os.Remove("/etc/hostname"))
+		report("truncate", os.Truncate("/etc/hostname", 0))
+		report("chmod", os.Chmod("/etc/hostname", 0o777))
+		_, err = os.ReadFile("/etc/hostname")
+		report("read", err)
+		_, err = os.OpenFile("/etc/hostname", os.O_RDONLY, 0)
+		report("open-read", err)
+		_, statErr := os.Stat(marker)
+		report("marker-exists", statErr)
+		fmt.Println("stdout still works")
+	case "fds":
+		ents, _ := os.ReadDir("/proc/self/fd")
+		for _, e := range ents {
+			target, _ := os.Readlink("/proc/self/fd/" + e.Name())
+			info, _ := os.ReadFile("/proc/self/fdinfo/" + e.Name())
+			flags := ""
+			for _, l := range strings.Split(string(info), "\n") {
+				if strings.HasPrefix(l, "flags:") {
+					flags = strings.TrimSpace(strings.TrimPrefix(l, "flags:"))
+				}
+			}
+			fmt.Printf("fd %s -> %s flags %s\n", e.Name(), target, flags)
+		}
+	case "ioctl-setflags":
+		f, err := os.Open(extra[0])
+		if err != nil {
+			fmt.Printf("ioctl-setflags: open %v\n", err)
+			return
+		}
+		flags := uint32(0)
+		_, _, e := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), 0x40086602, uintptr(unsafe.Pointer(&flags))) //nolint:gosec // G103: kernel ABI request
+		fmt.Printf("ioctl-setflags: %v\n", e)
+	case "mq-create":
+		name := append([]byte("/review-mq-probe"), 0)
+		_, _, e := syscall.Syscall6(syscall.SYS_MQ_OPEN, uintptr(unsafe.Pointer(&name[0])), uintptr(syscall.O_CREAT|syscall.O_RDWR), 0o600, 0, 0, 0) //nolint:gosec // G103: kernel ABI string
+		fmt.Printf("mq-create: %v\n", e)
 	case "path-exec":
 		err := syscall.Exec("/bin/true", []string{"true"}, nil)
 		fmt.Printf("path-exec: %v\n", err)
 	case "fork":
-		err := exec.Command("/bin/true").Run()
+		// ForkExec with explicit descriptors opens nothing itself, so the
+		// refusal seen is the fork's, not an open of /dev/null.
+		_, err := syscall.ForkExec("/bin/true", []string{"true"}, &syscall.ProcAttr{Files: []uintptr{0, 1, 2}})
 		fmt.Printf("fork: %v\n", err)
 	case "second-exec":
 		// The one allowed exec already happened (we are its result); an
@@ -101,11 +149,11 @@ func stageBinary(t *testing.T) (string, string) {
 	return p, sum(b)
 }
 
-func runProbe(t *testing.T, mode string) (string, int, error) {
+func runProbe(t *testing.T, mode string, extra ...string) (string, int, error) {
 	t.Helper()
 	p, d := stageBinary(t)
 	var out bytes.Buffer
-	cfg := Config{Entrypoint: p, SHA256: d, Argv: []string{"--probe", mode}, Stdout: &out, Stderr: io.Discard}
+	cfg := Config{Entrypoint: p, SHA256: d, Argv: append([]string{"--probe", mode}, extra...), Stdout: &out, Stderr: io.Discard}
 	if os.Getuid() == 0 {
 		cfg.DropTo = &Identity{UID: 65534, GID: 65534}
 	}
@@ -155,7 +203,7 @@ func TestRun_ChildSeesTheEnforcedState(t *testing.T) {
 func TestRun_FurtherLaunchesAreDenied(t *testing.T) {
 	for mode, want := range map[string]string{
 		"path-exec":   "path-exec: operation not permitted",
-		"fork":        "fork: fork/exec /bin/true: operation not permitted",
+		"fork":        "fork: operation not permitted",
 		"second-exec": "second-exec: operation not permitted",
 	} {
 		out, _, err := runProbe(t, mode)
@@ -232,4 +280,160 @@ func TestYamaScope_ReadsTheKernelValue(t *testing.T) {
 	} else if got != "unknown" {
 		t.Fatalf("no yama here, want unknown, got %q", got)
 	}
+}
+
+func TestRun_FileWritesAreDenied(t *testing.T) {
+	out, _, err := runProbe(t, "write-attempts", t.TempDir())
+	skipIfNoFilter(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"create", "mkdir", "symlink", "rename", "remove", "truncate", "chmod"} {
+		if !strings.Contains(out, name+": ") || !strings.Contains(lineOf(out, name+": "), "operation not permitted") {
+			t.Errorf("%s was not refused with EPERM:\n%s", name, out)
+		}
+	}
+	if !strings.Contains(lineOf(out, "read: "), "<nil>") || !strings.Contains(lineOf(out, "open-read: "), "<nil>") {
+		t.Errorf("reading must still work:\n%s", out)
+	}
+	if !strings.Contains(lineOf(out, "marker-exists: "), "no such file") {
+		t.Errorf("a marker file exists after a refused create:\n%s", out)
+	}
+	if !strings.Contains(out, "stdout still works") {
+		t.Errorf("stdout is broken:\n%s", out)
+	}
+}
+
+func lineOf(out, prefix string) string {
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, prefix) {
+			return l
+		}
+	}
+	return ""
+}
+
+// The program holds no file descriptor it could write through except what the
+// caller handed it as standard input, output and error: every descriptor the
+// launcher used is closed before the program starts, and the filter makes it
+// impossible to open a new file for writing. What remains beyond the standard
+// streams is the probe's own (the directory it lists, the runtime's poller),
+// and none of it is a path to a file.
+func TestRun_HoldsNoFileDescriptorsBeyondStandardStreams(t *testing.T) {
+	// A descriptor the caller itself leaked (open, writable, not close-on-exec),
+	// as a CI runner or a supervising shell can: it must not reach the program.
+	r, w, perr := os.Pipe()
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	defer r.Close()
+	defer w.Close()
+	if _, _, e := syscall.Syscall(syscall.SYS_FCNTL, w.Fd(), syscall.F_SETFD, 0); e != 0 {
+		t.Fatal(e)
+	}
+	// An append-mode regular file leaked the same way: writing through it
+	// changes a file, so it must not reach the program either.
+	af, aerr := os.OpenFile(t.TempDir()+"/leak", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	defer af.Close()
+	if _, _, e := syscall.Syscall(syscall.SYS_FCNTL, af.Fd(), syscall.F_SETFD, 0); e != 0 {
+		t.Fatal(e)
+	}
+	out, _, err := runProbe(t, "fds")
+	skipIfNoFilter(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, l := range strings.Split(out, "\n") {
+		var fd, target, flagWord, flags string
+		if n, _ := fmt.Sscanf(l, "fd %s -> %s %s %s", &fd, &target, &flagWord, &flags); n < 4 {
+			continue
+		}
+		seen++
+		if fd == "0" || fd == "1" || fd == "2" || strings.HasPrefix(target, "anon_inode:") {
+			continue
+		}
+		// Every other descriptor is read-only: access mode bits (the low two
+		// bits of the octal flags) are zero.
+		v, err := strconv.ParseUint(flags, 8, 64)
+		if err != nil || v&3 != 0 {
+			t.Errorf("descriptor %s -> %s has flags %s: it is not read-only", fd, target, flags)
+		}
+	}
+	if seen < 3 {
+		t.Fatalf("the probe listed %d descriptors:\n%s", seen, out)
+	}
+}
+
+func TestRun_InodeFlagIoctlIsRefused(t *testing.T) {
+	f := t.TempDir() + "/target"
+	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runProbe(t, "ioctl-setflags", f)
+	skipIfNoFilter(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "ioctl-setflags: operation not permitted") {
+		t.Fatalf("the inode flags request was not refused by the profile: %q", out)
+	}
+}
+
+func TestRun_MessageQueueCreateIsRefused(t *testing.T) {
+	out, _, err := runProbe(t, "mq-create")
+	skipIfNoFilter(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "mq-create: operation not permitted") {
+		t.Fatalf("message queue creation was not refused: %q", out)
+	}
+}
+
+// The launcher must not start a program with descriptors it could not mark.
+func TestCloseInherited_RefusesWhenNothingCanMarkThem(t *testing.T) {
+	restore := stubFDHooks()
+	defer restore()
+	closeRangeCall = func(_, _, _ uintptr) error { return syscall.ENOSYS }
+	listFDs = func() ([]string, error) { return nil, errors.New("no /proc") }
+	err := closeInherited()
+	var r *RefusalError
+	if !errors.As(err, &r) || r.Code != CodePolicyUnenforceable {
+		t.Fatalf("closeInherited with both ways broken: %v, want a POLICY_UNENFORCEABLE refusal", err)
+	}
+}
+
+// The first descriptor marked is exactly 5: 0-2 are the caller's streams, 3
+// and 4 the launcher's own.
+func TestCloseInherited_StartsAtExactlyFive(t *testing.T) {
+	restore := stubFDHooks()
+	defer restore()
+	var first, flags uintptr
+	closeRangeCall = func(f, _, fl uintptr) error { first, flags = f, fl; return nil }
+	if err := closeInherited(); err != nil {
+		t.Fatal(err)
+	}
+	if first != 5 || flags != 1<<2 {
+		t.Fatalf("close_range started at %d flags %#x, want 5 and CLOSE_RANGE_CLOEXEC", first, flags)
+	}
+	// The same boundary on the fallback path.
+	closeRangeCall = func(_, _, _ uintptr) error { return syscall.ENOSYS }
+	listFDs = func() ([]string, error) { return []string{"0", "2", "3", "4", "5", "6", "x"}, nil }
+	var marked []int
+	setCloexec = func(fd int) { marked = append(marked, fd) }
+	if err := closeInherited(); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(marked) != "[5 6]" {
+		t.Fatalf("fallback marked %v, want [5 6]", marked)
+	}
+}
+
+func stubFDHooks() func() {
+	a, b, c := closeRangeCall, listFDs, setCloexec
+	return func() { closeRangeCall, listFDs, setCloexec = a, b, c }
 }

@@ -35,6 +35,12 @@ func evalBPF(t *testing.T, prog []Insn, arch uint32, nr uint32, args [6]uint64) 
 			} else {
 				pc += int(in.Jf)
 			}
+		case opJge:
+			if acc >= in.K {
+				pc += int(in.Jt)
+			} else {
+				pc += int(in.Jf)
+			}
 		case opJset:
 			if acc&in.K != 0 {
 				pc += int(in.Jt)

@@ -58,6 +58,7 @@ const (
 	opLdAbs uint16 = 0x20
 	opJeq   uint16 = 0x15
 	opJset  uint16 = 0x45
+	opJge   uint16 = 0x35
 	opRet   uint16 = 0x06
 
 	// CloneThread is CLONE_THREAD: a clone carrying it makes a thread of
@@ -85,14 +86,17 @@ type SyscallNumbers struct {
 	Execve, Execveat           uint32
 	Clone, Clone3, Fork, Vfork uint32
 	Ptrace, ProcessVMWritev    uint32
+	// Open is zero where the architecture has no open (arm64).
+	Open, Openat uint32
+	Ioctl        uint32
 }
 
 // Syscalls returns the table for a.
 func Syscalls(a Arch) SyscallNumbers {
 	if a == ArchArm64 {
-		return SyscallNumbers{Read: 63, Write: 64, Execve: 221, Execveat: 281, Clone: 220, Clone3: 435, Ptrace: 117, ProcessVMWritev: 271}
+		return SyscallNumbers{Read: 63, Write: 64, Execve: 221, Execveat: 281, Clone: 220, Clone3: 435, Ptrace: 117, ProcessVMWritev: 271, Openat: 56, Ioctl: 29}
 	}
-	return SyscallNumbers{Read: 0, Write: 1, Execve: 59, Execveat: 322, Clone: 56, Clone3: 435, Fork: 57, Vfork: 58, Ptrace: 101, ProcessVMWritev: 311}
+	return SyscallNumbers{Read: 0, Write: 1, Execve: 59, Execveat: 322, Clone: 56, Clone3: 435, Fork: 57, Vfork: 58, Ptrace: 101, ProcessVMWritev: 311, Open: 2, Openat: 257, Ioctl: 16}
 }
 
 func ins(code uint16, jt, jf uint8, k uint32) Insn { return Insn{code, jt, jf, k} }
@@ -101,8 +105,9 @@ func ins(code uint16, jt, jf uint8, k uint32) Insn { return Insn{code, jt, jf, k
 // killed; execve by path is refused; execveat goes to the supervisor, which
 // allows exactly one; fork and vfork are refused; clone is allowed only as a
 // thread; clone3 answers ENOSYS so C libraries fall back to clone. Everything
-// else is allowed: the profile's other limits (read-only image, no network,
-// no credentials) are the guest's, not the filter's.
+// else is allowed except file mutation (see WriteDeniedSyscalls and the open
+// flags rule); the profile's other limits (read-only image, no network, no
+// credentials) are the guest's, not the filter's.
 func BuildFilter(a Arch) ([]Insn, error) {
 	if a != ArchAmd64 && a != ArchArm64 {
 		return nil, fmt.Errorf("reviewlaunch: no syscall table for %v", a)
@@ -119,6 +124,12 @@ func BuildFilter(a Arch) ([]Insn, error) {
 		// number and would slip past every exact-number rule below.
 		f = append(f, ins(opJset, 0, 1, 0x40000000), ins(opRet, 0, 0, RetKillProcess))
 	}
+	// Fail closed: the kernel adds syscalls every release and a table cannot
+	// name the ones that do not exist yet. Everything above the highest
+	// number this table knows answers "not implemented", so a library falls
+	// back to a call that is judged, and a new file-changing call is not
+	// allowed by omission.
+	f = append(f, ins(opJge, 0, 1, FirstUnknownSyscall), ins(opRet, 0, 0, RetErrno|errnoNosys))
 	verdict := func(nr, v uint32) {
 		f = append(f, ins(opJeq, 0, 1, nr), ins(opRet, 0, 0, v))
 	}
@@ -132,6 +143,37 @@ func BuildFilter(a Arch) ([]Insn, error) {
 		verdict(n.Fork, RetErrno|errnoPerm)
 		verdict(n.Vfork, RetErrno|errnoPerm)
 	}
+	// No file mutation: each listed call is refused, and an open that asks
+	// for write, create, truncate, append or tmpfile access is refused by its
+	// flags word (low 32 bits of the flags argument).
+	for _, d := range WriteDeniedSyscalls(a) {
+		v := RetErrno | errnoPerm
+		if d.Enosys {
+			v = RetErrno | errnoNosys
+		}
+		verdict(d.Nr, v)
+	}
+	openRule := func(nr uint32, argOff uint32) {
+		f = append(f,
+			ins(opJeq, 0, 4, nr),
+			ins(opLdAbs, 0, 0, argOff),
+			ins(opJset, 0, 1, OpenWriteMask),
+			ins(opRet, 0, 0, RetErrno|errnoPerm),
+			ins(opLdAbs, 0, 0, 0),
+		)
+	}
+	if n.Open != 0 {
+		openRule(n.Open, 16+8*1) // flags is the second argument
+	}
+	openRule(n.Openat, 16+8*2) // flags is the third argument
+	// ioctl is an allowlist of requests: terminal and descriptor housekeeping.
+	// Requests that change an inode's flags, attributes or contents are not on
+	// it, so a read-only descriptor cannot be used to change a file.
+	f = append(f, ins(opJeq, 0, uint8(len(IoctlAllowed)+3), n.Ioctl), ins(opLdAbs, 0, 0, 16+8*1))
+	for i, c := range IoctlAllowed {
+		f = append(f, ins(opJeq, uint8(len(IoctlAllowed)-i), 0, c))
+	}
+	f = append(f, ins(opRet, 0, 0, RetErrno|errnoPerm), ins(opRet, 0, 0, RetAllow), ins(opLdAbs, 0, 0, 0))
 	f = append(f,
 		ins(opJeq, 0, 4, n.Clone),
 		ins(opLdAbs, 0, 0, 16), // args[0] low word: the clone flags
