@@ -69,6 +69,9 @@ func Provision(ctx context.Context, mgr model.SandboxManager, s Spec) (*Guest, e
 		return nil, refuse(reviewprep.CodePolicyUnenforcable,
 			fmt.Sprintf("backend %q does not deliver the bundle as a launch-time image", s.Backend))
 	}
+	if s.UID <= 0 || s.GID <= 0 {
+		return nil, refuse(reviewprep.CodeMappingMismatch, "the reviewer identity must be an unprivileged uid and gid")
+	}
 	if !filepath.IsAbs(s.LeaseDir) {
 		return nil, refuse(reviewprep.CodeBundleInvalid, "the lease directory path is not absolute")
 	}

@@ -76,6 +76,9 @@ type sockFprog struct {
 // the entrypoint's exit status (128+signal when killed). A *RefusalError means the
 // reviewer was not started.
 func Run(cfg Config) (int, error) {
+	if cfg.DropTo != nil && (cfg.DropTo.UID <= 0 || cfg.DropTo.GID <= 0) {
+		return 0, refuse(CodePrivileged, "the identity to run as must have a uid and gid above zero")
+	}
 	if os.Getuid() == 0 && cfg.DropTo == nil {
 		return 0, refuse(CodePrivileged, "refusing to run the entrypoint as root; an unprivileged identity is required")
 	}
