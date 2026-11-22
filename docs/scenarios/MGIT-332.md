@@ -7,7 +7,8 @@
    interpreter, which is a second launch). Refusal exits 70 with a neutral error envelope on stderr and the
    program is not started.
 3. A launcher that starts as root refuses unless it is given an unprivileged identity; with one it clears the
-   capability bounding set and ambient capabilities, drops groups, gid and uid.
+   capability bounding set and ambient capabilities, drops groups, gid and uid. An identity with a uid or gid of zero (or below) is
+   refused too, whoever starts the launcher.
 4. It sets no_new_privs and a seccomp filter, then executes the verified file by descriptor. The filter
    refuses execve by path, fork and vfork; allows clone only as a thread; answers clone3 with ENOSYS so C
    libraries fall back to clone; and sends execveat to a supervisor that allows exactly one: the launcher's

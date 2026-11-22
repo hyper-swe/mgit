@@ -12,7 +12,8 @@
    refusal is returned, so a reviewer is never run on a live share.
 4. A lease directory that is not absolute, is missing, is a file or is a symbolic link is refused with
    BUNDLE_INVALID before launch.
-5. The program is only ever started as `mgit-guest review-exec --sha256 <digest> --uid N --gid N --dir <lease> --
+5. The reviewer identity must have a uid and gid above zero; otherwise the guest is not launched (MAPPING_MISMATCH).
+   The program is only ever started as `mgit-guest review-exec --sha256 <digest> --uid N --gid N --dir <lease> --
    <path> <argv...>`, with an empty environment. The digest must be 64 lower-case hex digits and the path absolute, or
    the run is refused with MAPPING_MISMATCH and nothing reaches the guest.
 6. A launcher refusal (exit 70 and the `mgit.review-error/v1` envelope on stderr) comes back as that error, with the
