@@ -22,6 +22,13 @@ func TestWriteDeniedNumbers_MatchThePlatformTable(t *testing.T) {
 		"io_uring_register": unix.SYS_IO_URING_REGISTER, "open_tree": unix.SYS_OPEN_TREE, "move_mount": unix.SYS_MOVE_MOUNT,
 		"fsopen": unix.SYS_FSOPEN, "fsconfig": unix.SYS_FSCONFIG, "fsmount": unix.SYS_FSMOUNT, "fspick": unix.SYS_FSPICK,
 		"openat2": unix.SYS_OPENAT2, "mount_setattr": unix.SYS_MOUNT_SETATTR, "fchmodat2": unix.SYS_FCHMODAT2,
+		"mq_open": unix.SYS_MQ_OPEN, "mq_unlink": unix.SYS_MQ_UNLINK, "mq_timedsend": unix.SYS_MQ_TIMEDSEND,
+		"shmget": unix.SYS_SHMGET, "shmat": unix.SYS_SHMAT, "msgget": unix.SYS_MSGGET, "msgsnd": unix.SYS_MSGSND,
+		"semget": unix.SYS_SEMGET, "semop": unix.SYS_SEMOP, "pidfd_open": unix.SYS_PIDFD_OPEN, "pidfd_getfd": unix.SYS_PIDFD_GETFD,
+		"setxattrat": unix.SYS_SETXATTRAT, "removexattrat": unix.SYS_REMOVEXATTRAT, "open_tree_attr": unix.SYS_OPEN_TREE_ATTR,
+		"file_setattr": unix.SYS_FILE_SETATTR,
 	}
 	checkNumbers(t, ArchArm64, want)
 }
+
+const unixIoctl = unix.SYS_IOCTL

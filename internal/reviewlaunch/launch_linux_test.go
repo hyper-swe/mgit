@@ -83,6 +83,19 @@ func probe(mode string, extra []string) {
 			}
 			fmt.Printf("fd %s -> %s flags %s\n", e.Name(), target, flags)
 		}
+	case "ioctl-setflags":
+		f, err := os.Open(extra[0])
+		if err != nil {
+			fmt.Printf("ioctl-setflags: open %v\n", err)
+			return
+		}
+		flags := uint32(0)
+		_, _, e := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), 0x40086602, uintptr(unsafe.Pointer(&flags))) //nolint:gosec // G103: kernel ABI request
+		fmt.Printf("ioctl-setflags: %v\n", e)
+	case "mq-create":
+		name := append([]byte("/review-mq-probe"), 0)
+		_, _, e := syscall.Syscall6(syscall.SYS_MQ_OPEN, uintptr(unsafe.Pointer(&name[0])), uintptr(syscall.O_CREAT|syscall.O_RDWR), 0o600, 0, 0, 0) //nolint:gosec // G103: kernel ABI string
+		fmt.Printf("mq-create: %v\n", e)
 	case "path-exec":
 		err := syscall.Exec("/bin/true", []string{"true"}, nil)
 		fmt.Printf("path-exec: %v\n", err)
@@ -318,6 +331,16 @@ func TestRun_HoldsNoFileDescriptorsBeyondStandardStreams(t *testing.T) {
 	if _, _, e := syscall.Syscall(syscall.SYS_FCNTL, w.Fd(), syscall.F_SETFD, 0); e != 0 {
 		t.Fatal(e)
 	}
+	// An append-mode regular file leaked the same way: writing through it
+	// changes a file, so it must not reach the program either.
+	af, aerr := os.OpenFile(t.TempDir()+"/leak", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	defer af.Close()
+	if _, _, e := syscall.Syscall(syscall.SYS_FCNTL, af.Fd(), syscall.F_SETFD, 0); e != 0 {
+		t.Fatal(e)
+	}
 	out, _, err := runProbe(t, "fds")
 	skipIfNoFilter(t, err)
 	if err != nil {
@@ -342,5 +365,31 @@ func TestRun_HoldsNoFileDescriptorsBeyondStandardStreams(t *testing.T) {
 	}
 	if seen < 3 {
 		t.Fatalf("the probe listed %d descriptors:\n%s", seen, out)
+	}
+}
+
+func TestRun_InodeFlagIoctlIsRefused(t *testing.T) {
+	f := t.TempDir() + "/target"
+	if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runProbe(t, "ioctl-setflags", f)
+	skipIfNoFilter(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "ioctl-setflags: operation not permitted") {
+		t.Fatalf("the inode flags request was not refused by the profile: %q", out)
+	}
+}
+
+func TestRun_MessageQueueCreateIsRefused(t *testing.T) {
+	out, _, err := runProbe(t, "mq-create")
+	skipIfNoFilter(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "mq-create: operation not permitted") {
+		t.Fatalf("message queue creation was not refused: %q", out)
 	}
 }

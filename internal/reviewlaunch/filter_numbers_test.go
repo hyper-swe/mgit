@@ -27,6 +27,9 @@ func checkNumbers(t *testing.T, a Arch, want map[string]uint32) {
 		}
 	}
 	n := Syscalls(a)
+	if n.Ioctl != unixIoctl {
+		t.Errorf("%v ioctl %d, platform %d", a, n.Ioctl, unixIoctl)
+	}
 	if w, ok := want["openat"]; !ok || n.Openat != w {
 		t.Errorf("%v openat %d, platform %d", a, n.Openat, w)
 	}
