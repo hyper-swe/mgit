@@ -201,3 +201,15 @@ func TestClose_RemovesTheSandboxForced(t *testing.T) {
 		t.Fatalf("err=%v removed=%v", err, m.removed)
 	}
 }
+
+func TestProvision_RefusesAnIdentityThatIsRootOrUnset(t *testing.T) {
+	for _, id := range [][2]int{{0, 0}, {0, 5}, {5, 0}, {-1, 5}, {5, -1}} {
+		m := &fakeMgr{backend: model.BackendKVM}
+		s := spec(t)
+		s.UID, s.GID = id[0], id[1]
+		_, err := Provision(context.Background(), m, s)
+		if err == nil || code(t, err) != reviewprep.CodeMappingMismatch || len(m.launched) != 0 {
+			t.Fatalf("%v: err=%v launches=%d", id, err, len(m.launched))
+		}
+	}
+}

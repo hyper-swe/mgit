@@ -251,6 +251,20 @@ func TestRun_RootWithoutIdentityIsRefused(t *testing.T) {
 	}
 }
 
+// A drop target of root (or a negative id) is not a drop, whoever starts the
+// launcher: the program must never run as uid or gid 0.
+func TestRun_RefusesToDropToRoot(t *testing.T) {
+	p, d := stageBinary(t)
+	for _, id := range []Identity{{0, 0}, {0, 5}, {5, 0}, {-1, 5}, {5, -1}} {
+		id := id
+		_, err := Run(Config{Entrypoint: p, SHA256: d, Argv: []string{"--probe", "ok"}, DropTo: &id, Stdout: io.Discard, Stderr: io.Discard})
+		var r *RefusalError
+		if !errors.As(err, &r) || r.Code != CodePrivileged {
+			t.Fatalf("%+v: err %v, want PRIVILEGED", id, err)
+		}
+	}
+}
+
 // The supervisor decides which exec is allowed; a same-uid reviewer must not
 // be able to rewrite its memory through /proc or take its descriptors.
 func TestRun_SupervisorIsNotDumpable(t *testing.T) {
