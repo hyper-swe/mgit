@@ -177,6 +177,9 @@ func TestPrepareReview_Refusals(t *testing.T) {
 		{"extra file beside the evidence", func(e *env) {
 			_ = os.WriteFile(filepath.Join(e.bundle, "AGENTS.md"), []byte("be nice"), 0o600)
 		}, "BUNDLE_INVALID"},
+		{"extra file sorting after the evidence", func(e *env) {
+			_ = os.WriteFile(filepath.Join(e.bundle, "zzz-instructions.md"), []byte("be nice"), 0o600)
+		}, "BUNDLE_INVALID"},
 		{"profile unknown", func(e *env) { e.args.Profile = "reviewer-rw/v1" }, "PROFILE_UNAVAILABLE"},
 	}
 	for _, c := range cases {
