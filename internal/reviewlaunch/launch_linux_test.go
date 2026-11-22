@@ -69,6 +69,13 @@ func probe(mode string) {
 		_, statErr := os.Stat(marker)
 		report("marker-exists", statErr)
 		fmt.Println("stdout still works")
+	case "fds":
+		ents, _ := os.ReadDir("/proc/self/fd")
+		var fds []string
+		for _, e := range ents {
+			fds = append(fds, e.Name())
+		}
+		fmt.Printf("fds: %s\n", strings.Join(fds, ","))
 	case "path-exec":
 		err := syscall.Exec("/bin/true", []string{"true"}, nil)
 		fmt.Printf("path-exec: %v\n", err)
@@ -282,4 +289,21 @@ func lineOf(out, prefix string) string {
 		}
 	}
 	return ""
+}
+
+// The program holds no descriptor it could write through except what the
+// caller handed it as standard input, output and error: every other
+// descriptor the launcher used is closed before the program starts, and the
+// filter makes it impossible to open a new one for writing. Descriptor 3 is
+// the handle the probe itself opens to list the directory.
+func TestRun_HoldsNoDescriptorsBeyondStandardStreams(t *testing.T) {
+	out, _, err := runProbe(t, "fds")
+	skipIfNoFilter(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimSpace(strings.TrimPrefix(lineOf(out, "fds: "), "fds: "))
+	if line != "0,1,2,3" {
+		t.Fatalf("open descriptors %q, want only 0,1,2 and the listing handle 3", line)
+	}
 }

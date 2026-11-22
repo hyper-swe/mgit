@@ -85,14 +85,16 @@ type SyscallNumbers struct {
 	Execve, Execveat           uint32
 	Clone, Clone3, Fork, Vfork uint32
 	Ptrace, ProcessVMWritev    uint32
+	// Open is zero where the architecture has no open (arm64).
+	Open, Openat uint32
 }
 
 // Syscalls returns the table for a.
 func Syscalls(a Arch) SyscallNumbers {
 	if a == ArchArm64 {
-		return SyscallNumbers{Read: 63, Write: 64, Execve: 221, Execveat: 281, Clone: 220, Clone3: 435, Ptrace: 117, ProcessVMWritev: 271}
+		return SyscallNumbers{Read: 63, Write: 64, Execve: 221, Execveat: 281, Clone: 220, Clone3: 435, Ptrace: 117, ProcessVMWritev: 271, Openat: 56}
 	}
-	return SyscallNumbers{Read: 0, Write: 1, Execve: 59, Execveat: 322, Clone: 56, Clone3: 435, Fork: 57, Vfork: 58, Ptrace: 101, ProcessVMWritev: 311}
+	return SyscallNumbers{Read: 0, Write: 1, Execve: 59, Execveat: 322, Clone: 56, Clone3: 435, Fork: 57, Vfork: 58, Ptrace: 101, ProcessVMWritev: 311, Open: 2, Openat: 257}
 }
 
 func ins(code uint16, jt, jf uint8, k uint32) Insn { return Insn{code, jt, jf, k} }
@@ -101,8 +103,9 @@ func ins(code uint16, jt, jf uint8, k uint32) Insn { return Insn{code, jt, jf, k
 // killed; execve by path is refused; execveat goes to the supervisor, which
 // allows exactly one; fork and vfork are refused; clone is allowed only as a
 // thread; clone3 answers ENOSYS so C libraries fall back to clone. Everything
-// else is allowed: the profile's other limits (read-only image, no network,
-// no credentials) are the guest's, not the filter's.
+// else is allowed except file mutation (see WriteDeniedSyscalls and the open
+// flags rule); the profile's other limits (read-only image, no network, no
+// credentials) are the guest's, not the filter's.
 func BuildFilter(a Arch) ([]Insn, error) {
 	if a != ArchAmd64 && a != ArchArm64 {
 		return nil, fmt.Errorf("reviewlaunch: no syscall table for %v", a)
@@ -132,6 +135,29 @@ func BuildFilter(a Arch) ([]Insn, error) {
 		verdict(n.Fork, RetErrno|errnoPerm)
 		verdict(n.Vfork, RetErrno|errnoPerm)
 	}
+	// No file mutation: each listed call is refused, and an open that asks
+	// for write, create, truncate, append or tmpfile access is refused by its
+	// flags word (low 32 bits of the flags argument).
+	for _, d := range WriteDeniedSyscalls(a) {
+		v := RetErrno | errnoPerm
+		if d.Enosys {
+			v = RetErrno | errnoNosys
+		}
+		verdict(d.Nr, v)
+	}
+	openRule := func(nr uint32, argOff uint32) {
+		f = append(f,
+			ins(opJeq, 0, 4, nr),
+			ins(opLdAbs, 0, 0, argOff),
+			ins(opJset, 0, 1, OpenWriteMask),
+			ins(opRet, 0, 0, RetErrno|errnoPerm),
+			ins(opLdAbs, 0, 0, 0),
+		)
+	}
+	if n.Open != 0 {
+		openRule(n.Open, 16+8*1) // open(path, flags, mode)
+	}
+	openRule(n.Openat, 16+8*2) // openat(dirfd, path, flags, mode)
 	f = append(f,
 		ins(opJeq, 0, 4, n.Clone),
 		ins(opLdAbs, 0, 0, 16), // args[0] low word: the clone flags
