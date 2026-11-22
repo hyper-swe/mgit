@@ -31,6 +31,14 @@ const launchTimeBackend = model.BackendKVM
 // guestBinary is where the guest image installs the launcher.
 const guestBinary = "/sbin/mgit-guest"
 
+// The review guest's size is fixed: the hypervisor refuses a launch with no
+// CPU or memory, and the profile does not take them from the caller, so every
+// review guest is the same shape. 256 MiB holds the image and one reviewer.
+const (
+	ReviewCPUs     = 1
+	ReviewMemoryMB = 256
+)
+
 var hexDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // Spec is what Provision needs.
@@ -88,6 +96,8 @@ func Provision(ctx context.Context, mgr model.SandboxManager, s Spec) (*Guest, e
 		ImageRef:     s.ImageRef,
 		Network:      model.NetworkPolicy{Mode: model.NetworkModeNone},
 		NoGuestRepo:  true,
+		CPUs:         ReviewCPUs,
+		MemoryMB:     ReviewMemoryMB,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("review guest launch: %w", err)
@@ -109,8 +119,9 @@ func (g *Guest) Run(ctx context.Context, e Entry) (*model.ExecResult, error) {
 	if !hexDigest.MatchString(e.SHA256) || !filepath.IsAbs(e.Path) {
 		return nil, refuse(reviewprep.CodeMappingMismatch, "the entrypoint needs a sha256 digest and an absolute path")
 	}
-	cmd := []string{guestBinary, "review-exec", "--sha256", e.SHA256,
-		"--uid", strconv.Itoa(g.uid), "--gid", strconv.Itoa(g.gid), "--dir", g.LeaseDir, "--", e.Path}
+	cmd := make([]string, 0, 11+len(e.Argv))
+	cmd = append(cmd, guestBinary, "review-exec", "--sha256", e.SHA256,
+		"--uid", strconv.Itoa(g.uid), "--gid", strconv.Itoa(g.gid), "--dir", g.LeaseDir, "--", e.Path)
 	cmd = append(cmd, e.Argv...)
 	res, err := g.mgr.Exec(ctx, g.ID, model.ExecRequest{Command: cmd, Dir: g.LeaseDir, AsRoot: true})
 	if err != nil {

@@ -256,7 +256,6 @@ func TestRun_RootWithoutIdentityIsRefused(t *testing.T) {
 func TestRun_RefusesToDropToRoot(t *testing.T) {
 	p, d := stageBinary(t)
 	for _, id := range []Identity{{0, 0}, {0, 5}, {5, 0}, {-1, 5}, {5, -1}} {
-		id := id
 		_, err := Run(Config{Entrypoint: p, SHA256: d, Argv: []string{"--probe", "ok"}, DropTo: &id, Stdout: io.Discard, Stderr: io.Discard})
 		var r *RefusalError
 		if !errors.As(err, &r) || r.Code != CodePrivileged {
