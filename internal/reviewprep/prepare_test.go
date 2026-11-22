@@ -312,3 +312,51 @@ func TestPrepare_NonPositiveTTLIsRefused(t *testing.T) {
 		}
 	}
 }
+
+func TestPrepare_TTLIsCapped(t *testing.T) {
+	r, m, b, s := fixture(t)
+	if _, err := Prepare(r, m, b, s, fixedNow, MaxTTL, "lease-1"); err != nil {
+		t.Fatalf("the cap itself must be allowed: %v", err)
+	}
+	_, err := Prepare(r, m, b, s, fixedNow, MaxTTL+time.Second, "lease-1")
+	if got := codeOf(t, err); got != "ATTESTATION_INVALID" {
+		t.Fatalf("code %s", got)
+	}
+}
+
+// The evidence is a JSON object. A scalar, an array, null or a document past
+// the size cap is refused, whatever digest it carries.
+func TestPrepare_BundleMustBeABoundedObject(t *testing.T) {
+	big := []byte(`{"pad":"` + strings.Repeat("x", MaxBundleBytes) + `"}`)
+	for name, body := range map[string][]byte{
+		"string": []byte(`"x"`), "number": []byte(`5`), "null": []byte(`null`),
+		"true": []byte(`true`), "array": []byte(`[{}]`), "oversize": big,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, m, _, s := fixture(t)
+			r.BundleDigest = sum(body)
+			if got := codeOf(t, errOnly(Prepare(r, m, body, s, fixedNow, time.Minute, "lease-1"))); got != "BUNDLE_INVALID" {
+				t.Fatalf("code %s", got)
+			}
+		})
+	}
+}
+
+func errOnly(_ *Attestation, err error) error { return err }
+
+// The attested entrypoint path is not itself signed, only its digest, so the
+// launch always goes through the launcher, which opens the file, checks the
+// digest on that open file and executes that descriptor.
+func TestLaunchArgs_GoThroughTheLauncherWithTheAttestedDigest(t *testing.T) {
+	_, m, _, _ := fixture(t)
+	got := LaunchArgs(m)
+	want := []string{"review-exec", "--sha256", m.EntrypointSHA256, "--", m.GuestEntrypoint, "--json", "--offline"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("launch args %v want %v", got, want)
+	}
+	m.Argv = []string{"--sha256", "evil", "--"}
+	got = LaunchArgs(m)
+	if got[2] != m.EntrypointSHA256 || got[4] != m.GuestEntrypoint {
+		t.Fatalf("mapped argv must not reach the launcher's own flags: %v", got)
+	}
+}
