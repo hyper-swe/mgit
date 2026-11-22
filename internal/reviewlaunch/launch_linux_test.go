@@ -307,6 +307,17 @@ func lineOf(out, prefix string) string {
 // streams is the probe's own (the directory it lists, the runtime's poller),
 // and none of it is a path to a file.
 func TestRun_HoldsNoFileDescriptorsBeyondStandardStreams(t *testing.T) {
+	// A descriptor the caller itself leaked (open, writable, not close-on-exec),
+	// as a CI runner or a supervising shell can: it must not reach the program.
+	r, w, perr := os.Pipe()
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	defer r.Close()
+	defer w.Close()
+	if _, _, e := syscall.Syscall(syscall.SYS_FCNTL, w.Fd(), syscall.F_SETFD, 0); e != 0 {
+		t.Fatal(e)
+	}
 	out, _, err := runProbe(t, "fds")
 	skipIfNoFilter(t, err)
 	if err != nil {
