@@ -76,6 +76,8 @@ func TestFilter_PerSyscallVerdicts(t *testing.T) {
 			{"clone without CLONE_THREAD is refused", n.Clone, [6]uint64{0x11}, errnoVerdict(eperm)},
 			{"clone with CLONE_THREAD is allowed", n.Clone, [6]uint64{CloneThread | 0x100}, RetAllow},
 			{"clone3 is ENOSYS so libc falls back to clone", n.Clone3, [6]uint64{}, errnoVerdict(enosys)},
+			{"ptrace is refused", n.Ptrace, [6]uint64{}, errnoVerdict(eperm)},
+			{"process_vm_writev is refused", n.ProcessVMWritev, [6]uint64{}, errnoVerdict(eperm)},
 			{"read is allowed", n.Read, [6]uint64{}, RetAllow},
 			{"write is allowed", n.Write, [6]uint64{}, RetAllow},
 		}
