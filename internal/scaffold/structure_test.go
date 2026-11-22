@@ -107,6 +107,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		"guest":         true, // guest supervisor library (FR-17.16, MGIT-11.5.6)
 		"execwire":      true, // host<->guest exec wire protocol (FR-17.11, MGIT-11.9.2)
 		"reviewprep":    true, // review prepare: request checks and signed attestation (MGIT-333)
+		"reviewlaunch":  true, // review launcher: fd-exec filter and supervisor (MGIT-332)
 		"landwire":      true, // host<->guest land object-frame wire protocol (FR-17.5, MGIT-11.10.10)
 		"guestboot":     true, // host->guest worktree-mount boot contract (FR-17.3, MGIT-11.6.5)
 		"guestnet":      true, // guest NIC/resolver configuration at boot (FR-17.7, MGIT-68)

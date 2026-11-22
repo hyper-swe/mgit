@@ -17,9 +17,17 @@ import (
 	"syscall"
 
 	"github.com/hyper-swe/mgit/internal/guest"
+	"github.com/hyper-swe/mgit/internal/reviewlaunch"
 )
 
 func main() {
+	// A review launch re-executes this binary as its pre-exec stage.
+	if reviewlaunch.MaybeStage() {
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "review-exec" {
+		os.Exit(reviewExec(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	os.Exit(run(os.Args[1:], os.Stdout))
 }
 
