@@ -110,7 +110,10 @@ func runProbe(t *testing.T, mode string) (string, int, error) {
 func skipIfNoFilter(t *testing.T, err error) {
 	t.Helper()
 	var r *Refusal
-	if errors.As(err, &r) && r.Code == CodePolicyUnenforceable {
+	// Only a kernel that lacks the feature skips; any other refusal (a
+	// permission error, say) is the launcher failing and must fail the test.
+	if errors.As(err, &r) && r.Code == CodePolicyUnenforceable &&
+		(strings.Contains(r.Detail, "invalid argument") || strings.Contains(r.Detail, "function not implemented")) {
 		t.Skipf("seccomp user notification unavailable here: %v", err)
 	}
 }
