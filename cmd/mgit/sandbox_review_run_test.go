@@ -150,3 +150,15 @@ func TestSandboxReviewRun_OnlyJSONOrNoFormatExists(t *testing.T) {
 	_, _, err := execReviewRun(rc, append(runFlags(), "--format", "text")...)
 	require.Error(t, err)
 }
+
+// Exit 71 is "started or may have started", as the run contract says: the help
+// must not promise that the reviewer certainly started.
+func TestSandboxReviewRun_TheHelpSays71MeansStartedOrMayHaveStarted(t *testing.T) {
+	long := strings.Join(strings.Fields(sandboxReviewRunCmd(nil).Long), " ")
+	if !strings.Contains(long, "71 when the reviewer started or may have started") {
+		t.Fatalf("the help does not say 71 means started or may have started:\n%s", long)
+	}
+	if !strings.Contains(long, "70 when the reviewer certainly did not start") {
+		t.Fatalf("the help does not say 70 means the reviewer certainly did not start:\n%s", long)
+	}
+}

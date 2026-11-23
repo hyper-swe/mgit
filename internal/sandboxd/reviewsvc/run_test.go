@@ -69,10 +69,11 @@ type recBindings struct {
 
 func (b *recBindings) Attach(_ context.Context, in AttachInput) (func(context.Context) error, error) {
 	b.attached = append(b.attached, in)
+	rel := func(context.Context) error { b.released++; return nil }
 	if b.err != nil {
-		return nil, b.err
+		return rel, b.err // the contract: a release function on every path, an error included
 	}
-	return func(context.Context) error { b.released++; return nil }, nil
+	return rel, nil
 }
 
 type runEnv struct {
@@ -373,13 +374,16 @@ func TestRunReview_TheBindingsAreAttachedAfterTheSealAndReleasedWhateverHappens(
 	}
 }
 
+// A refusal from Attach still has its release called, once: whatever Attach
+// installed before it refused is taken down, the guest is removed, and the
+// reviewer never starts.
 func TestRunReview_ABindingsRefusalStopsTheRunBeforeTheReviewer(t *testing.T) {
 	r := prepared(t)
 	b := &recBindings{err: reviewprep.Refuse(reviewprep.CodePolicyUnenforcable, "no credential slot")}
 	r.svc.WithRunner(RunnerConfig{Manager: r.mgr, Backend: model.BackendKVM, Bindings: b})
 	_, err := r.run(t)
 	e := envelopeOf(t, err)
-	if e.Code != reviewprep.CodePolicyUnenforcable || e.ReviewerStarted || b.released != 0 || len(r.mgr.removed) != 1 {
+	if e.Code != reviewprep.CodePolicyUnenforcable || e.ReviewerStarted || b.released != 1 || len(r.mgr.removed) != 1 {
 		t.Fatalf("envelope %+v released=%d", e, b.released)
 	}
 	for _, x := range r.mgr.execs {
