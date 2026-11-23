@@ -79,8 +79,7 @@ func TestE2E_ReviewGuest_LaunchTimeImage(t *testing.T) {
 	leaseDir := lease.Dir()
 
 	// The reviewer is never root. Unprivileged, it is the caller's own identity;
-	// run as root (the gate's second half) it is a fixed unprivileged one, and
-	// the lease is handed to it so it can read what it was given.
+	// run as root (the gate's second half) it is a fixed unprivileged one.
 	uid, gid := os.Getuid(), os.Getgid()
 	if uid == 0 {
 		uid, gid = 1001, 1001
@@ -92,16 +91,14 @@ func TestE2E_ReviewGuest_LaunchTimeImage(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = g.Close(context.Background()) })
 
-	if os.Getuid() == 0 {
-		// Delivered as the daemon's own identity (root here); give the
-		// guest's copy to the unprivileged reviewer so it can read what it
-		// was given. This changes the guest's image only, never the host.
-		own, oerr := mgr.Exec(ctx, g.ID, model.ExecRequest{
-			Command: []string{"/bin/busybox", "chown", "-R", fmt.Sprintf("%d:%d", uid, gid), leaseDir}, Timeout: 30 * time.Second,
-		})
-		require.NoError(t, oerr)
-		require.Zero(t, own.ExitCode, string(own.Stderr))
-	}
+	// A scratch path the reviewer owns, for the control and the denied write:
+	// the sealed lease is not the reviewer's to write, so the denial has to be
+	// shown somewhere the reviewer could otherwise write.
+	const scratch = "/tmp/review-scratch"
+	mk, merr := mgr.Exec(ctx, g.ID, model.ExecRequest{Command: []string{"/bin/sh", "-c",
+		fmt.Sprintf("/bin/busybox mkdir %s && /bin/busybox chown %d:%d %s", scratch, uid, gid, scratch)}, Timeout: 30 * time.Second})
+	require.NoError(t, merr)
+	require.Zero(t, mk.ExitCode, string(mk.Stderr))
 	same := &model.GuestIdentity{UID: uid, GID: gid}
 	exec := func(cmd ...string) *model.ExecResult {
 		t.Helper()
@@ -114,21 +111,41 @@ func TestE2E_ReviewGuest_LaunchTimeImage(t *testing.T) {
 	require.Zero(t, dsum.ExitCode, string(dsum.Stderr))
 	digest := strings.Fields(string(dsum.Stdout))[0]
 
-	// Control: the same program, same user, no launcher.
-	ctl := exec("/bin/busybox", "touch", filepath.Join(leaseDir, "control-marker"))
+	// The sealed lease: root-owned, the reviewer's group may read, nobody else
+	// may; the reviewer reads it and cannot write it even without the launcher.
+	lsn := exec("/bin/busybox", "ls", "-ln", leaseDir)
+	require.Zero(t, lsn.ExitCode, string(lsn.Stderr))
+	for _, line := range strings.Split(strings.TrimSpace(string(lsn.Stdout)), "\n") {
+		if strings.HasPrefix(line, "total") {
+			continue
+		}
+		f := strings.Fields(line)
+		require.GreaterOrEqual(t, len(f), 4, line)
+		assert.Equal(t, "-r--r-----", f[0], "a sealed file is 0440: %s", line)
+		assert.Equal(t, "0", f[2], "a sealed file is root-owned: %s", line)
+		assert.Equal(t, fmt.Sprint(gid), f[3], "a sealed file belongs to the reviewer's group: %s", line)
+	}
+	rd := exec("/bin/busybox", "cat", filepath.Join(leaseDir, "evidence.json"))
+	require.Zero(t, rd.ExitCode, "the reviewer must be able to read its evidence: %s", rd.Stderr)
+	assert.Contains(t, string(rd.Stdout), `"k"`)
+	wr := exec("/bin/busybox", "touch", filepath.Join(leaseDir, "direct-write"))
+	assert.NotZero(t, wr.ExitCode, "the reviewer must not be able to write the lease even without the launcher")
+
+	// Control: the same program, same user, no launcher, where it may write.
+	ctl := exec("/bin/busybox", "touch", filepath.Join(scratch, "control-marker"))
 	require.Zero(t, ctl.ExitCode, "the control must be able to write, or the denial below proves nothing: %s", ctl.Stderr)
 
 	// Through the launcher.
 	t.Logf("guest kernel: %s", exec("/bin/busybox", "uname", "-a").Stdout)
 	res, err := g.Run(ctx, reviewguest.Entry{SHA256: digest, Path: "/bin/busybox", Timeout: 90 * time.Second,
-		Argv: []string{"touch", filepath.Join(leaseDir, "review-marker")}})
+		Argv: []string{"touch", filepath.Join(scratch, "review-marker")}})
 	if err != nil {
 		// Say what the guest was doing, so a hang is a diagnosis and not a
 		// timeout: run the same launch again from a script that, if it is still
 		// running after 20s, prints every process's state, wait channel,
 		// syscall and kernel stack, and asks the launcher processes for a Go
 		// goroutine dump (SIGQUIT) before reading what they wrote.
-		script := fmt.Sprintf(hangProbe, leaseDir, digest, uid, gid)
+		script := fmt.Sprintf(hangProbe, leaseDir, scratch, digest, uid, gid)
 		d, derr := mgr.Exec(ctx, g.ID, model.ExecRequest{Command: []string{"/bin/sh", "-c", script}, RunAs: nil, Timeout: 90 * time.Second})
 		if derr != nil {
 			t.Logf("diagnostic exec failed: %v", derr)
@@ -143,16 +160,19 @@ func TestE2E_ReviewGuest_LaunchTimeImage(t *testing.T) {
 	assert.Contains(t, string(res.Stderr), "Operation not permitted", "the write must be refused with EPERM")
 	assert.NotContains(t, string(res.Stderr), "No such file", "the write must not fail for another reason")
 
-	ls := exec("/bin/busybox", "ls", leaseDir)
+	ls := exec("/bin/busybox", "ls", scratch)
 	require.Zero(t, ls.ExitCode, string(ls.Stderr))
 	assert.Contains(t, string(ls.Stdout), "control-marker")
 	assert.NotContains(t, string(ls.Stdout), "review-marker")
-	assert.Contains(t, string(ls.Stdout), "evidence.json")
+	lease2 := exec("/bin/busybox", "ls", leaseDir)
+	assert.NotContains(t, string(lease2.Stdout), "direct-write")
 
 	// The host's directory is untouched either way: the image was built at launch.
-	for _, n := range []string{"control-marker", "review-marker"} {
-		_, statErr := os.Stat(filepath.Join(leaseDir, n))
-		assert.True(t, errors.Is(statErr, os.ErrNotExist), "%s reached the host", n)
+	for _, p := range []string{
+		filepath.Join(leaseDir, "direct-write"), filepath.Join(scratch, "control-marker"), filepath.Join(scratch, "review-marker"),
+	} {
+		_, statErr := os.Stat(p)
+		assert.True(t, errors.Is(statErr, os.ErrNotExist), "%s reached the host", p)
 	}
 
 	// A wrong digest is a launcher refusal that started nothing.
@@ -170,8 +190,8 @@ func (reviewKeyAudit) RecordKeyChange(context.Context, string) error { return ni
 
 // hangProbe is run in the guest by busybox sh with: lease dir, entrypoint
 // digest, uid, gid.
-const hangProbe = `B=/bin/busybox; L=%s; D=%s; U=%d; G=%d
-/sbin/mgit-guest review-exec --sha256 $D --uid $U --gid $G --dir $L -- /bin/busybox touch $L/diag-marker >/tmp/o 2>/tmp/e &
+const hangProbe = `B=/bin/busybox; L=%s; X=%s; D=%s; U=%d; G=%d
+/sbin/mgit-guest review-exec --sha256 $D --uid $U --gid $G --dir $L -- /bin/busybox touch $X/diag-marker >/tmp/o 2>/tmp/e &
 P=$!
 i=0
 while kill -0 $P 2>/dev/null && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done
