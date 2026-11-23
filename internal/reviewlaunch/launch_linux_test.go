@@ -497,3 +497,48 @@ func TestRun_RefusesWhenTheBinaryNeverAnsweredTheStageReexec(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+// Once the stage has been reaped the supervisor is told so and given the
+// descriptor to close afterwards. A kernel that does not wake a blocked reader
+// when the descriptor closes (5.10) would otherwise leave the launcher waiting
+// for ever; here the supervisor can only finish once it has been told, and the
+// descriptor is closed only after it has finished.
+func TestEndSupervision_TellsTheSupervisorThenClosesTheDescriptor(t *testing.T) {
+	stageGone := make(chan struct{})
+	supDone := make(chan struct{})
+	finished := false
+	go func() {
+		<-stageGone // a supervisor that nothing else can wake
+		finished = true
+		close(supDone)
+	}()
+	closedAfterFinish := false
+	closeFD := func(int) { closedAfterFinish = finished }
+	returned := make(chan struct{})
+	go func() {
+		endSupervision(stageGone, supDone, 99, closeFD)
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(3 * time.Second):
+		t.Fatal("endSupervision never returned: the supervisor was not told the stage was gone")
+	}
+	if !closedAfterFinish {
+		t.Fatal("the descriptor was closed before the supervisor finished")
+	}
+}
+
+func TestEndSupervision_WithoutASupervisorOnlyTellsNobody(t *testing.T) {
+	stageGone := make(chan struct{})
+	closed := false
+	endSupervision(stageGone, nil, -1, func(int) { closed = true })
+	if closed {
+		t.Fatal("closed a descriptor that was never received")
+	}
+	select {
+	case <-stageGone:
+	default:
+		t.Fatal("the stage-gone signal was not raised")
+	}
+}
