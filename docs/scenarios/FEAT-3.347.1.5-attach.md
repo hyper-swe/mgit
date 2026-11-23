@@ -16,5 +16,5 @@ reviewer starts, to install what the operator's map names.
 4. A failed install lifts the egress policy and still returns a usable release;
    no error carries the credential.
 
-This daemon wires the map store and the binding but no credential source or
-egress enforcer, so scenarios 2 and 4 run against fakes only.
+The daemon wires the map store and the binding. The credential source is optional (`--review-credential-fd`); what is absent is a host egress enforcer for a review guest. A credential must name a host, so with no enforcer a map that asks for a credential or a host allowlist is refused. Scenarios 2 and 4 run against fakes only.
+5. A release whose cleanup exits nonzero, or returns no result, reports an error that carries no credential bytes, and still lifts the egress policy.

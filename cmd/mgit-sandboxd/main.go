@@ -271,9 +271,11 @@ func run(args []string, out, logSink io.Writer) int {
 			// Review run (MGIT-333): the same service runs a prepared review on
 			// the selected backend, which must deliver the bundle as a
 			// launch-time image or the run refuses. The operator's binding
-			// maps are read from the host root; this daemon has no credential
-			// source or egress enforcer wired yet, so a mapping that asks for a
-			// credential or a host allowlist is refused rather than run without it.
+			// maps are read from the host root; the credential
+			// source is optional (--review-credential-fd), but no egress
+			// enforcer is wired for a review guest yet, so a mapping that asks
+			// for a credential or a host allowlist is refused rather than run
+			// without it.
 			bindings, berr := reviewBindings(opts.reviewCredFD, opts.reviewCredRef, logger)
 			if berr != nil {
 				logger.Error("review run is not served", "reason", berr.Error())

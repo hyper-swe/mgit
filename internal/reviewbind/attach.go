@@ -2,6 +2,7 @@ package reviewbind
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync"
 
@@ -121,8 +122,12 @@ func (b *binding) Attach(ctx context.Context, in reviewsvc.AttachInput) (func(co
 		return release, unenforceable("the credential could not be installed in the guest")
 	}
 	fresh(func(c context.Context) error {
-		_, e := in.Exec(c, model.ExecRequest{Command: []string{guestVerb, "cred-remove", "--dest", dest}, AsRoot: true})
-		return e
+		r, e := in.Exec(c, model.ExecRequest{Command: []string{guestVerb, "cred-remove", "--dest", dest}, AsRoot: true})
+		if e != nil || r == nil || r.ExitCode != 0 {
+			// the slot may still be in the guest: say so, without any detail that could carry bytes
+			return errors.New("the credential slot could not be confirmed removed from the guest")
+		}
+		return nil
 	})
 	return release, nil
 }
