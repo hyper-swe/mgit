@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -14,7 +13,6 @@ import (
 )
 
 const sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-const img = "reviewer@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 type fakeMgr struct {
 	launched []model.SandboxLaunchOptions
@@ -22,6 +20,7 @@ type fakeMgr struct {
 	removed  []string
 	backend  string
 	res      *model.ExecResult
+	resFn    func(model.ExecRequest) *model.ExecResult
 	err      error
 }
 
@@ -35,6 +34,9 @@ func (f *fakeMgr) Launch(_ context.Context, o model.SandboxLaunchOptions) (*mode
 func (f *fakeMgr) List(context.Context) ([]model.SandboxInfo, error) { return nil, nil }
 func (f *fakeMgr) Exec(_ context.Context, _ string, r model.ExecRequest) (*model.ExecResult, error) {
 	f.execs = append(f.execs, r)
+	if f.resFn != nil {
+		return f.resFn(r), nil
+	}
 	if f.res == nil {
 		return &model.ExecResult{}, nil
 	}
@@ -49,11 +51,8 @@ func (f *fakeMgr) Resolve(context.Context, string) (*model.SandboxInfo, error) {
 
 func spec(t *testing.T) Spec {
 	t.Helper()
-	d := filepath.Join(t.TempDir(), "lease")
-	if err := os.Mkdir(d, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return Spec{Backend: model.BackendKVM, LeaseDir: d, ImageRef: img, TaskID: "REV-1", UID: 65534, GID: 65534}
+	f := newFixture(t)
+	return Spec{Backend: model.BackendKVM, Lease: f.open(t), TaskID: "REV-1", UID: 65534, GID: 65534}
 }
 
 func code(t *testing.T, err error) string {
@@ -76,7 +75,9 @@ func TestProvision_LaunchesTheLeaseDirWithNoNetworkAndNoRepo(t *testing.T) {
 		t.Fatalf("id=%q launches=%d", g.ID, len(m.launched))
 	}
 	o := m.launched[0]
-	if o.CPUs != ReviewCPUs || o.MemoryMB != ReviewMemoryMB || o.CPUs <= 0 || o.MemoryMB <= 0 || o.WorktreePath != s.LeaseDir || o.ImageRef != img || o.Network.Mode != model.NetworkModeNone || !o.NoGuestRepo || o.ConfineAgent || len(o.PublishPorts) != 0 {
+	if o.CPUs != ReviewCPUs || o.MemoryMB != ReviewMemoryMB || o.CPUs <= 0 || o.MemoryMB <= 0 ||
+		o.WorktreePath != s.Lease.Dir() || o.ImageRef != s.Lease.Image() ||
+		o.Network.Mode != model.NetworkModeNone || !o.NoGuestRepo || o.ConfineAgent || len(o.PublishPorts) != 0 {
 		t.Fatalf("launch options %+v", o)
 	}
 }
@@ -107,98 +108,16 @@ func TestProvision_RefusesAndRemovesWhenTheLaunchedBackendIsNotTheDeclaredOne(t 
 	}
 }
 
-func TestProvision_RefusesALeaseDirThatIsNotASealedDirectory(t *testing.T) {
+func TestProvision_RefusesWithoutASealedLease(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM}
 	s := spec(t)
-	file := filepath.Join(filepath.Dir(s.LeaseDir), "f")
-	if err := os.WriteFile(file, nil, 0o400); err != nil {
-		t.Fatal(err)
+	s.Lease = nil
+	if _, err := Provision(context.Background(), m, s); err == nil || code(t, err) != reviewprep.CodeBundleInvalid || len(m.launched) != 0 {
+		t.Fatalf("nil lease: err=%v launches=%d", err, len(m.launched))
 	}
-	link := filepath.Join(filepath.Dir(s.LeaseDir), "l")
-	if err := os.Symlink(s.LeaseDir, link); err != nil {
-		t.Fatal(err)
-	}
-	for name, p := range map[string]string{"relative": "lease", "dot": ".", "missing": filepath.Join(s.LeaseDir, "nope"), "file": file, "symlink": link} {
-		m := &fakeMgr{backend: model.BackendKVM}
-		x := s
-		x.LeaseDir = p
-		_, err := Provision(context.Background(), m, x)
-		if err == nil || code(t, err) != reviewprep.CodeBundleInvalid || len(m.launched) != 0 {
-			t.Fatalf("%s: err=%v launches=%d", name, err, len(m.launched))
-		}
-	}
-}
-
-func TestProvision_RefusesAnImageThatIsNotPinned(t *testing.T) {
-	s := spec(t)
-	s.ImageRef = "reviewer:latest"
-	m := &fakeMgr{backend: model.BackendKVM}
-	_, err := Provision(context.Background(), m, s)
-	if err == nil || code(t, err) != reviewprep.CodeImageMismatch || len(m.launched) != 0 {
-		t.Fatalf("err=%v", err)
-	}
-}
-
-func TestProvision_ReportsALaunchFailureWithoutRemovingAnything(t *testing.T) {
-	m := &fakeMgr{err: errors.New("boom")}
-	if _, err := Provision(context.Background(), m, spec(t)); err == nil || len(m.removed) != 0 {
-		t.Fatalf("err=%v removed=%v", err, m.removed)
-	}
-}
-
-func TestRun_GoesThroughTheLauncherAsRootWithTheDigestAndNoEnvironment(t *testing.T) {
-	m := &fakeMgr{backend: model.BackendKVM}
-	g, _ := Provision(context.Background(), m, spec(t))
-	_, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/usr/bin/reviewer", Argv: []string{"--json", "-x"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := m.execs[0]
-	want := []string{"/sbin/mgit-guest", "review-exec", "--sha256", sha, "--uid", "65534", "--gid", "65534", "--dir", g.LeaseDir, "--", "/usr/bin/reviewer", "--json", "-x"}
-	if !reflect.DeepEqual(r.Command, want) {
-		t.Fatalf("command %q", r.Command)
-	}
-	if !r.AsRoot || len(r.Env) != 0 || r.Dir != g.LeaseDir {
-		t.Fatalf("exec %+v", r)
-	}
-}
-
-func TestRun_RefusesADigestThatIsNotHex(t *testing.T) {
-	m := &fakeMgr{backend: model.BackendKVM}
-	g, _ := Provision(context.Background(), m, spec(t))
-	for _, e := range []Entry{{SHA256: "xyz", Path: "/a"}, {SHA256: sha, Path: "relative"}, {SHA256: sha, Path: ""}} {
-		if _, err := g.Run(context.Background(), e); err == nil || code(t, err) != reviewprep.CodeMappingMismatch {
-			t.Fatalf("%+v: err=%v", e, err)
-		}
-	}
-	if len(m.execs) != 0 {
-		t.Fatal("exec reached the guest")
-	}
-}
-
-func TestRun_ADeclinedLaunchComesBackAsTheRefusalEnvelope(t *testing.T) {
-	env, _ := json.Marshal(map[string]any{"schema": "mgit.review-error/v1", "code": "IMAGE_MISMATCH", "phase": "launch", "reviewer_started": false, "detail": "d"})
-	m := &fakeMgr{backend: model.BackendKVM, res: &model.ExecResult{ExitCode: 70, Stderr: append(env, '\n')}}
-	g, _ := Provision(context.Background(), m, spec(t))
-	_, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"})
-	if err == nil || code(t, err) != "IMAGE_MISMATCH" {
-		t.Fatalf("err=%v", err)
-	}
-}
-
-func TestRun_AnyOtherExitIsTheReviewersOwn(t *testing.T) {
-	m := &fakeMgr{backend: model.BackendKVM, res: &model.ExecResult{ExitCode: 3, Stdout: []byte("out")}}
-	g, _ := Provision(context.Background(), m, spec(t))
-	res, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"})
-	if err != nil || res.ExitCode != 3 || string(res.Stdout) != "out" {
-		t.Fatalf("res=%+v err=%v", res, err)
-	}
-}
-
-func TestClose_RemovesTheSandboxForced(t *testing.T) {
-	m := &fakeMgr{backend: model.BackendKVM}
-	g, _ := Provision(context.Background(), m, spec(t))
-	if err := g.Close(context.Background()); err != nil || !reflect.DeepEqual(m.removed, []string{"sb1"}) {
-		t.Fatalf("err=%v removed=%v", err, m.removed)
+	s.Lease = &Lease{}
+	if _, err := Provision(context.Background(), m, s); err == nil || code(t, err) != reviewprep.CodeBundleInvalid || len(m.launched) != 0 {
+		t.Fatalf("zero lease: err=%v launches=%d", err, len(m.launched))
 	}
 }
 
@@ -211,5 +130,146 @@ func TestProvision_RefusesAnIdentityThatIsRootOrUnset(t *testing.T) {
 		if err == nil || code(t, err) != reviewprep.CodeMappingMismatch || len(m.launched) != 0 {
 			t.Fatalf("%v: err=%v launches=%d", id, err, len(m.launched))
 		}
+	}
+}
+
+func TestProvision_ReportsALaunchFailureWithoutRemovingAnything(t *testing.T) {
+	m := &fakeMgr{err: errors.New("boom")}
+	if _, err := Provision(context.Background(), m, spec(t)); err == nil || len(m.removed) != 0 {
+		t.Fatalf("err=%v removed=%v", err, m.removed)
+	}
+}
+
+func provisioned(t *testing.T, m *fakeMgr) *Guest {
+	t.Helper()
+	g, err := Provision(context.Background(), m, spec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
+}
+
+func TestRun_GoesThroughTheLauncherAsRootWithTheDigestAndOnlyTheNonceInTheEnvironment(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM}
+	g := provisioned(t, m)
+	_, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/usr/bin/reviewer", Argv: []string{"--json", "-x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := m.execs[0]
+	want := []string{"/sbin/mgit-guest", "review-exec", "--sha256", sha, "--uid", "65534", "--gid", "65534", "--dir", g.LeaseDir, "--", "/usr/bin/reviewer", "--json", "-x"}
+	if !reflect.DeepEqual(r.Command, want) {
+		t.Fatalf("command %q", r.Command)
+	}
+	if !r.AsRoot || r.Dir != g.LeaseDir || len(r.Env) != 1 || !strings.HasPrefix(r.Env[0], NonceEnv+"=") || len(r.Env[0]) < len(NonceEnv)+1+32 {
+		t.Fatalf("exec %+v", r)
+	}
+	for _, a := range r.Command {
+		if strings.Contains(a, strings.TrimPrefix(r.Env[0], NonceEnv+"=")) {
+			t.Fatal("the nonce is on the command line, where the program could read it")
+		}
+	}
+}
+
+func TestRun_EachRunGetsItsOwnNonce(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM}
+	g := provisioned(t, m)
+	for i := 0; i < 2; i++ {
+		if _, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if m.execs[0].Env[0] == m.execs[1].Env[0] {
+		t.Fatal("two runs shared a nonce")
+	}
+}
+
+func TestRun_RefusesADigestThatIsNotHex(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM}
+	g := provisioned(t, m)
+	for _, e := range []Entry{{SHA256: "xyz", Path: "/a"}, {SHA256: sha, Path: "relative"}, {SHA256: sha, Path: ""}} {
+		if _, err := g.Run(context.Background(), e); err == nil || code(t, err) != reviewprep.CodeMappingMismatch {
+			t.Fatalf("%+v: err=%v", e, err)
+		}
+	}
+	if len(m.execs) != 0 {
+		t.Fatal("exec reached the guest")
+	}
+}
+
+// envelope renders what the launcher prints on a refusal.
+func envelope(schema, nonce, codeName string) []byte {
+	b, _ := json.Marshal(map[string]any{"schema": schema, "code": codeName, "phase": "launch", "reviewer_started": false, "detail": "d", "nonce": nonce})
+	return append(b, '\n')
+}
+
+func nonceOf(r model.ExecRequest) string {
+	return strings.TrimPrefix(r.Env[0], NonceEnv+"=")
+}
+
+func TestRun_ADeclinedLaunchComesBackAsTheRefusalEnvelope(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM}
+	m.resFn = func(r model.ExecRequest) *model.ExecResult {
+		return &model.ExecResult{ExitCode: 70, Stderr: envelope("mgit.review-error/v1", nonceOf(r), "IMAGE_MISMATCH")}
+	}
+	g := provisioned(t, m)
+	_, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"})
+	if err == nil || code(t, err) != "IMAGE_MISMATCH" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// The reviewed program shares stderr with the launcher, so what it prints is
+// never a refusal unless it carries this run's nonce, which it cannot read.
+func TestRun_AnEnvelopeTheProgramPrintsIsNotARefusal(t *testing.T) {
+	for name, stderr := range map[string][]byte{
+		"no nonce":    envelope("mgit.review-error/v1", "", "HASH_MISMATCH"),
+		"wrong nonce": envelope("mgit.review-error/v1", strings.Repeat("0", 32), "HASH_MISMATCH"),
+	} {
+		m := &fakeMgr{backend: model.BackendKVM, res: &model.ExecResult{ExitCode: 70, Stderr: stderr}}
+		g := provisioned(t, m)
+		res, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"})
+		if err != nil || res.ExitCode != 70 {
+			t.Fatalf("%s: res=%+v err=%v", name, res, err)
+		}
+	}
+}
+
+func TestRun_AnEnvelopeWithTheNonceButAnotherSchemaIsNotARefusal(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM}
+	m.resFn = func(r model.ExecRequest) *model.ExecResult {
+		return &model.ExecResult{ExitCode: 70, Stderr: envelope("something.else/v1", nonceOf(r), "HASH_MISMATCH")}
+	}
+	g := provisioned(t, m)
+	if _, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"}); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestRun_AnEnvelopeOnAnyOtherExitIsNotARefusal(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM}
+	m.resFn = func(r model.ExecRequest) *model.ExecResult {
+		return &model.ExecResult{ExitCode: 3, Stderr: envelope("mgit.review-error/v1", nonceOf(r), "HASH_MISMATCH")}
+	}
+	g := provisioned(t, m)
+	if _, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"}); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestRun_AnyOtherExitIsTheReviewersOwn(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM, res: &model.ExecResult{ExitCode: 3, Stdout: []byte("out")}}
+	g := provisioned(t, m)
+	res, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"})
+	if err != nil || res.ExitCode != 3 || string(res.Stdout) != "out" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}
+
+func TestClose_RemovesTheSandboxForced(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM}
+	g := provisioned(t, m)
+	if err := g.Close(context.Background()); err != nil || !reflect.DeepEqual(m.removed, []string{"sb1"}) {
+		t.Fatalf("err=%v removed=%v", err, m.removed)
 	}
 }
