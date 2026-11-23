@@ -1,6 +1,9 @@
 package model
 
-import "log/slog"
+import (
+	"fmt"
+	"log/slog"
+)
 
 // MaxStdinBytes bounds ExecRequest.Stdin: it carries a credential, which is small.
 const MaxStdinBytes = 4096
@@ -25,3 +28,7 @@ func (Secret) MarshalText() ([]byte, error) { return []byte(redacted), nil }
 
 // LogValue implements slog.LogValuer.
 func (Secret) LogValue() slog.Value { return slog.StringValue(redacted) }
+
+// Format implements fmt.Formatter, so that no verb (including the numeric ones
+// that print a byte slice's contents) shows the bytes.
+func (Secret) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(redacted)) }

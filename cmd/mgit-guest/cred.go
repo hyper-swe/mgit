@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -41,7 +42,7 @@ func credInstall(root string, ensureMem func(string) error, args []string, stdin
 		fmt.Fprintln(stderr, "cred-install:", err)
 		return 2
 	}
-	if *gid <= 0 {
+	if *gid <= 0 || *gid > math.MaxInt32 {
 		fmt.Fprintln(stderr, "cred-install: the group must be an unprivileged gid")
 		return 2
 	}
