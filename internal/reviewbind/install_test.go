@@ -2,8 +2,6 @@ package reviewbind
 
 import (
 	"encoding/json"
-	"errors"
-	"github.com/hyper-swe/mgit/internal/reviewprep"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,19 +17,11 @@ func recordJSON(t *testing.T, id string) []byte {
 	return b
 }
 
-// okResolver stands for the backend image store: "reviewer" is registered with the fixture's digest.
-func okResolver(_ string, name string) (string, error) {
-	if name == "reviewer" {
-		return "sha256:" + strings.Repeat("b", 64), nil
-	}
-	return "", errors.New("no such image")
-}
-
 func newRoot(t *testing.T) string { return filepath.Join(t.TempDir(), "host") }
 
 func TestInstall_WritesAPinnedMapTheLoaderAccepts(t *testing.T) {
 	root := newRoot(t)
-	info, err := Install(root, recordJSON(t, "m1"), false, okResolver)
+	info, err := Install(root, recordJSON(t, "m1"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +60,7 @@ func TestInstall_RefusesWhatTheLoaderWouldRefuse(t *testing.T) {
 		"bad id":      recordJSON(t, "../x"),
 	} {
 		root := newRoot(t)
-		if _, err := Install(root, in, false, okResolver); err == nil {
+		if _, err := Install(root, in, false); err == nil {
 			t.Errorf("%s was installed", name)
 		}
 	}
@@ -78,13 +68,13 @@ func TestInstall_RefusesWhatTheLoaderWouldRefuse(t *testing.T) {
 
 func TestInstall_NeverOverwritesAnInstalledID(t *testing.T) {
 	root := newRoot(t)
-	if _, err := Install(root, recordJSON(t, "m5"), false, okResolver); err != nil {
+	if _, err := Install(root, recordJSON(t, "m5"), false); err != nil {
 		t.Fatal(err)
 	}
 	other := goodMap("m5")
 	other.Argv = []string{"--other"}
 	raw, _ := json.Marshal(other)
-	if _, err := Install(root, raw, false, okResolver); err == nil {
+	if _, err := Install(root, raw, false); err == nil {
 		t.Fatal("an installed id was overwritten")
 	}
 	m, err := LoadMap(root, "m5")
@@ -95,13 +85,13 @@ func TestInstall_NeverOverwritesAnInstalledID(t *testing.T) {
 
 func TestInstall_DefaultIsPinnedAndShowResolvesIt(t *testing.T) {
 	root := newRoot(t)
-	if _, err := Install(root, recordJSON(t, "m6"), true, okResolver); err != nil {
+	if _, err := Install(root, recordJSON(t, "m6"), true); err != nil {
 		t.Fatal(err)
 	}
 	if id, err := DefaultID(root); err != nil || id != "m6" {
 		t.Fatalf("default %q %v", id, err)
 	}
-	info, err := Show(root, "")
+	info, err := Show(root, "", namesOf("reviewer"))
 	if err != nil || info.ID != "m6" {
 		t.Fatalf("show of the default: %+v %v", info, err)
 	}
@@ -115,10 +105,10 @@ func TestInstall_DefaultIsPinnedAndShowResolvesIt(t *testing.T) {
 
 func TestShow_NoDefaultSaysWhatToRun(t *testing.T) {
 	root := newRoot(t)
-	if _, err := Install(root, recordJSON(t, "m7"), false, okResolver); err != nil {
+	if _, err := Install(root, recordJSON(t, "m7"), false); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Show(root, "")
+	_, err := Show(root, "", namesOf("reviewer"))
 	if err == nil || !strings.Contains(err.Error(), "mgit sandbox review map install --file <map.json> --default") {
 		t.Fatalf("a missing default must say how to install one: %v", err)
 	}
@@ -129,10 +119,10 @@ func TestShow_NeverCarriesACredentialField(t *testing.T) {
 	m := goodMap("m8")
 	m.CredentialRef, m.EgressPolicyID = "review-key", "host:api.example.com"
 	raw, _ := json.Marshal(m)
-	if _, err := Install(root, raw, false, okResolver); err != nil {
+	if _, err := Install(root, raw, false); err != nil {
 		t.Fatal(err)
 	}
-	info, err := Show(root, "m8")
+	info, err := Show(root, "m8", namesOf("reviewer"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,57 +143,56 @@ func TestInstall_RefusesAnUnsafeExistingDirectory(t *testing.T) {
 	if err := os.Chmod(filepath.Join(root, "review", "maps"), 0o777); err != nil { //nolint:gosec // unsafe on purpose
 		t.Fatal(err)
 	}
-	if _, err := Install(root, recordJSON(t, "m9"), false, okResolver); err == nil {
+	if _, err := Install(root, recordJSON(t, "m9"), false); err == nil {
 		t.Fatal("installed into a world-writable maps directory")
 	}
 }
 
-func TestInstall_RefusesAnImageRefTheStoreDoesNotResolve(t *testing.T) {
-	m := goodMap("r1")
-	m.ImageRef = "unregistered@" + m.ImageDigest
-	raw, _ := json.Marshal(m)
-	root := newRoot(t)
-	if _, err := Install(root, raw, false, okResolver); err == nil {
-		t.Fatal("an image name the store does not know was installed")
-	}
-	if _, err := os.Stat(filepath.Join(root, "review", "maps", "r1.json")); err == nil {
-		t.Fatal("a refused map left files behind")
-	}
+func namesOf(names ...string) ImageNames {
+	return func(string, string) ([]string, error) { return names, nil }
 }
 
-func TestInstall_RefusesAnImageRefThatDisagreesWithItsDigest(t *testing.T) {
-	for name, edit := range map[string]func(*reviewprep.Mapping){
-		"ref digest differs from image_digest": func(m *reviewprep.Mapping) { m.ImageRef = "reviewer@sha256:" + strings.Repeat("c", 64) },
-		"ref has no digest":                    func(m *reviewprep.Mapping) { m.ImageRef = "reviewer:latest" },
-		"no image_ref at all":                  func(m *reviewprep.Mapping) { m.ImageRef = "" },
-	} {
-		m := goodMap("r2")
-		edit(&m)
-		raw, _ := json.Marshal(m)
-		if _, err := Install(newRoot(t), raw, false, okResolver); err == nil {
-			t.Errorf("%s was installed", name)
-		}
-	}
-	bad := func(string, string) (string, error) { return "sha256:" + strings.Repeat("d", 64), nil }
-	if _, err := Install(newRoot(t), recordJSON(t, "r3"), false, bad); err == nil {
-		t.Fatal("a store entry with another digest was accepted")
-	}
-	if _, err := Install(newRoot(t), recordJSON(t, "r4"), false, nil); err == nil {
-		t.Fatal("install ran with no image store to check against")
-	}
-}
-
-func TestShow_CarriesTheExactImageRef(t *testing.T) {
+func TestShow_ResolvesTheDigestToTheOneRegisteredImage(t *testing.T) {
 	root := newRoot(t)
-	if _, err := Install(root, recordJSON(t, "r5"), false, okResolver); err != nil {
+	if _, err := Install(root, recordJSON(t, "r5"), false); err != nil {
 		t.Fatal(err)
 	}
-	info, err := Show(root, "r5")
+	info, err := Show(root, "r5", namesOf("reviewer"))
 	if err != nil || info.ImageRef != "reviewer@sha256:"+strings.Repeat("b", 64) {
 		t.Fatalf("%+v %v", info, err)
 	}
 	j, _ := json.Marshal(info)
-	if !strings.Contains(string(j), `"image_ref":"reviewer@sha256:`) {
-		t.Fatalf("json name: %s", j)
+	if !strings.Contains(string(j), `"image_ref":"reviewer@sha256:`) || !strings.Contains(string(j), `"image_digest":"sha256:`) {
+		t.Fatalf("json names: %s", j)
+	}
+}
+
+func TestShow_NoRegisteredImageForTheDigestIsRefused(t *testing.T) {
+	root := newRoot(t)
+	if _, err := Install(root, recordJSON(t, "r6"), false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Show(root, "r6", namesOf()); err == nil || !strings.Contains(err.Error(), "register it in the image store") {
+		t.Fatalf("zero matches must refuse and say what to do: %v", err)
+	}
+}
+
+func TestShow_TwoRegisteredImagesForTheDigestAreRefused(t *testing.T) {
+	root := newRoot(t)
+	if _, err := Install(root, recordJSON(t, "r7"), false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Show(root, "r7", namesOf("a", "b")); err == nil || !strings.Contains(err.Error(), "a, b") {
+		t.Fatalf("two matches must refuse and name them: %v", err)
+	}
+}
+
+func TestShow_NoImageStoreIsRefused(t *testing.T) {
+	root := newRoot(t)
+	if _, err := Install(root, recordJSON(t, "r8"), false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Show(root, "r8", nil); err == nil {
+		t.Fatal("show ran with no image store")
 	}
 }

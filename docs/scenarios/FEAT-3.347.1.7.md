@@ -16,6 +16,6 @@ An operator installs the binding map a review is checked against, and a caller r
    prints a credential or its reference. Without `--id` it describes the default map.
 4. With no default installed, `show` says: `mgit sandbox review map install --file <map.json> --default`. Nothing picks a map
    on its own.
-5. The host root is the one the sandbox review commands use; `--host-root` overrides it. The record names the full image reference, and `install` refuses one the host's image store (images.lock) does not hold under that name with that digest. `prepare` and `run` take exactly `--image <image_ref>`; the same digest under another name is refused.
+5. The host root is the one the sandbox review commands use; `--host-root` overrides it. The map records the image digest only. `show` resolves it to the one name the host's image store (images.lock) registers under that digest and prints `image_ref` as `<name>@<digest>`; no match, or more than one, is refused with a line saying what to do. `prepare` and `run` take `--image <image_ref>`, and a digest that differs from the map's is refused.
 
 The JSON is `mgit.review-map-info/v1`: `schema`, `id`, `binding_sha256`, `image_ref`, `image_digest`, `map_sha256`, `egress_policy_id`.

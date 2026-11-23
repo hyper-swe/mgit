@@ -85,13 +85,10 @@ type Request struct {
 // Mapping is one operator-installed mgit.review-map/v1 record. It is never
 // read from the bundle or from project files.
 type Mapping struct {
-	Schema        string `json:"schema"`
-	ID            string `json:"id"`
-	BindingSHA256 string `json:"binding_sha256"`
-	ImageDigest   string `json:"image_digest"`
-	// ImageRef is the full <name>@<digest> the operator installed. When set, the
-	// request must name exactly it, not only the same digest.
-	ImageRef         string   `json:"image_ref,omitempty"`
+	Schema           string   `json:"schema"`
+	ID               string   `json:"id"`
+	BindingSHA256    string   `json:"binding_sha256"`
+	ImageDigest      string   `json:"image_digest"`
 	GuestEntrypoint  string   `json:"guest_entrypoint"`
 	EntrypointSHA256 string   `json:"entrypoint_sha256"`
 	Argv             []string `json:"argv"`
@@ -232,9 +229,6 @@ func Prepare(r Request, m Mapping, bundle []byte, s *Signer, now time.Time, ttl 
 	want := digestOf(r.Image)
 	if want == "" || want != m.ImageDigest {
 		return nil, refuse(CodeImageMismatch, "image digest does not match the mapping")
-	}
-	if m.ImageRef != "" && r.Image != m.ImageRef {
-		return nil, refuse(CodeImageMismatch, "image reference does not match the mapping")
 	}
 	if !isJSONObject(bundle) || !isHex64(r.BundleDigest) || hexSum(bundle) != r.BundleDigest {
 		return nil, refuse(CodeBundleInvalid, "bundle is not the declared evidence")

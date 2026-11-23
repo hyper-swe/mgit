@@ -23,12 +23,12 @@ func runMapCmd(t *testing.T, args ...string) (string, error) {
 }
 
 func TestReviewMapCLI_InstallThenShowTheDefault(t *testing.T) {
-	old := mapImageResolver
-	mapImageResolver = func(string, string) (string, error) { return "sha256:" + strings.Repeat("b", 64), nil }
-	defer func() { mapImageResolver = old }()
+	old := mapImageNames
+	mapImageNames = func(string, string) ([]string, error) { return []string{"reviewer"}, nil }
+	defer func() { mapImageNames = old }()
 	root := filepath.Join(t.TempDir(), "host")
 	rec := filepath.Join(t.TempDir(), "map.json")
-	body := `{"schema":"mgit.review-map/v1","id":"std","binding_sha256":"` + strings.Repeat("a", 64) + `","image_digest":"sha256:` + strings.Repeat("b", 64) + `","image_ref":"reviewer@sha256:` + strings.Repeat("b", 64) +
+	body := `{"schema":"mgit.review-map/v1","id":"std","binding_sha256":"` + strings.Repeat("a", 64) + `","image_digest":"sha256:` + strings.Repeat("b", 64) +
 		`","guest_entrypoint":"/opt/reviewer/bin/review","entrypoint_sha256":"` + strings.Repeat("c", 64) + `","argv":["--json"],"egress_policy_id":"none"}`
 	if err := os.WriteFile(rec, []byte(body), 0o600); err != nil {
 		t.Fatal(err)

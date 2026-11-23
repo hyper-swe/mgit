@@ -24,15 +24,9 @@ func sandboxReviewMapCmd() *cobra.Command {
 	return cmd
 }
 
-// mapImageResolver asks the host root's image store (images.lock) what digest a
-// name is registered under. A variable so a test can stand in for the store.
-var mapImageResolver reviewbind.ImageResolver = func(hostRoot, name string) (string, error) {
-	e, err := images.LookupEntry(hostRoot, name)
-	if err != nil {
-		return "", err
-	}
-	return e.Digest, nil
-}
+// mapImageNames asks the host root's image store (images.lock) which names are
+// registered under a digest. A variable so a test can stand in for the store.
+var mapImageNames reviewbind.ImageNames = images.NamesForDigest
 
 func mapHostRoot(override string) (string, error) {
 	if override != "" {
@@ -74,7 +68,7 @@ func sandboxReviewMapInstallCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("read the map file: %w", err)
 			}
-			info, err := reviewbind.Install(hostRoot, raw, makeDefault, mapImageResolver)
+			info, err := reviewbind.Install(hostRoot, raw, makeDefault)
 			if err != nil {
 				cmd.SilenceUsage = true
 				return err
@@ -106,7 +100,7 @@ func sandboxReviewMapShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			info, err := reviewbind.Show(hostRoot, id)
+			info, err := reviewbind.Show(hostRoot, id, mapImageNames)
 			if err != nil {
 				cmd.SilenceUsage = true
 				return err

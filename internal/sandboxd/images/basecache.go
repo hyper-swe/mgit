@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -59,6 +60,24 @@ func LookupEntry(hostRoot, name string) (Entry, error) {
 		return Entry{}, fmt.Errorf("%w: %q", ErrNoSuchImage, name)
 	}
 	return entry, nil
+}
+
+// NamesForDigest returns, sorted, the names registered in hostRoot's images.lock
+// whose pinned rootfs digest is digest. A caller that needs one image by digest
+// refuses on zero or several.
+func NamesForDigest(hostRoot, digest string) ([]string, error) {
+	lock, err := readLockFile(hostRoot)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for name, entry := range lock.Images {
+		if entry.Digest == digest {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 // RepointToCache rewrites every lock entry that pointed INTO legacyPath so it
