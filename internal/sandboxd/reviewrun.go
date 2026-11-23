@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/hyper-swe/mgit/internal/controlproto"
 	"github.com/hyper-swe/mgit/internal/reviewprep"
@@ -18,10 +19,23 @@ type ReviewRunner interface {
 	RunReview(ctx context.Context, args controlproto.ReviewRunArgs) ([]byte, error)
 }
 
+// reviewBudgetGrace is how long past the run's own limit the client waits for the
+// daemon to answer: time for the guest to be stopped and removed.
+const reviewBudgetGrace = 60 * time.Second
+
+// reviewReadBudget is how long to wait for a review run's answer: the run's
+// limit (the default when none is given) plus a grace.
+func reviewReadBudget(maxSeconds int) time.Duration {
+	if maxSeconds <= 0 {
+		maxSeconds = controlproto.DefaultReviewSeconds
+	}
+	return time.Duration(maxSeconds)*time.Second + reviewBudgetGrace
+}
+
 // ReviewRun asks the daemon to run a prepared review. A refusal comes back as a
 // *reviewprep.Error that says whether the reviewer had started.
 func (c *Client) ReviewRun(ctx context.Context, args controlproto.ReviewRunArgs) ([]byte, error) {
-	resp, err := c.roundTripRaw(ctx, &controlproto.Request{Kind: controlproto.KindReviewRun, ReviewRun: &args})
+	resp, err := c.roundTripBudget(ctx, &controlproto.Request{Kind: controlproto.KindReviewRun, ReviewRun: &args}, reviewReadBudget(args.MaxSeconds))
 	if err != nil {
 		return nil, err
 	}
