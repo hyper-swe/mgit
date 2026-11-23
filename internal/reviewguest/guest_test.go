@@ -183,7 +183,7 @@ func TestProvision_ARefusedSealRemovesTheGuest(t *testing.T) {
 			m.execErr = errors.New("transport")
 		}
 		_, err := Provision(context.Background(), m, spec(t))
-		if err == nil || code(t, err) != reviewprep.CodeBundleInvalid {
+		if err == nil || code(t, err) != reviewprep.CodePolicyUnenforcable {
 			t.Fatalf("%s: err=%v", name, err)
 		}
 		if !reflect.DeepEqual(m.removed, []string{"sb1"}) {
