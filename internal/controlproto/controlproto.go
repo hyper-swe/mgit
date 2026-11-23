@@ -213,6 +213,9 @@ type Request struct {
 	PolicySet  *PolicyArgs `json:"policy_set,omitempty"`
 	PolicyShow *TaskRef    `json:"policy_show,omitempty"`
 	Export     *ExportArgs `json:"export,omitempty"`
+	// ReviewPrepare asks for a signed review attestation (MGIT-333).
+	// Declared in reviewprepare.go beside the verb it serves.
+	ReviewPrepare *ReviewPrepareArgs `json:"review_prepare,omitempty"`
 	// Hello states the client's wire version before any verb is transacted.
 	// It is the FIRST frame a current client sends on every connection; a
 	// peer that sends anything else first is, by construction, a build from
@@ -267,13 +270,15 @@ type Response struct {
 	Echo *EchoResult `json:"echo,omitempty"`
 	// SyncVerify is the guest's answer to a sync-verify request (MGIT-164).
 	SyncVerify *SyncVerifyResult `json:"sync_verify,omitempty"`
+	// ReviewPrepare is the answer to a review-prepare request (MGIT-333).
+	ReviewPrepare *ReviewPrepareResult `json:"review_prepare,omitempty"`
 }
 
 // validKind reports whether k is a known request kind.
 func validKind(k byte) bool {
 	switch k {
 	case KindLaunch, KindExec, KindLand, KindList, KindRemove, KindStatus, KindGrants, KindGrant,
-		KindSync, KindPolicySet, KindPolicyShow, KindExport, KindHello, KindEcho, KindSyncVerify:
+		KindSync, KindPolicySet, KindPolicyShow, KindExport, KindHello, KindEcho, KindSyncVerify, KindReviewPrepare:
 		return true
 	default:
 		return false
@@ -331,12 +336,13 @@ func (req *Request) Validate() error {
 		KindGrant:  req.Grant != nil,
 		KindSync:   req.Sync != nil,
 
-		KindPolicySet:  req.PolicySet != nil,
-		KindPolicyShow: req.PolicyShow != nil,
-		KindExport:     req.Export != nil,
-		KindHello:      req.Hello != nil,
-		KindEcho:       req.Echo != nil,
-		KindSyncVerify: req.SyncVerify != nil,
+		KindPolicySet:     req.PolicySet != nil,
+		KindPolicyShow:    req.PolicyShow != nil,
+		KindExport:        req.Export != nil,
+		KindHello:         req.Hello != nil,
+		KindEcho:          req.Echo != nil,
+		KindSyncVerify:    req.SyncVerify != nil,
+		KindReviewPrepare: req.ReviewPrepare != nil,
 	}
 	for k, present := range set {
 		if present && k != req.Kind {
@@ -384,6 +390,8 @@ func (req *Request) Validate() error {
 		return req.Echo.Validate()
 	case KindSyncVerify:
 		return requireTask(req.SyncVerify)
+	case KindReviewPrepare:
+		return validateReviewPrepare(req.ReviewPrepare)
 	case KindList:
 		return nil // no payload
 	default:

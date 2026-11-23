@@ -103,6 +103,7 @@ func newSandboxCmd(connect connectFunc) *cobra.Command {
 		sandboxExecCmd(connect),
 		sandboxLandCmd(connect),
 		sandboxExportCmd(connect), // guest->host artifact export (MGIT-73)
+		sandboxReviewCmd(connect), // isolated read-only review: prepare (MGIT-333)
 		sandboxListCmd(connect),
 		sandboxStatusCmd(connect),
 		sandboxPublishedCmd(connect), // list a task's one-way published ports (SEC-09)
