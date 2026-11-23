@@ -78,3 +78,21 @@ func TestSecretIsRedactedUnderEveryFormatVerb(t *testing.T) {
 		}
 	}
 }
+
+func TestSecretMarkerIsExactlyTheDocumentedOne(t *testing.T) {
+	s := Secret(fakeSecret)
+	j, err := json.Marshal(s)
+	if err != nil || string(j) != `"[redacted]"` {
+		t.Errorf("json: %s %v", j, err)
+	}
+	tx, _ := s.MarshalText()
+	for name, got := range map[string]string{
+		"String": s.String(), "GoString": s.GoString(), "text": string(tx),
+		"%v": fmt.Sprintf("%v", s), "%d": fmt.Sprintf("%d", s), "%x": fmt.Sprintf("%x", s),
+		"log": s.LogValue().String(),
+	} {
+		if got != "[redacted]" {
+			t.Errorf("%s renders %q, want the exact marker", name, got)
+		}
+	}
+}

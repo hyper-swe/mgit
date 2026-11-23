@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"bytes"
 	"os"
 	"path/filepath"
@@ -191,5 +192,30 @@ func TestCredInstallAcceptsTheEdgesOfTheGidRange(t *testing.T) {
 		if code := credInstall(root, noMem, []string{"--dest", filepath.Join(root, "s"), "--gid", g}, strings.NewReader(fakeCred), &o, &e); code == 2 {
 			t.Errorf("gid %s is inside the range but was refused: %s", g, e.String())
 		}
+	}
+}
+
+func TestCredRemoveReportsAFailedOverwriteAndStillUnlinks(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "cred")
+	var o, e bytes.Buffer
+	if code := credInstall(root, noMem, credArgs(root, "s"), strings.NewReader(fakeCred), &o, &e); code != 0 {
+		t.Fatal(e.String())
+	}
+	p := filepath.Join(root, "s")
+	was := scrub
+	scrub = func(*os.File) error { return errors.New("forced write failure") }
+	defer func() { scrub = was }()
+	e.Reset()
+	if code := credRemove(root, []string{"--dest", p}, &o, &e); code != 1 {
+		t.Fatalf("a failed overwrite must be reported (exit 1), got %d", code)
+	}
+	if !strings.Contains(e.String(), "overwritten") {
+		t.Fatalf("the report does not say the overwrite failed: %q", e.String())
+	}
+	if _, err := os.Stat(p); err == nil {
+		t.Fatal("the slot must still be unlinked after a failed overwrite")
+	}
+	if code := credRemove(root, []string{"--dest", p}, &o, &e); code != 0 {
+		t.Fatalf("a second removal of an absent slot must succeed, got %d", code)
 	}
 }
