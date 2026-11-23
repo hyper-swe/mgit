@@ -100,7 +100,7 @@ func credRemove(root string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "cred-remove:", err)
 		return 2
 	}
-	_ = os.Chmod(*dest, 0o600) // the slot is read-only; its owner may open it to overwrite
+	_ = os.Chmod(*dest, 0o600)                   // the slot is read-only; its owner may open it to overwrite
 	f, err := os.OpenFile(*dest, os.O_WRONLY, 0) //nolint:gosec // dest is checked by credDest
 	if os.IsNotExist(err) {
 		return 0
