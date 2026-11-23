@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,4 +72,31 @@ func TestClient_ReviewRun_ATransportFailureIsNotAReviewRefusal(t *testing.T) {
 	require.Error(t, err)
 	var e *reviewprep.Error
 	assert.False(t, errors.As(err, &e))
+}
+
+type slowRunner struct{ wait time.Duration }
+
+func (s slowRunner) RunReview(context.Context, controlproto.ReviewRunArgs) ([]byte, error) {
+	time.Sleep(s.wait)
+	return []byte(`{"schema":"mgit.review-result/v1"}`), nil
+}
+
+// A review runs for minutes, far longer than an ordinary control request: the
+// client waits for it as long as the run it asked for may take, not for the
+// everyday request budget.
+func TestClient_ReviewRun_WaitsForTheRunNotJustTheRequestBudget(t *testing.T) {
+	client := clientFor(t, func(c *Config) { c.ReviewRunner = slowRunner{wait: 300 * time.Millisecond} })
+	client.requestTimeout = 100 * time.Millisecond
+	a := runArgs()
+	a.MaxSeconds = 5
+	got, err := client.ReviewRun(context.Background(), a)
+	require.NoError(t, err)
+	assert.Contains(t, string(got), "review-result")
+}
+
+func TestReviewReadBudget_IsTheRunLimitPlusAGrace(t *testing.T) {
+	assert.Equal(t, time.Duration(controlproto.DefaultReviewSeconds)*time.Second+reviewBudgetGrace, reviewReadBudget(0))
+	assert.Equal(t, 7*time.Second+reviewBudgetGrace, reviewReadBudget(7))
+	assert.Equal(t, time.Duration(controlproto.MaxReviewSeconds)*time.Second+reviewBudgetGrace, reviewReadBudget(controlproto.MaxReviewSeconds))
+	assert.GreaterOrEqual(t, reviewBudgetGrace, 30*time.Second)
 }
