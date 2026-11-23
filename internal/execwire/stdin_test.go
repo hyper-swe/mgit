@@ -46,3 +46,15 @@ func TestAnOversizedStdinIsRefusedByTheReader(t *testing.T) {
 		t.Fatal("an oversized stdin was read")
 	}
 }
+
+func TestWriteRequestLeavesTheCallersSecretIntact(t *testing.T) {
+	// the wipe is of a copy: the caller's own bytes are not zeroed behind its back
+	in := model.ExecRequest{Command: []string{"x"}, Stdin: model.Secret("FAKE-KEY-0123456789-not-real")}
+	var buf bytes.Buffer
+	if err := WriteRequest(&buf, in); err != nil {
+		t.Fatal(err)
+	}
+	if string(in.Stdin) != "FAKE-KEY-0123456789-not-real" {
+		t.Fatalf("the caller's secret was changed: %q", in.Stdin)
+	}
+}

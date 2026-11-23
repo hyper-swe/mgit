@@ -130,7 +130,17 @@ type ResultFrame struct {
 
 // WriteRequest writes one length-prefixed JSON ExecRequest (host -> guest).
 func WriteRequest(w io.Writer, req model.ExecRequest) error {
-	payload, err := json.Marshal(wireRequest{ExecRequest: req, Stdin: []byte(req.Stdin)})
+	stdin := append([]byte(nil), req.Stdin...) // a copy, wiped below
+	payload, err := json.Marshal(wireRequest{ExecRequest: req, Stdin: stdin})
+	// the copy and the encoding (which holds the secret in base64) do not outlive the call
+	defer func() {
+		for i := range stdin {
+			stdin[i] = 0
+		}
+		for i := range payload {
+			payload[i] = 0
+		}
+	}()
 	if err != nil {
 		return fmt.Errorf("execwire: encode request: %w", err)
 	}

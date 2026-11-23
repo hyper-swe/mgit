@@ -123,3 +123,20 @@ func TestCredRemoveOverwritesThenUnlinks(t *testing.T) {
 		t.Error("removing an absent slot must be a no-op so release can run twice")
 	}
 }
+
+func TestCredInstallFailsWhenTheDirectoryCannotBeGivenToTheGroup(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "cred")
+	var o, e bytes.Buffer
+	// a group this process is not a member of: a non-root chown is refused, and the install must say so
+	gid := os.Getgid() + 7919
+	if os.Getuid() == 0 {
+		t.Skip("root can give a directory to any group")
+	}
+	args := []string{"--dest", filepath.Join(root, "s"), "--gid", fmtInt(gid)}
+	if code := credInstall(root, args, strings.NewReader(fakeCred), &o, &e); code == 0 {
+		t.Fatal("the install succeeded with a directory the group cannot reach")
+	}
+	if _, err := os.Stat(filepath.Join(root, "s")); err == nil {
+		t.Fatal("a slot was left behind")
+	}
+}
