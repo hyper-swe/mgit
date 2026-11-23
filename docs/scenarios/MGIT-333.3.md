@@ -37,8 +37,13 @@ implements it must match it, and a difference is a change to this page.
    "stdout":"<base64>","stderr":"<base64>","elapsed_ms":N}`, and exits 0 whenever the reviewer ran to the end,
    whatever its own `exit_code`.
 8. Refusals. A refusal prints exactly one `mgit.review-error/v1` envelope on standard error, prints nothing on standard
-   output, and exits 70 when the reviewer did not start or 71 when it started and was stopped. The envelope carries no
-   bundle bytes, no prompt and no credential. The codes:
+   output, and exits 70 or 71. `reviewer_started` is false only when the run is certain that the reviewer never started
+   (exit 70). It is true when the reviewer started and was stopped, and also when the run cannot tell whether it
+   started: exit 71 means "the run did not complete and the reviewer ran or may have run", and a caller must treat it
+   so. The envelope says nothing finer than that; a caller that needs the difference prepares a new lease and does not
+   retry this one. The envelope carries no bundle bytes, no prompt and no credential. A NONCE_REPLAYED refusal's
+   `reviewer_started` (false) describes that request only: it says nothing about whether an earlier request for the lease
+   started the reviewer. The codes:
 
    | situation | code | reviewer_started | exit | nonce still usable |
    | --- | --- | --- | --- | --- |
@@ -53,7 +58,7 @@ implements it must match it, and a difference is a change to this page.
    | the launcher declined (the program is not the pinned one, and so on) | the launcher's code | false | 70 | no (spent) |
    | the reviewer ran past its time | RUN_TIMEOUT | true | 71 | no (spent) |
    | the reviewer produced more than the output limit | OUTPUT_LIMIT | true | 71 | no (spent) |
-   | the run could not be taken to its end for another reason after the reviewer may have started | POLICY_UNENFORCEABLE | true | 71 | no (spent) |
+   | the run could not be taken to its end for another reason, and it is not known whether the reviewer started (the guest could not be reached once the launcher had been asked to run it) | POLICY_UNENFORCEABLE | true (may have started) | 71 | no (spent) |
 
    A request that is malformed at the protocol boundary (a missing field, a lease that is not 32 lower-case hex
    digits, a limit out of range) is refused as an ordinary error with exit 1 and no envelope.
