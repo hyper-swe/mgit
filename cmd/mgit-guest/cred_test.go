@@ -61,6 +61,10 @@ func TestCredInstallRefusesAnEmptyStdinAnOversizedOneAndAFileThatExists(t *testi
 	if code := credInstall(root, credArgs(root, "c"), strings.NewReader("one"), &o, &e); code != 0 {
 		t.Fatal("first install failed")
 	}
+	// even when the file could be opened for writing (root in a guest can), an installed slot is not replaced
+	if err := os.Chmod(filepath.Join(root, "c"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if code := credInstall(root, credArgs(root, "c"), strings.NewReader("two"), &o, &e); code == 0 {
 		t.Error("an installed slot was overwritten")
 	}
@@ -86,8 +90,8 @@ func TestCredInstallRefusesADestOutsideTheCredentialDirectory(t *testing.T) {
 func TestCredInstallRefusesGidZero(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "cred")
 	var o, e bytes.Buffer
-	if code := credInstall(root, []string{"--dest", filepath.Join(root, "s"), "--gid", "0"}, strings.NewReader(fakeCred), &o, &e); code == 0 {
-		t.Error("the credential was shared with group zero")
+	if code := credInstall(root, []string{"--dest", filepath.Join(root, "s"), "--gid", "0"}, strings.NewReader(fakeCred), &o, &e); code != 2 {
+		t.Errorf("group zero must be refused up front (exit 2), got %d", code)
 	}
 }
 
