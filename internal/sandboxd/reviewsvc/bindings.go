@@ -3,6 +3,7 @@ package reviewsvc
 import (
 	"context"
 
+	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/reviewprep"
 )
 
@@ -15,6 +16,11 @@ type AttachInput struct {
 	LeaseDir    string
 	Attestation reviewprep.Attestation
 	Mapping     reviewprep.Mapping
+	// Exec runs a command in this guest as root, before the reviewer starts. It
+	// is the only way an implementation reaches the guest. It is for setup, not
+	// for secrets: an argument or an environment variable of an exec is visible
+	// to the guest's other processes, so a credential must not travel in one.
+	Exec func(ctx context.Context, req model.ExecRequest) (*model.ExecResult, error)
 }
 
 // Bindings is the seam between running a review and what a review needs beyond
