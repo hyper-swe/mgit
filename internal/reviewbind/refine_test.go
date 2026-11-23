@@ -129,3 +129,15 @@ func TestLoadMap_HostRootMustBeOwnerOnly(t *testing.T) {
 		t.Fatal("a world-writable host root was accepted")
 	}
 }
+
+func TestLoadMap_UnsafeDirectoryRefusalTellsTheOperatorWhatToRun(t *testing.T) {
+	root := t.TempDir()
+	install(t, root, goodMap("m6"))
+	if err := os.Chmod(filepath.Join(root, "review", "maps"), 0o770); err != nil { //nolint:gosec // the test makes it unsafe on purpose
+		t.Fatal(err)
+	}
+	_, err := LoadMap(root, "m6")
+	if err == nil || !strings.Contains(err.Error(), "chmod 0700 ") {
+		t.Fatalf("the refusal does not say what to run: %v", err)
+	}
+}

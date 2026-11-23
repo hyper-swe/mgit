@@ -79,7 +79,7 @@ func LoadMap(hostRoot, id string) (*reviewprep.Mapping, error) {
 	for _, d := range []string{hostRoot, filepath.Join(hostRoot, "review"), filepath.Join(hostRoot, "review", "maps")} {
 		fi, derr := os.Lstat(d)
 		if derr != nil || !fi.IsDir() || fi.Mode().Perm()&0o022 != 0 {
-			return nil, bad("mapping directory is not a plain owner-writable directory")
+			return nil, bad("mapping directory " + d + " must be a plain directory only its owner can write; run: chmod 0700 " + d)
 		}
 	}
 	dir := filepath.Join(hostRoot, "review", "maps")
