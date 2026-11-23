@@ -386,3 +386,48 @@ func TestRunReview_ByDefaultAMappingThatNeedsACredentialIsRefused(t *testing.T) 
 		t.Fatal(err)
 	}
 }
+
+// A caller that loses its connection cannot know whether the daemon consumed the
+// lease. The guarantee is at most one run per lease: a disconnect before the
+// consumption leaves the lease unspent, so a retry is the first run; one after it
+// leaves it spent, so a retry is refused and never starts a second review.
+func TestRunReview_ADisconnectBeforeTheNonceIsConsumedLeavesTheLeaseUnspent(t *testing.T) {
+	r := prepared(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := r.svc.RunReview(ctx, r.args)
+	var e *reviewprep.Error
+	if err == nil || errors.As(err, &e) {
+		t.Fatalf("a cancelled request must fail as an ordinary error, got %v", err)
+	}
+	if usedRecords(t, r.root) != 0 || len(r.mgr.launched) != 0 {
+		t.Fatalf("consumed=%d launched=%d", usedRecords(t, r.root), len(r.mgr.launched))
+	}
+	if _, err := r.run(t); err != nil {
+		t.Fatalf("the retry was not the first run: %v", err)
+	}
+}
+
+func TestRunReview_ADisconnectAfterTheNonceIsConsumedSpendsTheLeaseAndARetryIsRefused(t *testing.T) {
+	r := prepared(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.mgr.runRes = func(model.ExecRequest) (*model.ExecResult, error) {
+		cancel() // the caller goes away while the reviewer runs
+		return nil, context.Canceled
+	}
+	_, err := r.svc.RunReview(ctx, r.args)
+	if err == nil {
+		t.Fatal("a run whose caller went away reported success")
+	}
+	if len(r.mgr.removed) != 1 {
+		t.Fatalf("the guest was not removed after the disconnect: %v", r.mgr.removed)
+	}
+	launches := len(r.mgr.launched)
+	_, err = r.run(t)
+	if e := envelopeOf(t, err); e.Code != reviewprep.CodeNonceReplayed {
+		t.Fatalf("retry envelope %+v", e)
+	}
+	if len(r.mgr.launched) != launches {
+		t.Fatal("a retry after a disconnect started the review again")
+	}
+}
