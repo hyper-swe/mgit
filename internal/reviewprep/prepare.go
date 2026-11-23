@@ -125,10 +125,12 @@ type Attestation struct {
 }
 
 // WriteDenialEnforced says whether the launcher this build ships denies file
-// changes. The attestation reports only what the launcher enforces, so until
-// that is true the attestation states writes as possible and a client that
-// requires the profile refuses it. The slice that lands the denial sets it.
-var WriteDenialEnforced = false
+// changes. The attestation reports only what the launcher enforces; this build
+// ships the review launcher's write denial (every call that creates, changes or
+// removes a file, an open for writing, and the routes around them), so the
+// attestation states writes as denied. Set it false only in a build whose
+// launcher does not deny them.
+var WriteDenialEnforced = true
 
 // policyText names every restriction the profile enforces in this build. Its
 // digest rides in the attestation, so a change to the policy is a visible
