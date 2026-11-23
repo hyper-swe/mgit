@@ -84,10 +84,6 @@ func TestE2E_ReviewGuest_LaunchTimeImage(t *testing.T) {
 	uid, gid := os.Getuid(), os.Getgid()
 	if uid == 0 {
 		uid, gid = 1001, 1001
-		require.NoError(t, os.Chown(leaseDir, uid, gid))
-		for _, n := range []string{"evidence.json", "attestation.json"} {
-			require.NoError(t, os.Chown(filepath.Join(leaseDir, n), uid, gid))
-		}
 	}
 	ctx := context.Background()
 	g, err := reviewguest.Provision(ctx, mgr, reviewguest.Spec{
@@ -96,6 +92,16 @@ func TestE2E_ReviewGuest_LaunchTimeImage(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = g.Close(context.Background()) })
 
+	if os.Getuid() == 0 {
+		// Delivered as the daemon's own identity (root here); give the
+		// guest's copy to the unprivileged reviewer so it can read what it
+		// was given. This changes the guest's image only, never the host.
+		own, oerr := mgr.Exec(ctx, g.ID, model.ExecRequest{
+			Command: []string{"/bin/busybox", "chown", "-R", fmt.Sprintf("%d:%d", uid, gid), leaseDir}, Timeout: 30 * time.Second,
+		})
+		require.NoError(t, oerr)
+		require.Zero(t, own.ExitCode, string(own.Stderr))
+	}
 	same := &model.GuestIdentity{UID: uid, GID: gid}
 	exec := func(cmd ...string) *model.ExecResult {
 		t.Helper()
