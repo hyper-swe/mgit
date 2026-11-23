@@ -34,6 +34,7 @@ var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 // Service issues review attestations from host state under hostRoot.
 type Service struct {
+	runner    *runner
 	mapLoader MapLoader
 	root      string
 	signer    *reviewprep.Signer
