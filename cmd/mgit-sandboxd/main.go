@@ -261,6 +261,13 @@ func run(args []string, out, logSink io.Writer) int {
 			logger.Warn("review prepare is not served", "reason", rerr.Error())
 		} else {
 			dcfg.ReviewPreparer = rs
+			// Review run (MGIT-333): the same service runs a prepared review on
+			// the selected backend, which must deliver the bundle as a
+			// launch-time image or the run refuses. Nothing is installed behind
+			// the bindings seam yet, so a mapping that asks for a credential or
+			// a network policy is refused rather than run without it.
+			rs.WithRunner(reviewsvc.RunnerConfig{Manager: manager, Backend: reviewBackendName(context.Background(), opts.backend)})
+			dcfg.ReviewRunner = rs
 		}
 
 		// Wire host egress enforcement (allowlist proxy + restricted DNS) so
