@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 const stageArg = "__review_stage__"
@@ -123,16 +125,18 @@ func Run(cfg Config) (int, error) {
 
 	listener, entryFD, recvErr := recvListener(int(parentSock.Fd()))
 	var supDone chan struct{}
+	stageGone := make(chan struct{})
 	if recvErr == nil {
 		supDone = make(chan struct{})
 		d := NewExecDecider(entryFD, HostArch())
-		go func() { defer close(supDone); supervise(listener, d) }()
+		go func() { defer close(supDone); supervise(listener, d, stageGone) }()
 		_, _ = parentSock.Write([]byte{1})
 	}
 	waitErr := cmd.Wait()
+	close(stageGone)
 	if recvErr == nil {
-		_ = syscall.Close(listener)
 		<-supDone
+		_ = syscall.Close(listener)
 	}
 	status, _ := io.ReadAll(statusR)
 	if len(status) > 0 {
@@ -177,9 +181,34 @@ func recvListener(sock int) (listener, entryFD int, err error) {
 	return fds[0], int(binary.LittleEndian.Uint32(buf)), nil
 }
 
-// supervise answers notifications until the filter's last holder is gone.
-func supervise(fd int, d *ExecDecider) {
+// superviseTick is how often the supervisor looks up from waiting.
+const superviseTick = 100 // milliseconds
+
+// supervise answers notifications until the filter's last holder is gone or
+// done is closed. It waits with poll rather than blocking in the read: on
+// older kernels (seen on 5.10) closing the descriptor does not wake a thread
+// blocked reading it, which left the launcher hung after the program exited.
+func supervise(fd int, d *ExecDecider, done <-chan struct{}) {
 	for {
+		select {
+		case <-done:
+			return
+		default:
+		}
+		pfd := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}} //nolint:gosec // G115: a descriptor number fits int32
+		n, err := unix.Poll(pfd, superviseTick)
+		if err != nil {
+			if err == unix.EINTR {
+				continue
+			}
+			return
+		}
+		if n == 0 {
+			continue
+		}
+		if pfd[0].Revents&unix.POLLIN == 0 {
+			return // hung up, errored or closed, with nothing left to answer
+		}
 		var req [80]byte
 		if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), ioctlNotifRecv, uintptr(unsafe.Pointer(&req[0]))); e != 0 { //nolint:gosec // G103: kernel ABI structs are passed by pointer
 			if e == syscall.EINTR {
