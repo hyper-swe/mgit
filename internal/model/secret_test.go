@@ -2,9 +2,9 @@ package model
 
 import (
 	"bytes"
-	"log/slog"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 )

@@ -59,7 +59,15 @@ func credInstall(root string, args []string, stdin io.Reader, stdout, stderr io.
 		fmt.Fprintln(stderr, "cred-install: cannot prepare the credential directory")
 		return 1
 	}
-	_ = os.Chown(root, -1, *gid)
+	// the group must be able to reach the slot: a directory it cannot enter is a failure, not a quiet default
+	if err := os.Chown(root, -1, *gid); err != nil {
+		fmt.Fprintln(stderr, "cred-install: the credential directory could not be given to the group")
+		return 1
+	}
+	if err := os.Chmod(root, 0o750); err != nil {
+		fmt.Fprintln(stderr, "cred-install: the credential directory could not be restricted")
+		return 1
+	}
 	f, err := os.OpenFile(*dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o440) //nolint:gosec // dest is checked by credDest
 	if err != nil {
 		fmt.Fprintln(stderr, "cred-install: the slot cannot be created (it may already exist)")
