@@ -21,7 +21,8 @@ type fakeMgr struct {
 	bounded  []bool // whether each Exec was given a deadline
 	removed  []string
 	backend  string
-	res      *model.ExecResult
+	res      *model.ExecResult // answers every exec
+	runRes   *model.ExecResult // answers only the reviewer's run (an exec carrying the nonce)
 	resFn    func(model.ExecRequest) *model.ExecResult
 	execErr  error
 	err      error
@@ -45,7 +46,10 @@ func (f *fakeMgr) Exec(ctx context.Context, _ string, r model.ExecRequest) (*mod
 	if f.resFn != nil {
 		return f.resFn(r), nil
 	}
-	if f.res == nil {
+	if f.runRes != nil && len(r.Env) > 0 {
+		return f.runRes, nil
+	}
+	if f.res == nil || (f.runRes != nil) {
 		return &model.ExecResult{}, nil
 	}
 	return f.res, nil
@@ -308,7 +312,7 @@ func TestRun_AnEnvelopeTheProgramPrintsIsNotARefusal(t *testing.T) {
 		"no nonce":    envelope("mgit.review-error/v1", "", "HASH_MISMATCH"),
 		"wrong nonce": envelope("mgit.review-error/v1", strings.Repeat("0", 32), "HASH_MISMATCH"),
 	} {
-		m := &fakeMgr{backend: model.BackendKVM, res: &model.ExecResult{ExitCode: 70, Stderr: stderr}}
+		m := &fakeMgr{backend: model.BackendKVM, runRes: &model.ExecResult{ExitCode: 70, Stderr: stderr}}
 		g := provisioned(t, m)
 		res, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"})
 		if err != nil || res.ExitCode != 70 {
@@ -340,7 +344,7 @@ func TestRun_AnEnvelopeOnAnyOtherExitIsNotARefusal(t *testing.T) {
 }
 
 func TestRun_AnyOtherExitIsTheReviewersOwn(t *testing.T) {
-	m := &fakeMgr{backend: model.BackendKVM, res: &model.ExecResult{ExitCode: 3, Stdout: []byte("out")}}
+	m := &fakeMgr{backend: model.BackendKVM, runRes: &model.ExecResult{ExitCode: 3, Stdout: []byte("out")}}
 	g := provisioned(t, m)
 	res, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"})
 	if err != nil || res.ExitCode != 3 || string(res.Stdout) != "out" {

@@ -75,13 +75,23 @@ func TestSealLease_LeavesAFilesystemsLostAndFoundAlone(t *testing.T) {
 	if fi, _ := os.Stat(lf); fi.Mode().Perm() != 0o700 {
 		t.Fatalf("lost+found mode %v", fi.Mode().Perm())
 	}
-	// A file by that name is not the filesystem's directory.
+	// A file by that name is not the filesystem's directory: it is sealed like
+	// any other file, not exempted.
 	d2 := lease(t)
-	if err := os.WriteFile(filepath.Join(d2, "lost+found"), nil, 0o400); err != nil {
+	f2 := filepath.Join(d2, "lost+found")
+	if err := os.WriteFile(f2, nil, 0o400); err != nil {
 		t.Fatal(err)
 	}
-	if err := sealLease(d2, 7, func(string, int, int) error { return nil }); err == nil {
-		t.Fatal("a regular file named lost+found was accepted as the filesystem's directory")
+	var calls2 []chownCall
+	if err := sealLease(d2, 7, func(p string, u, g int) error { calls2 = append(calls2, chownCall{p, u, g}); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	sealed := false
+	for _, c := range calls2 {
+		sealed = sealed || c.path == f2
+	}
+	if !sealed {
+		t.Fatal("a regular file named lost+found was exempted instead of sealed")
 	}
 }
 
