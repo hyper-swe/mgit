@@ -15,6 +15,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -44,9 +45,6 @@ const sealLimit = 30 * time.Second
 
 // MaxRun is the longest a review may run, and the limit when none is given.
 const MaxRun = 30 * time.Minute
-
-// hostGrace is how long past the run limit the host waits for the guest to report.
-const hostGrace = 15 * time.Second
 
 // NonceEnv is the variable that carries the per-run refusal nonce to the launcher.
 const NonceEnv = reviewlaunch.RefusalNonceEnv
@@ -163,17 +161,25 @@ func (g *Guest) Run(ctx context.Context, e Entry) (*model.ExecResult, error) {
 	if limit < 0 || limit > MaxRun {
 		return nil, refuse(reviewprep.CodeMappingMismatch, "the run limit is outside the allowed range")
 	}
-	// The guest enforces the limit itself; this deadline is the host's backstop
-	// for a guest that never answers, which would otherwise hold the caller.
-	ctx, cancel := context.WithTimeout(ctx, limit+hostGrace)
-	defer cancel()
 	nonce, err := newNonce()
 	if err != nil {
 		return nil, fmt.Errorf("review guest nonce: %w", err)
 	}
-	res, err := g.mgr.Exec(ctx, g.ID, model.ExecRequest{
+	// The limit is enforced here, at the limit: the exec's deadline is the limit
+	// itself (the microvm backend puts it on the guest connection), and a result
+	// that arrives after it is a timeout even if the backend let it through. The
+	// caller removes the guest afterwards, which ends a reviewer still running.
+	runCtx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	res, err := g.mgr.Exec(runCtx, g.ID, model.ExecRequest{
 		Command: cmd, Dir: g.LeaseDir, AsRoot: true, Timeout: limit, Env: []string{NonceEnv + "=" + nonce},
 	})
+	if cerr := ctx.Err(); cerr != nil {
+		return nil, fmt.Errorf("review guest exec: %w", cerr) // the caller went away; not the run's own timeout
+	}
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		return nil, fmt.Errorf("review guest exec: the run passed its limit of %v: %w", limit, context.DeadlineExceeded)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("review guest exec: %w", err)
 	}
