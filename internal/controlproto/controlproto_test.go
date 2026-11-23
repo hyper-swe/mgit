@@ -85,7 +85,7 @@ func TestControlProto_TruncatedFailsClosed(t *testing.T) {
 // refused.
 func TestControlProto_UnknownKindRejected(t *testing.T) {
 	var buf bytes.Buffer
-	require.NoError(t, writeFrame(&buf, 'Z', []byte("{}")))
+	require.NoError(t, writeFrame(&buf, '9', []byte("{}")))
 	_, err := ReadRequest(&buf)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown request kind")
