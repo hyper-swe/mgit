@@ -1,0 +1,121 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+
+	"github.com/hyper-swe/mgit/internal/model"
+)
+
+// credDir is where a review credential is placed: a tmpfs the guest mounts at
+// boot, so the file never reaches a disk image.
+const credDir = "/run/review-cred"
+
+var credName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// credDest checks that dest is one plain name directly inside root.
+func credDest(root, dest string) error {
+	if !filepath.IsAbs(dest) || filepath.Clean(dest) != dest || filepath.Dir(dest) != root || !credName.MatchString(filepath.Base(dest)) {
+		return fmt.Errorf("the destination must be one plain name inside %s", root)
+	}
+	return nil
+}
+
+// credInstall reads a credential from stdin and writes it to a root-owned file
+// that the reviewer's group can read. It prints nothing of the credential; an
+// empty stdin is a refusal, so a guest that dropped stdin cannot install an
+// empty slot. It never replaces an existing slot.
+func credInstall(root string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("cred-install", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dest := fs.String("dest", "", "file to create")
+	gid := fs.Int("gid", 0, "group allowed to read it")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if err := credDest(root, *dest); err != nil {
+		fmt.Fprintln(stderr, "cred-install:", err)
+		return 2
+	}
+	if *gid <= 0 {
+		fmt.Fprintln(stderr, "cred-install: the group must be an unprivileged gid")
+		return 2
+	}
+	b, err := io.ReadAll(io.LimitReader(stdin, model.MaxStdinBytes+1))
+	defer func() {
+		for i := range b {
+			b[i] = 0
+		}
+	}()
+	if err != nil || len(b) == 0 || len(b) > model.MaxStdinBytes {
+		fmt.Fprintln(stderr, "cred-install: stdin must hold a credential of 1 to", model.MaxStdinBytes, "bytes")
+		return 2
+	}
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		fmt.Fprintln(stderr, "cred-install: cannot prepare the credential directory")
+		return 1
+	}
+	_ = os.Chown(root, -1, *gid)
+	f, err := os.OpenFile(*dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o440) //nolint:gosec // dest is checked by credDest
+	if err != nil {
+		fmt.Fprintln(stderr, "cred-install: the slot cannot be created (it may already exist)")
+		return 1
+	}
+	fail := func() int {
+		_ = f.Close()
+		_ = os.Remove(*dest)
+		fmt.Fprintln(stderr, "cred-install: the slot could not be written")
+		return 1
+	}
+	if err := f.Chmod(0o440); err != nil {
+		return fail()
+	}
+	if err := f.Chown(-1, *gid); err != nil {
+		return fail()
+	}
+	if _, err := f.Write(b); err != nil {
+		return fail()
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(*dest)
+		return 1
+	}
+	return 0
+}
+
+// credRemove overwrites a slot with zeros and unlinks it. An absent slot is
+// not an error, so a release can run twice.
+func credRemove(root string, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("cred-remove", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dest := fs.String("dest", "", "file to remove")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if err := credDest(root, *dest); err != nil {
+		fmt.Fprintln(stderr, "cred-remove:", err)
+		return 2
+	}
+	f, err := os.OpenFile(*dest, os.O_WRONLY, 0) //nolint:gosec // dest is checked by credDest
+	if os.IsNotExist(err) {
+		return 0
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "cred-remove: the slot cannot be opened")
+		return 1
+	}
+	if fi, serr := f.Stat(); serr == nil {
+		_, _ = f.Write(make([]byte, fi.Size()))
+		_ = f.Sync()
+	}
+	_ = f.Close()
+	if err := os.Remove(*dest); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintln(stderr, "cred-remove: the slot cannot be removed")
+		return 1
+	}
+	return 0
+}

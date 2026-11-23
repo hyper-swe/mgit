@@ -130,7 +130,7 @@ type ResultFrame struct {
 
 // WriteRequest writes one length-prefixed JSON ExecRequest (host -> guest).
 func WriteRequest(w io.Writer, req model.ExecRequest) error {
-	payload, err := json.Marshal(req)
+	payload, err := json.Marshal(wireRequest{ExecRequest: req, Stdin: []byte(req.Stdin)})
 	if err != nil {
 		return fmt.Errorf("execwire: encode request: %w", err)
 	}
@@ -160,11 +160,24 @@ func ReadRequest(r io.Reader) (model.ExecRequest, error) {
 	if _, err := io.ReadFull(r, payload); err != nil {
 		return model.ExecRequest{}, fmt.Errorf("execwire: read request: %w", err)
 	}
-	var req model.ExecRequest
-	if err := json.Unmarshal(payload, &req); err != nil {
+	var wr wireRequest
+	if err := json.Unmarshal(payload, &wr); err != nil {
 		return model.ExecRequest{}, fmt.Errorf("execwire: parse request: %w", err)
 	}
-	return req, nil
+	wr.ExecRequest.Stdin = model.Secret(wr.Stdin)
+	if len(wr.Stdin) > model.MaxStdinBytes {
+		return model.ExecRequest{}, fmt.Errorf("execwire: stdin %d bytes exceeds %d cap", len(wr.Stdin), model.MaxStdinBytes)
+	}
+	return wr.ExecRequest, nil
+}
+
+// wireRequest is the host-to-guest request: the ExecRequest as it always was,
+// plus the child's stdin. The field exists only here, so the control protocol
+// between a client and the daemon cannot carry it. A guest that predates it
+// ignores the key, and a verb that needs stdin refuses an empty one.
+type wireRequest struct {
+	model.ExecRequest
+	Stdin []byte `json:"stdin,omitempty"`
 }
 
 // WriteFrame writes one typed, length-prefixed frame (guest -> host).
