@@ -68,8 +68,9 @@ implements it must match it, and a difference is a change to this page.
     it is reported as an ordinary failure (exit 1, no envelope), never as a refusal, and the caller must not assume
     that nothing ran. Because the nonce is consumed durably before the guest is launched, a retry of the same lease is
     refused with NONCE_REPLAYED and never launches the review again; this verb stores no result, so a caller that lost
-    one prepares a new lease. A guest left over by a daemon that stopped mid-run is removed by the daemon's ordinary
-    reaping of sandboxes at start, not by this verb.
+    one prepares a new lease. A guest does not outlive a daemon that stops mid-run: its virtual machine monitor dies
+    with the daemon (a parent-death signal), and a graceful stop removes the guests first. The per-guest files
+    the backend keeps are the backend's own to clear, not this verb's.
 12. What a review needs beyond the sealed bundle (the binding map, a network policy, a credential) is installed behind
     one interface, `reviewsvc.Bindings`, called once per run after the guest is sealed and before the reviewer starts,
     and released whatever happens. The default installs nothing and grants nothing: a mapping that names a credential
