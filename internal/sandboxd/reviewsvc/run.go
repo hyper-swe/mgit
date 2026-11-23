@@ -133,10 +133,15 @@ func (s *Service) RunReview(ctx context.Context, a controlproto.ReviewRunArgs) (
 			return rn.Manager.Exec(c, g.ID, r)
 		},
 	})
+	// The release is registered before the error is looked at: the Bindings
+	// contract hands one back on every path, a refusal included, so whatever
+	// Attach installed before it refused is taken down too.
+	if release != nil {
+		defer func() { _ = release(context.WithoutCancel(ctx)) }()
+	}
 	if err != nil {
 		return nil, asRefusal(err, "the review's bindings could not be installed")
 	}
-	defer func() { _ = release(context.WithoutCancel(ctx)) }()
 
 	began := s.now()
 	res, err := g.Run(ctx, reviewguest.Entry{

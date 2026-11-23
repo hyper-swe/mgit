@@ -17,7 +17,7 @@ import (
 // read as a refusal.
 const (
 	reviewExitRefused = 70 // refused before the reviewer started
-	reviewExitStopped = 71 // the reviewer started and was stopped (time or output limit)
+	reviewExitStopped = 71 // the reviewer started or may have started, and the run did not complete
 )
 
 // reviewRunner is the one verb `review run` needs, asserted on the connected
@@ -40,7 +40,8 @@ func sandboxReviewRunCmd(connect connectFunc) *cobra.Command {
 			"reviewer's (70 and 71 from a reviewer are reported as 1). With --format json one mgit.review-result/v1\n" +
 			"object is printed and the exit status is 0 whenever the reviewer ran to its end.\n\n" +
 			"A refusal prints one mgit.review-error/v1 envelope on standard error, prints nothing on standard\n" +
-			"output, and exits 70 when the reviewer did not start or 71 when it started and was stopped.",
+			"output, and exits 70 when the reviewer certainly did not start, or 71 when the reviewer started or may\n" +
+			"have started (the run did not complete; treat the reviewer as having run).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true // an argument problem was caught above; what follows is not a usage error
