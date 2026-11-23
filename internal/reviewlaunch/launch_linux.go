@@ -143,11 +143,7 @@ func Run(cfg Config) (int, error) {
 		_, _ = parentSock.Write([]byte{1})
 	}
 	waitErr := cmd.Wait()
-	close(stageGone)
-	if recvErr == nil {
-		<-supDone
-		_ = syscall.Close(listener)
-	}
+	endSupervision(stageGone, supDone, listener, func(fd int) { _ = syscall.Close(fd) })
 	status, _ := io.ReadAll(statusR)
 	if len(status) > 0 {
 		var r RefusalError
@@ -243,6 +239,18 @@ func supervise(fd int, d *ExecDecider, done <-chan struct{}) {
 		}
 		_, _, _ = syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), ioctlNotifSend, uintptr(unsafe.Pointer(&resp[0]))) //nolint:gosec // G103: kernel ABI structs are passed by pointer
 	}
+}
+
+// endSupervision tells the supervisor the stage has been reaped, waits for it to
+// finish, and only then closes the notification descriptor. With no supervisor
+// (supDone nil) it only raises the signal.
+func endSupervision(stageGone chan struct{}, supDone <-chan struct{}, listener int, closeFD func(int)) {
+	close(stageGone)
+	if supDone == nil {
+		return
+	}
+	<-supDone
+	closeFD(listener)
 }
 
 // MaybeStage runs the launcher's stage when this process was started as one,

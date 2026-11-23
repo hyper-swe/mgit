@@ -19,6 +19,13 @@ import (
 // and because it owns none of it, it cannot change a mode or an owner back.
 // It runs as root, before the reviewer starts. Refs: FEAT-3.347.1, MGIT-333
 func reviewSeal(args []string, stderr io.Writer) int {
+	return reviewSealWith(args, stderr, os.Chown, ownedByRootWithGroup)
+}
+
+// reviewSealWith is reviewSeal with the ownership change and the on-disk owner
+// check injected, so the rule that a seal is checked after it is made is testable
+// by a user who cannot change owners.
+func reviewSealWith(args []string, stderr io.Writer, chown func(path string, uid, gid int) error, owned func(path string, gid int) error) int {
 	fs := flag.NewFlagSet("review-seal", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	gid := fs.Int("gid", 0, "the reviewer's group id (above zero)")
@@ -29,13 +36,13 @@ func reviewSeal(args []string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "review-seal: --gid N (above zero) and one lease directory are required")
 		return 2
 	}
-	if err := sealLease(fs.Arg(0), *gid, os.Chown); err != nil {
+	if err := sealLease(fs.Arg(0), *gid, chown); err != nil {
 		fmt.Fprintln(stderr, "review-seal:", err)
 		return 1
 	}
 	// Look again at what is on disk: a seal that did not take is a failure,
 	// never a lease the reviewer happens to own.
-	if err := verifySealed(fs.Arg(0), *gid, ownedByRootWithGroup); err != nil {
+	if err := verifySealed(fs.Arg(0), *gid, owned); err != nil {
 		fmt.Fprintln(stderr, "review-seal:", err)
 		return 1
 	}
@@ -82,9 +89,12 @@ func sealLease(dir string, gid int, chown func(path string, uid, gid int) error)
 	return os.Chmod(dir, 0o750) //nolint:gosec // group may enter and read; nobody but root may write
 }
 
-// verifySealed checks the owner of the directory and of every file in it.
+// verifySealed checks the owner and the mode of the directory and of every file in it.
 func verifySealed(dir string, gid int, owned func(path string, gid int) error) error {
 	if err := owned(dir, gid); err != nil {
+		return err
+	}
+	if err := hasMode(dir, 0o750); err != nil {
 		return err
 	}
 	ents, err := os.ReadDir(dir)
@@ -95,16 +105,36 @@ func verifySealed(dir string, gid int, owned func(path string, gid int) error) e
 		if isLostAndFound(dir, e) {
 			continue
 		}
-		if err := owned(filepath.Join(dir, e.Name()), gid); err != nil {
+		p := filepath.Join(dir, e.Name())
+		if err := owned(p, gid); err != nil {
+			return err
+		}
+		if err := hasMode(p, 0o440); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// hasMode fails unless path has exactly the permission bits a seal sets.
+func hasMode(path string, want os.FileMode) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if fi.Mode().Perm() != want {
+		return fmt.Errorf("%s has mode %04o, the seal sets %04o", filepath.Base(path), fi.Mode().Perm(), want)
+	}
+	return nil
+}
+
+// lostFoundRootOwned says whether a lost+found is owned by uid 0. It is a
+// variable so the rule can be tested by a user who cannot make a root-owned one.
+var lostFoundRootOwned = isRootOwned
+
 // isLostAndFound reports whether e is the directory a filesystem keeps at its
 // root: named exactly lost+found, a real directory (not a link), empty, and
-// mode 0700. A volume delivered as an image has one; it is the filesystem's and
+// mode 0700, owned by root. A volume delivered as an image has one; it is the filesystem's and
 // stays root-owned 0700. Anything else by that name is not it.
 func isLostAndFound(dir string, e os.DirEntry) bool {
 	if e.Name() != "lost+found" {
@@ -112,7 +142,7 @@ func isLostAndFound(dir string, e os.DirEntry) bool {
 	}
 	p := filepath.Join(dir, e.Name())
 	fi, err := os.Lstat(p)
-	if err != nil || fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() || fi.Mode().Perm() != 0o700 {
+	if err != nil || fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() || fi.Mode().Perm() != 0o700 || !lostFoundRootOwned(p) {
 		return false
 	}
 	inside, err := os.ReadDir(p)
