@@ -85,7 +85,10 @@ const (
 	// 7 adds the review-prepare verb (KindReviewPrepare, a ReviewPrepare
 	// field on request and response) that checks a review request and signs
 	// what would run (MGIT-333).
-	ProtocolVersion = 7
+	//
+	// 8 adds the review-run verb (KindReviewRun, a ReviewRun field on request
+	// and response) that runs a prepared review (MGIT-333).
+	ProtocolVersion = 8
 
 	// LegacyProtocol names every mgit built before the handshake existed
 	// (0.5.x and earlier). Such a peer never states a version, so this number

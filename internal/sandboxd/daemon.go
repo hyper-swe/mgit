@@ -79,6 +79,9 @@ type Config struct {
 	// ReviewPreparer serves the review-prepare verb (MGIT-333). When nil the
 	// verb reports itself unserved.
 	ReviewPreparer ReviewPreparer
+	// ReviewRunner serves the review-run verb (MGIT-333). When nil the verb
+	// answers that no review guest backend is wired, and starts nothing.
+	ReviewRunner ReviewRunner
 	// HeartbeatInterval is how often the daemon writes a liveness beat on an
 	// outstanding exec stream. Zero selects execwire.HeartbeatInterval — the
 	// cadence the client judges silence against — and it is overridable only

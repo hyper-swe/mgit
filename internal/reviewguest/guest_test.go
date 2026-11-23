@@ -27,6 +27,7 @@ type fakeMgr struct {
 	resFn    func(model.ExecRequest) *model.ExecResult
 	execErr  error
 	err      error
+	runDelay time.Duration // the reviewer's run takes this long, whatever its deadline (as a backend that ignores it would)
 }
 
 func (f *fakeMgr) Launch(_ context.Context, o model.SandboxLaunchOptions) (*model.SandboxInfo, error) {
@@ -42,6 +43,9 @@ func (f *fakeMgr) Exec(ctx context.Context, _ string, r model.ExecRequest) (*mod
 	dl, has := ctx.Deadline()
 	f.bounded = append(f.bounded, has)
 	f.limits = append(f.limits, dl)
+	if f.runDelay > 0 && len(r.Env) > 0 {
+		time.Sleep(f.runDelay)
+	}
 	if f.execErr != nil {
 		return nil, f.execErr
 	}
@@ -174,7 +178,8 @@ func TestProvision_SealsTheLeaseInTheGuestForTheReviewerGroup(t *testing.T) {
 		t.Fatalf("execs %d", len(m.execs))
 	}
 	r := m.execs[0]
-	want := []string{"/sbin/mgit-guest", "review-seal", "--gid", "65534", s.Lease.Dir()}
+	att := s.Lease.Attestation()
+	want := []string{"/sbin/mgit-guest", "review-seal", "--gid", "65534", "--evidence-sha256", att.BundleSHA256, s.Lease.Dir()}
 	if !reflect.DeepEqual(r.Command, want) || !r.AsRoot || len(r.Env) != 0 || r.Timeout <= 0 {
 		t.Fatalf("seal exec %+v", r)
 	}
@@ -362,10 +367,9 @@ func TestClose_RemovesTheSandboxForced(t *testing.T) {
 	}
 }
 
-// The host's own deadline sits just past the limit the guest enforces: late
-// enough that the guest's own timeout reports first, soon enough that a silent
-// guest cannot hold the caller for more than a short grace.
-func TestRun_TheHostDeadlineSitsJustPastTheGuestLimit(t *testing.T) {
+// The run is stopped at its limit, not after it: the deadline the exec is given
+// is the limit itself, so a reviewer that runs past it is cut off there.
+func TestRun_TheExecDeadlineIsTheLimitItself(t *testing.T) {
 	m := &fakeMgr{backend: model.BackendKVM}
 	g := provisioned(t, m)
 	for _, limit := range []time.Duration{7 * time.Second, 0} {
@@ -378,10 +382,39 @@ func TestRun_TheHostDeadlineSitsJustPastTheGuestLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := m.limits[len(m.limits)-1].Sub(start)
-		// Fixed bounds, not derived from the constant under test: a grace of zero
-		// (or an enormous one) must fail here whatever hostGrace says.
-		if got < want+5*time.Second || got > want+30*time.Second {
-			t.Fatalf("limit %v: the host deadline is %v after the start, want between 5s and 30s past %v", limit, got, want)
+		// Fixed bounds, not derived from any constant: any grace past the limit fails.
+		if got < want-time.Second || got > want+time.Second {
+			t.Fatalf("limit %v: the exec deadline is %v after the start, want the limit itself", limit, got)
 		}
+	}
+}
+
+// A backend that ignores the deadline and answers late does not turn an overrun
+// into a success: a result that arrives after the limit is a timeout.
+func TestRun_AResultThatArrivesAfterTheLimitIsATimeout(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM, runDelay: 300 * time.Millisecond,
+		runRes: &model.ExecResult{ExitCode: 0, Stdout: []byte("late")}}
+	g := provisioned(t, m)
+	res, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a", Timeout: 50 * time.Millisecond})
+	if !errors.Is(err, context.DeadlineExceeded) || res != nil {
+		t.Fatalf("a run past its limit came back as res=%+v err=%v, want a timeout and no result", res, err)
+	}
+	// Inside the limit, the same late-ish answer is the reviewer's own.
+	m2 := &fakeMgr{backend: model.BackendKVM, runDelay: 20 * time.Millisecond,
+		runRes: &model.ExecResult{ExitCode: 0, Stdout: []byte("in time")}}
+	g2 := provisioned(t, m2)
+	if res, err := g2.Run(context.Background(), Entry{SHA256: sha, Path: "/a", Timeout: 5 * time.Second}); err != nil || string(res.Stdout) != "in time" {
+		t.Fatalf("a run inside its limit: res=%+v err=%v", res, err)
+	}
+}
+
+// A caller that goes away is not the run's own timeout: the caller's error comes back.
+func TestRun_ACallerCancelIsNotReportedAsTheRunsTimeout(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM, runDelay: 100 * time.Millisecond, runRes: &model.ExecResult{}}
+	g := provisioned(t, m)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := g.Run(ctx, Entry{SHA256: sha, Path: "/a", Timeout: 50 * time.Millisecond}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err %v, want the caller's cancel", err)
 	}
 }

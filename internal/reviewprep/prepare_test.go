@@ -407,3 +407,60 @@ func TestAttestation_DefaultReportsWritesAsDenied(t *testing.T) {
 		t.Fatalf("a client must accept it: %v", err)
 	}
 }
+
+func TestRunRefusalCodes_AreDistinctAndNamed(t *testing.T) {
+	got := map[string]string{
+		"NONCE_REPLAYED": CodeNonceReplayed, "RUN_TIMEOUT": CodeRunTimeout, "OUTPUT_LIMIT": CodeOutputLimit,
+	}
+	seen := map[string]bool{}
+	for want, c := range got {
+		if c != want || seen[c] {
+			t.Fatalf("code %q, want %q (or a duplicate)", c, want)
+		}
+		seen[c] = true
+	}
+}
+
+// What is about to run must be what the operator's mapping says, checked again
+// against the attestation at run time rather than trusted from when it was made.
+func TestCheckMapping_AcceptsTheMappingTheAttestationWasMadeFrom(t *testing.T) {
+	r, m, b, s := fixture(t)
+	att, err := Prepare(r, m, b, s, fixedNow, time.Minute, "lease-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckMapping(att, m); err != nil {
+		t.Fatalf("matching mapping refused: %v", err)
+	}
+}
+
+func TestCheckMapping_RefusesAnyFieldThatDiffers(t *testing.T) {
+	r, m, b, s := fixture(t)
+	att, err := Prepare(r, m, b, s, fixedNow, time.Minute, "lease-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]struct {
+		mutate func(*Mapping)
+		code   string
+	}{
+		"id":         {func(x *Mapping) { x.ID = "other" }, CodeMappingMismatch},
+		"binding":    {func(x *Mapping) { x.BindingSHA256 = strings.Repeat("c", 64) }, CodeMappingMismatch},
+		"image":      {func(x *Mapping) { x.ImageDigest = "sha256:" + strings.Repeat("2", 64) }, CodeImageMismatch},
+		"entrypoint": {func(x *Mapping) { x.EntrypointSHA256 = strings.Repeat("f", 64) }, CodeMappingMismatch},
+		"argv":       {func(x *Mapping) { x.Argv = []string{"--other"} }, CodeMappingMismatch},
+		"egress":     {func(x *Mapping) { x.EgressPolicyID = "allow-docs" }, CodeMappingMismatch},
+		"credential": {func(x *Mapping) { x.CredentialRef = "cred-1" }, CodeMappingMismatch},
+	}
+	for name, c := range cases {
+		mm := m
+		c.mutate(&mm)
+		err := CheckMapping(att, mm)
+		if got := codeOf(t, err); got != c.code {
+			t.Fatalf("%s: code %s, want %s", name, got, c.code)
+		}
+	}
+	if err := CheckMapping(nil, m); err == nil {
+		t.Fatal("a nil attestation was accepted")
+	}
+}

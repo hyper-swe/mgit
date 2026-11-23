@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -259,8 +262,9 @@ func TestSealLease_AFailedChownIsAFailure(t *testing.T) {
 	}
 }
 
-func TestReviewSeal_NeedsAGidAndADirectory(t *testing.T) {
-	for _, args := range [][]string{{}, {"/x"}, {"--gid", "5"}, {"--gid", "0", "/x"}} {
+func TestReviewSeal_NeedsAGidADigestAndADirectory(t *testing.T) {
+	dig := evidenceDigest("x")
+	for _, args := range [][]string{{}, {"/x"}, {"--gid", "5"}, {"--gid", "0", "/x"}, {"--gid", "5", "/x"}, {"--gid", "5", "--evidence-sha256", "nothex", "/x"}, {"--gid", "5", "--evidence-sha256", dig}} {
 		var e bytes.Buffer
 		if code := reviewSeal(args, &e); code != 2 {
 			t.Fatalf("%v: exit %d", args, code)
@@ -365,12 +369,12 @@ func TestReviewSeal_FailsWhenTheOnDiskCheckFails(t *testing.T) {
 	chown := func(string, int, int) error { return nil }
 	var e bytes.Buffer
 	notRoot := func(string, int) error { return errors.New("still the reviewer's") }
-	if code := reviewSealWith([]string{"--gid", "5", d}, &e, chown, notRoot); code != 1 {
+	if code := reviewSealWith(sealArgs(d, 5), &e, chown, notRoot); code != 1 {
 		t.Fatalf("exit %d with a seal that did not take: %s", code, e.String())
 	}
 	d2 := lease(t)
 	var e2 bytes.Buffer
-	if code := reviewSealWith([]string{"--gid", "5", d2}, &e2, chown, func(string, int) error { return nil }); code != 0 {
+	if code := reviewSealWith(sealArgs(d2, 5), &e2, chown, func(string, int) error { return nil }); code != 0 {
 		t.Fatalf("exit %d for a seal that took: %s", code, e2.String())
 	}
 }
@@ -396,5 +400,54 @@ func TestSealLease_TakesNineEntriesAndRefusesTen(t *testing.T) {
 	}
 	if err := sealLease(mk(10), 5, noop); err == nil {
 		t.Fatal("ten entries accepted")
+	}
+}
+
+func evidenceDigest(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+// sealArgs is the command line the host gives the verb for a lease whose
+// evidence is the "x" that lease() writes.
+func sealArgs(dir string, gid int) []string {
+	return []string{"--gid", strconv.Itoa(gid), "--evidence-sha256", evidenceDigest("x"), dir}
+}
+
+// The evidence the guest was built with must be the evidence the attestation
+// names: a lease changed between the host's check and the guest's image is
+// refused here, before anything is handed to the reviewer.
+func TestReviewSeal_RefusesEvidenceThatIsNotTheAttestedOne(t *testing.T) {
+	var calls int
+	chown := func(string, int, int) error { calls++; return nil }
+	ok := func(string, int) error { return nil }
+
+	d := lease(t)
+	var e bytes.Buffer
+	args := []string{"--gid", "5", "--evidence-sha256", evidenceDigest("something else"), d}
+	if code := reviewSealWith(args, &e, chown, ok); code != 1 || calls != 0 {
+		t.Fatalf("a different digest: exit %d, %d chowns: %s", code, calls, e.String())
+	}
+	d2 := lease(t)
+	ev2 := filepath.Join(d2, "evidence.json")
+	if err := os.Chmod(ev2, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ev2, []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := reviewSealWith(sealArgs(d2, 5), &e, chown, ok); code != 1 || calls != 0 {
+		t.Fatalf("changed evidence: exit %d, %d chowns", code, calls)
+	}
+	d3 := lease(t)
+	if err := os.Remove(filepath.Join(d3, "evidence.json")); err != nil {
+		t.Fatal(err)
+	}
+	if code := reviewSealWith(sealArgs(d3, 5), &e, chown, ok); code != 1 || calls != 0 {
+		t.Fatalf("no evidence: exit %d, %d chowns", code, calls)
+	}
+	d4 := lease(t)
+	if code := reviewSealWith(sealArgs(d4, 5), &e, chown, ok); code != 0 || calls == 0 {
+		t.Fatalf("the attested evidence was refused: exit %d: %s", code, e.String())
 	}
 }

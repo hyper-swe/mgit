@@ -201,6 +201,13 @@ func remoteExecFailure(rf execwire.ResultFrame) error {
 // the caller needs — sync, whose refusal names the conflicting paths — uses
 // this and maps the response-level error itself. Refs: MGIT-76
 func (c *Client) roundTripRaw(ctx context.Context, req *controlproto.Request) (*controlproto.Response, error) {
+	return c.roundTripBudget(ctx, req, c.requestTimeout)
+}
+
+// roundTripBudget is roundTripRaw with the response budget given. A verb that
+// legitimately takes long (a review run) passes its own; every other verb gets
+// the everyday request timeout.
+func (c *Client) roundTripBudget(ctx context.Context, req *controlproto.Request, budget time.Duration) (*controlproto.Response, error) {
 	conn, err := c.dialGreeted(ctx)
 	if err != nil {
 		return nil, err
@@ -215,7 +222,7 @@ func (c *Client) roundTripRaw(ctx context.Context, req *controlproto.Request) (*
 	// Arm the response budget HERE, from the instant the request went out.
 	// Armed at dial instead, it would already have been spent by the greeting
 	// and by anything else that happened first. Refs: MGIT-122
-	_ = conn.SetReadDeadline(c.clock().Add(c.requestTimeout))
+	_ = conn.SetReadDeadline(c.clock().Add(budget))
 	resp, err := controlproto.ReadResponse(conn)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: read response: %w", err)

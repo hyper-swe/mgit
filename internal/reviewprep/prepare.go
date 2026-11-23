@@ -46,6 +46,10 @@ const (
 	CodeBundleInvalid      = "BUNDLE_INVALID"
 	CodePolicyUnenforcable = "POLICY_UNENFORCEABLE"
 	CodeAttestationInvalid = "ATTESTATION_INVALID"
+	// The three refusals only a run can make (the run verb's contract).
+	CodeNonceReplayed = "NONCE_REPLAYED"
+	CodeRunTimeout    = "RUN_TIMEOUT"
+	CodeOutputLimit   = "OUTPUT_LIMIT"
 )
 
 // Error is the refusal envelope. Detail is neutral: it never carries bundle
@@ -266,6 +270,29 @@ func Prepare(r Request, m Mapping, bundle []byte, s *Signer, now time.Time, ttl 
 	}
 	a.Signature = ed25519.Sign(s.priv, payload(a))
 	return a, nil
+}
+
+// CheckMapping fails unless the operator's mapping is the one the attestation
+// was made from: the same id, binding, image, entrypoint digest, argument list,
+// network policy id and credential reference. The run uses it to confirm that
+// what it is about to start is what was attested, whatever the mapping file
+// says now. It does not check the signature; the caller has verified that.
+func CheckMapping(a *Attestation, m Mapping) error {
+	if a == nil {
+		return refuse(CodeAttestationInvalid, "no attestation")
+	}
+	if a.ImageDigest != m.ImageDigest {
+		return refuse(CodeImageMismatch, "the mapping's image is not the attested one")
+	}
+	ad, err := argvDigest(m.Argv)
+	if err != nil {
+		return refuse(CodeMappingMismatch, "argv cannot be encoded")
+	}
+	if a.MappingID != m.ID || a.BindingSHA256 != m.BindingSHA256 || a.EntrypointSHA256 != m.EntrypointSHA256 ||
+		a.ArgvSHA256 != ad || a.EgressPolicyID != m.EgressPolicyID || a.CredentialRef != m.CredentialRef {
+		return refuse(CodeMappingMismatch, "the mapping is not the attested one")
+	}
+	return nil
 }
 
 // Verify is the client side: every requested identity, the signature, the

@@ -1,7 +1,6 @@
 package reviewguest
 
 import (
-	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,22 +11,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyper-swe/mgit/internal/controlproto"
 	"github.com/hyper-swe/mgit/internal/reviewprep"
-	"github.com/hyper-swe/mgit/internal/sandboxd/attest"
-	"github.com/hyper-swe/mgit/internal/sandboxd/reviewsvc"
 )
-
-type noAudit struct{}
-
-func (noAudit) RecordKeyChange(context.Context, string) error { return nil }
 
 var fixedNow = time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 
 const imageDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 
-// fixture seals a real lease through the daemon's own review service, so what
-// is opened here is exactly what production writes.
+// fixture seals a lease the way the daemon's review service does (a private
+// directory under review/leases holding the evidence and the signed
+// attestation, both read-only). The package cannot use the real service here
+// because the service imports this package; the external test in
+// lease_service_test.go opens a lease the real service sealed, which pins the
+// two layouts together.
 type fixture struct {
 	root, id string
 	pub      ed25519.PublicKey
@@ -36,56 +32,49 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	old := reviewprep.WriteDenialEnforced
-	reviewprep.WriteDenialEnforced = true
-	t.Cleanup(func() { reviewprep.WriteDenialEnforced = old })
-
 	root := t.TempDir()
-	if err := attest.GenerateKey(context.Background(), root, noAudit{}); err != nil {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sg, err := reviewprep.NewSigner("mgit-sandboxd", priv)
+	if err != nil {
 		t.Fatal(err)
 	}
 	m := reviewprep.Mapping{
 		Schema: reviewprep.MapSchema, ID: "pi-v1", BindingSHA256: strings.Repeat("b", 64), ImageDigest: imageDigest,
 		GuestEntrypoint: "/opt/r/bin/r", EntrypointSHA256: strings.Repeat("e", 64), Argv: []string{"--json"}, EgressPolicyID: "none",
 	}
-	mp := filepath.Join(root, "review", "maps", "pi-v1.json")
-	if err := os.MkdirAll(filepath.Dir(mp), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := json.Marshal(m)
-	if err := os.WriteFile(mp, b, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	ev := []byte(`{"citations":[{"n":1}]}`)
-	bundle := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bundle, "evidence.json"), ev, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	h := sha256.Sum256(ev)
-	svc, err := reviewsvc.New(root, func() time.Time { return fixedNow })
-	if err != nil {
-		t.Fatal(err)
-	}
-	args := controlproto.ReviewPrepareArgs{
+	req := reviewprep.Request{
 		Profile: reviewprep.Profile, Image: "reviewer@" + imageDigest, MappingID: "pi-v1", BindingDigest: strings.Repeat("b", 64),
-		BundleDir: bundle, BundleDigest: hex.EncodeToString(h[:]), Nonce: "nonce-0123456789abcdef",
+		BundleDigest: hex.EncodeToString(h[:]), Nonce: "nonce-0123456789abcdef",
 	}
-	raw, err := svc.PrepareReview(context.Background(), args)
+	id := strings.Repeat("c", 32)
+	att, err := reviewprep.Prepare(req, m, ev, sg, fixedNow, 5*time.Minute, id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var att reviewprep.Attestation
-	if err := json.Unmarshal(raw, &att); err != nil {
-		t.Fatal(err)
-	}
-	priv, err := attest.LoadSigningKey(root)
+	raw, err := json.Marshal(att)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &fixture{root: root, id: att.Lease, pub: priv.Public().(ed25519.PublicKey), req: reviewprep.Request{
-		Profile: args.Profile, Image: args.Image, MappingID: args.MappingID, BindingDigest: args.BindingDigest,
-		BundleDigest: args.BundleDigest, Nonce: args.Nonce,
-	}}
+	dir := filepath.Join(root, "review", "leases", id)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{filepath.Join(root, "review"), filepath.Join(root, "review", "leases"), dir} {
+		if err := os.Chmod(d, 0o700); err != nil { //nolint:gosec // a lease directory is 0700, as the service makes it
+			t.Fatal(err)
+		}
+	}
+	for name, data := range map[string][]byte{"evidence.json": ev, "attestation.json": raw} {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &fixture{root: root, id: id, pub: pub, req: req}
 }
 
 func (f *fixture) dir() string { return filepath.Join(f.root, "review", "leases", f.id) }
@@ -147,7 +136,7 @@ func TestOpenLease_RefusesAnythingThatIsNotThatSealedLease(t *testing.T) {
 			return f.openAt(fixedNow)
 		}, reviewprep.CodeBundleInvalid},
 		{"lease is a link", func(t *testing.T, f *fixture) (*Lease, error) {
-			other := strings.Repeat("c", 32)
+			other := strings.Repeat("e", 32)
 			mustDo(t, os.Symlink(f.dir(), filepath.Join(f.root, "review", "leases", other)))
 			return OpenLease(f.root, other, f.req, f.pub, fixedNow)
 		}, reviewprep.CodeBundleInvalid},
