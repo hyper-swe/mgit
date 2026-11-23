@@ -429,7 +429,11 @@ func TestReviewSeal_RefusesEvidenceThatIsNotTheAttestedOne(t *testing.T) {
 		t.Fatalf("a different digest: exit %d, %d chowns: %s", code, calls, e.String())
 	}
 	d2 := lease(t)
-	if err := os.WriteFile(filepath.Join(d2, "evidence.json"), []byte("tampered"), 0o600); err != nil {
+	ev2 := filepath.Join(d2, "evidence.json")
+	if err := os.Chmod(ev2, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ev2, []byte("tampered"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if code := reviewSealWith(sealArgs(d2, 5), &e, chown, ok); code != 1 || calls != 0 {
