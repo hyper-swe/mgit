@@ -132,6 +132,10 @@ func TestE2E_ReviewGuest_LaunchTimeImage(t *testing.T) {
 	}
 	require.NoError(t, err)
 	assert.NotZero(t, res.ExitCode, "the reviewer's write must fail")
+	// The failure is the denial itself (EPERM from the filter), not some other
+	// reason the program could not write.
+	assert.Contains(t, string(res.Stderr), "Operation not permitted", "the write must be refused with EPERM")
+	assert.NotContains(t, string(res.Stderr), "No such file", "the write must not fail for another reason")
 
 	ls := exec("/bin/busybox", "ls", leaseDir)
 	require.Zero(t, ls.ExitCode, string(ls.Stderr))
