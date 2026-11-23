@@ -38,6 +38,9 @@ const guestBinary = "/sbin/mgit-guest"
 // launcherRefusalExit is the status review-exec exits with when it refuses.
 const launcherRefusalExit = 70
 
+// sealLimit bounds the in-guest seal step.
+const sealLimit = 30 * time.Second
+
 // MaxRun is the longest a review may run, and the limit when none is given.
 const MaxRun = 30 * time.Minute
 
@@ -123,6 +126,16 @@ func Provision(ctx context.Context, mgr model.SandboxManager, s Spec) (*Guest, e
 		_ = mgr.Remove(ctx, info.ID, true)
 		return nil, refuse(reviewprep.CodePolicyUnenforcable,
 			fmt.Sprintf("the launched backend %q is not a launch-time image", info.Backend))
+	}
+	// Hand the lease to the reviewer's group, root-owned: the reviewer reads
+	// what it was given and owns none of it. Fail closed on any trouble.
+	seal, err := mgr.Exec(ctx, info.ID, model.ExecRequest{
+		Command: []string{guestBinary, "review-seal", "--gid", strconv.Itoa(s.GID), s.Lease.dir},
+		AsRoot:  true, Timeout: sealLimit,
+	})
+	if err != nil || seal.ExitCode != 0 {
+		_ = mgr.Remove(ctx, info.ID, true)
+		return nil, refuse(reviewprep.CodeBundleInvalid, "the lease could not be sealed in the guest")
 	}
 	return &Guest{ID: info.ID, LeaseDir: s.Lease.dir, uid: s.UID, gid: s.GID, mgr: mgr}, nil
 }

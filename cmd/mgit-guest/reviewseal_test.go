@@ -113,3 +113,28 @@ func TestReviewSeal_NeedsAGidAndADirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifySealed_FailsWhenAnythingIsStillOwnedByTheReviewer(t *testing.T) {
+	d := lease(t)
+	bad := filepath.Join(d, "evidence.json")
+	owned := func(p string, _ int) error {
+		if p == bad {
+			return errors.New("owned by the reviewer")
+		}
+		return nil
+	}
+	if err := verifySealed(d, 5, owned); err == nil {
+		t.Fatal("a file the reviewer owns passed")
+	}
+	if err := verifySealed(d, 5, func(string, int) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySealed(d, 5, func(p string, _ int) error {
+		if p == d {
+			return errors.New("dir")
+		}
+		return nil
+	}); err == nil {
+		t.Fatal("a directory the reviewer owns passed")
+	}
+}
