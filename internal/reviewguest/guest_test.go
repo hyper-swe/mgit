@@ -174,7 +174,8 @@ func TestProvision_SealsTheLeaseInTheGuestForTheReviewerGroup(t *testing.T) {
 		t.Fatalf("execs %d", len(m.execs))
 	}
 	r := m.execs[0]
-	want := []string{"/sbin/mgit-guest", "review-seal", "--gid", "65534", s.Lease.Dir()}
+	att := s.Lease.Attestation()
+	want := []string{"/sbin/mgit-guest", "review-seal", "--gid", "65534", "--evidence-sha256", att.BundleSHA256, s.Lease.Dir()}
 	if !reflect.DeepEqual(r.Command, want) || !r.AsRoot || len(r.Env) != 0 || r.Timeout <= 0 {
 		t.Fatalf("seal exec %+v", r)
 	}
