@@ -5,7 +5,7 @@ An operator installs the binding map a review is checked against, and a caller r
 ## Scenarios
 
 1. `mgit sandbox review map install --file map.json [--default]` checks the record (schema `mgit.review-map/v1`, a valid id,
-   an egress policy of `none` or one named host, a credential reference only with a named host), creates the host root,
+   an egress policy of `none` or one named host (`host:<fqdn>` opens that host on port 443 only, resolved when the review starts), a credential reference only with a named host), creates the host root,
    `review` and `review/maps` as owner-only directories, and writes `<id>.json` and `<id>.sha256` (the canonical hash) at
    mode 0600. It loads the result back and removes it if it does not load. An id that is already installed is refused and
    never overwritten. Repeating an install of exactly the same record is accepted, and with `--default` it rewrites the default pointer: that is the repair for a damaged pointer.
