@@ -29,7 +29,8 @@ import (
 // firecracker guest through the same service the daemon's run verb calls: the
 // mapped program's output comes back, the lease cannot be run twice, a program
 // that tries to write is refused by the launcher, an output over the limit is
-// refused with the reviewer marked started, and every guest is gone afterwards.
+// refused with the reviewer marked started, a reviewer past its time limit is
+// refused with RUN_TIMEOUT, and every guest is gone afterwards.
 // Refs: FEAT-3.347.1, MGIT-333
 func TestE2E_ReviewRun_ThroughTheRunService(t *testing.T) {
 	kernel, rootfs := requireE2EGuest(t)
@@ -119,6 +120,17 @@ func TestE2E_ReviewRun_ThroughTheRunService(t *testing.T) {
 	raw, err = svc.RunReview(ctx, b)
 	e := envelope(err)
 	assert.Equal(t, reviewprep.CodeOutputLimit, e.Code)
+	assert.True(t, e.ReviewerStarted)
+	assert.Nil(t, raw)
+
+	// 4. A reviewer that runs past its limit is refused with RUN_TIMEOUT, even
+	// one that would have finished a few seconds later, and is marked started.
+	install("run-slow", "sleep", "4")
+	sl := prepare("run-slow")
+	sl.MaxSeconds = 2
+	raw, err = svc.RunReview(ctx, sl)
+	e = envelope(err)
+	assert.Equal(t, reviewprep.CodeRunTimeout, e.Code)
 	assert.True(t, e.ReviewerStarted)
 	assert.Nil(t, raw)
 
