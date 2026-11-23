@@ -269,6 +269,23 @@ func TestRunReview_ATimeoutIsRefusedWithTheReviewerStartedAndTheGuestRemoved(t *
 	}
 }
 
+// The limit is enforced at the limit: a reviewer that runs past it but would
+// have finished soon after is refused with RUN_TIMEOUT, not returned as a result.
+// The fake, like a backend that ignores the deadline, answers late with exit 0.
+func TestRunReview_AReviewerThatOutrunsItsLimitIsRefusedEvenIfItFinishes(t *testing.T) {
+	r := prepared(t)
+	r.args.MaxSeconds = 1
+	r.mgr.runRes = func(model.ExecRequest) (*model.ExecResult, error) {
+		time.Sleep(2500 * time.Millisecond)
+		return &model.ExecResult{Stdout: []byte("late")}, nil
+	}
+	raw, err := r.svc.RunReview(context.Background(), r.args)
+	e := envelopeOf(t, err)
+	if e.Code != reviewprep.CodeRunTimeout || !e.ReviewerStarted || raw != nil || len(r.mgr.removed) != 1 {
+		t.Fatalf("envelope %+v raw=%q removed=%v", e, raw, r.mgr.removed)
+	}
+}
+
 func TestRunReview_TooMuchOutputIsRefusedAndNoneOfItIsReturned(t *testing.T) {
 	r := prepared(t)
 	r.args.MaxOutputBytes = 10
