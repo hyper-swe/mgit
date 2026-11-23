@@ -8,6 +8,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,6 +36,9 @@ func CanonicalHashJSON(raw []byte) (string, error) {
 	dec.UseNumber()
 	if err := dec.Decode(&v); err != nil {
 		return "", err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return "", errors.New("bytes after the record")
 	}
 	canon, err := json.Marshal(v) // map keys are emitted sorted
 	if err != nil {
@@ -71,6 +76,12 @@ func LoadMap(hostRoot, id string) (*reviewprep.Mapping, error) {
 	if !idPattern.MatchString(id) {
 		return nil, bad("mapping is not installed")
 	}
+	for _, d := range []string{filepath.Join(hostRoot, "review"), filepath.Join(hostRoot, "review", "maps")} {
+		fi, derr := os.Lstat(d)
+		if derr != nil || !fi.IsDir() || fi.Mode().Perm()&0o022 != 0 {
+			return nil, bad("mapping directory is not a plain owner-writable directory")
+		}
+	}
 	dir := filepath.Join(hostRoot, "review", "maps")
 	raw, err := readPlain(filepath.Join(dir, id+".json"), maxMapBytes)
 	if err != nil {
@@ -89,6 +100,12 @@ func LoadMap(hostRoot, id string) (*reviewprep.Mapping, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&m); err != nil || m.Schema != reviewprep.MapSchema || m.ID != id {
 		return nil, bad("mapping is not a valid map record for this id")
+	}
+	// The pinned hash covers every key the file holds; the struct decode takes
+	// keys by any letter case and the last duplicate. Accept only a record that
+	// is exactly its own decoded form, so what was pinned is what is used.
+	if again, herr := CanonicalHash(m); herr != nil || !strings.EqualFold(again, got) {
+		return nil, bad("mapping has keys the loader does not read as written")
 	}
 	if _, err := ParseEgress(m.EgressPolicyID); err != nil {
 		return nil, bad("mapping names a malformed egress policy")

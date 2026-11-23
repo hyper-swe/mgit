@@ -22,7 +22,10 @@ type Policy struct {
 }
 
 var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
-var ipLike = regexp.MustCompile(`^[0-9.]+$`)
+
+// lastLabelNumeric matches a final label a C resolver reads as part of an
+// address: decimal, octal or hex digits only, so a.123 and 0x7f.1 are refused.
+var lastLabelNumeric = regexp.MustCompile(`(^|\.)(0[xX][0-9a-fA-F]*|[0-9]+)$`)
 
 // ParseEgress reads a policy id: "" or "none", or "host:<name>" with one
 // fully qualified DNS name. No wildcard, no address, no list, no port.
@@ -31,7 +34,7 @@ func ParseEgress(id string) (Policy, error) {
 		return Policy{Kind: EgressNone}, nil
 	}
 	h, ok := strings.CutPrefix(id, "host:")
-	if !ok || !hostPattern.MatchString(h) || ipLike.MatchString(h) || h == "localhost" {
+	if !ok || !hostPattern.MatchString(h) || lastLabelNumeric.MatchString(h) {
 		return Policy{}, errors.New("egress policy must be none or host:<one fully qualified name>")
 	}
 	return Policy{Kind: EgressHost, Host: h}, nil
