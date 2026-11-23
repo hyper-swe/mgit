@@ -39,7 +39,7 @@ func printInfo(w io.Writer, info reviewbind.Info, asJSON bool) error {
 		_, err = fmt.Fprintln(w, string(raw))
 		return err
 	}
-	_, err := fmt.Fprintf(w, "id: %s\nbinding_sha256: %s\nmap_sha256: %s\negress_policy_id: %s\n", info.ID, info.BindingSHA256, info.MapSHA256, info.EgressPolicyID)
+	_, err := fmt.Fprintf(w, "id: %s\nbinding_sha256: %s\nimage_digest: %s\nmap_sha256: %s\negress_policy_id: %s\n", info.ID, info.BindingSHA256, info.ImageDigest, info.MapSHA256, info.EgressPolicyID)
 	return err
 }
 

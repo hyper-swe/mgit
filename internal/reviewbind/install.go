@@ -32,6 +32,7 @@ type Info struct {
 	Schema         string `json:"schema"`
 	ID             string `json:"id"`
 	BindingSHA256  string `json:"binding_sha256"`
+	ImageDigest    string `json:"image_digest"`
 	MapSHA256      string `json:"map_sha256"`
 	EgressPolicyID string `json:"egress_policy_id"`
 }
@@ -45,7 +46,7 @@ func infoOf(m *reviewprep.Mapping) (Info, error) {
 	if e == "" {
 		e = "none"
 	}
-	return Info{Schema: InfoSchema, ID: m.ID, BindingSHA256: m.BindingSHA256, MapSHA256: h, EgressPolicyID: e}, nil
+	return Info{Schema: InfoSchema, ID: m.ID, BindingSHA256: m.BindingSHA256, ImageDigest: m.ImageDigest, MapSHA256: h, EgressPolicyID: e}, nil
 }
 
 // ensureDir creates d as an owner-only directory, or checks that an existing
