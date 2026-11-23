@@ -22,6 +22,27 @@ func asRoot(t *testing.T) {
 	t.Cleanup(func() { lostFoundRootOwned = was })
 }
 
+// sealedModes gives a lease the modes the seal sets, so the checks that look at
+// what is on disk can be exercised without changing owners.
+func sealedModes(t *testing.T, d string) {
+	t.Helper()
+	ents, err := os.ReadDir(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		if err := os.Chmod(filepath.Join(d, e.Name()), 0o440); err != nil { //nolint:gosec // the sealed file mode
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(d, 0o750); err != nil { //nolint:gosec // the sealed directory mode
+		t.Fatal(err)
+	}
+}
+
 func lease(t *testing.T) string {
 	t.Helper()
 	d := filepath.Join(t.TempDir(), "lease")
@@ -172,6 +193,7 @@ func TestVerifySealed_SkipsOnlyTheFilesystemsLostAndFound(t *testing.T) {
 	if err := os.Mkdir(lf, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	sealedModes(t, d)
 	var seen []string
 	if err := verifySealed(d, 5, func(p string, _ int) error { seen = append(seen, p); return nil }); err != nil {
 		t.Fatal(err)
@@ -248,6 +270,7 @@ func TestReviewSeal_NeedsAGidAndADirectory(t *testing.T) {
 
 func TestVerifySealed_FailsWhenAnythingIsStillOwnedByTheReviewer(t *testing.T) {
 	d := lease(t)
+	sealedModes(t, d)
 	bad := filepath.Join(d, "evidence.json")
 	owned := func(p string, _ int) error {
 		if p == bad {
@@ -286,6 +309,7 @@ func TestLostAndFound_MustBeRootOwned(t *testing.T) {
 	if err := sealLease(d, 7, func(string, int, int) error { return nil }); err == nil {
 		t.Fatal("a lost+found that is not root's was exempted when sealing")
 	}
+	sealedModes(t, d)
 	var seen []string
 	_ = verifySealed(d, 7, func(p string, _ int) error { seen = append(seen, p); return nil })
 	found := false
