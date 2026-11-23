@@ -55,10 +55,10 @@ func sandboxReviewMapInstallCmd() *cobra.Command {
 		Use:   "install --file <map.json> [--default]",
 		Short: "Install a review binding map and pin its hash",
 		Long: "Checks a mgit.review-map/v1 record, writes it with its pinned hash under the host root's review/maps\n" +
-			"directory (owner-only, never overwriting an installed id) and verifies it loads. --default also makes it\n" +
-			"the map `show` reports when no id is given. An egress policy `host:<fqdn>` opens that host on port 443\n" +
-			"only, resolved when the review starts; the grant does not follow later DNS changes. The host root is the one the\n" +
-			"sandbox review commands use; --host-root overrides it.",
+			"directory (owner-only; a different map under an installed id is refused) and verifies it loads. --default also makes it\n" +
+			"the map `show` reports when no id is given. Until the review egress applier ships, a map whose\n" +
+			"egress policy is not none is refused when a review runs; host:<fqdn> will then mean that host on port 443 only.\n" +
+			"The host root is the one the sandbox review commands use; --host-root overrides it.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			hostRoot, err := mapHostRoot(root)
