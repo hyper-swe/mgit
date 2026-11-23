@@ -29,8 +29,9 @@ type AttachInput struct {
 //
 // Attach is called once per run, after the guest is provisioned and its seal
 // verified and before the reviewer starts. It installs whatever the mapping asks
-// for and returns a release function, which the run calls whatever happens
-// (including when Attach's own later steps fail). An error from Attach is a
+// for and returns a release function. The release function is never nil, on any
+// return path including an error, and the caller always calls it, whatever
+// happens and without checking it first; calling it twice is safe. An error from Attach is a
 // refusal: *reviewprep.Error, with the reviewer not started. An implementation
 // must refuse what it cannot provide rather than run without it.
 type Bindings interface {
@@ -45,10 +46,14 @@ type NoBindings struct{}
 // Attach implements Bindings.
 func (NoBindings) Attach(_ context.Context, in AttachInput) (func(context.Context) error, error) {
 	if in.Mapping.CredentialRef != "" {
-		return nil, reviewprep.Refuse(reviewprep.CodePolicyUnenforcable, "this build provides no credential slot, and the mapping asks for one")
+		return noRelease, reviewprep.Refuse(reviewprep.CodePolicyUnenforcable, "this build provides no credential slot, and the mapping asks for one")
 	}
 	if p := in.Mapping.EgressPolicyID; p != "" && p != "none" {
-		return nil, reviewprep.Refuse(reviewprep.CodePolicyUnenforcable, "this build provides no network policy, and the mapping asks for one")
+		return noRelease, reviewprep.Refuse(reviewprep.CodePolicyUnenforcable, "this build provides no network policy, and the mapping asks for one")
 	}
-	return func(context.Context) error { return nil }, nil
+	return noRelease, nil
 }
+
+// noRelease is the release function of an Attach that installed nothing. It is
+// returned on every path, refusals included, so a caller can always call it.
+func noRelease(context.Context) error { return nil }

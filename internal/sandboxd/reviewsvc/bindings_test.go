@@ -3,6 +3,7 @@ package reviewsvc
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hyper-swe/mgit/internal/reviewprep"
@@ -85,5 +86,64 @@ func TestService_UsesTheMapLoaderItIsGiven(t *testing.T) {
 	}
 	if gotRoot != e.root || gotID != e.args.MappingID {
 		t.Fatalf("loader called with %q %q", gotRoot, gotID)
+	}
+}
+
+// A replacement loader sees only ids the service has already accepted: the
+// check that keeps an id from naming a path lives in the service, ahead of any
+// loader, not inside the default one.
+func TestService_NoLoaderIsEverHandedAnIdThatCouldNameAPath(t *testing.T) {
+	ids := []string{"../etc/passwd", "..", ".", "a/b", "/abs", "a\x00b", "", strings.Repeat("a", 65), ".hidden", "a b", "a\\b"}
+	for _, id := range ids {
+		e := setup(t)
+		called := false
+		e.svc.WithMapLoader(func(string, string) (*reviewprep.Mapping, error) {
+			called = true
+			return nil, reviewprep.Refuse(reviewprep.CodeMappingMismatch, "loader")
+		})
+		e.args.MappingID = id
+		_, err := e.svc.PrepareReview(context.Background(), e.args)
+		if called {
+			t.Fatalf("id %q reached the loader", id)
+		}
+		if err == nil || refusalCode(t, err) != reviewprep.CodeMappingMismatch {
+			t.Fatalf("id %q: err=%v", id, err)
+		}
+	}
+	// A well-formed id does reach it.
+	e := setup(t)
+	called := false
+	e.svc.WithMapLoader(func(string, string) (*reviewprep.Mapping, error) {
+		called = true
+		return nil, reviewprep.Refuse(reviewprep.CodeMappingMismatch, "loader")
+	})
+	_, _ = e.svc.PrepareReview(context.Background(), e.args)
+	if !called {
+		t.Fatal("a valid id never reached the loader")
+	}
+}
+
+// The caller always calls the release function, including after an error, and
+// does not check it first: every return path of Attach hands back one that is
+// safe to call.
+func TestNoBindings_ReleaseIsNeverNilAndSafeToCallOnEveryPath(t *testing.T) {
+	cases := map[string]reviewprep.Mapping{
+		"nothing asked":   {},
+		"credential":      {CredentialRef: "cred-1"},
+		"network policy":  {EgressPolicyID: "allow-docs"},
+		"both":            {CredentialRef: "cred-1", EgressPolicyID: "allow-docs"},
+		"none is allowed": {EgressPolicyID: "none"},
+	}
+	for name, m := range cases {
+		release, _ := attach(t, NoBindings{}, m)
+		if release == nil {
+			t.Fatalf("%s: release is nil", name)
+		}
+		if err := release(context.Background()); err != nil {
+			t.Fatalf("%s: release: %v", name, err)
+		}
+		if err := release(context.Background()); err != nil { // twice is fine
+			t.Fatalf("%s: second release: %v", name, err)
+		}
 	}
 }
