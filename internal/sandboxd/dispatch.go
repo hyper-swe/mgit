@@ -183,6 +183,8 @@ func (d *Daemon) dispatch(ctx context.Context, conn net.Conn, req *controlproto.
 		d.serveSyncVerify(ctx, conn, req.SyncVerify)
 	case controlproto.KindReviewPrepare:
 		d.serveReviewPrepare(ctx, conn, req.ReviewPrepare)
+	case controlproto.KindReviewRun:
+		d.serveReviewRun(ctx, conn, req.ReviewRun)
 	case controlproto.KindEcho:
 		d.serveEcho(conn, req.Echo)
 	default:
