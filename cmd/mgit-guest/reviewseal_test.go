@@ -13,6 +13,36 @@ type chownCall struct {
 	uid, gid int
 }
 
+// asRoot makes the lost+found ownership check read as root-owned, which a test
+// run by an ordinary user could not otherwise produce.
+func asRoot(t *testing.T) {
+	t.Helper()
+	was := lostFoundRootOwned
+	lostFoundRootOwned = func(string) bool { return true }
+	t.Cleanup(func() { lostFoundRootOwned = was })
+}
+
+// sealedModes gives a lease the modes the seal sets, so the checks that look at
+// what is on disk can be exercised without changing owners.
+func sealedModes(t *testing.T, d string) {
+	t.Helper()
+	ents, err := os.ReadDir(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		if err := os.Chmod(filepath.Join(d, e.Name()), 0o440); err != nil { //nolint:gosec // the sealed file mode
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(d, 0o750); err != nil { //nolint:gosec // the sealed directory mode
+		t.Fatal(err)
+	}
+}
+
 func lease(t *testing.T) string {
 	t.Helper()
 	d := filepath.Join(t.TempDir(), "lease")
@@ -58,6 +88,7 @@ func TestSealLease_MakesItRootOwnedAndReadableToTheReviewerGroupOnly(t *testing.
 // directory. It is the filesystem's, root-owned 0700, and not the reviewer's to
 // read, so it is left alone rather than refused or handed over.
 func TestSealLease_LeavesAFilesystemsLostAndFoundAlone(t *testing.T) {
+	asRoot(t)
 	d := lease(t)
 	lf := filepath.Join(d, "lost+found")
 	if err := os.Mkdir(lf, 0o700); err != nil {
@@ -98,6 +129,7 @@ func TestSealLease_LeavesAFilesystemsLostAndFoundAlone(t *testing.T) {
 // The exemption is exact: a directory named lost+found, at the lease root,
 // empty, mode 0700, not a link. Anything else with that name is refused.
 func TestSealLease_LostAndFoundExemptionIsExact(t *testing.T) {
+	asRoot(t)
 	noop := func(string, int, int) error { return nil }
 	cases := map[string]func(t *testing.T, d string){
 		"not empty": func(t *testing.T, d string) {
@@ -155,11 +187,13 @@ func TestSealLease_LostAndFoundExemptionIsExact(t *testing.T) {
 }
 
 func TestVerifySealed_SkipsOnlyTheFilesystemsLostAndFound(t *testing.T) {
+	asRoot(t)
 	d := lease(t)
 	lf := filepath.Join(d, "lost+found")
 	if err := os.Mkdir(lf, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	sealedModes(t, d)
 	var seen []string
 	if err := verifySealed(d, 5, func(p string, _ int) error { seen = append(seen, p); return nil }); err != nil {
 		t.Fatal(err)
@@ -236,6 +270,7 @@ func TestReviewSeal_NeedsAGidAndADirectory(t *testing.T) {
 
 func TestVerifySealed_FailsWhenAnythingIsStillOwnedByTheReviewer(t *testing.T) {
 	d := lease(t)
+	sealedModes(t, d)
 	bad := filepath.Join(d, "evidence.json")
 	owned := func(p string, _ int) error {
 		if p == bad {
@@ -256,5 +291,110 @@ func TestVerifySealed_FailsWhenAnythingIsStillOwnedByTheReviewer(t *testing.T) {
 		return nil
 	}); err == nil {
 		t.Fatal("a directory the reviewer owns passed")
+	}
+}
+
+// The filesystem's lost+found is root's. One owned by anyone else (a directory
+// the reviewer's own user made, say) is not exempt: it is refused when sealing
+// and checked like any other entry when verifying.
+func TestLostAndFound_MustBeRootOwned(t *testing.T) {
+	was := lostFoundRootOwned
+	lostFoundRootOwned = func(string) bool { return false }
+	defer func() { lostFoundRootOwned = was }()
+	d := lease(t)
+	lf := filepath.Join(d, "lost+found")
+	if err := os.Mkdir(lf, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := sealLease(d, 7, func(string, int, int) error { return nil }); err == nil {
+		t.Fatal("a lost+found that is not root's was exempted when sealing")
+	}
+	sealedModes(t, d)
+	var seen []string
+	_ = verifySealed(d, 7, func(p string, _ int) error { seen = append(seen, p); return nil })
+	found := false
+	for _, p := range seen {
+		found = found || p == lf
+	}
+	if !found {
+		t.Fatal("a lost+found that is not root's was skipped when verifying")
+	}
+}
+
+// What is on disk must also have the modes the seal sets: a seal that took the
+// owner but left a file writable by the group, or the directory open to
+// everyone, is not a seal.
+func TestVerifySealed_ChecksTheModesToo(t *testing.T) {
+	ok := func(string, int) error { return nil }
+	d := lease(t) // 0700 directory, 0400 files: not the sealed modes
+	if err := verifySealed(d, 5, ok); err == nil {
+		t.Fatal("unsealed modes passed")
+	}
+	if err := sealLease(d, 5, func(string, int, int) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySealed(d, 5, ok); err != nil {
+		t.Fatalf("sealed modes refused: %v", err)
+	}
+	ev := filepath.Join(d, "evidence.json")
+	for _, bad := range []os.FileMode{0o640, 0o444, 0o660, 0o400} {
+		if err := os.Chmod(ev, bad); err != nil { //nolint:gosec // the test sets the mode wrong on purpose
+			t.Fatal(err)
+		}
+		if err := verifySealed(d, 5, ok); err == nil {
+			t.Fatalf("file mode %v passed", bad)
+		}
+	}
+	if err := os.Chmod(ev, 0o440); err != nil { //nolint:gosec // back to the sealed mode
+		t.Fatal(err)
+	}
+	for _, bad := range []os.FileMode{0o755, 0o770, 0o700} {
+		if err := os.Chmod(d, bad); err != nil { //nolint:gosec // the test sets the mode wrong on purpose
+			t.Fatal(err)
+		}
+		if err := verifySealed(d, 5, ok); err == nil {
+			t.Fatalf("directory mode %v passed", bad)
+		}
+	}
+}
+
+// The seal is not trusted because it ran: the verb looks at what is on disk and
+// fails if anything did not take, whatever the changes reported.
+func TestReviewSeal_FailsWhenTheOnDiskCheckFails(t *testing.T) {
+	d := lease(t)
+	chown := func(string, int, int) error { return nil }
+	var e bytes.Buffer
+	notRoot := func(string, int) error { return errors.New("still the reviewer's") }
+	if code := reviewSealWith([]string{"--gid", "5", d}, &e, chown, notRoot); code != 1 {
+		t.Fatalf("exit %d with a seal that did not take: %s", code, e.String())
+	}
+	d2 := lease(t)
+	var e2 bytes.Buffer
+	if code := reviewSealWith([]string{"--gid", "5", d2}, &e2, chown, func(string, int) error { return nil }); code != 0 {
+		t.Fatalf("exit %d for a seal that took: %s", code, e2.String())
+	}
+}
+
+// A lease holds the evidence and the attestation, with room for the filesystem's
+// own lost+found; ten entries are not that.
+func TestSealLease_TakesNineEntriesAndRefusesTen(t *testing.T) {
+	noop := func(string, int, int) error { return nil }
+	mk := func(n int) string {
+		d := filepath.Join(t.TempDir(), "lease")
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < n; i++ {
+			if err := os.WriteFile(filepath.Join(d, "f"+string(rune('a'+i))), []byte("x"), 0o400); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return d
+	}
+	if err := sealLease(mk(9), 5, noop); err != nil {
+		t.Fatalf("nine entries refused: %v", err)
+	}
+	if err := sealLease(mk(10), 5, noop); err == nil {
+		t.Fatal("ten entries accepted")
 	}
 }

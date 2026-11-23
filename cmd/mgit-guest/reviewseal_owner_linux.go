@@ -21,3 +21,13 @@ func ownedByRootWithGroup(path string, gid int) error {
 	}
 	return nil
 }
+
+// isRootOwned reports whether path is owned by uid 0.
+func isRootOwned(path string) bool {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && st.Uid == 0
+}
