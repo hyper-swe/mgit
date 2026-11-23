@@ -42,6 +42,7 @@ func rawFixture(t *testing.T) (Request, Mapping, []byte, *Signer) {
 		ID:               "pi-v1",
 		BindingSHA256:    strings.Repeat("b", 64),
 		ImageDigest:      imageDigest,
+		ImageRef:         "reviewer@" + imageDigest,
 		GuestEntrypoint:  "/opt/reviewer/bin/reviewer",
 		EntrypointSHA256: strings.Repeat("e", 64),
 		Argv:             []string{"--json", "--offline"},
@@ -115,6 +116,7 @@ func TestPrepare_Refusals(t *testing.T) {
 		{"image digest differs from the map", func(r *Request, _ *Mapping, _ *[]byte) {
 			r.Image = "reviewer@sha256:" + strings.Repeat("2", 64)
 		}, "IMAGE_MISMATCH"},
+		{"same digest under another name than the map's image_ref", func(r *Request, _ *Mapping, _ *[]byte) { r.Image = "other@" + imageDigest }, "IMAGE_MISMATCH"},
 		{"image without a digest", func(r *Request, _ *Mapping, _ *[]byte) { r.Image = "reviewer:latest" }, "IMAGE_MISMATCH"},
 		{"mapping id differs", func(r *Request, _ *Mapping, _ *[]byte) { r.MappingID = "other" }, "MAPPING_MISMATCH"},
 		{"binding digest differs", func(r *Request, _ *Mapping, _ *[]byte) { r.BindingDigest = strings.Repeat("c", 64) }, "MAPPING_MISMATCH"},

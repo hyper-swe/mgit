@@ -18,6 +18,7 @@ func goodMap(id string) reviewprep.Mapping {
 		Schema: reviewprep.MapSchema, ID: id,
 		BindingSHA256:    strings.Repeat("a", 64),
 		ImageDigest:      "sha256:" + strings.Repeat("b", 64),
+		ImageRef:         "reviewer@sha256:" + strings.Repeat("b", 64),
 		GuestEntrypoint:  "/opt/reviewer/bin/review",
 		EntrypointSHA256: strings.Repeat("c", 64),
 		Argv:             []string{"--json"},
