@@ -149,20 +149,8 @@ func Install(hostRoot string, raw []byte, makeDefault bool) (Info, error) {
 		return Info{}, err
 	}
 	rec, pin := filepath.Join(dir, m.ID+".json"), filepath.Join(dir, m.ID+".sha256")
-	if err := writeNew(rec, canon); err != nil {
-		if os.IsExist(err) {
-			return Info{}, bad("a map with this id is already installed; it is never overwritten")
-		}
-		return Info{}, err
-	}
-	if err := writeNew(pin, []byte(hash+"\n")); err != nil {
-		_ = os.Remove(rec)
-		return Info{}, err
-	}
-	loaded, err := LoadMap(hostRoot, m.ID)
+	loaded, err := installRecord(hostRoot, m, rec, pin, canon, hash)
 	if err != nil {
-		_ = os.Remove(rec)
-		_ = os.Remove(pin)
 		return Info{}, err
 	}
 	if makeDefault {
@@ -175,6 +163,37 @@ func Install(hostRoot string, raw []byte, makeDefault bool) (Info, error) {
 		}
 	}
 	return infoOf(loaded)
+}
+
+// installRecord writes the record and its pin, or accepts a record already
+// installed with exactly this content (so the same install can be repeated with
+// --default to repair a damaged pointer). A different record under an
+// installed id is refused and never overwrites it.
+func installRecord(hostRoot string, m reviewprep.Mapping, rec, pin string, canon []byte, hash string) (*reviewprep.Mapping, error) {
+	if err := writeNew(rec, canon); err != nil {
+		if !os.IsExist(err) {
+			return nil, err
+		}
+		have, lerr := LoadMap(hostRoot, m.ID)
+		if lerr != nil {
+			return nil, bad("a map with this id is already installed and does not verify; it is never overwritten")
+		}
+		if h, herr := CanonicalHash(*have); herr != nil || h != hash {
+			return nil, bad("a different map with this id is already installed; it is never overwritten")
+		}
+		return have, nil
+	}
+	if err := writeNew(pin, []byte(hash+"\n")); err != nil {
+		_ = os.Remove(rec)
+		return nil, err
+	}
+	loaded, err := LoadMap(hostRoot, m.ID)
+	if err != nil {
+		_ = os.Remove(rec)
+		_ = os.Remove(pin)
+		return nil, err
+	}
+	return loaded, nil
 }
 
 // DefaultID returns the id of the default map. The pointer is pinned like a

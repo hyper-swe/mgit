@@ -8,7 +8,7 @@ An operator installs the binding map a review is checked against, and a caller r
    an egress policy of `none` or one named host, a credential reference only with a named host), creates the host root,
    `review` and `review/maps` as owner-only directories, and writes `<id>.json` and `<id>.sha256` (the canonical hash) at
    mode 0600. It loads the result back and removes it if it does not load. An id that is already installed is refused and
-   never overwritten.
+   never overwritten. Repeating an install of exactly the same record is accepted, and with `--default` it rewrites the default pointer: that is the repair for a damaged pointer.
 2. `--default` also writes a pinned pointer, `_default`, naming the id. `_default` is not a valid map id, so no map can take
    its name. An edited pointer is refused.
 3. `mgit sandbox review map show [--id X] [--json]` verifies the map and prints its id, `binding_sha256` (the digest the
