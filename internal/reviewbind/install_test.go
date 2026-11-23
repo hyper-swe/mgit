@@ -2,6 +2,7 @@ package reviewbind
 
 import (
 	"encoding/json"
+	"github.com/hyper-swe/mgit/internal/reviewprep"
 	"os"
 	"path/filepath"
 	"strings"

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -24,6 +25,28 @@ var (
 	idPattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 	refPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
+
+var (
+	hex64Pattern     = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	imageDigestShape = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+)
+
+// validateRecord holds a record to what prepare needs of it, so a map that
+// installs or loads is one a review can use: lower-case hex digests and an
+// absolute, clean entrypoint path.
+func validateRecord(m *reviewprep.Mapping) error {
+	switch {
+	case !hex64Pattern.MatchString(m.BindingSHA256):
+		return bad("mapping needs binding_sha256 as 64 lower-case hex digits")
+	case !imageDigestShape.MatchString(m.ImageDigest):
+		return bad("mapping needs image_digest as sha256:<64 lower-case hex digits>")
+	case !hex64Pattern.MatchString(m.EntrypointSHA256):
+		return bad("mapping needs entrypoint_sha256 as 64 lower-case hex digits")
+	case !path.IsAbs(m.GuestEntrypoint) || path.Clean(m.GuestEntrypoint) != m.GuestEntrypoint:
+		return bad("mapping needs guest_entrypoint as an absolute, clean path")
+	}
+	return nil
+}
 
 func bad(detail string) error { return reviewprep.Refuse(reviewprep.CodeMappingMismatch, detail) }
 
@@ -106,6 +129,9 @@ func LoadMap(hostRoot, id string) (*reviewprep.Mapping, error) {
 	// is exactly its own decoded form, so what was pinned is what is used.
 	if again, herr := CanonicalHash(m); herr != nil || !strings.EqualFold(again, got) {
 		return nil, bad("mapping has keys the loader does not read as written")
+	}
+	if err := validateRecord(&m); err != nil {
+		return nil, err
 	}
 	if _, err := ParseEgress(m.EgressPolicyID); err != nil {
 		return nil, bad("mapping names a malformed egress policy")

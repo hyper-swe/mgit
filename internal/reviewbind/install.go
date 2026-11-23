@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/reviewprep"
 )
 
@@ -136,6 +137,9 @@ func Install(hostRoot string, raw []byte, makeDefault bool) (Info, error) {
 	if m.Schema != reviewprep.MapSchema || !idPattern.MatchString(m.ID) {
 		return Info{}, bad("map record has the wrong schema or an id this build does not accept")
 	}
+	if err := validateRecord(&m); err != nil {
+		return Info{}, err
+	}
 	canon, err := json.Marshal(m)
 	if err != nil {
 		return Info{}, err
@@ -243,7 +247,11 @@ func Show(hostRoot, id string, names ImageNames) (Info, error) {
 	case 0:
 		return Info{}, bad("no image is registered with the map's digest " + m.ImageDigest + "; register it in the image store first")
 	case 1:
-		info.ImageRef = found[0] + "@" + m.ImageDigest
+		ref := found[0] + "@" + m.ImageDigest
+		if model.ValidateImageRef(ref) != nil {
+			return Info{}, bad("the image registered under the map's digest is named " + found[0] + ", which is not a valid image reference name; register it under a lower-case name")
+		}
+		info.ImageRef = ref
 		return info, nil
 	}
 	return Info{}, bad("several images are registered with the map's digest " + m.ImageDigest + " (" + strings.Join(found, ", ") + "); keep one")
