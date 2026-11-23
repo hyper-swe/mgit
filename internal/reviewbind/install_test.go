@@ -265,3 +265,65 @@ func TestShow_AsksTheStoreForTheMapsImageDigestUnderTheHostRoot(t *testing.T) {
 		t.Fatalf("calls=%d %+v %v", calls, info, err)
 	}
 }
+
+func TestInstall_RefusesARecordPrepareCouldNotUse(t *testing.T) {
+	for name, edit := range map[string]func(*reviewprep.Mapping){
+		"no binding digest":        func(m *reviewprep.Mapping) { m.BindingSHA256 = "" },
+		"short binding digest":     func(m *reviewprep.Mapping) { m.BindingSHA256 = strings.Repeat("a", 63) },
+		"uppercase binding digest": func(m *reviewprep.Mapping) { m.BindingSHA256 = strings.Repeat("A", 64) },
+		"no image digest":          func(m *reviewprep.Mapping) { m.ImageDigest = "" },
+		"image digest without alg": func(m *reviewprep.Mapping) { m.ImageDigest = strings.Repeat("b", 64) },
+		"uppercase image digest":   func(m *reviewprep.Mapping) { m.ImageDigest = "sha256:" + strings.Repeat("B", 64) },
+		"no entrypoint digest":     func(m *reviewprep.Mapping) { m.EntrypointSHA256 = "" },
+		"relative entrypoint":      func(m *reviewprep.Mapping) { m.GuestEntrypoint = "bin/review" },
+		"unclean entrypoint":       func(m *reviewprep.Mapping) { m.GuestEntrypoint = "/opt/../bin/review" },
+	} {
+		m := goodMap("v1")
+		edit(&m)
+		raw, _ := json.Marshal(m)
+		root := newRoot(t)
+		if _, err := Install(root, raw, false); err == nil {
+			t.Errorf("%s was installed", name)
+		}
+		if _, err := os.Stat(filepath.Join(root, "review", "maps", "v1.json")); err == nil {
+			t.Errorf("%s left a record behind", name)
+		}
+	}
+}
+
+func TestInstall_ARefusedRecordNeverDisplacesAWorkingDefault(t *testing.T) {
+	root := newRoot(t)
+	if _, err := Install(root, recordJSON(t, "good"), true); err != nil {
+		t.Fatal(err)
+	}
+	bad := goodMap("incomplete")
+	bad.BindingSHA256 = ""
+	raw, _ := json.Marshal(bad)
+	if _, err := Install(root, raw, true); err == nil {
+		t.Fatal("an incomplete record was installed")
+	}
+	if id, err := DefaultID(root); err != nil || id != "good" {
+		t.Fatalf("the default changed to %q (%v)", id, err)
+	}
+}
+
+func TestLoadMap_RefusesAnIncompleteRecordOnDisk(t *testing.T) {
+	root := t.TempDir()
+	m := goodMap("inc")
+	m.BindingSHA256 = ""
+	raw, _ := json.Marshal(m)
+	pinned(t, root, "inc", raw)
+	if _, err := LoadMap(root, "inc"); err == nil {
+		t.Fatal("a pinned record with no binding digest loaded")
+	}
+}
+
+func TestShow_AnImageNameThatIsNotAValidReferenceIsRefused(t *testing.T) {
+	root := newRoot(t)
+	if _, err := Install(root, recordJSON(t, "u1"), false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Show(root, "u1", namesOf("Reviewer")); err == nil {
+		t.Fatal("show emitted a reference the launch would refuse")
+	}
+}
