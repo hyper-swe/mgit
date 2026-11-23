@@ -481,3 +481,19 @@ func TestSupervise_StopsWhenToldTheStageIsGone(t *testing.T) {
 		t.Fatal("the supervisor did not stop after the stage was gone")
 	}
 }
+
+// A binary that launches must answer the launcher's stage re-exec first
+// (MaybeStage). One that does not would be started as its own stage and run
+// whatever it normally runs, which can start another launch: a fork bomb. Run
+// refuses instead, before it starts anything.
+func TestRun_RefusesWhenTheBinaryNeverAnsweredTheStageReexec(t *testing.T) {
+	p, d := stageBinary(t)
+	was := stageAnswered.Load()
+	stageAnswered.Store(false)
+	t.Cleanup(func() { stageAnswered.Store(was) })
+	_, err := Run(Config{Entrypoint: p, SHA256: d, Argv: []string{"--probe", "ok"}, Stdout: io.Discard, Stderr: io.Discard})
+	var r *RefusalError
+	if !errors.As(err, &r) || r.Code != CodeLaunchFailed || !strings.Contains(r.Detail, "MaybeStage") {
+		t.Fatalf("err %v", err)
+	}
+}
