@@ -29,7 +29,7 @@ func credDest(root, dest string) error {
 // that the reviewer's group can read. It prints nothing of the credential; an
 // empty stdin is a refusal, so a guest that dropped stdin cannot install an
 // empty slot. It never replaces an existing slot.
-func credInstall(root string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func credInstall(root string, ensureMem func(string) error, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cred-install", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dest := fs.String("dest", "", "file to create")
@@ -57,6 +57,12 @@ func credInstall(root string, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	if err := os.MkdirAll(root, 0o750); err != nil {
 		fmt.Fprintln(stderr, "cred-install: cannot prepare the credential directory")
+		return 1
+	}
+	// the credential goes only on memory-backed storage; if the directory is not
+	// already on it, put a tmpfs there, and if that cannot be done, install nothing
+	if err := ensureMem(root); err != nil {
+		fmt.Fprintln(stderr, "cred-install: the credential directory is not memory-backed and could not be made so")
 		return 1
 	}
 	// the group must be able to reach the slot: a directory it cannot enter is a failure, not a quiet default
