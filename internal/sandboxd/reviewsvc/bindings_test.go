@@ -69,3 +69,21 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// The operator's map is read through a loader the service is given, so the
+// package that owns map loading can replace it without editing the service.
+func TestService_UsesTheMapLoaderItIsGiven(t *testing.T) {
+	e := setup(t)
+	var gotRoot, gotID string
+	e.svc.WithMapLoader(func(hostRoot, id string) (*reviewprep.Mapping, error) {
+		gotRoot, gotID = hostRoot, id
+		return nil, reviewprep.Refuse(reviewprep.CodeMappingMismatch, "from the loader")
+	})
+	_, err := e.svc.PrepareReview(context.Background(), e.args)
+	if err == nil || refusalCode(t, err) != reviewprep.CodeMappingMismatch {
+		t.Fatalf("err=%v", err)
+	}
+	if gotRoot != e.root || gotID != e.args.MappingID {
+		t.Fatalf("loader called with %q %q", gotRoot, gotID)
+	}
+}
