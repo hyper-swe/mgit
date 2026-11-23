@@ -484,15 +484,31 @@ func TestRun_AHighLeakedDescriptorDoesNotReachTheProgram(t *testing.T) {
 		t.Skipf("cannot place a descriptor at %d: %v", high, err)
 	}
 	defer func() { _ = syscall.Close(high) }()
-	out, _, perr := runProbe(t, "fds")
+	out, code, perr := runProbe(t, "fds")
 	skipIfNoFilter(t, perr)
 	if perr != nil {
 		t.Fatal(perr)
 	}
+	// The probe must have run to the end: a program that died early lists
+	// nothing, and an empty list would read as "the descriptor did not leak".
+	if code != 0 {
+		t.Fatalf("the probe exited %d:\n%s", code, out)
+	}
+	listed := map[string]bool{}
 	for _, l := range strings.Split(out, "\n") {
 		var fd string
-		if n, _ := fmt.Sscanf(l, "fd %s", &fd); n == 1 && fd == strconv.Itoa(high) {
-			t.Fatalf("descriptor %d reached the program:\n%s", high, out)
+		if n, _ := fmt.Sscanf(l, "fd %s", &fd); n == 1 {
+			listed[fd] = true
 		}
+	}
+	// Positive control in the same run: the report names the standard streams,
+	// so it was produced by a probe that could see its own descriptors.
+	for _, std := range []string{"0", "1", "2"} {
+		if !listed[std] {
+			t.Fatalf("the report does not list descriptor %s, so it proves nothing:\n%s", std, out)
+		}
+	}
+	if listed[strconv.Itoa(high)] {
+		t.Fatalf("descriptor %d reached the program:\n%s", high, out)
 	}
 }
