@@ -18,7 +18,8 @@ const sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 type fakeMgr struct {
 	launched []model.SandboxLaunchOptions
 	execs    []model.ExecRequest
-	bounded  []bool // whether each Exec was given a deadline
+	bounded  []bool      // whether each Exec was given a deadline
+	limits   []time.Time // the deadline each Exec was given
 	removed  []string
 	backend  string
 	res      *model.ExecResult // answers every exec
@@ -38,8 +39,9 @@ func (f *fakeMgr) Launch(_ context.Context, o model.SandboxLaunchOptions) (*mode
 func (f *fakeMgr) List(context.Context) ([]model.SandboxInfo, error) { return nil, nil }
 func (f *fakeMgr) Exec(ctx context.Context, _ string, r model.ExecRequest) (*model.ExecResult, error) {
 	f.execs = append(f.execs, r)
-	_, has := ctx.Deadline()
+	dl, has := ctx.Deadline()
 	f.bounded = append(f.bounded, has)
+	f.limits = append(f.limits, dl)
 	if f.execErr != nil {
 		return nil, f.execErr
 	}
@@ -158,7 +160,7 @@ func provisioned(t *testing.T, m *fakeMgr) *Guest {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.execs, m.bounded = nil, nil // the seal step is checked on its own
+	m.execs, m.bounded, m.limits = nil, nil, nil // the seal step is checked on its own
 	return g
 }
 
@@ -357,5 +359,27 @@ func TestClose_RemovesTheSandboxForced(t *testing.T) {
 	g := provisioned(t, m)
 	if err := g.Close(context.Background()); err != nil || !reflect.DeepEqual(m.removed, []string{"sb1"}) {
 		t.Fatalf("err=%v removed=%v", err, m.removed)
+	}
+}
+
+// The host's own deadline sits just past the limit the guest enforces: late
+// enough that the guest's own timeout reports first, soon enough that a silent
+// guest cannot hold the caller for more than a short grace.
+func TestRun_TheHostDeadlineSitsJustPastTheGuestLimit(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM}
+	g := provisioned(t, m)
+	for _, limit := range []time.Duration{7 * time.Second, 0} {
+		want := limit
+		if want == 0 {
+			want = MaxRun
+		}
+		start := time.Now()
+		if _, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a", Timeout: limit}); err != nil {
+			t.Fatal(err)
+		}
+		got := m.limits[len(m.limits)-1].Sub(start)
+		if got < want+hostGrace/2 || got > want+hostGrace+time.Second {
+			t.Fatalf("limit %v: the host deadline is %v after the start, want just past %v by about %v", limit, got, want, hostGrace)
+		}
 	}
 }
