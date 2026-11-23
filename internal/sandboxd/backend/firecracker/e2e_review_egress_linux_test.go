@@ -109,7 +109,8 @@ func httpStandIn(t *testing.T) (net.Listener, func() int) {
 // wired as the daemon wires it. A mapping that names an egress policy gets an
 // allowlist-mode guest with an empty list and a grant function; the binder
 // grants one exact ip:port; the reviewer reaches that destination and nothing
-// else; and when the run ends, the stack is stopped and the guest's tap is
+// else (neither another port on that address nor another address on that
+// port); and when the run ends, the stack is stopped and the guest's tap is
 // gone. A mapping with no policy gets no grant function and no network. A
 // grant the host refuses refuses the review before the reviewer starts.
 // Refs: MGIT-344, FEAT-3.347.1, SEC-05
@@ -192,9 +193,10 @@ func TestE2E_ReviewRun_EgressReachesOnlyTheGrantedDestination(t *testing.T) {
 	}
 	// The reviewer is one exec (the launcher refuses fork), so it fetches with
 	// busybox wget to stdout: no shell, no pipe, no file written.
-	fetch := func(port string) []string {
-		return []string{"wget", "-q", "-T", "8", "-O", "-", "http://" + allowedTestIP.String() + ":" + port + "/"}
+	fetchFrom := func(ip netip.Addr, port string) []string {
+		return []string{"wget", "-q", "-T", "8", "-O", "-", "http://" + ip.String() + ":" + port + "/"}
 	}
+	fetch := func(port string) []string { return fetchFrom(allowedTestIP, port) }
 	gone := func(id string) {
 		t.Helper()
 		assert.False(t, runner.Running(id), "the egress stack outlived the review guest %s", id)
@@ -224,6 +226,22 @@ func TestE2E_ReviewRun_EgressReachesOnlyTheGrantedDestination(t *testing.T) {
 	assert.NotZero(t, res.ExitCode, "an ungranted destination answered: %s", res.Stdout)
 	assert.NotContains(t, string(res.Stdout), reviewEgressBody)
 	assert.Equal(t, 1, connections(), "a flow to an ungranted port reached the destination")
+	id, _ = bind.last()
+	gone(id)
+
+	// 2b. Another address on the granted port is not reached either: the grant
+	// names one exact address, not a port. The address is public (a private or
+	// documentation range would be refused before any grant is consulted), and
+	// the stand-in would answer it, so only the grant stands in the way.
+	offGrant := netip.MustParseAddr("140.82.112.4")
+	require.NotEqual(t, allowedTestIP, offGrant)
+	install("egress-other-address", "review-net", fetchFrom(offGrant, "443")...)
+	raw, err = svc.RunReview(ctx, prepare("egress-other-address"))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &res))
+	assert.NotZero(t, res.ExitCode, "an ungranted address answered: %s", res.Stdout)
+	assert.NotContains(t, string(res.Stdout), reviewEgressBody)
+	assert.Equal(t, 1, connections(), "a flow to an ungranted address on the granted port reached the destination")
 	id, _ = bind.last()
 	gone(id)
 
