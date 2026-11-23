@@ -73,3 +73,37 @@ func TestReadResponse_StillRefusesAFrameOverOneMebibyte(t *testing.T) {
 	_, err := ReadResponse(bytes.NewReader(hdr[:]))
 	require.Error(t, err)
 }
+
+// A review-run answer that carries a refusal beside its result keeps the 1 MiB cap.
+func TestWriteResponse_AResultWithARefusalBesideItKeepsTheOneMebibyteCap(t *testing.T) {
+	both := reviewResponse(t, 2<<20, 0)
+	both.ReviewRun.Refusal = json.RawMessage(`{}`)
+	err := WriteResponse(&bytes.Buffer{}, both)
+	assert.True(t, errors.Is(err, ErrResponseTooLarge), "a result with a refusal beside it got the review ceiling: %v", err)
+}
+
+// The review-run reader takes a large frame only when it is a review result:
+// any other answer over 1 MiB is refused even on that path.
+func TestReadReviewRunResponse_ALargeAnswerThatIsNotAReviewResultIsRefused(t *testing.T) {
+	payload, err := json.Marshal(&Response{Error: strings.Repeat("x", 2<<20)})
+	require.NoError(t, err)
+	var buf bytes.Buffer
+	require.NoError(t, writeLenPrefixed(&buf, payload))
+	_, err = ReadReviewRunResponse(&buf)
+	require.Error(t, err)
+
+	var ok bytes.Buffer
+	require.NoError(t, WriteResponse(&ok, reviewResponse(t, int(MaxReviewOutputBytes), 0)))
+	resp, err := ReadReviewRunResponse(&ok)
+	require.NoError(t, err)
+	assert.NotEmpty(t, resp.ReviewRun.Result)
+}
+
+// A result over even the review ceiling (only possible if the run's own cap
+// were bypassed) is refused with words that do not claim nothing ran.
+func TestWriteResponse_AReviewResultOverItsCeilingSaysTheReviewRan(t *testing.T) {
+	err := WriteResponse(&bytes.Buffer{}, reviewResponse(t, int(MaxReviewOutputBytes)+(1<<20), 0))
+	require.True(t, errors.Is(err, ErrResponseTooLarge), "%v", err)
+	assert.Contains(t, err.Error(), "the review ran to its end")
+	assert.NotContains(t, err.Error(), "Nothing was applied")
+}
