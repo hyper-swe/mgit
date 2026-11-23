@@ -21,6 +21,12 @@ type AttachInput struct {
 	// for secrets: an argument or an environment variable of an exec is visible
 	// to the guest's other processes, so a credential must not travel in one.
 	Exec func(ctx context.Context, req model.ExecRequest) (*model.ExecResult, error)
+	// AllowEgress admits one exact ip:port (never a host name) for this guest
+	// on the host's egress stack, before the reviewer starts. It is nil when
+	// the guest has no network: the mapping names no egress policy, or this
+	// daemon has no stack. An implementation that needs egress and finds it nil
+	// refuses. Every grant is revoked when the guest is removed. Refs: MGIT-344
+	AllowEgress func(ctx context.Context, entry string) error
 }
 
 // Bindings is the seam between running a review and what a review needs beyond

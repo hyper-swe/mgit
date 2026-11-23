@@ -3,6 +3,7 @@
 package main
 
 import (
+	"github.com/hyper-swe/mgit/internal/reviewguest"
 	"log/slog"
 	"time"
 
@@ -59,6 +60,10 @@ func wireEgress(svc *service.SandboxService, events *index.Store, clock func() t
 	// authorizer is consulted per connection, so a mutated allowlist decides
 	// the next flow with no VM involvement. Refs: MGIT-72
 	wiring := egressWiring{Policy: firecracker.NewPolicyController(runner)}
+	// The same stack serves a review guest whose mapping names an egress
+	// policy: started for it at launch, widened only by exact ip:port grants,
+	// revoked and stopped before it is removed. Refs: MGIT-344
+	wiring.Review = reviewEgress{EgressController: firecracker.NewEgressController(runner), Runner: runner}
 
 	// Capability escalation: a host-observed egress denial can be escalated to a
 	// scoped, audited grant that widens THIS runner's live allowlist; the grant
@@ -84,3 +89,12 @@ func wireEgress(svc *service.SandboxService, events *index.Store, clock func() t
 	wiring.Grants = capSvc
 	return wiring
 }
+
+// reviewEgress is the review guest's view of the host egress stack: the
+// controller starts and stops it, the runner grants and revokes. Refs: MGIT-344
+type reviewEgress struct {
+	firecracker.EgressController
+	*egress.Runner
+}
+
+var _ reviewguest.EgressControl = reviewEgress{}

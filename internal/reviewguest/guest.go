@@ -69,6 +69,25 @@ type Spec struct {
 	TaskID string
 	// UID and GID are the unprivileged identity the reviewer runs as.
 	UID, GID int
+	// Egress is the host egress stack the guest's network goes through. Nil
+	// (the default) launches the guest with no network at all. When it is set
+	// the guest launches in allowlist mode with an empty list, so it can reach
+	// nothing until a grant is made on this stack. Refs: MGIT-344
+	Egress EgressControl
+}
+
+// EgressControl is a backend's host egress stack: the proxy and DNS a guest's
+// allowlist-mode network is steered to, and the grants that widen it. Every
+// method takes the guest's own sandbox id. Refs: MGIT-344, FR-17.8, SEC-05
+type EgressControl interface {
+	// StartEgress brings the stack up for a launched guest.
+	StartEgress(ctx context.Context, info model.SandboxInfo) error
+	// StopEgress takes it down; it is safe to call more than once.
+	StopEgress(sandboxID string)
+	// AllowEgress admits one exact ip:port for the guest.
+	AllowEgress(ctx context.Context, sandboxID, entry string) error
+	// RevokeAll drops every grant the guest holds.
+	RevokeAll(sandboxID string)
 }
 
 // Entry is the mapped entrypoint: its digest, its guest path and its argv.
@@ -86,6 +105,7 @@ type Guest struct {
 	LeaseDir string
 	uid, gid int
 	mgr      model.SandboxManager
+	egress   EgressControl
 }
 
 func refuse(code, detail string) *reviewprep.Error {
@@ -107,11 +127,16 @@ func Provision(ctx context.Context, mgr model.SandboxManager, s Spec) (*Guest, e
 	if err := model.ValidateImageRef(s.Lease.image); err != nil {
 		return nil, refuse(reviewprep.CodeImageMismatch, "the image is not pinned by digest")
 	}
+	network := model.NetworkPolicy{Mode: model.NetworkModeNone}
+	if s.Egress != nil {
+		// Default-deny: allowlist mode with nothing on the list. Refs: MGIT-344
+		network = model.NetworkPolicy{Mode: model.NetworkModeAllowlist}
+	}
 	info, err := mgr.Launch(ctx, model.SandboxLaunchOptions{
 		TaskID:       s.TaskID,
 		WorktreePath: s.Lease.dir,
 		ImageRef:     s.Lease.image,
-		Network:      model.NetworkPolicy{Mode: model.NetworkModeNone},
+		Network:      network,
 		NoGuestRepo:  true,
 		CPUs:         ReviewCPUs,
 		MemoryMB:     ReviewMemoryMB,
@@ -126,6 +151,21 @@ func Provision(ctx context.Context, mgr model.SandboxManager, s Spec) (*Guest, e
 		return nil, refuse(reviewprep.CodePolicyUnenforcable,
 			fmt.Sprintf("the launched backend %q is not a launch-time image", info.Backend))
 	}
+	g := &Guest{ID: info.ID, LeaseDir: s.Lease.dir, uid: s.UID, gid: s.GID, mgr: mgr}
+	if s.Egress != nil {
+		// The host stack is up before anything runs in the guest, the seal
+		// included; a stack that will not start refuses the run. The mode is
+		// stated here rather than read back from the manager, so the stack is
+		// always started for the empty allowlist this launch asked for.
+		up := *info
+		up.NetworkMode, up.NetworkAllowlist = model.NetworkModeAllowlist, nil
+		if err := s.Egress.StartEgress(ctx, up); err != nil {
+			s.Egress.StopEgress(info.ID)
+			_ = mgr.Remove(ctx, info.ID, true)
+			return nil, refuse(reviewprep.CodePolicyUnenforcable, "the host network controls for the review guest could not be started")
+		}
+		g.egress = s.Egress
+	}
 	// Hand the lease to the reviewer's group, root-owned: the reviewer reads
 	// what it was given and owns none of it. Fail closed on any trouble.
 	seal, err := mgr.Exec(ctx, info.ID, model.ExecRequest{
@@ -133,14 +173,31 @@ func Provision(ctx context.Context, mgr model.SandboxManager, s Spec) (*Guest, e
 		AsRoot:  true, Timeout: sealLimit,
 	})
 	if err != nil || seal.ExitCode != 0 {
-		_ = mgr.Remove(ctx, info.ID, true)
+		_ = g.Close(ctx)
 		detail := "the lease could not be sealed in the guest"
 		if err == nil {
 			detail += ": " + clip(seal.Stderr, 300) // the seal's own words; they name no bundle content
 		}
 		return nil, refuse(reviewprep.CodePolicyUnenforcable, detail)
 	}
-	return &Guest{ID: info.ID, LeaseDir: s.Lease.dir, uid: s.UID, gid: s.GID, mgr: mgr}, nil
+	return g, nil
+}
+
+// HasEgress reports whether the guest was launched with a host egress stack.
+func (g *Guest) HasEgress() bool { return g.egress != nil }
+
+// AllowEgress admits one exact ip:port for this guest on its own stack, before
+// the reviewer starts. A guest with no stack, or a grant the stack refuses, is
+// a refusal: the review does not run without what its binding needs.
+// Refs: MGIT-344, SEC-05
+func (g *Guest) AllowEgress(ctx context.Context, entry string) error {
+	if g.egress == nil {
+		return refuse(reviewprep.CodePolicyUnenforcable, "the review guest has no network, and a grant was asked for")
+	}
+	if err := g.egress.AllowEgress(ctx, g.ID, entry); err != nil {
+		return refuse(reviewprep.CodePolicyUnenforcable, "the host did not admit the network grant "+clip([]byte(entry), 80))
+	}
+	return nil
 }
 
 // Run starts the entrypoint through the launcher. A launcher refusal (exit 70
@@ -216,8 +273,15 @@ func launcherRefusal(stderr []byte, nonce string) (reviewprep.Error, bool) {
 	return env.Error, true
 }
 
-// Close removes the guest.
-func (g *Guest) Close(ctx context.Context) error { return g.mgr.Remove(ctx, g.ID, true) }
+// Close takes down the guest's egress stack, if it has one, and removes the guest.
+func (g *Guest) Close(ctx context.Context) error {
+	if g.egress != nil {
+		// No grant outlives the guest, and the stack goes before the guest.
+		g.egress.RevokeAll(g.ID)
+		g.egress.StopEgress(g.ID)
+	}
+	return g.mgr.Remove(ctx, g.ID, true)
+}
 
 // clip returns the first n bytes of b as one trimmed line.
 func clip(b []byte, n int) string {

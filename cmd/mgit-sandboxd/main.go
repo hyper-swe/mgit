@@ -257,6 +257,8 @@ func run(args []string, out, logSink io.Writer) int {
 		// Review prepare (MGIT-333): checks a review request and signs what
 		// would run. It needs the host signing key; without one the verb stays
 		// unserved rather than issuing anything unkeyed.
+		var reviewSvc *reviewsvc.Service
+		var reviewCfg reviewsvc.RunnerConfig
 		if rs, rerr := reviewsvc.New(opts.hostRoot, clock); rerr != nil {
 			logger.Warn("review prepare is not served", "reason", rerr.Error())
 		} else {
@@ -266,8 +268,10 @@ func run(args []string, out, logSink io.Writer) int {
 			// launch-time image or the run refuses. Nothing is installed behind
 			// the bindings seam yet, so a mapping that asks for a credential or
 			// a network policy is refused rather than run without it.
-			rs.WithRunner(reviewsvc.RunnerConfig{Manager: manager, Backend: reviewBackendName(context.Background(), opts.backend)})
+			reviewCfg = reviewsvc.RunnerConfig{Manager: manager, Backend: reviewBackendName(context.Background(), opts.backend)}
+			rs.WithRunner(reviewCfg)
 			dcfg.ReviewRunner = rs
+			reviewSvc = rs
 		}
 
 		// Wire host egress enforcement (allowlist proxy + restricted DNS) so
@@ -277,6 +281,12 @@ func run(args []string, out, logSink io.Writer) int {
 		egressWired := wireEgress(svc, events, clock, logger)
 		if egressWired.Grants != nil {
 			dcfg.Grants = egressWired.Grants
+		}
+		// A review guest whose mapping names an egress policy goes behind the
+		// same host stack; without one, such a review refuses. Refs: MGIT-344
+		if reviewSvc != nil && egressWired.Review != nil {
+			reviewCfg.Egress = egressWired.Review
+			reviewSvc.WithRunner(reviewCfg)
 		}
 
 		// Wire the egress-policy verbs (MGIT-72): change a sandbox's allowlist

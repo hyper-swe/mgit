@@ -31,6 +31,10 @@ type RunnerConfig struct {
 	// Bindings installs the binding map, network policy and credential; nil
 	// means NoBindings, which grants nothing.
 	Bindings Bindings
+	// Egress is the backend's host egress stack. A guest gets it only when its
+	// mapping names an egress policy; nil means no review guest ever has a
+	// network, so a binding that needs one refuses. Refs: MGIT-344
+	Egress reviewguest.EgressControl
 }
 
 type runner struct{ RunnerConfig }
@@ -118,21 +122,31 @@ func (s *Service) RunReview(ctx context.Context, a controlproto.ReviewRunArgs) (
 		return nil, err
 	}
 
+	// The guest gets a network only when the mapping names an egress policy
+	// and this daemon has a stack to put it behind. Refs: MGIT-344
+	var eg reviewguest.EgressControl
+	if p := m.EgressPolicyID; p != "" && p != "none" && rn.Egress != nil {
+		eg = rn.Egress
+	}
 	g, err := reviewguest.Provision(ctx, rn.Manager, reviewguest.Spec{
 		Backend: rn.Backend, Lease: lease, TaskID: "REVIEW-" + a.Lease[:16],
-		UID: rn.ReviewerUID, GID: rn.ReviewerGID,
+		UID: rn.ReviewerUID, GID: rn.ReviewerGID, Egress: eg,
 	})
 	if err != nil {
 		return nil, asRefusal(err, "the review guest could not be provisioned")
 	}
 	defer func() { _ = g.Close(context.WithoutCancel(ctx)) }()
 
-	release, err := rn.Bindings.Attach(ctx, AttachInput{
+	in := AttachInput{
 		GuestID: g.ID, LeaseDir: lease.Dir(), Attestation: att, Mapping: *m,
 		Exec: func(c context.Context, r model.ExecRequest) (*model.ExecResult, error) {
 			return rn.Manager.Exec(c, g.ID, r)
 		},
-	})
+	}
+	if g.HasEgress() {
+		in.AllowEgress = g.AllowEgress
+	}
+	release, err := rn.Bindings.Attach(ctx, in)
 	// The release is registered before the error is looked at: the Bindings
 	// contract hands one back on every path, a refusal included, so whatever
 	// Attach installed before it refused is taken down too.
