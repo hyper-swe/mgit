@@ -36,8 +36,11 @@
 11. The launcher returns once the program has exited, on every kernel. Its supervisor waits with poll and is told when
     the program is gone; on a 5.10 guest, closing the notification descriptor did not wake a supervisor blocked
     reading it, and the launcher hung after the program had already been refused its write.
-12. Left open on purpose: writing to a descriptor the caller handed in as standard output or error, and
+12. The launcher re-executes its own binary as its stage, so a binary that launches must call `MaybeStage` first thing.
+    `Run` refuses (LAUNCH_FAILED, naming `MaybeStage`) in a binary that has not, instead of starting a copy that runs
+    whatever the binary normally runs. The one production entry point, the guest binary, calls it before anything else.
+13. Left open on purpose: writing to a descriptor the caller handed in as standard output or error, and
    connecting to a unix socket the user may already open; both are decisions of the caller and the guest's
    network policy, not of the launcher.
-13. Not here: the sealed read-only bundle, the signed attestation, leases, egress and credentials (later
+14. Not here: the sealed read-only bundle, the signed attestation, leases, egress and credentials (later
    slices), and an arm64 run (the filter table is tested for arm64; the guest run is amd64).

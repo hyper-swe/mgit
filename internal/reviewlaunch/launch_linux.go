@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -20,6 +21,12 @@ import (
 )
 
 const stageArg = "__review_stage__"
+
+// stageAnswered records that this process called MaybeStage, which a binary
+// that launches must do first thing: the launcher re-executes the binary as
+// its stage, and a binary that does not answer would run whatever it normally
+// runs (a test suite, a server) in that child instead.
+var stageAnswered atomic.Bool
 
 // Config describes one review launch.
 type Config struct {
@@ -78,6 +85,9 @@ type sockFprog struct {
 // the entrypoint's exit status (128+signal when killed). A *RefusalError means the
 // reviewer was not started.
 func Run(cfg Config) (int, error) {
+	if !stageAnswered.Load() {
+		return 0, refuse(CodeLaunchFailed, "this binary never called MaybeStage first, so it cannot be re-executed as the launcher's stage")
+	}
 	if cfg.DropTo != nil && (cfg.DropTo.UID <= 0 || cfg.DropTo.GID <= 0) {
 		return 0, refuse(CodePrivileged, "the identity to run as must have a uid and gid above zero")
 	}
@@ -239,6 +249,7 @@ func supervise(fd int, d *ExecDecider, done <-chan struct{}) {
 // and never returns in that case; otherwise it returns false at once. Every
 // binary that calls Run must call it first thing in main.
 func MaybeStage() bool {
+	stageAnswered.Store(true)
 	if len(os.Args) != 3 || os.Args[1] != stageArg {
 		return false
 	}
