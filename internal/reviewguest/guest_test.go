@@ -378,8 +378,10 @@ func TestRun_TheHostDeadlineSitsJustPastTheGuestLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := m.limits[len(m.limits)-1].Sub(start)
-		if got < want+hostGrace/2 || got > want+hostGrace+time.Second {
-			t.Fatalf("limit %v: the host deadline is %v after the start, want just past %v by about %v", limit, got, want, hostGrace)
+		// Fixed bounds, not derived from the constant under test: a grace of zero
+		// (or an enormous one) must fail here whatever hostGrace says.
+		if got < want+5*time.Second || got > want+30*time.Second {
+			t.Fatalf("limit %v: the host deadline is %v after the start, want between 5s and 30s past %v", limit, got, want)
 		}
 	}
 }
