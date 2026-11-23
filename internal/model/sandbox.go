@@ -398,6 +398,13 @@ type ExecRequest struct {
 	// AsRoot is the operator's explicit escalation (`--as-root`): the daemon
 	// audits it and sets RunAs to root. It is never implied. Refs: MGIT-151
 	AsRoot bool `json:"as_root,omitempty"`
+	// Stdin is what the child reads on its standard input. It is set only by
+	// the daemon's own code, never by a client: it has no JSON name here, so it
+	// is absent from the control encoding and from every audit record, and it
+	// travels to the guest only in the exec wire's own frame (internal/execwire).
+	// It exists so a small secret can reach a guest process without being in
+	// argv or the environment, which the guest's other processes can read.
+	Stdin Secret `json:"-"`
 }
 
 // Validate checks the exec request shape, including that an explicit
@@ -409,6 +416,9 @@ func (r ExecRequest) Validate() error {
 	}
 	if r.Timeout < 0 {
 		return &ValidationError{Field: "timeout_ns", Message: "must be non-negative (zero = sandbox TTL governs)"}
+	}
+	if len(r.Stdin) > MaxStdinBytes {
+		return &ValidationError{Field: "stdin", Message: "is larger than a credential can be"}
 	}
 	if r.RunAs != nil {
 		if err := r.RunAs.Validate(); err != nil {

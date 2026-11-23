@@ -31,6 +31,12 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "review-exec" {
 		os.Exit(reviewExec(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "cred-install" {
+		os.Exit(credInstall(credDir, ensureTmpfs, os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "cred-remove" {
+		os.Exit(credRemove(credDir, os.Args[2:], os.Stdout, os.Stderr))
+	}
 	os.Exit(run(os.Args[1:], os.Stdout))
 }
 

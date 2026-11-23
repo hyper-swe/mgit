@@ -10,6 +10,7 @@
 package guest
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -155,6 +156,9 @@ func (s *Supervisor) Execute(ctx context.Context, req model.ExecRequest, stdout,
 	}
 	if req.Dir != "" {
 		cmd.Dir = req.Dir
+	}
+	if len(req.Stdin) > 0 {
+		cmd.Stdin = bytes.NewReader(req.Stdin)
 	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
