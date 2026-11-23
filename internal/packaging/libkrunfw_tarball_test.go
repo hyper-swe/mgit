@@ -208,6 +208,7 @@ func fakeBrewScript(t *testing.T, preinstalled string) (brew, calls string) {
 	brew = filepath.Join(dir, "brew")
 	body := "#!/bin/sh\necho \"$*\" >>" + calls + "\n" +
 		"case \"$1 $2 $3\" in\n" +
+		"  \"--prefix libkrun \") echo /not-installed/opt/libkrun; exit 0 ;;\n" +
 		"  \"list --versions " + preinstalled + "\") echo \"" + preinstalled + " 1.0\"; exit 0 ;;\n" +
 		"esac\nexit 1\n"
 	require.NoError(t, os.WriteFile(brew, []byte(body), 0o700)) //nolint:gosec // a t.TempDir path
@@ -226,6 +227,7 @@ func TestBrewInstallCheck_ARefusedPreflightUninstallsNothing(t *testing.T) {
 			cmd.Env = append(os.Environ(), "BREW="+brew)
 			out, err := cmd.CombinedOutput()
 			require.Error(t, err, "the check must refuse when %s is already installed: %s", preinstalled, out)
+			assert.Contains(t, string(out), preinstalled+" is already installed", "must reach the refusal for the installed formula")
 			log, readErr := os.ReadFile(calls) //nolint:gosec // a t.TempDir path
 			require.NoError(t, readErr)
 			assert.NotContains(t, string(log), "uninstall", "a refusal ran an uninstall:\n%s", log)

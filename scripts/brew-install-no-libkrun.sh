@@ -99,11 +99,12 @@ if "$BREW" list --versions libkrun >/dev/null 2>&1; then
   echo "      Run it on a runner or Homebrew prefix without libkrun." >&2
   exit 1
 fi
-if "$BREW" --prefix libkrun >/dev/null 2>&1; then
-  echo "FAIL: a libkrun prefix exists even though the formula is not installed." >&2
+# Without --installed, Homebrew also prints where an absent formula would go.
+if "$BREW" --prefix --installed libkrun >/dev/null 2>&1; then
+  echo "FAIL: Homebrew reports an installed libkrun prefix." >&2
   exit 1
 fi
-echo "    ok: \`brew list --versions libkrun\` and \`brew --prefix libkrun\` both fail"
+echo "    ok: \`brew list --versions libkrun\` and \`brew --prefix --installed libkrun\` both fail"
 
 # The other half of the precondition: the gate has to be armed. If the
 # libkrun/krun tap were already trusted here, a reintroduced dependency would
