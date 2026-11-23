@@ -64,13 +64,17 @@ implements it must match it, and a difference is a change to this page.
     arguments, network policy and credential reference). The guest is built from the lease as it was verified, and the
     in-guest seal checks the evidence's digest against the attestation before it hands anything to the reviewer, so a
     change to the lease between the host's check and the guest's image is refused as a failed seal.
-11. A connection that ends before the caller has a result tells the caller nothing about whether the reviewer started:
-    it is reported as an ordinary failure (exit 1, no envelope), never as a refusal, and the caller must not assume
-    that nothing ran. Because the nonce is consumed durably before the guest is launched, a retry of the same lease is
-    refused with NONCE_REPLAYED and never launches the review again; this verb stores no result, so a caller that lost
-    one prepares a new lease. A guest does not outlive a daemon that stops mid-run: its virtual machine monitor dies
-    with the daemon (a parent-death signal), and a graceful stop removes the guests first. The per-guest files
-    the backend keeps are the backend's own to clear, not this verb's.
+11. A connection that ends before the caller has a result tells the caller nothing about whether the daemon had consumed
+    the lease, or whether the reviewer started: it is reported as an ordinary failure (exit 1, no envelope), never as a
+    refusal, and the caller must not assume that nothing ran. The guarantee is at most one run per lease, not that every
+    retry is refused. Two cases follow:
+    - The request never reached the daemon, or the caller was gone before the daemon consumed the nonce (the daemon
+      checks for this just before consuming): nothing is spent, and a retry of the same lease is the first run.
+    - The nonce had been consumed: the lease is spent, the guest is removed, and a retry is refused with NONCE_REPLAYED;
+      it never launches the review again. This verb stores no result, so a caller that lost one prepares a new lease.
+    A guest does not outlive a daemon that stops mid-run: its virtual machine monitor dies with the daemon (a
+    parent-death signal), and a graceful stop removes the guests first. The per-guest files the backend keeps are the
+    backend's own to clear, not this verb's.
 12. What a review needs beyond the sealed bundle (the binding map, a network policy, a credential) is installed behind
     one interface, `reviewsvc.Bindings`, called once per run after the guest is sealed and before the reviewer starts,
     and released whatever happens. The default installs nothing and grants nothing: a mapping that names a credential
