@@ -216,6 +216,9 @@ type Request struct {
 	// ReviewPrepare asks for a signed review attestation (MGIT-333).
 	// Declared in reviewprepare.go beside the verb it serves.
 	ReviewPrepare *ReviewPrepareArgs `json:"review_prepare,omitempty"`
+	// ReviewRun asks to run a prepared review (MGIT-333). Declared in
+	// reviewrun.go beside the verb it serves.
+	ReviewRun *ReviewRunArgs `json:"review_run,omitempty"`
 	// Hello states the client's wire version before any verb is transacted.
 	// It is the FIRST frame a current client sends on every connection; a
 	// peer that sends anything else first is, by construction, a build from
@@ -272,13 +275,15 @@ type Response struct {
 	SyncVerify *SyncVerifyResult `json:"sync_verify,omitempty"`
 	// ReviewPrepare is the answer to a review-prepare request (MGIT-333).
 	ReviewPrepare *ReviewPrepareResult `json:"review_prepare,omitempty"`
+	// ReviewRun is the answer to a review-run request (MGIT-333).
+	ReviewRun *ReviewRunResult `json:"review_run,omitempty"`
 }
 
 // validKind reports whether k is a known request kind.
 func validKind(k byte) bool {
 	switch k {
 	case KindLaunch, KindExec, KindLand, KindList, KindRemove, KindStatus, KindGrants, KindGrant,
-		KindSync, KindPolicySet, KindPolicyShow, KindExport, KindHello, KindEcho, KindSyncVerify, KindReviewPrepare:
+		KindSync, KindPolicySet, KindPolicyShow, KindExport, KindHello, KindEcho, KindSyncVerify, KindReviewPrepare, KindReviewRun:
 		return true
 	default:
 		return false
@@ -343,6 +348,7 @@ func (req *Request) Validate() error {
 		KindEcho:          req.Echo != nil,
 		KindSyncVerify:    req.SyncVerify != nil,
 		KindReviewPrepare: req.ReviewPrepare != nil,
+		KindReviewRun:     req.ReviewRun != nil,
 	}
 	for k, present := range set {
 		if present && k != req.Kind {
@@ -392,6 +398,8 @@ func (req *Request) Validate() error {
 		return requireTask(req.SyncVerify)
 	case KindReviewPrepare:
 		return validateReviewPrepare(req.ReviewPrepare)
+	case KindReviewRun:
+		return validateReviewRun(req.ReviewRun)
 	case KindList:
 		return nil // no payload
 	default:
