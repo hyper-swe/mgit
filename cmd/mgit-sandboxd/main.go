@@ -62,6 +62,10 @@ type daemonOpts struct {
 	maxConcLands int
 	maxLandBytes int64
 	ackReduced   bool
+	// reviewCredFD is an inherited descriptor holding the one review credential
+	// (-1: none); reviewCredRef names it in the operator's maps.
+	reviewCredFD  int
+	reviewCredRef string
 	// version prints the build and exits WITHOUT starting a daemon.
 	version bool
 	// vmm prints the linked VMM report (model.VMMReport) as JSON and exits
@@ -92,6 +96,8 @@ func parseFlags(args []string, logSink io.Writer) (*daemonOpts, int) {
 		"per-pool host buffer ceiling in bytes (0 = land.DefaultLimits default, 4 GiB)")
 	flags.StringVar(&o.backend, "backend", sandboxd.BackendRequestAuto,
 		"sandbox backend: auto (platform hypervisor) or container (REDUCED isolation; requires --acknowledge-reduced-isolation)")
+	flags.IntVar(&o.reviewCredFD, "review-credential-fd", -1, "inherited descriptor holding the review credential, read once (never an argument)")
+	flags.StringVar(&o.reviewCredRef, "review-credential-ref", "", "the credential_ref the operator maps name for it")
 	flags.BoolVar(&o.ackReduced, "acknowledge-reduced-isolation", false,
 		"accept the container fallback's shared-kernel risk (recorded in the audit trail)")
 	flags.BoolVar(&o.version, "version", false,
@@ -268,8 +274,13 @@ func run(args []string, out, logSink io.Writer) int {
 			// maps are read from the host root; this daemon has no credential
 			// source or egress enforcer wired yet, so a mapping that asks for a
 			// credential or a host allowlist is refused rather than run without it.
-			rs.WithMapLoader(reviewbind.LoadMap).WithRunner(reviewsvc.RunnerConfig{Manager: manager, Backend: reviewBackendName(context.Background(), opts.backend), Bindings: reviewbind.New(reviewbind.Config{})})
-			dcfg.ReviewRunner = rs
+			bindings, berr := reviewBindings(opts.reviewCredFD, opts.reviewCredRef, logger)
+			if berr != nil {
+				logger.Error("review run is not served", "reason", berr.Error())
+			} else {
+				rs.WithMapLoader(reviewbind.LoadMap).WithRunner(reviewsvc.RunnerConfig{Manager: manager, Backend: reviewBackendName(context.Background(), opts.backend), Bindings: bindings})
+				dcfg.ReviewRunner = rs
+			}
 		}
 
 		// Wire host egress enforcement (allowlist proxy + restricted DNS) so

@@ -36,7 +36,8 @@ func (f *fakeEgress) Apply(_ context.Context, _ string, _ Policy) (func(context.
 func src(secret string) CredentialSource {
 	return func(_ context.Context, ref string) (*Slot, error) {
 		s := NewSlot(ref)
-		return s, s.Fill(strings.NewReader(secret))
+		err := s.Fill(strings.NewReader(secret))
+		return s, err
 	}
 }
 
