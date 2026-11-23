@@ -116,8 +116,8 @@ func TestE2E_ReviewGuest_LaunchTimeImage(t *testing.T) {
 	lsn := exec("/bin/busybox", "ls", "-ln", leaseDir)
 	require.Zero(t, lsn.ExitCode, string(lsn.Stderr))
 	for _, line := range strings.Split(strings.TrimSpace(string(lsn.Stdout)), "\n") {
-		if strings.HasPrefix(line, "total") {
-			continue
+		if strings.HasPrefix(line, "total") || strings.HasSuffix(line, " lost+found") {
+			continue // the filesystem's own directory, root-owned 0700, left as it is
 		}
 		f := strings.Fields(line)
 		require.GreaterOrEqual(t, len(f), 4, line)

@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -135,7 +136,11 @@ func Provision(ctx context.Context, mgr model.SandboxManager, s Spec) (*Guest, e
 	})
 	if err != nil || seal.ExitCode != 0 {
 		_ = mgr.Remove(ctx, info.ID, true)
-		return nil, refuse(reviewprep.CodePolicyUnenforcable, "the lease could not be sealed in the guest")
+		detail := "the lease could not be sealed in the guest"
+		if err == nil {
+			detail += ": " + clip(seal.Stderr, 300) // the seal's own words; they name no bundle content
+		}
+		return nil, refuse(reviewprep.CodePolicyUnenforcable, detail)
 	}
 	return &Guest{ID: info.ID, LeaseDir: s.Lease.dir, uid: s.UID, gid: s.GID, mgr: mgr}, nil
 }
@@ -207,3 +212,11 @@ func launcherRefusal(stderr []byte, nonce string) (reviewprep.Error, bool) {
 
 // Close removes the guest.
 func (g *Guest) Close(ctx context.Context) error { return g.mgr.Remove(ctx, g.ID, true) }
+
+// clip returns the first n bytes of b as one trimmed line.
+func clip(b []byte, n int) string {
+	if len(b) > n {
+		b = b[:n]
+	}
+	return strings.Join(strings.Fields(string(b)), " ")
+}
