@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/buildinfo"
+	"github.com/hyper-swe/mgit/internal/reviewbind"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/libkrun"
 	"github.com/hyper-swe/mgit/internal/sandboxd/hostmem"
@@ -61,6 +62,10 @@ type daemonOpts struct {
 	maxConcLands int
 	maxLandBytes int64
 	ackReduced   bool
+	// reviewCredFD is an inherited descriptor holding the one review credential
+	// (-1: none); reviewCredRef names it in the operator's maps.
+	reviewCredFD  int
+	reviewCredRef string
 	// version prints the build and exits WITHOUT starting a daemon.
 	version bool
 	// vmm prints the linked VMM report (model.VMMReport) as JSON and exits
@@ -91,6 +96,8 @@ func parseFlags(args []string, logSink io.Writer) (*daemonOpts, int) {
 		"per-pool host buffer ceiling in bytes (0 = land.DefaultLimits default, 4 GiB)")
 	flags.StringVar(&o.backend, "backend", sandboxd.BackendRequestAuto,
 		"sandbox backend: auto (platform hypervisor) or container (REDUCED isolation; requires --acknowledge-reduced-isolation)")
+	flags.IntVar(&o.reviewCredFD, "review-credential-fd", -1, "inherited descriptor holding the review credential, read once (never an argument)")
+	flags.StringVar(&o.reviewCredRef, "review-credential-ref", "", "the credential_ref the operator maps name for it")
 	flags.BoolVar(&o.ackReduced, "acknowledge-reduced-isolation", false,
 		"accept the container fallback's shared-kernel risk (recorded in the audit trail)")
 	flags.BoolVar(&o.version, "version", false,
@@ -265,13 +272,21 @@ func run(args []string, out, logSink io.Writer) int {
 			dcfg.ReviewPreparer = rs
 			// Review run (MGIT-333): the same service runs a prepared review on
 			// the selected backend, which must deliver the bundle as a
-			// launch-time image or the run refuses. Nothing is installed behind
-			// the bindings seam yet, so a mapping that asks for a credential or
-			// a network policy is refused rather than run without it.
-			reviewCfg = reviewsvc.RunnerConfig{Manager: manager, Backend: reviewBackendName(context.Background(), opts.backend)}
-			rs.WithRunner(reviewCfg)
-			dcfg.ReviewRunner = rs
-			reviewSvc = rs
+			// launch-time image or the run refuses. The operator's binding
+			// maps are read from the host root; the credential source is
+			// optional (--review-credential-fd). A mapping that names an
+			// egress policy goes behind the host egress stack wired below;
+			// where this daemon has none, such a review is refused rather
+			// than run without it.
+			bindings, berr := reviewBindings(opts.reviewCredFD, opts.reviewCredRef, logger)
+			if berr != nil {
+				logger.Error("review run is not served", "reason", berr.Error())
+			} else {
+				reviewCfg = reviewsvc.RunnerConfig{Manager: manager, Backend: reviewBackendName(context.Background(), opts.backend), Bindings: bindings}
+				rs.WithMapLoader(reviewbind.LoadMap).WithRunner(reviewCfg)
+				dcfg.ReviewRunner = rs
+				reviewSvc = rs
+			}
 		}
 
 		// Wire host egress enforcement (allowlist proxy + restricted DNS) so
