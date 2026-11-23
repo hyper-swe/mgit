@@ -383,26 +383,27 @@ func TestLaunchArgs_GoThroughTheLauncherWithTheAttestedDigest(t *testing.T) {
 	}
 }
 
-// The attestation reports only what the launcher enforces: with no write
-// denial in the launcher it says writes are possible, and a client that
-// requires the profile refuses it.
-// The attestation reports only what the launcher enforces. The build ships
-// with no write denial, so an attestation issued with the shipped default says
-// writes are possible, and a client that requires the profile refuses it. No
-// test assigns the flag here: the default is what is under test.
-func TestAttestation_DefaultReportsWritesAsPossible(t *testing.T) {
-	if shippedWriteDenial {
-		t.Fatal("WriteDenialEnforced ships true; it may only be set by the change that makes the launcher deny writes")
+// The attestation reports only what the launcher enforces. The launcher this
+// build ships denies file changes (the review launcher's write denial), so an
+// attestation issued with the shipped default states writes as denied and a
+// client that requires the profile accepts it. No test assigns the flag here:
+// the default is what is under test.
+func TestAttestation_DefaultReportsWritesAsDenied(t *testing.T) {
+	if !shippedWriteDenial {
+		t.Fatal("WriteDenialEnforced ships false although the launcher denies writes")
 	}
 	r, m, b, s := rawFixture(t)
 	att, err := Prepare(r, m, b, s, fixedNow, time.Minute, "lease-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !att.Enforced.FilesystemWrites {
-		t.Fatal("the default attestation claims writes are denied while the launcher does not deny them")
+	if att.Enforced.FilesystemWrites {
+		t.Fatal("the default attestation says writes are possible although the launcher denies them")
 	}
-	if got := codeOf(t, Verify(att, r, s.Public(), fixedNow)); got != "ATTESTATION_INVALID" {
-		t.Fatalf("a client must refuse it, code %s", got)
+	if att.CapabilityPolicyDigest != "81bdcf6ab19e001cd9c87b55cc4076e1611091c5224d784652c9ac8ebc5d5d4e" {
+		t.Fatalf("the shipped policy digest is %s", att.CapabilityPolicyDigest)
+	}
+	if err := Verify(att, r, s.Public(), fixedNow); err != nil {
+		t.Fatalf("a client must accept it: %v", err)
 	}
 }
