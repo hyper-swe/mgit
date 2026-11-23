@@ -196,3 +196,72 @@ func TestShow_NoImageStoreIsRefused(t *testing.T) {
 		t.Fatal("show ran with no image store")
 	}
 }
+
+func TestInstall_ReinstallingTheSameRecordWithDefaultRepairsADamagedPointer(t *testing.T) {
+	root := newRoot(t)
+	raw := recordJSON(t, "d1")
+	if _, err := Install(root, raw, true); err != nil {
+		t.Fatal(err)
+	}
+	pin := filepath.Join(root, "review", "maps", "_default.sha256")
+	if err := os.WriteFile(pin, []byte("damaged\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DefaultID(root); err == nil {
+		t.Fatal("a damaged pointer pin was accepted")
+	}
+	if _, err := Install(root, raw, true); err != nil {
+		t.Fatalf("the repair the hint names does not work: %v", err)
+	}
+	if id, err := DefaultID(root); err != nil || id != "d1" {
+		t.Fatalf("pointer after repair: %q %v", id, err)
+	}
+}
+
+func TestInstall_ReinstallingTheSameRecordWithoutDefaultIsAnAcceptedNoOp(t *testing.T) {
+	root := newRoot(t)
+	raw := recordJSON(t, "d2")
+	first, err := Install(root, raw, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := Install(root, raw, false)
+	if err != nil || again != first {
+		t.Fatalf("%+v %v", again, err)
+	}
+}
+
+func TestInstall_ADifferentRecordUnderAnInstalledIDIsStillRefusedWithDefault(t *testing.T) {
+	root := newRoot(t)
+	if _, err := Install(root, recordJSON(t, "d3"), true); err != nil {
+		t.Fatal(err)
+	}
+	other := goodMap("d3")
+	other.Argv = []string{"--other"}
+	raw, _ := json.Marshal(other)
+	if _, err := Install(root, raw, true); err == nil {
+		t.Fatal("a different record replaced an installed one")
+	}
+}
+
+func TestShow_AsksTheStoreForTheMapsImageDigestUnderTheHostRoot(t *testing.T) {
+	root := newRoot(t)
+	m := goodMap("s1")
+	m.BindingSHA256 = strings.Repeat("a", 64) // differs from the image digest on purpose
+	raw, _ := json.Marshal(m)
+	if _, err := Install(root, raw, false); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	names := func(hr, digest string) ([]string, error) {
+		calls++
+		if hr != root || digest != m.ImageDigest {
+			return nil, nil
+		}
+		return []string{"reviewer"}, nil
+	}
+	info, err := Show(root, "s1", names)
+	if err != nil || calls != 1 || info.ImageRef != "reviewer@"+m.ImageDigest {
+		t.Fatalf("calls=%d %+v %v", calls, info, err)
+	}
+}

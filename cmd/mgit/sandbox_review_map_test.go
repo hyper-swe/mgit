@@ -48,3 +48,30 @@ func TestReviewMapCLI_InstallThenShowTheDefault(t *testing.T) {
 		t.Fatalf("show --json: %s %v", out, err)
 	}
 }
+
+// The real wiring: no stub, an images.lock on disk. show must resolve the map's
+// digest through the host root's image store.
+func TestReviewMapCLI_ShowResolvesThroughTheHostRootsRealImageStore(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "host")
+	rec := filepath.Join(t.TempDir(), "map.json")
+	d := "sha256:" + strings.Repeat("b", 64)
+	body := `{"schema":"mgit.review-map/v1","id":"real","binding_sha256":"` + strings.Repeat("a", 64) + `","image_digest":"` + d +
+		`","guest_entrypoint":"/opt/reviewer/bin/review","entrypoint_sha256":"` + strings.Repeat("c", 64) + `","argv":["--json"],"egress_policy_id":"none"}`
+	if err := os.WriteFile(rec, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runMapCmd(t, "install", "--host-root", root, "--file", rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runMapCmd(t, "show", "--host-root", root, "--id", "real", "--json"); err == nil {
+		t.Fatal("show succeeded with no image registered")
+	}
+	lock := `{"images":{"reviewer":{"digest":"` + d + `"}}}`
+	if err := os.WriteFile(filepath.Join(root, "images.lock"), []byte(lock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runMapCmd(t, "show", "--host-root", root, "--id", "real", "--json")
+	if err != nil || !strings.Contains(out, `"image_ref":"reviewer@`+d+`"`) {
+		t.Fatalf("%s %v", out, err)
+	}
+}
