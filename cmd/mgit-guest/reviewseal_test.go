@@ -13,6 +13,15 @@ type chownCall struct {
 	uid, gid int
 }
 
+// asRoot makes the lost+found ownership check read as root-owned, which a test
+// run by an ordinary user could not otherwise produce.
+func asRoot(t *testing.T) {
+	t.Helper()
+	was := lostFoundRootOwned
+	lostFoundRootOwned = func(string) bool { return true }
+	t.Cleanup(func() { lostFoundRootOwned = was })
+}
+
 func lease(t *testing.T) string {
 	t.Helper()
 	d := filepath.Join(t.TempDir(), "lease")
@@ -58,6 +67,7 @@ func TestSealLease_MakesItRootOwnedAndReadableToTheReviewerGroupOnly(t *testing.
 // directory. It is the filesystem's, root-owned 0700, and not the reviewer's to
 // read, so it is left alone rather than refused or handed over.
 func TestSealLease_LeavesAFilesystemsLostAndFoundAlone(t *testing.T) {
+	asRoot(t)
 	d := lease(t)
 	lf := filepath.Join(d, "lost+found")
 	if err := os.Mkdir(lf, 0o700); err != nil {
@@ -98,6 +108,7 @@ func TestSealLease_LeavesAFilesystemsLostAndFoundAlone(t *testing.T) {
 // The exemption is exact: a directory named lost+found, at the lease root,
 // empty, mode 0700, not a link. Anything else with that name is refused.
 func TestSealLease_LostAndFoundExemptionIsExact(t *testing.T) {
+	asRoot(t)
 	noop := func(string, int, int) error { return nil }
 	cases := map[string]func(t *testing.T, d string){
 		"not empty": func(t *testing.T, d string) {
@@ -155,6 +166,7 @@ func TestSealLease_LostAndFoundExemptionIsExact(t *testing.T) {
 }
 
 func TestVerifySealed_SkipsOnlyTheFilesystemsLostAndFound(t *testing.T) {
+	asRoot(t)
 	d := lease(t)
 	lf := filepath.Join(d, "lost+found")
 	if err := os.Mkdir(lf, 0o700); err != nil {
@@ -256,5 +268,68 @@ func TestVerifySealed_FailsWhenAnythingIsStillOwnedByTheReviewer(t *testing.T) {
 		return nil
 	}); err == nil {
 		t.Fatal("a directory the reviewer owns passed")
+	}
+}
+
+// The filesystem's lost+found is root's. One owned by anyone else (a directory
+// the reviewer's own user made, say) is not exempt: it is refused when sealing
+// and checked like any other entry when verifying.
+func TestLostAndFound_MustBeRootOwned(t *testing.T) {
+	was := lostFoundRootOwned
+	lostFoundRootOwned = func(string) bool { return false }
+	defer func() { lostFoundRootOwned = was }()
+	d := lease(t)
+	lf := filepath.Join(d, "lost+found")
+	if err := os.Mkdir(lf, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := sealLease(d, 7, func(string, int, int) error { return nil }); err == nil {
+		t.Fatal("a lost+found that is not root's was exempted when sealing")
+	}
+	var seen []string
+	_ = verifySealed(d, 7, func(p string, _ int) error { seen = append(seen, p); return nil })
+	found := false
+	for _, p := range seen {
+		found = found || p == lf
+	}
+	if !found {
+		t.Fatal("a lost+found that is not root's was skipped when verifying")
+	}
+}
+
+// What is on disk must also have the modes the seal sets: a seal that took the
+// owner but left a file writable by the group, or the directory open to
+// everyone, is not a seal.
+func TestVerifySealed_ChecksTheModesToo(t *testing.T) {
+	ok := func(string, int) error { return nil }
+	d := lease(t) // 0700 directory, 0400 files: not the sealed modes
+	if err := verifySealed(d, 5, ok); err == nil {
+		t.Fatal("unsealed modes passed")
+	}
+	if err := sealLease(d, 5, func(string, int, int) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySealed(d, 5, ok); err != nil {
+		t.Fatalf("sealed modes refused: %v", err)
+	}
+	ev := filepath.Join(d, "evidence.json")
+	for _, bad := range []os.FileMode{0o640, 0o444, 0o660, 0o400} {
+		if err := os.Chmod(ev, bad); err != nil { //nolint:gosec // the test sets the mode wrong on purpose
+			t.Fatal(err)
+		}
+		if err := verifySealed(d, 5, ok); err == nil {
+			t.Fatalf("file mode %v passed", bad)
+		}
+	}
+	if err := os.Chmod(ev, 0o440); err != nil { //nolint:gosec // back to the sealed mode
+		t.Fatal(err)
+	}
+	for _, bad := range []os.FileMode{0o755, 0o770, 0o700} {
+		if err := os.Chmod(d, bad); err != nil { //nolint:gosec // the test sets the mode wrong on purpose
+			t.Fatal(err)
+		}
+		if err := verifySealed(d, 5, ok); err == nil {
+			t.Fatalf("directory mode %v passed", bad)
+		}
 	}
 }
