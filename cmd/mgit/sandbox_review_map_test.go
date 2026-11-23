@@ -41,7 +41,7 @@ func TestReviewMapCLI_InstallThenShowTheDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	var info reviewbind.Info
-	if err := json.Unmarshal([]byte(out), &info); err != nil || info.ID != "std" || info.BindingSHA256 != strings.Repeat("a", 64) || info.MapSHA256 == info.BindingSHA256 || info.Schema != reviewbind.InfoSchema {
+	if err := json.Unmarshal([]byte(out), &info); err != nil || info.ID != "std" || info.BindingSHA256 != strings.Repeat("a", 64) || info.MapSHA256 == info.BindingSHA256 || info.ImageDigest != "sha256:"+strings.Repeat("b", 64) || info.Schema != reviewbind.InfoSchema {
 		t.Fatalf("show --json: %s %v", out, err)
 	}
 }

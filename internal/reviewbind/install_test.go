@@ -33,6 +33,9 @@ func TestInstall_WritesAPinnedMapTheLoaderAccepts(t *testing.T) {
 	if info.ID != "m1" || info.MapSHA256 != h || info.BindingSHA256 != m.BindingSHA256 || info.MapSHA256 == info.BindingSHA256 {
 		t.Fatalf("info does not carry the two distinct hashes: %+v", info)
 	}
+	if info.ImageDigest != m.ImageDigest || !strings.HasPrefix(info.ImageDigest, "sha256:") {
+		t.Fatalf("info lacks the record's image digest: %+v", info)
+	}
 	for _, d := range []string{root, filepath.Join(root, "review"), filepath.Join(root, "review", "maps")} {
 		fi, err := os.Stat(d)
 		if err != nil || fi.Mode().Perm() != 0o700 {
