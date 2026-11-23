@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hyper-swe/mgit/internal/controlproto"
 	"github.com/hyper-swe/mgit/internal/model"
@@ -429,5 +430,39 @@ func TestRunReview_ADisconnectAfterTheNonceIsConsumedSpendsTheLeaseAndARetryIsRe
 	}
 	if len(r.mgr.launched) != launches {
 		t.Fatal("a retry after a disconnect started the review again")
+	}
+}
+
+// The caller can go away between the first look at it and the consumption of the
+// nonce (while the mapping is being read, say). That last look is what keeps the
+// lease unspent, so it is tested on its own: the cancellation happens after the
+// run began and before anything is consumed.
+func TestRunReview_ACallerGoneJustBeforeConsumptionSpendsNothing(t *testing.T) {
+	r := prepared(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.svc.WithMapLoader(func(root, id string) (*reviewprep.Mapping, error) {
+		m, err := loadMapFromDisk(root, id)
+		cancel() // gone after the mapping was read
+		return m, err
+	})
+	_, err := r.svc.RunReview(ctx, r.args)
+	var e *reviewprep.Error
+	if err == nil || errors.As(err, &e) {
+		t.Fatalf("a canceled request must fail as an ordinary error, got %v", err)
+	}
+	if usedRecords(t, r.root) != 0 || len(r.mgr.launched) != 0 {
+		t.Fatalf("consumed=%d launched=%d", usedRecords(t, r.root), len(r.mgr.launched))
+	}
+}
+
+// The lease is checked against the clock at run time: one that was valid when it
+// was prepared is refused once its attestation has expired.
+func TestRunReview_AnExpiredAttestationIsRefusedAtRunTime(t *testing.T) {
+	r := prepared(t)
+	r.svc.now = func() time.Time { return now.Add(time.Hour) }
+	_, err := r.run(t)
+	e := envelopeOf(t, err)
+	if e.Code != reviewprep.CodeAttestationInvalid || usedRecords(t, r.root) != 0 || len(r.mgr.launched) != 0 {
+		t.Fatalf("envelope %+v consumed=%d", e, usedRecords(t, r.root))
 	}
 }
