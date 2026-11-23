@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -251,6 +252,19 @@ func TestRun_RootWithoutIdentityIsRefused(t *testing.T) {
 	}
 }
 
+// A drop target of root (or a negative id) is not a drop, whoever starts the
+// launcher: the program must never run as uid or gid 0.
+func TestRun_RefusesToDropToRoot(t *testing.T) {
+	p, d := stageBinary(t)
+	for _, id := range []Identity{{0, 0}, {0, 5}, {5, 0}, {-1, 5}, {5, -1}} {
+		_, err := Run(Config{Entrypoint: p, SHA256: d, Argv: []string{"--probe", "ok"}, DropTo: &id, Stdout: io.Discard, Stderr: io.Discard})
+		var r *RefusalError
+		if !errors.As(err, &r) || r.Code != CodePrivileged {
+			t.Fatalf("%+v: err %v, want PRIVILEGED", id, err)
+		}
+	}
+}
+
 // The supervisor decides which exec is allowed; a same-uid reviewer must not
 // be able to rewrite its memory through /proc or take its descriptors.
 func TestRun_SupervisorIsNotDumpable(t *testing.T) {
@@ -436,4 +450,50 @@ func TestCloseInherited_StartsAtExactlyFive(t *testing.T) {
 func stubFDHooks() func() {
 	a, b, c := closeRangeCall, listFDs, setCloexec
 	return func() { closeRangeCall, listFDs, setCloexec = a, b, c }
+}
+
+// On an older kernel closing the notification descriptor does not wake a
+// supervisor blocked reading it, so the launcher hung after the program had
+// already exited (seen on a 5.10 guest). The supervisor must stop on its own
+// once told the stage is gone, with nothing ever arriving on the descriptor.
+func TestSupervise_StopsWhenToldTheStageIsGone(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		supervise(int(r.Fd()), NewExecDecider(5, HostArch()), done)
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("the supervisor stopped before it was told to")
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(done)
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the supervisor did not stop after the stage was gone")
+	}
+}
+
+// A binary that launches must answer the launcher's stage re-exec first
+// (MaybeStage). One that does not would be started as its own stage and run
+// whatever it normally runs, which can start another launch: a fork bomb. Run
+// refuses instead, before it starts anything.
+func TestRun_RefusesWhenTheBinaryNeverAnsweredTheStageReexec(t *testing.T) {
+	p, d := stageBinary(t)
+	was := stageAnswered.Load()
+	stageAnswered.Store(false)
+	t.Cleanup(func() { stageAnswered.Store(was) })
+	_, err := Run(Config{Entrypoint: p, SHA256: d, Argv: []string{"--probe", "ok"}, Stdout: io.Discard, Stderr: io.Discard})
+	var r *RefusalError
+	if !errors.As(err, &r) || r.Code != CodeLaunchFailed || !strings.Contains(r.Detail, "MaybeStage") {
+		t.Fatalf("err %v", err)
+	}
 }

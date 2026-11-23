@@ -13,11 +13,20 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 const stageArg = "__review_stage__"
+
+// stageAnswered records that this process called MaybeStage, which a binary
+// that launches must do first thing: the launcher re-executes the binary as
+// its stage, and a binary that does not answer would run whatever it normally
+// runs (a test suite, a server) in that child instead.
+var stageAnswered atomic.Bool
 
 // Config describes one review launch.
 type Config struct {
@@ -76,6 +85,12 @@ type sockFprog struct {
 // the entrypoint's exit status (128+signal when killed). A *RefusalError means the
 // reviewer was not started.
 func Run(cfg Config) (int, error) {
+	if !stageAnswered.Load() {
+		return 0, refuse(CodeLaunchFailed, "this binary never called MaybeStage first, so it cannot be re-executed as the launcher's stage")
+	}
+	if cfg.DropTo != nil && (cfg.DropTo.UID <= 0 || cfg.DropTo.GID <= 0) {
+		return 0, refuse(CodePrivileged, "the identity to run as must have a uid and gid above zero")
+	}
 	if os.Getuid() == 0 && cfg.DropTo == nil {
 		return 0, refuse(CodePrivileged, "refusing to run the entrypoint as root; an unprivileged identity is required")
 	}
@@ -120,16 +135,18 @@ func Run(cfg Config) (int, error) {
 
 	listener, entryFD, recvErr := recvListener(int(parentSock.Fd()))
 	var supDone chan struct{}
+	stageGone := make(chan struct{})
 	if recvErr == nil {
 		supDone = make(chan struct{})
 		d := NewExecDecider(entryFD, HostArch())
-		go func() { defer close(supDone); supervise(listener, d) }()
+		go func() { defer close(supDone); supervise(listener, d, stageGone) }()
 		_, _ = parentSock.Write([]byte{1})
 	}
 	waitErr := cmd.Wait()
+	close(stageGone)
 	if recvErr == nil {
-		_ = syscall.Close(listener)
 		<-supDone
+		_ = syscall.Close(listener)
 	}
 	status, _ := io.ReadAll(statusR)
 	if len(status) > 0 {
@@ -174,9 +191,34 @@ func recvListener(sock int) (listener, entryFD int, err error) {
 	return fds[0], int(binary.LittleEndian.Uint32(buf)), nil
 }
 
-// supervise answers notifications until the filter's last holder is gone.
-func supervise(fd int, d *ExecDecider) {
+// superviseTick is how often the supervisor looks up from waiting.
+const superviseTick = 100 // milliseconds
+
+// supervise answers notifications until the filter's last holder is gone or
+// done is closed. It waits with poll rather than blocking in the read: on
+// older kernels (seen on 5.10) closing the descriptor does not wake a thread
+// blocked reading it, which left the launcher hung after the program exited.
+func supervise(fd int, d *ExecDecider, done <-chan struct{}) {
 	for {
+		select {
+		case <-done:
+			return
+		default:
+		}
+		pfd := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}} //nolint:gosec // G115: a descriptor number fits int32
+		n, err := unix.Poll(pfd, superviseTick)
+		if err != nil {
+			if err == unix.EINTR {
+				continue
+			}
+			return
+		}
+		if n == 0 {
+			continue
+		}
+		if pfd[0].Revents&unix.POLLIN == 0 {
+			return // hung up, errored or closed, with nothing left to answer
+		}
 		var req [80]byte
 		if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), ioctlNotifRecv, uintptr(unsafe.Pointer(&req[0]))); e != 0 { //nolint:gosec // G103: kernel ABI structs are passed by pointer
 			if e == syscall.EINTR {
@@ -207,6 +249,7 @@ func supervise(fd int, d *ExecDecider) {
 // and never returns in that case; otherwise it returns false at once. Every
 // binary that calls Run must call it first thing in main.
 func MaybeStage() bool {
+	stageAnswered.Store(true)
 	if len(os.Args) != 3 || os.Args[1] != stageArg {
 		return false
 	}

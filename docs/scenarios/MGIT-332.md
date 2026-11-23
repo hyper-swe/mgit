@@ -7,7 +7,8 @@
    interpreter, which is a second launch). Refusal exits 70 with a neutral error envelope on stderr and the
    program is not started.
 3. A launcher that starts as root refuses unless it is given an unprivileged identity; with one it clears the
-   capability bounding set and ambient capabilities, drops groups, gid and uid.
+   capability bounding set and ambient capabilities, drops groups, gid and uid. An identity with a uid or gid of zero (or below) is
+   refused too, whoever starts the launcher.
 4. It sets no_new_privs and a seccomp filter, then executes the verified file by descriptor. The filter
    refuses execve by path, fork and vfork; allows clone only as a thread; answers clone3 with ENOSYS so C
    libraries fall back to clone; and sends execveat to a supervisor that allows exactly one: the launcher's
@@ -32,8 +33,14 @@
 10. On a kernel older than 5.11, which cannot mark a whole range of descriptors at once, the launcher marks them
     one by one from the directory of open descriptors. If neither works, the launcher refuses with
     POLICY_UNENFORCEABLE and starts nothing.
-11. Left open on purpose: writing to a descriptor the caller handed in as standard output or error, and
+11. The launcher returns once the program has exited, on every kernel. Its supervisor waits with poll and is told when
+    the program is gone; on a 5.10 guest, closing the notification descriptor did not wake a supervisor blocked
+    reading it, and the launcher hung after the program had already been refused its write.
+12. The launcher re-executes its own binary as its stage, so a binary that launches must call `MaybeStage` first thing.
+    `Run` refuses (LAUNCH_FAILED, naming `MaybeStage`) in a binary that has not, instead of starting a copy that runs
+    whatever the binary normally runs. The one production entry point, the guest binary, calls it before anything else.
+13. Left open on purpose: writing to a descriptor the caller handed in as standard output or error, and
    connecting to a unix socket the user may already open; both are decisions of the caller and the guest's
    network policy, not of the launcher.
-12. Not here: the sealed read-only bundle, the signed attestation, leases, egress and credentials (later
+14. Not here: the sealed read-only bundle, the signed attestation, leases, egress and credentials (later
    slices), and an arm64 run (the filter table is tested for arm64; the guest run is amd64).

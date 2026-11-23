@@ -25,6 +25,9 @@ func main() {
 	if reviewlaunch.MaybeStage() {
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "review-seal" {
+		os.Exit(reviewSeal(os.Args[2:], os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "review-exec" {
 		os.Exit(reviewExec(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
