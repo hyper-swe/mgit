@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -183,6 +184,65 @@ func TestRunReview_ASecondRunOfTheSameLeaseIsRefusedBeforeAnythingStarts(t *test
 	}
 	if len(r.mgr.launched) != launches {
 		t.Fatal("a replay launched a guest")
+	}
+}
+
+// The consumption record is made durable before the guest is launched: the
+// record is written, then flushed, then each directory on its path is flushed
+// up to the host root (so its entry, and any directory just created for it,
+// survive a power loss), and only then is a guest launched.
+func TestRunReview_TheConsumptionRecordIsFlushedWithItsDirectoriesBeforeTheLaunch(t *testing.T) {
+	r := prepared(t)
+	var synced []string
+	r.svc.syncFile = func(f *os.File) error {
+		if len(r.mgr.launched) != 0 {
+			t.Errorf("%s flushed after a guest was launched", f.Name())
+		}
+		if len(synced) == 0 {
+			b, err := os.ReadFile(f.Name())
+			if err != nil || len(b) != 65 {
+				t.Errorf("the record was flushed before it was written: %q %v", b, err)
+			}
+		}
+		synced = append(synced, f.Name())
+		return nil
+	}
+	if _, err := r.run(t); err != nil {
+		t.Fatal(err)
+	}
+	used := filepath.Join(r.root, "review", "used")
+	entries, err := os.ReadDir(used)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("records %v %v", entries, err)
+	}
+	want := []string{filepath.Join(used, entries[0].Name()), used, filepath.Join(r.root, "review"), r.root}
+	if !reflect.DeepEqual(synced, want) {
+		t.Fatalf("flushed %q,\nwant %q (the record, then each directory up to the root, in that order)", synced, want)
+	}
+}
+
+// A flush that fails stops the run before any guest: the record's durability is
+// not confirmed, so nothing is launched, and the lease stays spent (fail closed).
+func TestRunReview_AFlushThatFailsLaunchesNothing(t *testing.T) {
+	for fail := 0; fail < 4; fail++ {
+		r := prepared(t)
+		n := 0
+		r.svc.syncFile = func(*os.File) error {
+			n++
+			if n == fail+1 {
+				return errors.New("flush failed")
+			}
+			return nil
+		}
+		_, err := r.run(t)
+		e := envelopeOf(t, err)
+		if e.Code != reviewprep.CodePolicyUnenforcable || e.ReviewerStarted || len(r.mgr.launched) != 0 {
+			t.Fatalf("flush %d failing: envelope %+v launched=%d", fail, e, len(r.mgr.launched))
+		}
+		_, err = r.run(t)
+		if e := envelopeOf(t, err); e.Code != reviewprep.CodeNonceReplayed {
+			t.Fatalf("flush %d failing: a retry was not refused as spent: %+v", fail, e)
+		}
 	}
 }
 
