@@ -23,6 +23,7 @@ type fakeMgr struct {
 	backend  string
 	res      *model.ExecResult
 	resFn    func(model.ExecRequest) *model.ExecResult
+	execErr  error
 	err      error
 }
 
@@ -38,6 +39,9 @@ func (f *fakeMgr) Exec(ctx context.Context, _ string, r model.ExecRequest) (*mod
 	f.execs = append(f.execs, r)
 	_, has := ctx.Deadline()
 	f.bounded = append(f.bounded, has)
+	if f.execErr != nil {
+		return nil, f.execErr
+	}
 	if f.resFn != nil {
 		return f.resFn(r), nil
 	}
@@ -150,7 +154,42 @@ func provisioned(t *testing.T, m *fakeMgr) *Guest {
 	if err != nil {
 		t.Fatal(err)
 	}
+	m.execs, m.bounded = nil, nil // the seal step is checked on its own
 	return g
+}
+
+func TestProvision_SealsTheLeaseInTheGuestForTheReviewerGroup(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM}
+	s := spec(t)
+	if _, err := Provision(context.Background(), m, s); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.execs) != 1 {
+		t.Fatalf("execs %d", len(m.execs))
+	}
+	r := m.execs[0]
+	want := []string{"/sbin/mgit-guest", "review-seal", "--gid", "65534", s.Lease.Dir()}
+	if !reflect.DeepEqual(r.Command, want) || !r.AsRoot || len(r.Env) != 0 || r.Timeout <= 0 {
+		t.Fatalf("seal exec %+v", r)
+	}
+}
+
+func TestProvision_ARefusedSealRemovesTheGuest(t *testing.T) {
+	for name, m := range map[string]*fakeMgr{
+		"nonzero exit": {backend: model.BackendKVM, res: &model.ExecResult{ExitCode: 1, Stderr: []byte("no")}},
+		"exec error":   {backend: model.BackendKVM, resFn: nil},
+	} {
+		if name == "exec error" {
+			m.execErr = errors.New("transport")
+		}
+		_, err := Provision(context.Background(), m, spec(t))
+		if err == nil || code(t, err) != reviewprep.CodeBundleInvalid {
+			t.Fatalf("%s: err=%v", name, err)
+		}
+		if !reflect.DeepEqual(m.removed, []string{"sb1"}) {
+			t.Fatalf("%s: removed=%v", name, m.removed)
+		}
+	}
 }
 
 func TestRun_GoesThroughTheLauncherAsRootWithTheDigestAndOnlyTheNonceInTheEnvironment(t *testing.T) {
