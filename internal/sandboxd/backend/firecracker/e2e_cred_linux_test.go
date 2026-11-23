@@ -92,6 +92,9 @@ func TestE2E_CredentialSlot_IsMemoryBackedAndGroupReadable(t *testing.T) {
 	assert.Equal(t, "0", f[2])
 	assert.Equal(t, fmt.Sprint(gid), f[3])
 
+	// Say what the path looks like to the reader, so a refusal is a diagnosis.
+	t.Logf("path modes:\n%s", run("", "/bin/busybox", "ls", "-ldn", "/", "/run", dir, slot).Stdout)
+
 	// The reviewer's group reads it; another user cannot.
 	rd := as(1001, gid, "/bin/busybox", "cat", slot)
 	require.Zero(t, rd.ExitCode, "the reviewer's group must read the slot: %s", rd.Stderr)

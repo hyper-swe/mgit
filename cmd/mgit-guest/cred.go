@@ -55,6 +55,11 @@ func credInstall(root string, ensureMem func(string) error, args []string, stdin
 		fmt.Fprintln(stderr, "cred-install: stdin must hold a credential of 1 to", model.MaxStdinBytes, "bytes")
 		return 2
 	}
+	// the parent must be enterable by the group too: MkdirAll would create a missing parent with the slot directory's own mode
+	if err := os.MkdirAll(filepath.Dir(root), 0o755); err != nil { //nolint:gosec // a parent like /run is world-searchable, as it is everywhere
+		fmt.Fprintln(stderr, "cred-install: cannot prepare the credential directory")
+		return 1
+	}
 	if err := os.MkdirAll(root, 0o750); err != nil {
 		fmt.Fprintln(stderr, "cred-install: cannot prepare the credential directory")
 		return 1
@@ -70,7 +75,7 @@ func credInstall(root string, ensureMem func(string) error, args []string, stdin
 		fmt.Fprintln(stderr, "cred-install: the credential directory could not be given to the group")
 		return 1
 	}
-	if err := os.Chmod(root, 0o750); err != nil {
+	if err := os.Chmod(root, 0o750); err != nil { //nolint:gosec // a directory: owner and the reviewer group may enter it
 		fmt.Fprintln(stderr, "cred-install: the credential directory could not be restricted")
 		return 1
 	}

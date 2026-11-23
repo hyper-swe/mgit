@@ -154,3 +154,17 @@ func TestCredInstallInstallsNothingWhenTheDirectoryCannotBeMadeMemoryBacked(t *t
 		t.Fatal("a slot was left behind")
 	}
 }
+
+func TestCredInstallLeavesAFreshParentEnterableByTheGroup(t *testing.T) {
+	// a missing /run is created by the install: it must not take the slot directory's 0750
+	parent := filepath.Join(t.TempDir(), "run")
+	root := filepath.Join(parent, "review-cred")
+	var o, e bytes.Buffer
+	if code := credInstall(root, noMem, credArgs(root, "s"), strings.NewReader(fakeCred), &o, &e); code != 0 {
+		t.Fatal(e.String())
+	}
+	fi, err := os.Stat(parent)
+	if err != nil || fi.Mode().Perm()&0o001 == 0 {
+		t.Fatalf("the parent %v cannot be searched by others: %v", fi.Mode(), err)
+	}
+}
