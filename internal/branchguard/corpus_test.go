@@ -60,6 +60,22 @@ func TestSurvey_ThisRepositoryRealBranches_RefusesOnlyKnownIncidents(t *testing.
 			"the corpus invariant is unverified here, not satisfied here")
 	}
 
+	judgeLiveCorpus(t, results)
+	t.Logf("surveyed %d branches", len(results))
+}
+
+// corpusT is the part of *testing.T the live-corpus judgement uses, so a test
+// can watch whether the judgement would fail without failing itself.
+type corpusT interface {
+	require.TestingT
+	Helper()
+	Logf(format string, args ...any)
+}
+
+// judgeLiveCorpus applies the corpus invariant to a survey of this clone's
+// branches: nothing is refused except a known incident. Refs: MGIT-142, MGIT-343
+func judgeLiveCorpus(t corpusT, results []*branchguard.Result) {
+	t.Helper()
 	for _, res := range results {
 		if res.Clean() || res.Overridden() {
 			continue
@@ -68,7 +84,6 @@ func TestSurvey_ThisRepositoryRealBranches_RefusesOnlyKnownIncidents(t *testing.
 			"branch %q is refused and is not a known incident:\n%s",
 			res.Branch, branchguard.Refusal(res))
 	}
-	t.Logf("surveyed %d branches", len(results))
 }
 
 // knownIncidents are the branches this repository is KNOWN to have got wrong,
