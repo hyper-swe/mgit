@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/hyper-swe/mgit/internal/reviewlaunch"
 )
@@ -16,6 +17,10 @@ import (
 // A refusal prints the mgit.review-error/v1 envelope on stderr and exits 70;
 // otherwise the exit status is the entrypoint's. Refs: FEAT-3.347.1
 func reviewExec(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	// The nonce is for the refusal envelope only; take it out of the
+	// environment so nothing started from here can inherit it.
+	nonce := os.Getenv(reviewlaunch.RefusalNonceEnv)
+	_ = os.Unsetenv(reviewlaunch.RefusalNonceEnv)
 	fs := flag.NewFlagSet("review-exec", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	sha := fs.String("sha256", "", "lower-case hex SHA-256 of the entrypoint")
@@ -42,7 +47,7 @@ func reviewExec(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if err != nil {
 		var r *reviewlaunch.RefusalError
 		if errors.As(err, &r) {
-			_, _ = stderr.Write(append(reviewlaunch.RefusalJSON(r), '\n'))
+			_, _ = stderr.Write(append(reviewlaunch.RefusalJSONWithNonce(r, nonce), '\n'))
 			return 70
 		}
 		fmt.Fprintln(stderr, err)

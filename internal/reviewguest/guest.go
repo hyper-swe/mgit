@@ -10,15 +10,18 @@
 package reviewguest
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 
 	"github.com/hyper-swe/mgit/internal/model"
+	"github.com/hyper-swe/mgit/internal/reviewlaunch"
 	"github.com/hyper-swe/mgit/internal/reviewprep"
 )
 
@@ -30,6 +33,12 @@ const launchTimeBackend = model.BackendKVM
 
 // guestBinary is where the guest image installs the launcher.
 const guestBinary = "/sbin/mgit-guest"
+
+// launcherRefusalExit is the status review-exec exits with when it refuses.
+const launcherRefusalExit = 70
+
+// NonceEnv is the variable that carries the per-run refusal nonce to the launcher.
+const NonceEnv = reviewlaunch.RefusalNonceEnv
 
 // The review guest's size is fixed: the hypervisor refuses a launch with no
 // CPU or memory, and the profile does not take them from the caller, so every
@@ -44,10 +53,11 @@ var hexDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // Spec is what Provision needs.
 type Spec struct {
 	// Backend is the backend the manager reports; it must be launch-time.
-	Backend  string
-	LeaseDir string // absolute path of the sealed lease directory
-	ImageRef string // name@sha256:<digest>
-	TaskID   string
+	Backend string
+	// Lease is the sealed, verified lease the guest is built from; the image
+	// is the one its attestation was issued for.
+	Lease  *Lease
+	TaskID string
 	// UID and GID are the unprivileged identity the reviewer runs as.
 	UID, GID int
 }
@@ -80,20 +90,16 @@ func Provision(ctx context.Context, mgr model.SandboxManager, s Spec) (*Guest, e
 	if s.UID <= 0 || s.GID <= 0 {
 		return nil, refuse(reviewprep.CodeMappingMismatch, "the reviewer identity must be an unprivileged uid and gid")
 	}
-	if !filepath.IsAbs(s.LeaseDir) {
-		return nil, refuse(reviewprep.CodeBundleInvalid, "the lease directory path is not absolute")
+	if s.Lease == nil || s.Lease.dir == "" {
+		return nil, refuse(reviewprep.CodeBundleInvalid, "a sealed lease is required")
 	}
-	fi, err := os.Lstat(s.LeaseDir)
-	if err != nil || !fi.IsDir() {
-		return nil, refuse(reviewprep.CodeBundleInvalid, "the lease directory is not a directory")
-	}
-	if err := model.ValidateImageRef(s.ImageRef); err != nil {
+	if err := model.ValidateImageRef(s.Lease.image); err != nil {
 		return nil, refuse(reviewprep.CodeImageMismatch, "the image is not pinned by digest")
 	}
 	info, err := mgr.Launch(ctx, model.SandboxLaunchOptions{
 		TaskID:       s.TaskID,
-		WorktreePath: s.LeaseDir,
-		ImageRef:     s.ImageRef,
+		WorktreePath: s.Lease.dir,
+		ImageRef:     s.Lease.image,
 		Network:      model.NetworkPolicy{Mode: model.NetworkModeNone},
 		NoGuestRepo:  true,
 		CPUs:         ReviewCPUs,
@@ -109,7 +115,7 @@ func Provision(ctx context.Context, mgr model.SandboxManager, s Spec) (*Guest, e
 		return nil, refuse(reviewprep.CodePolicyUnenforcable,
 			fmt.Sprintf("the launched backend %q is not a launch-time image", info.Backend))
 	}
-	return &Guest{ID: info.ID, LeaseDir: s.LeaseDir, uid: s.UID, gid: s.GID, mgr: mgr}, nil
+	return &Guest{ID: info.ID, LeaseDir: s.Lease.dir, uid: s.UID, gid: s.GID, mgr: mgr}, nil
 }
 
 // Run starts the entrypoint through the launcher. A launcher refusal (exit 70
@@ -123,21 +129,48 @@ func (g *Guest) Run(ctx context.Context, e Entry) (*model.ExecResult, error) {
 	cmd = append(cmd, guestBinary, "review-exec", "--sha256", e.SHA256,
 		"--uid", strconv.Itoa(g.uid), "--gid", strconv.Itoa(g.gid), "--dir", g.LeaseDir, "--", e.Path)
 	cmd = append(cmd, e.Argv...)
-	res, err := g.mgr.Exec(ctx, g.ID, model.ExecRequest{Command: cmd, Dir: g.LeaseDir, AsRoot: true})
+	nonce, err := newNonce()
+	if err != nil {
+		return nil, fmt.Errorf("review guest nonce: %w", err)
+	}
+	res, err := g.mgr.Exec(ctx, g.ID, model.ExecRequest{
+		Command: cmd, Dir: g.LeaseDir, AsRoot: true, Env: []string{NonceEnv + "=" + nonce},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("review guest exec: %w", err)
 	}
-	if res.ExitCode == 70 {
-		var env reviewprep.Error
-		line := res.Stderr
-		for len(line) > 0 && (line[len(line)-1] == '\n') {
-			line = line[:len(line)-1]
-		}
-		if json.Unmarshal(line, &env) == nil && env.Schema == reviewprep.ErrorSchema && env.Code != "" {
-			return res, &env
+	if res.ExitCode == launcherRefusalExit {
+		if env := launcherRefusal(res.Stderr, nonce); env != nil {
+			return res, env
 		}
 	}
 	return res, nil
+}
+
+func newNonce() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// launcherRefusal returns the refusal the launcher printed, or nil. The
+// reviewed program shares the launcher's stderr, so an envelope counts only if
+// it carries this run's nonce, which only the launcher is given.
+func launcherRefusal(stderr []byte, nonce string) *reviewprep.Error {
+	var env struct {
+		reviewprep.Error
+		Nonce string `json:"nonce"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(stderr), &env) != nil {
+		return nil
+	}
+	if env.Schema != reviewprep.ErrorSchema || env.Code == "" || env.Nonce != nonce {
+		return nil
+	}
+	e := env.Error
+	return &e
 }
 
 // Close removes the guest.

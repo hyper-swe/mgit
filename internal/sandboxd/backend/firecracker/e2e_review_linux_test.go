@@ -49,7 +49,7 @@ func TestE2E_ReviewGuest_LaunchTimeImage(t *testing.T) {
 	reviewprep.WriteDenialEnforced = true
 	t.Cleanup(func() { reviewprep.WriteDenialEnforced = old })
 	hostRoot := t.TempDir()
-	require.NoError(t, attest.GenerateKey(context.Background(), hostRoot, noopAudit{}))
+	require.NoError(t, attest.GenerateKey(context.Background(), hostRoot, reviewKeyAudit{}))
 	mapping := reviewprep.Mapping{
 		Schema: reviewprep.MapSchema, ID: "live-v1", BindingSHA256: strings.Repeat("b", 64), ImageDigest: imageDigestOf(ref),
 		GuestEntrypoint: "/bin/busybox", EntrypointSHA256: strings.Repeat("e", 64), Argv: []string{"true"}, EgressPolicyID: "none",
@@ -129,3 +129,8 @@ func TestE2E_ReviewGuest_LaunchTimeImage(t *testing.T) {
 	assert.Equal(t, "HASH_MISMATCH", re.Code)
 	assert.False(t, re.ReviewerStarted)
 }
+
+// reviewKeyAudit accepts the host attestation key's creation record.
+type reviewKeyAudit struct{}
+
+func (reviewKeyAudit) RecordKeyChange(context.Context, string) error { return nil }
