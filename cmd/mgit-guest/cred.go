@@ -13,7 +13,7 @@ import (
 
 // credDir is where a review credential is placed: a tmpfs the guest mounts at
 // boot, so the file never reaches a disk image.
-const credDir = "/run/review-cred"
+const credDir = "/run/review-cred" //nolint:gosec // a directory path, not a credential
 
 var credName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
@@ -74,7 +74,7 @@ func credInstall(root string, ensureMem func(string) error, args []string, stdin
 		fmt.Fprintln(stderr, "cred-install: the credential directory could not be restricted")
 		return 1
 	}
-	f, err := os.OpenFile(*dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o440) //nolint:gosec // dest is checked by credDest
+	f, err := os.OpenFile(*dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o440) //nolint:gosec // dest is checked by credDest; 0440 is the point: the reviewer's group reads it
 	if err != nil {
 		fmt.Fprintln(stderr, "cred-install: the slot cannot be created (it may already exist)")
 		return 1
@@ -85,7 +85,7 @@ func credInstall(root string, ensureMem func(string) error, args []string, stdin
 		fmt.Fprintln(stderr, "cred-install: the slot could not be written")
 		return 1
 	}
-	if err := f.Chmod(0o440); err != nil {
+	if err := f.Chmod(0o440); err != nil { //nolint:gosec // see the OpenFile above
 		return fail()
 	}
 	if err := f.Chown(-1, *gid); err != nil {

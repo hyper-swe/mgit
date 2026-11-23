@@ -17,13 +17,13 @@ func ensureTmpfs(dir string) error {
 	if err := syscall.Statfs(dir, &st); err != nil {
 		return err
 	}
-	if int64(st.Type) == tmpfsMagic {
+	if st.Type == tmpfsMagic {
 		return nil
 	}
 	if err := syscall.Mount("tmpfs", dir, "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC, "mode=0750,size=64k"); err != nil {
 		return err
 	}
-	if err := syscall.Statfs(dir, &st); err != nil || int64(st.Type) != tmpfsMagic {
+	if err := syscall.Statfs(dir, &st); err != nil || st.Type != tmpfsMagic {
 		return fmt.Errorf("not a tmpfs after the mount")
 	}
 	return nil
