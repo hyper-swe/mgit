@@ -115,3 +115,14 @@ func TestParseEgress_AddressSpellingsAreRefused(t *testing.T) {
 		t.Errorf("a plain name refused: %v", err)
 	}
 }
+
+func TestLoadMap_HostRootMustBeOwnerOnly(t *testing.T) {
+	root := t.TempDir()
+	install(t, root, goodMap("m5"))
+	if err := os.Chmod(root, 0o777); err != nil { //nolint:gosec // the test makes it unsafe on purpose
+		t.Fatal(err)
+	}
+	if _, err := LoadMap(root, "m5"); err == nil {
+		t.Fatal("a world-writable host root was accepted")
+	}
+}

@@ -76,7 +76,7 @@ func LoadMap(hostRoot, id string) (*reviewprep.Mapping, error) {
 	if !idPattern.MatchString(id) {
 		return nil, bad("mapping is not installed")
 	}
-	for _, d := range []string{filepath.Join(hostRoot, "review"), filepath.Join(hostRoot, "review", "maps")} {
+	for _, d := range []string{hostRoot, filepath.Join(hostRoot, "review"), filepath.Join(hostRoot, "review", "maps")} {
 		fi, derr := os.Lstat(d)
 		if derr != nil || !fi.IsDir() || fi.Mode().Perm()&0o022 != 0 {
 			return nil, bad("mapping directory is not a plain owner-writable directory")
