@@ -280,3 +280,11 @@ func TestSlotFillsFromAnInheritedFdAndNotFromArgvOrEnv(t *testing.T) {
 		t.Fatal("not read")
 	}
 }
+
+func TestLoadMapAcceptsEveryIdTheServiceLetsThrough(t *testing.T) {
+	root := t.TempDir()
+	install(t, root, goodMap("Pi-Review.v1"))
+	if m, err := LoadMap(root, "Pi-Review.v1"); err != nil || m.ID != "Pi-Review.v1" {
+		t.Fatalf("%+v %v", m, err)
+	}
+}
