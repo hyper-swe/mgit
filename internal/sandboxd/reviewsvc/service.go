@@ -34,9 +34,10 @@ var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 // Service issues review attestations from host state under hostRoot.
 type Service struct {
-	root   string
-	signer *reviewprep.Signer
-	now    func() time.Time
+	mapLoader MapLoader
+	root      string
+	signer    *reviewprep.Signer
+	now       func() time.Time
 }
 
 // New loads the host signing key. A daemon without one cannot attest and
@@ -90,12 +91,32 @@ func (s *Service) PrepareReview(_ context.Context, a controlproto.ReviewPrepareA
 	return raw, nil
 }
 
+// MapLoader reads the operator-installed mapping with the given id under
+// hostRoot, or returns a refusal envelope. It is how another package takes over
+// map loading (checks on where the map came from, say) without editing this one.
+type MapLoader func(hostRoot, id string) (*reviewprep.Mapping, error)
+
+// WithMapLoader replaces how the service reads mappings and returns the service.
+func (s *Service) WithMapLoader(l MapLoader) *Service {
+	s.mapLoader = l
+	return s
+}
+
 func (s *Service) loadMap(id string) (*reviewprep.Mapping, error) {
+	if s.mapLoader != nil {
+		return s.mapLoader(s.root, id)
+	}
+	return loadMapFromDisk(s.root, id)
+}
+
+// loadMapFromDisk is the default loader: hostRoot/review/maps/<id>.json, a
+// regular file, strictly decoded.
+func loadMapFromDisk(hostRoot, id string) (*reviewprep.Mapping, error) {
 	bad := func(d string) error { return reviewprep.Refuse(reviewprep.CodeMappingMismatch, d) }
 	if !idPattern.MatchString(id) {
 		return nil, bad("mapping is not installed")
 	}
-	p := filepath.Join(s.root, "review", "maps", id+".json")
+	p := filepath.Join(hostRoot, "review", "maps", id+".json")
 	raw, err := readRegular(p, maxMapBytes)
 	if err != nil {
 		return nil, bad("mapping is not installed")
