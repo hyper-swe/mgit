@@ -42,15 +42,25 @@ func VerifyEntrypoint(f *os.File, want string) error {
 	return err
 }
 
+// RefusalNonceEnv names the environment variable by which the caller hands the
+// launcher a per-run secret. The launcher echoes it in its refusal envelope so
+// the caller can tell that envelope from bytes the reviewed program prints on
+// the same stream; the program never sees it (its environment is empty).
+const RefusalNonceEnv = "MGIT_REVIEW_REFUSAL_NONCE"
+
 // RefusalJSON renders err as the mgit.review-error/v1 envelope for a launch
 // that did not start the reviewer. It carries no prompt, bundle or credential.
-func RefusalJSON(r *RefusalError) []byte {
+func RefusalJSON(r *RefusalError) []byte { return RefusalJSONWithNonce(r, "") }
+
+// RefusalJSONWithNonce is RefusalJSON with the caller's per-run nonce echoed.
+func RefusalJSONWithNonce(r *RefusalError, nonce string) []byte {
 	b, _ := json.Marshal(struct {
 		Schema          string `json:"schema"`
 		Code            string `json:"code"`
 		Phase           string `json:"phase"`
 		ReviewerStarted bool   `json:"reviewer_started"`
 		Detail          string `json:"detail"`
-	}{"mgit.review-error/v1", r.Code, "launch", false, r.Detail})
+		Nonce           string `json:"nonce,omitempty"`
+	}{"mgit.review-error/v1", r.Code, "launch", false, r.Detail, nonce})
 	return b
 }
