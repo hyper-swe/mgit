@@ -12,6 +12,7 @@ import (
 // operator would, but with bytes the operator did not produce through install.
 func pinned(t *testing.T, root, id string, raw []byte) {
 	t.Helper()
+	ownerOnly(t, root)
 	dir := filepath.Join(root, "review", "maps")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
@@ -72,6 +73,7 @@ func TestLoadMap_MapsDirectoryMustBeOwnerOnly(t *testing.T) {
 
 func TestLoadMap_MapsDirectoryMustNotBeALink(t *testing.T) {
 	root, elsewhere := t.TempDir(), t.TempDir()
+	ownerOnly(t, root)
 	install(t, elsewhere, goodMap("m1"))
 	if err := os.MkdirAll(filepath.Join(root, "review"), 0o750); err != nil {
 		t.Fatal(err)
@@ -86,6 +88,7 @@ func TestLoadMap_MapsDirectoryMustNotBeALink(t *testing.T) {
 
 func TestLoadMap_ReviewDirectoryMustNotBeALink(t *testing.T) {
 	root, elsewhere := t.TempDir(), t.TempDir()
+	ownerOnly(t, root)
 	install(t, elsewhere, goodMap("m1"))
 	if err := os.Symlink(filepath.Join(elsewhere, "review"), filepath.Join(root, "review")); err != nil {
 		t.Fatal(err)

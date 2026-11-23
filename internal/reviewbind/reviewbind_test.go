@@ -25,9 +25,19 @@ func goodMap(id string) reviewprep.Mapping {
 	}
 }
 
+// ownerOnly makes a fixture root the way an operator has it, whatever the umask
+// of the machine running the tests: t.TempDir is 0775 under umask 0002.
+func ownerOnly(t *testing.T, root string) {
+	t.Helper()
+	if err := os.Chmod(root, 0o700); err != nil { //nolint:gosec // a directory: owner-only is the point
+		t.Fatal(err)
+	}
+}
+
 // install writes the record and its pinned canonical hash the way an operator does.
 func install(t *testing.T, root string, m reviewprep.Mapping) {
 	t.Helper()
+	ownerOnly(t, root)
 	dir := filepath.Join(root, "review", "maps")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)

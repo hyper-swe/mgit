@@ -13,3 +13,7 @@
 4. The credential slot is filled once from an inherited descriptor, taken once and wiped after. It is never in argv or
    the environment, and neither its rendering (`%v`, `%+v`, `%#v`, `%s`, `%q`, `%x`, JSON) nor an error carries its bytes.
    The tests use a made-up key only; no real credential reaches a guest.
+
+The host root, `review` and `review/maps` must each be a plain directory that only its owner can write; a directory
+that is linked, or writable by group or others, makes every map under it refused. Install with
+`chmod 0700 <root>/review <root>/review/maps` (a umask of 0002 would otherwise leave them group-writable).
