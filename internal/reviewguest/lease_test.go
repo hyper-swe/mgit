@@ -180,6 +180,20 @@ func TestOpenLease_RefusesAnythingThatIsNotThatSealedLease(t *testing.T) {
 			mustDo(t, os.Chmod(p, 0o400))
 			return f.openAt(fixedNow)
 		}, reviewprep.CodeAttestationInvalid},
+		{"attestation carries a field it does not define", func(t *testing.T, f *fixture) (*Lease, error) {
+			p := filepath.Join(f.dir(), "attestation.json")
+			raw, err := os.ReadFile(p) //nolint:gosec // test path
+			mustDo(t, err)
+			var m map[string]any
+			mustDo(t, json.Unmarshal(raw, &m))
+			m["extra_field"] = "x" // not signed: only the strict decode catches it
+			out, err := json.Marshal(m)
+			mustDo(t, err)
+			mustDo(t, os.Chmod(p, 0o600))
+			mustDo(t, os.WriteFile(p, out, 0o600))
+			mustDo(t, os.Chmod(p, 0o400))
+			return f.openAt(fixedNow)
+		}, reviewprep.CodeAttestationInvalid},
 		{"evidence changed after sealing", func(t *testing.T, f *fixture) (*Lease, error) {
 			p := filepath.Join(f.dir(), "evidence.json")
 			mustDo(t, os.Chmod(p, 0o600))
