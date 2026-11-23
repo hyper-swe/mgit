@@ -32,7 +32,7 @@ func (r *runClient) ReviewRun(_ context.Context, a controlproto.ReviewRunArgs) (
 	return json.Marshal(r.res)
 }
 
-func runRun(c sandboxClient, args ...string) (stdout, stderr string, err error) {
+func execReviewRun(c sandboxClient, args ...string) (stdout, stderr string, err error) {
 	cmd := newSandboxCmd(okConnect(c))
 	var o, e bytes.Buffer
 	cmd.SetOut(&o)
@@ -59,7 +59,7 @@ func exitCodeOf(t *testing.T, err error) int {
 
 func TestSandboxReviewRun_DefaultModePassesTheReviewersStreamsAndExitThrough(t *testing.T) {
 	rc := &runClient{fakeSandboxClient: &fakeSandboxClient{}, res: controlproto.ReviewResult{ExitCode: 3, Stdout: []byte("out\n"), Stderr: []byte("err\n")}}
-	out, errOut, err := runRun(rc, runFlags()...)
+	out, errOut, err := execReviewRun(rc, runFlags()...)
 	assert.Equal(t, "out\n", out)
 	assert.Equal(t, "err\n", errOut)
 	assert.Equal(t, 3, exitCodeOf(t, err))
@@ -68,7 +68,7 @@ func TestSandboxReviewRun_DefaultModePassesTheReviewersStreamsAndExitThrough(t *
 
 func TestSandboxReviewRun_ASuccessfulReviewerExitsZero(t *testing.T) {
 	rc := &runClient{fakeSandboxClient: &fakeSandboxClient{}, res: controlproto.ReviewResult{ExitCode: 0, Stdout: []byte("ok")}}
-	out, _, err := runRun(rc, runFlags()...)
+	out, _, err := execReviewRun(rc, runFlags()...)
 	require.NoError(t, err)
 	assert.Equal(t, "ok", out)
 }
@@ -76,17 +76,17 @@ func TestSandboxReviewRun_ASuccessfulReviewerExitsZero(t *testing.T) {
 func TestSandboxReviewRun_ReservedExitCodesFromTheReviewerAreReportedAsOne(t *testing.T) {
 	for _, code := range []int{70, 71} {
 		rc := &runClient{fakeSandboxClient: &fakeSandboxClient{}, res: controlproto.ReviewResult{ExitCode: code}}
-		_, _, err := runRun(rc, runFlags()...)
+		_, _, err := execReviewRun(rc, runFlags()...)
 		assert.Equal(t, 1, exitCodeOf(t, err), "reviewer exit %d must not read as a refusal", code)
 	}
 	rc := &runClient{fakeSandboxClient: &fakeSandboxClient{}, res: controlproto.ReviewResult{ExitCode: 69}}
-	_, _, err := runRun(rc, runFlags()...)
+	_, _, err := execReviewRun(rc, runFlags()...)
 	assert.Equal(t, 69, exitCodeOf(t, err))
 }
 
 func TestSandboxReviewRun_JSONModePrintsTheResultAndExitsZeroWhateverTheReviewerExited(t *testing.T) {
 	rc := &runClient{fakeSandboxClient: &fakeSandboxClient{}, res: controlproto.ReviewResult{ExitCode: 3, Stdout: []byte("o"), Stderr: []byte("e")}}
-	out, errOut, err := runRun(rc, append(runFlags(), "--format", "json")...)
+	out, errOut, err := execReviewRun(rc, append(runFlags(), "--format", "json")...)
 	require.NoError(t, err)
 	assert.Empty(t, errOut)
 	var got controlproto.ReviewResult
@@ -99,7 +99,7 @@ func TestSandboxReviewRun_JSONModePrintsTheResultAndExitsZeroWhateverTheReviewer
 func TestSandboxReviewRun_ARefusalBeforeTheReviewerIsAnEnvelopeOnStderrAndExit70(t *testing.T) {
 	rc := &runClient{fakeSandboxClient: &fakeSandboxClient{}, err: reviewprep.Refuse(reviewprep.CodeNonceReplayed, "already run")}
 	for _, mode := range [][]string{nil, {"--format", "json"}} {
-		out, errOut, err := runRun(rc, append(runFlags(), mode...)...)
+		out, errOut, err := execReviewRun(rc, append(runFlags(), mode...)...)
 		assert.Empty(t, out, "a refusal prints nothing on stdout")
 		assert.Equal(t, 70, exitCodeOf(t, err))
 		assert.Contains(t, errOut, `"schema":"mgit.review-error/v1"`)
@@ -113,7 +113,7 @@ func TestSandboxReviewRun_ARefusalAfterTheReviewerStartedExits71(t *testing.T) {
 	e := reviewprep.Refuse(reviewprep.CodeRunTimeout, "too slow")
 	e.ReviewerStarted = true
 	rc := &runClient{fakeSandboxClient: &fakeSandboxClient{}, err: e}
-	out, errOut, err := runRun(rc, runFlags()...)
+	out, errOut, err := execReviewRun(rc, runFlags()...)
 	assert.Empty(t, out)
 	assert.Equal(t, 71, exitCodeOf(t, err))
 	assert.Contains(t, errOut, `"reviewer_started":true`)
@@ -121,7 +121,7 @@ func TestSandboxReviewRun_ARefusalAfterTheReviewerStartedExits71(t *testing.T) {
 
 func TestSandboxReviewRun_ATransportFailureIsNotAReviewRefusal(t *testing.T) {
 	rc := &runClient{fakeSandboxClient: &fakeSandboxClient{}, err: errors.New("daemon gone")}
-	out, errOut, err := runRun(rc, runFlags()...)
+	out, errOut, err := execReviewRun(rc, runFlags()...)
 	require.Error(t, err)
 	assert.Empty(t, out)
 	assert.NotContains(t, errOut, "mgit.review-error")
@@ -131,7 +131,7 @@ func TestSandboxReviewRun_ATransportFailureIsNotAReviewRefusal(t *testing.T) {
 
 func TestSandboxReviewRun_TheLimitsAreForwardedAndNothingToRunCanBeNamed(t *testing.T) {
 	rc := &runClient{fakeSandboxClient: &fakeSandboxClient{}}
-	_, _, _ = runRun(rc, append(runFlags(), "--max-seconds", "30", "--max-output-bytes", "2048")...)
+	_, _, _ = execReviewRun(rc, append(runFlags(), "--max-seconds", "30", "--max-output-bytes", "2048")...)
 	assert.Equal(t, 30, rc.got.MaxSeconds)
 	assert.Equal(t, int64(2048), rc.got.MaxOutputBytes)
 	cmd := newSandboxCmd(okConnect(rc))
@@ -147,6 +147,6 @@ func TestSandboxReviewRun_TheLimitsAreForwardedAndNothingToRunCanBeNamed(t *test
 
 func TestSandboxReviewRun_OnlyJSONOrNoFormatExists(t *testing.T) {
 	rc := &runClient{fakeSandboxClient: &fakeSandboxClient{}}
-	_, _, err := runRun(rc, append(runFlags(), "--format", "text")...)
+	_, _, err := execReviewRun(rc, append(runFlags(), "--format", "text")...)
 	require.Error(t, err)
 }

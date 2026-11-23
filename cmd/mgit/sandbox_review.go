@@ -22,10 +22,11 @@ type reviewPreparer interface {
 func sandboxReviewCmd(connect connectFunc) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "review",
-		Short: "Prepare an isolated, read-only review",
-		Long:  "Checks a review request and signs exactly what would run. It starts nothing.",
+		Short: "Prepare and run an isolated, read-only review",
+		Long:  "prepare checks a review request and signs exactly what would run; it starts nothing. run runs a prepared review.",
 	}
 	cmd.AddCommand(sandboxReviewPrepareCmd(connect))
+	cmd.AddCommand(sandboxReviewRunCmd(connect))
 	return cmd
 }
 
