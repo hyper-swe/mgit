@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/model"
@@ -74,6 +75,14 @@ const (
 	MaxRequestBytes = 1 << 20 // 1 MiB
 	// MaxResponseBytes caps one control response.
 	MaxResponseBytes = 1 << 20 // 1 MiB
+	// MaxReviewResponseBytes caps a review-run answer that carries a result:
+	// the largest output a run allows (MaxReviewOutputBytes, split any way
+	// between stdout and stderr) base64-encoded, plus a fixed allowance for
+	// the rest of the result and the response around it. Refs: MGIT-333
+	MaxReviewResponseBytes = (int(MaxReviewOutputBytes)+2)/3*4 + 4 + reviewEnvelopeBytes
+	// reviewEnvelopeBytes is that allowance: schema, lease, exit code, signal,
+	// elapsed time and the JSON around them, with room to spare.
+	reviewEnvelopeBytes = 4 << 10
 	// MaxArgv caps an exec command's argv length.
 	MaxArgv = 4096
 	// MaxEnv caps the number of per-exec env injections.
@@ -481,13 +490,21 @@ func validateExport(e *ExportArgs) error {
 // Refs: MGIT-160, R-H233
 var ErrResponseTooLarge = errors.New("control response too large to send")
 
-// WriteResponse frames and writes a response.
+// WriteResponse frames and writes a response. A review-run answer carrying a
+// result, and nothing else, may be as large as MaxReviewResponseBytes; every
+// other answer is held to MaxResponseBytes.
 func WriteResponse(w io.Writer, resp *Response) error {
 	payload, err := json.Marshal(resp)
 	if err != nil {
 		return fmt.Errorf("controlproto: encode response: %w", err)
 	}
-	if len(payload) > MaxResponseBytes {
+	limit := responseLimit(resp)
+	if limit == MaxReviewResponseBytes && len(payload) > limit {
+		return fmt.Errorf("%w: the review ran to its end, but its result is %d bytes, over the %d-byte "+
+			"review-response limit, so it could not be sent",
+			ErrResponseTooLarge, len(payload), limit)
+	}
+	if len(payload) > limit {
 		return fmt.Errorf("%w: this verb's answer is %d bytes, over the %d-byte control-response "+
 			"limit, so it could not be sent. Nothing was applied. Narrow what you asked for — "+
 			"for a worktree sync, exclude large generated trees such as node_modules from the "+
@@ -503,17 +520,49 @@ func WriteResponse(w io.Writer, resp *Response) error {
 // ReadResponse reads one response, enforcing the size ceiling before
 // allocating and rejecting unknown fields.
 func ReadResponse(r io.Reader) (*Response, error) {
-	payload, err := readLenPrefixed(r, MaxResponseBytes)
+	resp, _, err := readResponse(r, MaxResponseBytes)
+	return resp, err
+}
+
+// ReadReviewRunResponse reads the answer to a review-run request. It allows a
+// frame up to MaxReviewResponseBytes, but only a review-run result, and nothing
+// else, may be larger than MaxResponseBytes.
+func ReadReviewRunResponse(r io.Reader) (*Response, error) {
+	resp, n, err := readResponse(r, MaxReviewResponseBytes)
 	if err != nil {
 		return nil, err
+	}
+	if n > MaxResponseBytes && responseLimit(resp) != MaxReviewResponseBytes {
+		return nil, fmt.Errorf("controlproto: a %d-byte answer over the %d-byte cap is not a review result", n, MaxResponseBytes)
+	}
+	return resp, nil
+}
+
+func readResponse(r io.Reader, max int) (*Response, int, error) {
+	payload, err := readLenPrefixed(r, uint32(max)) //nolint:gosec // both callers pass a positive constant
+	if err != nil {
+		return nil, 0, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(payload))
 	dec.DisallowUnknownFields()
 	var resp Response
 	if err := dec.Decode(&resp); err != nil {
-		return nil, fmt.Errorf("controlproto: decode response: %w", err)
+		return nil, 0, fmt.Errorf("controlproto: decode response: %w", err)
 	}
-	return &resp, nil
+	return &resp, len(payload), nil
+}
+
+// responseLimit is the ceiling an answer is held to: MaxReviewResponseBytes for
+// a review-run answer that carries a result and no other field, MaxResponseBytes
+// for everything else (a refusal envelope included: it is small by definition).
+func responseLimit(resp *Response) int {
+	if resp == nil || resp.ReviewRun == nil || len(resp.ReviewRun.Result) == 0 || len(resp.ReviewRun.Refusal) != 0 {
+		return MaxResponseBytes
+	}
+	if !reflect.DeepEqual(*resp, Response{ReviewRun: resp.ReviewRun}) {
+		return MaxResponseBytes
+	}
+	return MaxReviewResponseBytes
 }
 
 // writeFrame writes [kind][len BE][payload].
