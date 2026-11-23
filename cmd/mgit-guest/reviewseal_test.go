@@ -110,7 +110,7 @@ func TestSealLease_LostAndFoundExemptionIsExact(t *testing.T) {
 		},
 		"open to others": func(t *testing.T, d string) {
 			lf := filepath.Join(d, "lost+found")
-			if err := os.Mkdir(lf, 0o755); err != nil {
+			if err := os.Mkdir(lf, 0o700); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.Chmod(lf, 0o755); err != nil { //nolint:gosec // the test makes it too open on purpose
