@@ -4,12 +4,12 @@ package firecracker
 
 import (
 	"context"
-	"fmt"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
