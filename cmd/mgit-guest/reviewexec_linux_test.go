@@ -8,7 +8,20 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/hyper-swe/mgit/internal/reviewlaunch"
 )
+
+// TestMain lets this test binary also be the launcher's re-exec'd stage, as
+// main does first thing. Without it the launcher starts this binary as its
+// stage, the binary runs the whole suite again instead, and every run starts
+// another: the tests multiply until the machine is out of processes.
+func TestMain(m *testing.M) {
+	if reviewlaunch.MaybeStage() {
+		return
+	}
+	os.Exit(m.Run())
+}
 
 // refusal runs review-exec against a digest that cannot match, which the
 // launcher refuses before it starts anything.
