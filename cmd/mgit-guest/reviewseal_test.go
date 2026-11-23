@@ -85,6 +85,65 @@ func TestSealLease_LeavesAFilesystemsLostAndFoundAlone(t *testing.T) {
 	}
 }
 
+// The exemption is exact: a directory named lost+found, at the lease root,
+// empty, mode 0700, not a link. Anything else with that name is refused.
+func TestSealLease_LostAndFoundExemptionIsExact(t *testing.T) {
+	noop := func(string, int, int) error { return nil }
+	cases := map[string]func(t *testing.T, d string){
+		"not empty": func(t *testing.T, d string) {
+			lf := filepath.Join(d, "lost+found")
+			if err := os.Mkdir(lf, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(lf, "x"), nil, 0o400); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a link": func(t *testing.T, d string) {
+			other := filepath.Join(t.TempDir(), "o")
+			if err := os.Mkdir(other, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(other, filepath.Join(d, "lost+found")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"open to others": func(t *testing.T, d string) {
+			lf := filepath.Join(d, "lost+found")
+			if err := os.Mkdir(lf, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(lf, 0o755); err != nil { //nolint:gosec // the test makes it too open on purpose
+				t.Fatal(err)
+			}
+		},
+		"nested, not at the root": func(t *testing.T, d string) {
+			if err := os.MkdirAll(filepath.Join(d, "sub", "lost+found"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a different name": func(t *testing.T, d string) {
+			if err := os.Mkdir(filepath.Join(d, "Lost+Found"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, mk := range cases {
+		d := lease(t)
+		mk(t, d)
+		if err := sealLease(d, 7, noop); err == nil {
+			t.Fatalf("%s: accepted", name)
+		}
+	}
+	d := lease(t)
+	if err := os.Mkdir(filepath.Join(d, "lost+found"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := sealLease(d, 7, noop); err != nil {
+		t.Fatalf("the exact lost+found was refused: %v", err)
+	}
+}
+
 func TestVerifySealed_SkipsOnlyTheFilesystemsLostAndFound(t *testing.T) {
 	d := lease(t)
 	lf := filepath.Join(d, "lost+found")
