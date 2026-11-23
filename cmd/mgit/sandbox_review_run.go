@@ -43,6 +43,7 @@ func sandboxReviewRunCmd(connect connectFunc) *cobra.Command {
 			"output, and exits 70 when the reviewer did not start or 71 when it started and was stopped.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SilenceUsage = true // an argument problem was caught above; what follows is not a usage error
 			if format != "" && format != "json" {
 				return fmt.Errorf("--format must be json or empty")
 			}
@@ -59,7 +60,7 @@ func sandboxReviewRunCmd(connect connectFunc) *cobra.Command {
 			if errors.As(err, &refusal) {
 				env, _ := json.Marshal(refusal)
 				fmt.Fprintln(cmd.ErrOrStderr(), string(env))
-				cmd.SilenceUsage = true
+				cmd.SilenceErrors = true // the envelope is the whole of standard error
 				if refusal.ReviewerStarted {
 					return &exitError{code: reviewExitStopped}
 				}
@@ -82,7 +83,7 @@ func sandboxReviewRunCmd(connect connectFunc) *cobra.Command {
 			if _, err := cmd.ErrOrStderr().Write(res.Stderr); err != nil {
 				return err
 			}
-			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true // standard error is the reviewer's, with nothing added
 			code := res.ExitCode
 			if code == reviewExitRefused || code == reviewExitStopped {
 				code = 1
