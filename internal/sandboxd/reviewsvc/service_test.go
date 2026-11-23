@@ -263,8 +263,8 @@ func TestPrepareReview_MappingIDCannotLeaveTheMapDirectory(t *testing.T) {
 }
 
 // With the flag as shipped, the service issues an attestation that states
-// writes as possible; nothing here assigns the flag.
-func TestPrepareReview_DefaultAttestationStatesWritesPossible(t *testing.T) {
+// writes as denied, which the launcher enforces; nothing here assigns the flag.
+func TestPrepareReview_DefaultAttestationStatesWritesDenied(t *testing.T) {
 	e := setupRaw(t)
 	raw, err := e.svc.PrepareReview(context.Background(), e.args)
 	if err != nil {
@@ -274,7 +274,7 @@ func TestPrepareReview_DefaultAttestationStatesWritesPossible(t *testing.T) {
 	if err := json.Unmarshal(raw, &att); err != nil {
 		t.Fatal(err)
 	}
-	if !att.Enforced.FilesystemWrites {
-		t.Fatalf("default attestation claims writes denied: %s", raw)
+	if att.Enforced.FilesystemWrites {
+		t.Fatalf("default attestation says writes are possible: %s", raw)
 	}
 }

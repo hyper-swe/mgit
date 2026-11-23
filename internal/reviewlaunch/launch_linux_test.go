@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 var emptyStr = []byte{0}
@@ -436,4 +438,61 @@ func TestCloseInherited_StartsAtExactlyFive(t *testing.T) {
 func stubFDHooks() func() {
 	a, b, c := closeRangeCall, listFDs, setCloexec
 	return func() { closeRangeCall, listFDs, setCloexec = a, b, c }
+}
+
+// If the inherited descriptors cannot be marked, the stage refuses before it
+// opens the entrypoint or starts anything. The entrypoint here does not exist:
+// a stage that ignored the failure would reach it and report LAUNCH_FAILED.
+func TestStage_RefusesWhenInheritedDescriptorsCannotBeMarked(t *testing.T) {
+	restore := stubFDHooks()
+	defer restore()
+	closeRangeCall = func(_, _, _ uintptr) error { return syscall.ENOSYS }
+	listFDs = func() ([]string, error) { return nil, errors.New("no /proc") }
+	err := stage(stageConfig{Entrypoint: "/nonexistent/entrypoint", SHA256: strings.Repeat("0", 64)}, nil, nil)
+	var r *RefusalError
+	if !errors.As(err, &r) || r.Code != CodePolicyUnenforceable {
+		t.Fatalf("stage err %v, want POLICY_UNENFORCEABLE", err)
+	}
+}
+
+// A descriptor far above the usual range must not follow the program either:
+// the range that is marked has to reach the top, not stop at an arbitrary
+// number.
+func TestRun_AHighLeakedDescriptorDoesNotReachTheProgram(t *testing.T) {
+	const high = 60000
+	var lim syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &lim); err != nil {
+		t.Fatal(err)
+	}
+	if lim.Max < high+16 {
+		t.Skipf("hard descriptor limit %d is below %d", lim.Max, high+16)
+	}
+	if lim.Cur < high+16 {
+		old := lim
+		lim.Cur = high + 16
+		if err := syscall.Setrlimit(syscall.RLIMIT_NOFILE, &lim); err != nil {
+			t.Skipf("cannot raise the descriptor limit: %v", err)
+		}
+		defer func() { _ = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &old) }()
+	}
+	af, err := os.OpenFile(t.TempDir()+"/leak", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer af.Close()
+	if err := unix.Dup3(int(af.Fd()), high, 0); err != nil {
+		t.Skipf("cannot place a descriptor at %d: %v", high, err)
+	}
+	defer func() { _ = syscall.Close(high) }()
+	out, _, perr := runProbe(t, "fds")
+	skipIfNoFilter(t, perr)
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	for _, l := range strings.Split(out, "\n") {
+		var fd string
+		if n, _ := fmt.Sscanf(l, "fd %s", &fd); n == 1 && fd == strconv.Itoa(high) {
+			t.Fatalf("descriptor %d reached the program:\n%s", high, out)
+		}
+	}
 }
