@@ -35,7 +35,8 @@ func reviewReadBudget(maxSeconds int) time.Duration {
 // ReviewRun asks the daemon to run a prepared review. A refusal comes back as a
 // *reviewprep.Error that says whether the reviewer had started.
 func (c *Client) ReviewRun(ctx context.Context, args controlproto.ReviewRunArgs) ([]byte, error) {
-	resp, err := c.roundTripBudget(ctx, &controlproto.Request{Kind: controlproto.KindReviewRun, ReviewRun: &args}, reviewReadBudget(args.MaxSeconds))
+	resp, err := c.roundTripRead(ctx, &controlproto.Request{Kind: controlproto.KindReviewRun, ReviewRun: &args},
+		reviewReadBudget(args.MaxSeconds), controlproto.ReadReviewRunResponse)
 	if err != nil {
 		return nil, err
 	}

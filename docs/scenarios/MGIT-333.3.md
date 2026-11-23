@@ -25,7 +25,10 @@ implements it must match it, and a difference is a change to this page.
    start of the reviewer. `--max-output-bytes` (0 or absent means 4194304; otherwise 1 to 16777216) counts the raw bytes
    of standard output and standard error together, before any encoding. A negative value or one above the maximum is
    refused at the protocol boundary as a malformed request, with no envelope and no consumption. Output of exactly the
-   cap succeeds; one byte more is refused with OUTPUT_LIMIT and no byte of either stream is returned. A run that exceeds
+   cap succeeds and reaches the caller whole, up to the 16777216-byte maximum however it is split between the two
+   streams (the daemon's answer to a review run has its own ceiling, sized for that maximum once encoded; every other
+   verb keeps the 1 MiB control-response cap); one byte more is refused with OUTPUT_LIMIT and no byte of either stream
+   is returned. A run that exceeds
    its time is refused with RUN_TIMEOUT. If both would apply, RUN_TIMEOUT wins, since an unfinished run has no complete
    output to measure. Both refusals mean the reviewer ran, and the guest is stopped and removed.
 6. Default output. Standard output is the reviewer's standard output, byte for byte. Standard error is the reviewer's
