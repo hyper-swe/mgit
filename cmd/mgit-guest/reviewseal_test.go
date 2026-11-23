@@ -54,6 +54,57 @@ func TestSealLease_MakesItRootOwnedAndReadableToTheReviewerGroupOnly(t *testing.
 	}
 }
 
+// A volume delivered as a filesystem image carries its own lost+found
+// directory. It is the filesystem's, root-owned 0700, and not the reviewer's to
+// read, so it is left alone rather than refused or handed over.
+func TestSealLease_LeavesAFilesystemsLostAndFoundAlone(t *testing.T) {
+	d := lease(t)
+	lf := filepath.Join(d, "lost+found")
+	if err := os.Mkdir(lf, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var calls []chownCall
+	if err := sealLease(d, 7, func(p string, u, g int) error { calls = append(calls, chownCall{p, u, g}); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range calls {
+		if c.path == lf {
+			t.Fatal("lost+found was handed to the reviewer's group")
+		}
+	}
+	if fi, _ := os.Stat(lf); fi.Mode().Perm() != 0o700 {
+		t.Fatalf("lost+found mode %v", fi.Mode().Perm())
+	}
+	// A file by that name is not the filesystem's directory.
+	d2 := lease(t)
+	if err := os.WriteFile(filepath.Join(d2, "lost+found"), nil, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := sealLease(d2, 7, func(string, int, int) error { return nil }); err == nil {
+		t.Fatal("a regular file named lost+found was accepted as the filesystem's directory")
+	}
+}
+
+func TestVerifySealed_SkipsOnlyTheFilesystemsLostAndFound(t *testing.T) {
+	d := lease(t)
+	lf := filepath.Join(d, "lost+found")
+	if err := os.Mkdir(lf, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	if err := verifySealed(d, 5, func(p string, _ int) error { seen = append(seen, p); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range seen {
+		if p == lf {
+			t.Fatal("lost+found was checked as the reviewer's")
+		}
+	}
+	if len(seen) != 3 {
+		t.Fatalf("checked %v", seen)
+	}
+}
+
 func TestSealLease_RefusesWhatIsNotTheExpectedShape(t *testing.T) {
 	noop := func(string, int, int) error { return nil }
 	cases := map[string]func(t *testing.T) (string, int){

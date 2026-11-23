@@ -174,6 +174,15 @@ func TestProvision_SealsTheLeaseInTheGuestForTheReviewerGroup(t *testing.T) {
 	}
 }
 
+func TestProvision_ARefusedSealSaysWhyInTheRefusal(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM, res: &model.ExecResult{ExitCode: 1, Stderr: []byte("review-seal: lost+found is not a regular file")}}
+	_, err := Provision(context.Background(), m, spec(t))
+	var e *reviewprep.Error
+	if !errors.As(err, &e) || !strings.Contains(e.Detail, "lost+found is not a regular file") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestProvision_ARefusedSealRemovesTheGuest(t *testing.T) {
 	for name, m := range map[string]*fakeMgr{
 		"nonzero exit": {backend: model.BackendKVM, res: &model.ExecResult{ExitCode: 1, Stderr: []byte("no")}},
@@ -270,11 +279,21 @@ func nonceOf(r model.ExecRequest) string {
 	return strings.TrimPrefix(r.Env[0], NonceEnv+"=")
 }
 
+// onRun answers only the reviewer's run; the seal step before it gets a clean exit.
+func onRun(f func(model.ExecRequest) *model.ExecResult) func(model.ExecRequest) *model.ExecResult {
+	return func(r model.ExecRequest) *model.ExecResult {
+		if len(r.Env) == 0 {
+			return &model.ExecResult{}
+		}
+		return f(r)
+	}
+}
+
 func TestRun_ADeclinedLaunchComesBackAsTheRefusalEnvelope(t *testing.T) {
 	m := &fakeMgr{backend: model.BackendKVM}
-	m.resFn = func(r model.ExecRequest) *model.ExecResult {
+	m.resFn = onRun(func(r model.ExecRequest) *model.ExecResult {
 		return &model.ExecResult{ExitCode: 70, Stderr: envelope("mgit.review-error/v1", nonceOf(r), "IMAGE_MISMATCH")}
-	}
+	})
 	g := provisioned(t, m)
 	_, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"})
 	if err == nil || code(t, err) != "IMAGE_MISMATCH" {
@@ -300,9 +319,9 @@ func TestRun_AnEnvelopeTheProgramPrintsIsNotARefusal(t *testing.T) {
 
 func TestRun_AnEnvelopeWithTheNonceButAnotherSchemaIsNotARefusal(t *testing.T) {
 	m := &fakeMgr{backend: model.BackendKVM}
-	m.resFn = func(r model.ExecRequest) *model.ExecResult {
+	m.resFn = onRun(func(r model.ExecRequest) *model.ExecResult {
 		return &model.ExecResult{ExitCode: 70, Stderr: envelope("something.else/v1", nonceOf(r), "HASH_MISMATCH")}
-	}
+	})
 	g := provisioned(t, m)
 	if _, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"}); err != nil {
 		t.Fatalf("err=%v", err)
@@ -311,9 +330,9 @@ func TestRun_AnEnvelopeWithTheNonceButAnotherSchemaIsNotARefusal(t *testing.T) {
 
 func TestRun_AnEnvelopeOnAnyOtherExitIsNotARefusal(t *testing.T) {
 	m := &fakeMgr{backend: model.BackendKVM}
-	m.resFn = func(r model.ExecRequest) *model.ExecResult {
+	m.resFn = onRun(func(r model.ExecRequest) *model.ExecResult {
 		return &model.ExecResult{ExitCode: 3, Stderr: envelope("mgit.review-error/v1", nonceOf(r), "HASH_MISMATCH")}
-	}
+	})
 	g := provisioned(t, m)
 	if _, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"}); err != nil {
 		t.Fatalf("err=%v", err)
