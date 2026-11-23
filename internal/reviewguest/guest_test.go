@@ -28,6 +28,9 @@ type fakeMgr struct {
 	execErr  error
 	err      error
 	runDelay time.Duration // the reviewer's run takes this long, whatever its deadline (as a backend that ignores it would)
+	// reportNet, when set, is the network the manager reports back for the
+	// launched guest instead of echoing what was asked. Refs: MGIT-344
+	reportNet *model.NetworkPolicy
 }
 
 func (f *fakeMgr) Launch(_ context.Context, o model.SandboxLaunchOptions) (*model.SandboxInfo, error) {
@@ -35,7 +38,11 @@ func (f *fakeMgr) Launch(_ context.Context, o model.SandboxLaunchOptions) (*mode
 	if f.err != nil {
 		return nil, f.err
 	}
-	return &model.SandboxInfo{ID: "sb1", Backend: f.backend, WorktreePath: o.WorktreePath, NetworkMode: o.Network.Mode}, nil
+	info := &model.SandboxInfo{ID: "sb1", Backend: f.backend, WorktreePath: o.WorktreePath, NetworkMode: o.Network.Mode}
+	if f.reportNet != nil {
+		info.NetworkMode, info.NetworkAllowlist = f.reportNet.Mode, f.reportNet.Allowlist
+	}
+	return info, nil
 }
 func (f *fakeMgr) List(context.Context) ([]model.SandboxInfo, error) { return nil, nil }
 func (f *fakeMgr) Exec(ctx context.Context, _ string, r model.ExecRequest) (*model.ExecResult, error) {

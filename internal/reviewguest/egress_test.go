@@ -163,3 +163,30 @@ func TestGuest_CloseRevokesAndStopsTheStackBeforeRemoving(t *testing.T) {
 		t.Fatalf("stop came at %v with removed=%v, want before the removal", e.at[n-1], m.removed)
 	}
 }
+
+// The host stack is always started for the default-deny policy this launch
+// asked for (allowlist mode, nothing on the list), never for whatever network
+// the manager reports back. A manager that reports open mode, a wider list or
+// no mode at all must not start a stack that lets traffic through before a
+// grant is made. Refs: MGIT-344, SEC-05
+func TestProvision_StartsTheHostStackForAnEmptyAllowlistWhateverTheManagerReports(t *testing.T) {
+	for _, reported := range []model.NetworkPolicy{
+		{Mode: model.NetworkModeOpen},
+		{Mode: model.NetworkModeAllowlist, Allowlist: []string{"example.com:443"}},
+		{Mode: ""},
+	} {
+		m := &fakeMgr{backend: model.BackendKVM, reportNet: &reported}
+		s, e := egressSpec(t, m)
+		if _, err := Provision(context.Background(), m, s); err != nil {
+			t.Fatalf("reported %+v: %v", reported, err)
+		}
+		if len(e.started) != 1 || e.at[0] != [2]int{0, 0} {
+			t.Fatalf("reported %+v: starts %d at %v, want one before any exec", reported, len(e.started), e.at)
+		}
+		got := e.started[0]
+		if got.NetworkMode != model.NetworkModeAllowlist || len(got.NetworkAllowlist) != 0 {
+			t.Fatalf("reported %+v: the stack was started for mode %q list %v, want allowlist mode with nothing on the list",
+				reported, got.NetworkMode, got.NetworkAllowlist)
+		}
+	}
+}
