@@ -63,3 +63,18 @@ func TestExecStdinIsAbsentFromStructuredLogs(t *testing.T) {
 		}
 	}
 }
+
+func TestSecretIsRedactedUnderEveryFormatVerb(t *testing.T) {
+	s := Secret(fakeSecret)
+	type holder struct{ S Secret }
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d", "%b", "%o", "%c", "%U", "%t", "%e", "%08.3d"} {
+		for name, arg := range map[string]any{"value": s, "pointer": &s, "field": holder{s}, "fieldptr": &holder{s}, "slice": []Secret{s}} {
+			out := fmt.Sprintf(verb, arg)
+			for _, leak := range []string{fakeSecret, fmt.Sprintf("%d", []byte(fakeSecret)), fmt.Sprintf("%x", []byte(fakeSecret))} {
+				if strings.Contains(out, leak) {
+					t.Errorf("%s of a %s shows the secret: %s", verb, name, out)
+				}
+			}
+		}
+	}
+}

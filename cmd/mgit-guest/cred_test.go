@@ -168,3 +168,16 @@ func TestCredInstallLeavesAFreshParentEnterableByTheGroup(t *testing.T) {
 		t.Fatalf("the parent %v cannot be searched by others: %v", fi.Mode(), err)
 	}
 }
+
+func TestCredInstallRefusesAGidThatDoesNotFitTheKernelsRange(t *testing.T) {
+	for _, g := range []string{"4294967296", "4294967297", "2147483648", "-1"} {
+		root := filepath.Join(t.TempDir(), "cred")
+		var o, e bytes.Buffer
+		if code := credInstall(root, noMem, []string{"--dest", filepath.Join(root, "s"), "--gid", g}, strings.NewReader(fakeCred), &o, &e); code != 2 {
+			t.Errorf("gid %s must be refused up front (exit 2), got %d", g, code)
+		}
+		if _, err := os.Stat(filepath.Join(root, "s")); err == nil {
+			t.Errorf("gid %s left a slot behind", g)
+		}
+	}
+}
