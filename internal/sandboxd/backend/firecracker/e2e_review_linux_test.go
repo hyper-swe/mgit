@@ -153,27 +153,31 @@ func (reviewKeyAudit) RecordKeyChange(context.Context, string) error { return ni
 
 // hangProbe is run in the guest by busybox sh with: lease dir, entrypoint
 // digest, uid, gid.
-const hangProbe = `L=%s; D=%s; U=%d; G=%d
+const hangProbe = `B=/bin/busybox; L=%s; D=%s; U=%d; G=%d
 /sbin/mgit-guest review-exec --sha256 $D --uid $U --gid $G --dir $L -- /bin/busybox touch $L/diag-marker >/tmp/o 2>/tmp/e &
 P=$!
 i=0
 while kill -0 $P 2>/dev/null && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done
 if kill -0 $P 2>/dev/null; then
-  echo "STILL RUNNING after ${i}s"
+  echo "STILL RUNNING after ${i}s; launcher pid $P"
+  $B ps -o pid,ppid,user,stat,args 2>&1 | $B grep -v '\[' 
   for d in /proc/[0-9]*; do
     p=${d#/proc/}
-    echo "== pid $p $(tr '\0' ' ' < $d/cmdline 2>&1)"
-    grep -E '^(State|PPid|Uid|NoNewPrivs|Seccomp)' $d/status 2>&1 | tr '\n' ' '; echo
+    [ "$p" = 1 ] && continue
+    [ -e $d/exe ] || continue
+    echo "== pid $p exe=$($B readlink $d/exe) comm=$(cat $d/comm)"
+    $B grep -E '^(State|PPid|Uid|NoNewPrivs|Seccomp)' $d/status 2>&1 | $B tr '\n' ' '; echo
     echo "wchan=$(cat $d/wchan 2>&1) syscall=$(cat $d/syscall 2>&1)"
-    head -12 $d/stack 2>&1
+    head -8 $d/stack 2>&1
+    echo "fds: $(ls -l $d/fd 2>&1 | $B sed 's/.* [0-9:]* //' | $B tr '\n' ' ')"
   done
   for d in /proc/[0-9]*; do
     p=${d#/proc/}
     [ "$p" = 1 ] && continue
-    case "$(tr '\0' ' ' < $d/cmdline 2>/dev/null)" in *mgit-guest*) kill -QUIT $p 2>/dev/null;; esac
+    case "$($B readlink $d/exe 2>/dev/null)" in */mgit-guest) $B kill -QUIT $p 2>/dev/null;; esac
   done
   sleep 3
-  echo "== launcher stderr"; head -c 6000 /tmp/e
+  echo "== launcher stderr"; head -c 8000 /tmp/e
 else
   wait $P; echo "RETURNED rc=$? within ${i}s"; cat /tmp/o; head -c 2000 /tmp/e
 fi`
