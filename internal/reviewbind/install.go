@@ -32,6 +32,7 @@ type Info struct {
 	Schema         string `json:"schema"`
 	ID             string `json:"id"`
 	BindingSHA256  string `json:"binding_sha256"`
+	ImageRef       string `json:"image_ref"`
 	ImageDigest    string `json:"image_digest"`
 	MapSHA256      string `json:"map_sha256"`
 	EgressPolicyID string `json:"egress_policy_id"`
@@ -46,7 +47,7 @@ func infoOf(m *reviewprep.Mapping) (Info, error) {
 	if e == "" {
 		e = "none"
 	}
-	return Info{Schema: InfoSchema, ID: m.ID, BindingSHA256: m.BindingSHA256, ImageDigest: m.ImageDigest, MapSHA256: h, EgressPolicyID: e}, nil
+	return Info{Schema: InfoSchema, ID: m.ID, BindingSHA256: m.BindingSHA256, ImageRef: m.ImageRef, ImageDigest: m.ImageDigest, MapSHA256: h, EgressPolicyID: e}, nil
 }
 
 // ensureDir creates d as an owner-only directory, or checks that an existing
@@ -111,12 +112,19 @@ func replace(path string, data []byte) error {
 	return os.Rename(tmp, path)
 }
 
+// ImageResolver reports the digest the image store holds under name for
+// hostRoot, or an error if the name is not registered.
+type ImageResolver func(hostRoot, name string) (digest string, err error)
+
 // Install validates raw as a map record, writes it and its pinned canonical
 // hash under hostRoot/review/maps with owner-only modes, and refuses an id that
 // is already installed. What it writes is what LoadMap accepts: the result is
 // loaded back before it is reported, and removed again if it does not load.
 // With makeDefault the id also becomes the default map.
-func Install(hostRoot string, raw []byte, makeDefault bool) (Info, error) {
+func Install(hostRoot string, raw []byte, makeDefault bool, resolve ImageResolver) (Info, error) {
+	if resolve == nil {
+		return Info{}, bad("there is no image store to check the map's image against")
+	}
 	if len(raw) > maxMapBytes {
 		return Info{}, bad("map record is too large")
 	}
@@ -131,6 +139,13 @@ func Install(hostRoot string, raw []byte, makeDefault bool) (Info, error) {
 	}
 	if m.Schema != reviewprep.MapSchema || !idPattern.MatchString(m.ID) {
 		return Info{}, bad("map record has the wrong schema or an id this build does not accept")
+	}
+	name, refDigest, refOK := splitRef(m.ImageRef)
+	if !refOK || name == "" || refDigest != m.ImageDigest {
+		return Info{}, bad("map record needs image_ref as <name>@sha256:<hex> carrying its image_digest")
+	}
+	if got, rerr := resolve(hostRoot, name); rerr != nil || got != m.ImageDigest {
+		return Info{}, bad("the image " + name + " is not registered with this digest in the image store")
 	}
 	canon, err := json.Marshal(m)
 	if err != nil {

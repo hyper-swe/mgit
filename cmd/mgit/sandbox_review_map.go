@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mgit/internal/reviewbind"
+	"github.com/hyper-swe/mgit/internal/sandboxd/images"
 )
 
 // sandboxReviewMapCmd is the operator's way to install and read the binding
@@ -21,6 +22,16 @@ func sandboxReviewMapCmd() *cobra.Command {
 	}
 	cmd.AddCommand(sandboxReviewMapInstallCmd(), sandboxReviewMapShowCmd())
 	return cmd
+}
+
+// mapImageResolver asks the host root's image store (images.lock) what digest a
+// name is registered under. A variable so a test can stand in for the store.
+var mapImageResolver reviewbind.ImageResolver = func(hostRoot, name string) (string, error) {
+	e, err := images.LookupEntry(hostRoot, name)
+	if err != nil {
+		return "", err
+	}
+	return e.Digest, nil
 }
 
 func mapHostRoot(override string) (string, error) {
@@ -39,7 +50,7 @@ func printInfo(w io.Writer, info reviewbind.Info, asJSON bool) error {
 		_, err = fmt.Fprintln(w, string(raw))
 		return err
 	}
-	_, err := fmt.Fprintf(w, "id: %s\nbinding_sha256: %s\nimage_digest: %s\nmap_sha256: %s\negress_policy_id: %s\n", info.ID, info.BindingSHA256, info.ImageDigest, info.MapSHA256, info.EgressPolicyID)
+	_, err := fmt.Fprintf(w, "id: %s\nbinding_sha256: %s\nimage_ref: %s\nimage_digest: %s\nmap_sha256: %s\negress_policy_id: %s\n", info.ID, info.BindingSHA256, info.ImageRef, info.ImageDigest, info.MapSHA256, info.EgressPolicyID)
 	return err
 }
 
@@ -63,7 +74,7 @@ func sandboxReviewMapInstallCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("read the map file: %w", err)
 			}
-			info, err := reviewbind.Install(hostRoot, raw, makeDefault)
+			info, err := reviewbind.Install(hostRoot, raw, makeDefault, mapImageResolver)
 			if err != nil {
 				cmd.SilenceUsage = true
 				return err

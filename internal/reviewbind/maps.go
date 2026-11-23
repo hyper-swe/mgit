@@ -25,6 +25,15 @@ var (
 	refPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
 
+// splitRef splits <name>@sha256:<64 hex> and reports whether it has that shape.
+func splitRef(ref string) (name, digest string, ok bool) {
+	i := strings.LastIndex(ref, "@")
+	if i <= 0 || !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(ref[i+1:]) {
+		return "", "", false
+	}
+	return ref[:i], ref[i+1:], true
+}
+
 func bad(detail string) error { return reviewprep.Refuse(reviewprep.CodeMappingMismatch, detail) }
 
 // CanonicalHashJSON is the sha256 (hex) of the record's canonical form: keys
@@ -106,6 +115,11 @@ func LoadMap(hostRoot, id string) (*reviewprep.Mapping, error) {
 	// is exactly its own decoded form, so what was pinned is what is used.
 	if again, herr := CanonicalHash(m); herr != nil || !strings.EqualFold(again, got) {
 		return nil, bad("mapping has keys the loader does not read as written")
+	}
+	if m.ImageRef != "" {
+		if name, digest, ok := splitRef(m.ImageRef); !ok || name == "" || digest != m.ImageDigest {
+			return nil, bad("mapping image reference does not carry the mapping's image digest")
+		}
 	}
 	if _, err := ParseEgress(m.EgressPolicyID); err != nil {
 		return nil, bad("mapping names a malformed egress policy")

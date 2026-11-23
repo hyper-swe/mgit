@@ -12,11 +12,10 @@ An operator installs the binding map a review is checked against, and a caller r
 2. `--default` also writes a pinned pointer, `_default`, naming the id. `_default` is not a valid map id, so no map can take
    its name. An edited pointer is refused.
 3. `mgit sandbox review map show [--id X] [--json]` verifies the map and prints its id, `binding_sha256` (the digest the
-   record carries), `image_digest` (the record's `sha256:<hex>`), `map_sha256` (the pinned hash of the whole record; a different value) and the egress policy id. It never
+   record carries), `image_ref` (the full `<name>@sha256:<hex>` to pass as `--image`) and `image_digest` (its digest), `map_sha256` (the pinned hash of the whole record; a different value) and the egress policy id. It never
    prints a credential or its reference. Without `--id` it describes the default map.
 4. With no default installed, `show` says: `mgit sandbox review map install --file <map.json> --default`. Nothing picks a map
    on its own.
-5. The host root is the one the sandbox review commands use; `--host-root` overrides it. The map records the image digest only, not an image name. `prepare` and `run` take `--image <name>@<image_digest>`
-   and compare only the digest to the map's; a digest alone is refused. The name is not in the map.
+5. The host root is the one the sandbox review commands use; `--host-root` overrides it. The record names the full image reference, and `install` refuses one the host's image store (images.lock) does not hold under that name with that digest. `prepare` and `run` take exactly `--image <image_ref>`; the same digest under another name is refused.
 
-The JSON is `mgit.review-map-info/v1`: `schema`, `id`, `binding_sha256`, `image_digest`, `map_sha256`, `egress_policy_id`.
+The JSON is `mgit.review-map-info/v1`: `schema`, `id`, `binding_sha256`, `image_ref`, `image_digest`, `map_sha256`, `egress_policy_id`.

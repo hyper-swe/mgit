@@ -1,8 +1,9 @@
 package reviewbind
 
 import (
-	"errors"
 	"encoding/json"
+	"errors"
+	"github.com/hyper-swe/mgit/internal/reviewprep"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,10 +172,10 @@ func TestInstall_RefusesAnImageRefTheStoreDoesNotResolve(t *testing.T) {
 }
 
 func TestInstall_RefusesAnImageRefThatDisagreesWithItsDigest(t *testing.T) {
-	for name, edit := range map[string]func(*Mapping){
-		"ref digest differs from image_digest": func(m *Mapping) { m.ImageRef = "reviewer@sha256:" + strings.Repeat("c", 64) },
-		"ref has no digest":                    func(m *Mapping) { m.ImageRef = "reviewer:latest" },
-		"no image_ref at all":                  func(m *Mapping) { m.ImageRef = "" },
+	for name, edit := range map[string]func(*reviewprep.Mapping){
+		"ref digest differs from image_digest": func(m *reviewprep.Mapping) { m.ImageRef = "reviewer@sha256:" + strings.Repeat("c", 64) },
+		"ref has no digest":                    func(m *reviewprep.Mapping) { m.ImageRef = "reviewer:latest" },
+		"no image_ref at all":                  func(m *reviewprep.Mapping) { m.ImageRef = "" },
 	} {
 		m := goodMap("r2")
 		edit(&m)
