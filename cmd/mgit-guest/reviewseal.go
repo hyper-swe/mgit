@@ -1,12 +1,15 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 )
 
 // reviewSeal hands the lease to the reviewer's group without handing the
@@ -29,12 +32,20 @@ func reviewSealWith(args []string, stderr io.Writer, chown func(path string, uid
 	fs := flag.NewFlagSet("review-seal", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	gid := fs.Int("gid", 0, "the reviewer's group id (above zero)")
+	evidence := fs.String("evidence-sha256", "", "the sha256 the attestation names for evidence.json")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *gid <= 0 || fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "review-seal: --gid N (above zero) and one lease directory are required")
+	if *gid <= 0 || fs.NArg() != 1 || !evidenceHex.MatchString(*evidence) {
+		fmt.Fprintln(stderr, "review-seal: --gid N (above zero), --evidence-sha256 (64 hex digits) and one lease directory are required")
 		return 2
+	}
+	// What the guest was built from must be what the host checked: a lease
+	// changed between that check and this image is refused before anything is
+	// handed to the reviewer.
+	if err := checkEvidence(fs.Arg(0), *evidence); err != nil {
+		fmt.Fprintln(stderr, "review-seal:", err)
+		return 1
 	}
 	if err := sealLease(fs.Arg(0), *gid, chown); err != nil {
 		fmt.Fprintln(stderr, "review-seal:", err)
@@ -147,4 +158,25 @@ func isLostAndFound(dir string, e os.DirEntry) bool {
 	}
 	inside, err := os.ReadDir(p)
 	return err == nil && len(inside) == 0
+}
+
+var evidenceHex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// checkEvidence fails unless dir/evidence.json is a regular file whose sha256
+// is want.
+func checkEvidence(dir, want string) error {
+	p := filepath.Join(dir, "evidence.json")
+	fi, err := os.Lstat(p)
+	if err != nil || !fi.Mode().IsRegular() {
+		return errors.New("the lease has no evidence.json to check")
+	}
+	b, err := os.ReadFile(p) //nolint:gosec // a fixed name inside the lease
+	if err != nil {
+		return errors.New("the evidence cannot be read")
+	}
+	h := sha256.Sum256(b)
+	if hex.EncodeToString(h[:]) != want {
+		return errors.New("the evidence is not the one the attestation names")
+	}
+	return nil
 }

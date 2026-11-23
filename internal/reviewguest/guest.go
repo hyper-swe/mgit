@@ -131,7 +131,7 @@ func Provision(ctx context.Context, mgr model.SandboxManager, s Spec) (*Guest, e
 	// Hand the lease to the reviewer's group, root-owned: the reviewer reads
 	// what it was given and owns none of it. Fail closed on any trouble.
 	seal, err := mgr.Exec(ctx, info.ID, model.ExecRequest{
-		Command: []string{guestBinary, "review-seal", "--gid", strconv.Itoa(s.GID), s.Lease.dir},
+		Command: []string{guestBinary, "review-seal", "--gid", strconv.Itoa(s.GID), "--evidence-sha256", s.Lease.att.BundleSHA256, s.Lease.dir},
 		AsRoot:  true, Timeout: sealLimit,
 	})
 	if err != nil || seal.ExitCode != 0 {
