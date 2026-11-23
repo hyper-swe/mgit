@@ -49,7 +49,7 @@ func (f *fakeEgress) allow(_ context.Context, entry string) error {
 
 func lookupOf(addrs ...string) func(context.Context, string) ([]netip.Addr, error) {
 	return func(_ context.Context, _ string) ([]netip.Addr, error) {
-		var out []netip.Addr
+		out := make([]netip.Addr, 0, len(addrs))
 		for _, a := range addrs {
 			out = append(out, netip.MustParseAddr(a))
 		}

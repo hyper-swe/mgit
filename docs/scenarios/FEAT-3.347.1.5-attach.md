@@ -16,5 +16,12 @@ reviewer starts, to install what the operator's map names.
 4. A failed install lifts the egress policy and still returns a usable release;
    no error carries the credential.
 
-The daemon wires the map store and the binding. The credential source is optional (`--review-credential-fd`); what is absent is a host egress enforcer for a review guest. A credential must name a host, so with no enforcer a map that asks for a credential or a host allowlist is refused. Scenarios 2 and 4 run against fakes only.
-5. A release whose cleanup exits nonzero, or returns no result, reports an error that carries no credential bytes, and still lifts the egress policy.
+Host egress: a map whose egress policy is `host:<fqdn>` is granted through the daemon's egress stack for that review guest only.
+The host is resolved on the host side; every resolved address is admitted on port 443 and no other port, and nothing else is
+reachable (an address off the grant, or a port off it, is refused). The addresses are fixed at grant time, so the grant does not
+follow later DNS changes. Every grant is revoked when the guest is removed. A guest with no egress stack (a daemon without one,
+or a policy of `none`) refuses a `host:` map before anything is installed.
+
+The credential source is optional (`--review-credential-fd`). The attach tests run against fakes; the live case is the firecracker
+e2e `TestE2E_ReviewBind_GrantsTheResolvedAddressOn443AndNothingElse`.
+5. A release whose cleanup exits nonzero, or returns no result, reports an error that carries no credential bytes.

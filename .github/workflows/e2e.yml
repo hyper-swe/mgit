@@ -840,6 +840,10 @@ jobs:
           # exists: asserted by name, so a SKIP fails. Refs: MGIT-344
           grep -q -- '--- PASS: TestE2E_ReviewRun_EgressReachesOnlyTheGrantedDestination' "$RUNNER_TEMP/fc-root.log" \
             || { echo "FATAL: the review egress proof did not PASS in the root half"; exit 1; }
+          # The binding's own grant (resolved address, port 443 only, an
+          # address off the grant refused) is asserted the same way.
+          grep -q -- '--- PASS: TestE2E_ReviewBind_GrantsTheResolvedAddressOn443AndNothingElse' "$RUNNER_TEMP/fc-root.log" \
+            || { echo "FATAL: the review binding egress proof did not PASS in the root half"; exit 1; }
 
       # The guest supervisor's credential switch is proven where a process may
       # make it: as root, without a VM. Asserted positively — a SKIP here
