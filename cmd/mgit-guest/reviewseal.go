@@ -19,6 +19,13 @@ import (
 // and because it owns none of it, it cannot change a mode or an owner back.
 // It runs as root, before the reviewer starts. Refs: FEAT-3.347.1, MGIT-333
 func reviewSeal(args []string, stderr io.Writer) int {
+	return reviewSealWith(args, stderr, os.Chown, ownedByRootWithGroup)
+}
+
+// reviewSealWith is reviewSeal with the ownership change and the on-disk owner
+// check injected, so the rule that a seal is checked after it is made is testable
+// by a user who cannot change owners.
+func reviewSealWith(args []string, stderr io.Writer, chown func(path string, uid, gid int) error, owned func(path string, gid int) error) int {
 	fs := flag.NewFlagSet("review-seal", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	gid := fs.Int("gid", 0, "the reviewer's group id (above zero)")
@@ -29,13 +36,13 @@ func reviewSeal(args []string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "review-seal: --gid N (above zero) and one lease directory are required")
 		return 2
 	}
-	if err := sealLease(fs.Arg(0), *gid, os.Chown); err != nil {
+	if err := sealLease(fs.Arg(0), *gid, chown); err != nil {
 		fmt.Fprintln(stderr, "review-seal:", err)
 		return 1
 	}
 	// Look again at what is on disk: a seal that did not take is a failure,
 	// never a lease the reviewer happens to own.
-	if err := verifySealed(fs.Arg(0), *gid, ownedByRootWithGroup); err != nil {
+	if err := verifySealed(fs.Arg(0), *gid, owned); err != nil {
 		fmt.Fprintln(stderr, "review-seal:", err)
 		return 1
 	}
