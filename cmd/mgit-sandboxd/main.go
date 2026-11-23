@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mgit/internal/buildinfo"
+	"github.com/hyper-swe/mgit/internal/reviewbind"
 	"github.com/hyper-swe/mgit/internal/sandboxd"
 	"github.com/hyper-swe/mgit/internal/sandboxd/backend/libkrun"
 	"github.com/hyper-swe/mgit/internal/sandboxd/hostmem"
@@ -263,10 +264,11 @@ func run(args []string, out, logSink io.Writer) int {
 			dcfg.ReviewPreparer = rs
 			// Review run (MGIT-333): the same service runs a prepared review on
 			// the selected backend, which must deliver the bundle as a
-			// launch-time image or the run refuses. Nothing is installed behind
-			// the bindings seam yet, so a mapping that asks for a credential or
-			// a network policy is refused rather than run without it.
-			rs.WithRunner(reviewsvc.RunnerConfig{Manager: manager, Backend: reviewBackendName(context.Background(), opts.backend)})
+			// launch-time image or the run refuses. The operator's binding
+			// maps are read from the host root; this daemon has no credential
+			// source or egress enforcer wired yet, so a mapping that asks for a
+			// credential or a host allowlist is refused rather than run without it.
+			rs.WithMapLoader(reviewbind.LoadMap).WithRunner(reviewsvc.RunnerConfig{Manager: manager, Backend: reviewBackendName(context.Background(), opts.backend), Bindings: reviewbind.New(reviewbind.Config{})})
 			dcfg.ReviewRunner = rs
 		}
 
