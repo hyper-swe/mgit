@@ -36,9 +36,6 @@ import (
 // makes the denial a property of the launcher rather than of the image.
 // Refs: FEAT-3.347.1, MGIT-333
 func TestE2E_ReviewGuest_LaunchTimeImage(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("the reviewer drops to the caller's unprivileged identity; run unprivileged")
-	}
 	kernel, rootfs := requireE2EGuest(t)
 	clock := func() time.Time { return time.Now().UTC() }
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -81,7 +78,17 @@ func TestE2E_ReviewGuest_LaunchTimeImage(t *testing.T) {
 	require.NoError(t, err)
 	leaseDir := lease.Dir()
 
+	// The reviewer is never root. Unprivileged, it is the caller's own identity;
+	// run as root (the gate's second half) it is a fixed unprivileged one, and
+	// the lease is handed to it so it can read what it was given.
 	uid, gid := os.Getuid(), os.Getgid()
+	if uid == 0 {
+		uid, gid = 1001, 1001
+		require.NoError(t, os.Chown(leaseDir, uid, gid))
+		for _, n := range []string{"evidence.json", "attestation.json"} {
+			require.NoError(t, os.Chown(filepath.Join(leaseDir, n), uid, gid))
+		}
+	}
 	ctx := context.Background()
 	g, err := reviewguest.Provision(ctx, mgr, reviewguest.Spec{
 		Backend: model.BackendKVM, Lease: lease, TaskID: "REV-LIVE", UID: uid, GID: gid,
