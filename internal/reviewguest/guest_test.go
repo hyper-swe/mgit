@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/reviewprep"
@@ -168,6 +169,23 @@ func TestRun_GoesThroughTheLauncherAsRootWithTheDigestAndOnlyTheNonceInTheEnviro
 		if strings.Contains(a, strings.TrimPrefix(r.Env[0], NonceEnv+"=")) {
 			t.Fatal("the nonce is on the command line, where the program could read it")
 		}
+	}
+}
+
+func TestRun_AlwaysBoundsTheRunAndHonoursAShorterLimit(t *testing.T) {
+	m := &fakeMgr{backend: model.BackendKVM}
+	g := provisioned(t, m)
+	if _, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a", Timeout: 7 * time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	if m.execs[0].Timeout <= 0 || m.execs[0].Timeout > MaxRun || m.execs[1].Timeout != 7*time.Second {
+		t.Fatalf("timeouts %v %v", m.execs[0].Timeout, m.execs[1].Timeout)
+	}
+	if _, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a", Timeout: MaxRun + time.Second}); err == nil {
+		t.Fatal("a limit above the maximum was accepted")
 	}
 }
 

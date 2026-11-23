@@ -105,8 +105,14 @@ func TestE2E_ReviewGuest_LaunchTimeImage(t *testing.T) {
 	require.Zero(t, ctl.ExitCode, "the control must be able to write, or the denial below proves nothing: %s", ctl.Stderr)
 
 	// Through the launcher.
-	res, err := g.Run(ctx, reviewguest.Entry{SHA256: digest, Path: "/bin/busybox",
+	t.Logf("guest kernel: %s", exec("/bin/busybox", "uname", "-a").Stdout)
+	res, err := g.Run(ctx, reviewguest.Entry{SHA256: digest, Path: "/bin/busybox", Timeout: 90 * time.Second,
 		Argv: []string{"touch", filepath.Join(leaseDir, "review-marker")}})
+	if err != nil {
+		// Say what the guest was doing, so a hang is a diagnosis and not a timeout.
+		t.Logf("processes: %s", exec("/bin/busybox", "ps").Stdout)
+		t.Logf("dmesg: %s", exec("/bin/busybox", "dmesg").Stdout)
+	}
 	require.NoError(t, err)
 	assert.NotZero(t, res.ExitCode, "the reviewer's write must fail")
 

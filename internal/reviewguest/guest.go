@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/reviewlaunch"
@@ -36,6 +37,9 @@ const guestBinary = "/sbin/mgit-guest"
 
 // launcherRefusalExit is the status review-exec exits with when it refuses.
 const launcherRefusalExit = 70
+
+// MaxRun is the longest a review may run, and the limit when none is given.
+const MaxRun = 30 * time.Minute
 
 // NonceEnv is the variable that carries the per-run refusal nonce to the launcher.
 const NonceEnv = reviewlaunch.RefusalNonceEnv
@@ -67,6 +71,8 @@ type Entry struct {
 	SHA256 string
 	Path   string
 	Argv   []string
+	// Timeout bounds the run; zero means MaxRun.
+	Timeout time.Duration
 }
 
 // Guest is a provisioned review guest.
@@ -129,12 +135,19 @@ func (g *Guest) Run(ctx context.Context, e Entry) (*model.ExecResult, error) {
 	cmd = append(cmd, guestBinary, "review-exec", "--sha256", e.SHA256,
 		"--uid", strconv.Itoa(g.uid), "--gid", strconv.Itoa(g.gid), "--dir", g.LeaseDir, "--", e.Path)
 	cmd = append(cmd, e.Argv...)
+	limit := e.Timeout
+	if limit == 0 {
+		limit = MaxRun
+	}
+	if limit < 0 || limit > MaxRun {
+		return nil, refuse(reviewprep.CodeMappingMismatch, "the run limit is outside the allowed range")
+	}
 	nonce, err := newNonce()
 	if err != nil {
 		return nil, fmt.Errorf("review guest nonce: %w", err)
 	}
 	res, err := g.mgr.Exec(ctx, g.ID, model.ExecRequest{
-		Command: cmd, Dir: g.LeaseDir, AsRoot: true, Env: []string{NonceEnv + "=" + nonce},
+		Command: cmd, Dir: g.LeaseDir, AsRoot: true, Timeout: limit, Env: []string{NonceEnv + "=" + nonce},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("review guest exec: %w", err)
