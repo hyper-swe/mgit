@@ -170,7 +170,7 @@ func TestCredInstallLeavesAFreshParentEnterableByTheGroup(t *testing.T) {
 }
 
 func TestCredInstallRefusesAGidThatDoesNotFitTheKernelsRange(t *testing.T) {
-	for _, g := range []string{"4294967296", "4294967297", "2147483648", "-1"} {
+	for _, g := range []string{"4294967295", "4294967296", "4294967297", "18446744073709551616", "0", "-1"} {
 		root := filepath.Join(t.TempDir(), "cred")
 		var o, e bytes.Buffer
 		if code := credInstall(root, noMem, []string{"--dest", filepath.Join(root, "s"), "--gid", g}, strings.NewReader(fakeCred), &o, &e); code != 2 {
@@ -178,6 +178,18 @@ func TestCredInstallRefusesAGidThatDoesNotFitTheKernelsRange(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(root, "s")); err == nil {
 			t.Errorf("gid %s left a slot behind", g)
+		}
+	}
+}
+
+func TestCredInstallAcceptsTheEdgesOfTheGidRange(t *testing.T) {
+	for _, g := range []string{"1", "2147483648", "4294967294"} {
+		root := filepath.Join(t.TempDir(), "cred")
+		var o, e bytes.Buffer
+		// A non-root run cannot chown, so it stops later than the range check;
+		// what matters is that the range check did not refuse it (exit 2).
+		if code := credInstall(root, noMem, []string{"--dest", filepath.Join(root, "s"), "--gid", g}, strings.NewReader(fakeCred), &o, &e); code == 2 {
+			t.Errorf("gid %s is inside the range but was refused: %s", g, e.String())
 		}
 	}
 }

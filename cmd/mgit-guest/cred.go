@@ -34,7 +34,7 @@ func credInstall(root string, ensureMem func(string) error, args []string, stdin
 	fs := flag.NewFlagSet("cred-install", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dest := fs.String("dest", "", "file to create")
-	gid := fs.Int("gid", 0, "group allowed to read it")
+	gid64 := fs.Uint64("gid", 0, "group allowed to read it")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -42,10 +42,12 @@ func credInstall(root string, ensureMem func(string) error, args []string, stdin
 		fmt.Fprintln(stderr, "cred-install:", err)
 		return 2
 	}
-	if *gid <= 0 || *gid > math.MaxInt32 {
+	if *gid64 < 1 || *gid64 > math.MaxUint32-1 { // 0 is root; 2^32-1 is the kernel's "no change" value
+
 		fmt.Fprintln(stderr, "cred-install: the group must be an unprivileged gid")
 		return 2
 	}
+	gid := int(*gid64)
 	b, err := io.ReadAll(io.LimitReader(stdin, model.MaxStdinBytes+1))
 	defer func() {
 		for i := range b {
@@ -72,7 +74,7 @@ func credInstall(root string, ensureMem func(string) error, args []string, stdin
 		return 1
 	}
 	// the group must be able to reach the slot: a directory it cannot enter is a failure, not a quiet default
-	if err := os.Chown(root, -1, *gid); err != nil {
+	if err := os.Chown(root, -1, gid); err != nil {
 		fmt.Fprintln(stderr, "cred-install: the credential directory could not be given to the group")
 		return 1
 	}
@@ -94,7 +96,7 @@ func credInstall(root string, ensureMem func(string) error, args []string, stdin
 	if err := f.Chmod(0o440); err != nil { //nolint:gosec // see the OpenFile above
 		return fail()
 	}
-	if err := f.Chown(-1, *gid); err != nil {
+	if err := f.Chown(-1, gid); err != nil {
 		return fail()
 	}
 	if _, err := f.Write(b); err != nil {
