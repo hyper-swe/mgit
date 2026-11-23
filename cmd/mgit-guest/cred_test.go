@@ -32,7 +32,7 @@ func fmtInt(n int) string {
 func TestCredInstallWritesAReadOnlyFileAndSaysNothingOfIt(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "cred")
 	var out, errb bytes.Buffer
-	if code := credInstall(root, credArgs(root, "slot1"), strings.NewReader(fakeCred), &out, &errb); code != 0 {
+	if code := credInstall(root, noMem, credArgs(root, "slot1"), strings.NewReader(fakeCred), &out, &errb); code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
 	if strings.Contains(out.String()+errb.String(), fakeCred) {
@@ -51,21 +51,21 @@ func TestCredInstallWritesAReadOnlyFileAndSaysNothingOfIt(t *testing.T) {
 func TestCredInstallRefusesAnEmptyStdinAnOversizedOneAndAFileThatExists(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "cred")
 	var o, e bytes.Buffer
-	if code := credInstall(root, credArgs(root, "a"), strings.NewReader(""), &o, &e); code == 0 {
+	if code := credInstall(root, noMem, credArgs(root, "a"), strings.NewReader(""), &o, &e); code == 0 {
 		t.Error("an empty stdin was accepted (an older guest drops stdin)")
 	}
 	big := strings.NewReader(strings.Repeat("x", model.MaxStdinBytes+1))
-	if code := credInstall(root, credArgs(root, "b"), big, &o, &e); code == 0 {
+	if code := credInstall(root, noMem, credArgs(root, "b"), big, &o, &e); code == 0 {
 		t.Error("an oversized stdin was accepted")
 	}
-	if code := credInstall(root, credArgs(root, "c"), strings.NewReader("one"), &o, &e); code != 0 {
+	if code := credInstall(root, noMem, credArgs(root, "c"), strings.NewReader("one"), &o, &e); code != 0 {
 		t.Fatal("first install failed")
 	}
 	// even when the file could be opened for writing (root in a guest can), an installed slot is not replaced
 	if err := os.Chmod(filepath.Join(root, "c"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := credInstall(root, credArgs(root, "c"), strings.NewReader("two"), &o, &e); code == 0 {
+	if code := credInstall(root, noMem, credArgs(root, "c"), strings.NewReader("two"), &o, &e); code == 0 {
 		t.Error("an installed slot was overwritten")
 	}
 	if strings.Contains(o.String()+e.String(), "one") && strings.Contains(o.String()+e.String(), "two") {
@@ -81,7 +81,7 @@ func TestCredInstallRefusesADestOutsideTheCredentialDirectory(t *testing.T) {
 	} {
 		var o, e bytes.Buffer
 		args := []string{"--dest", dest, "--gid", fmtInt(os.Getgid())}
-		if code := credInstall(root, args, strings.NewReader(fakeCred), &o, &e); code == 0 {
+		if code := credInstall(root, noMem, args, strings.NewReader(fakeCred), &o, &e); code == 0 {
 			t.Errorf("%q was accepted", dest)
 		}
 	}
@@ -90,7 +90,7 @@ func TestCredInstallRefusesADestOutsideTheCredentialDirectory(t *testing.T) {
 func TestCredInstallRefusesGidZero(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "cred")
 	var o, e bytes.Buffer
-	if code := credInstall(root, []string{"--dest", filepath.Join(root, "s"), "--gid", "0"}, strings.NewReader(fakeCred), &o, &e); code != 2 {
+	if code := credInstall(root, noMem, []string{"--dest", filepath.Join(root, "s"), "--gid", "0"}, strings.NewReader(fakeCred), &o, &e); code != 2 {
 		t.Errorf("group zero must be refused up front (exit 2), got %d", code)
 	}
 }
@@ -98,7 +98,7 @@ func TestCredInstallRefusesGidZero(t *testing.T) {
 func TestCredRemoveOverwritesThenUnlinks(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "cred")
 	var o, e bytes.Buffer
-	if code := credInstall(root, credArgs(root, "s"), strings.NewReader(fakeCred), &o, &e); code != 0 {
+	if code := credInstall(root, noMem, credArgs(root, "s"), strings.NewReader(fakeCred), &o, &e); code != 0 {
 		t.Fatal(e.String())
 	}
 	p := filepath.Join(root, "s")
@@ -133,8 +133,22 @@ func TestCredInstallFailsWhenTheDirectoryCannotBeGivenToTheGroup(t *testing.T) {
 		t.Skip("root can give a directory to any group")
 	}
 	args := []string{"--dest", filepath.Join(root, "s"), "--gid", fmtInt(gid)}
-	if code := credInstall(root, args, strings.NewReader(fakeCred), &o, &e); code == 0 {
+	if code := credInstall(root, noMem, args, strings.NewReader(fakeCred), &o, &e); code == 0 {
 		t.Fatal("the install succeeded with a directory the group cannot reach")
+	}
+	if _, err := os.Stat(filepath.Join(root, "s")); err == nil {
+		t.Fatal("a slot was left behind")
+	}
+}
+
+func noMem(string) error { return nil }
+
+func TestCredInstallInstallsNothingWhenTheDirectoryCannotBeMadeMemoryBacked(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "cred")
+	var o, e bytes.Buffer
+	refuse := func(string) error { return os.ErrPermission }
+	if code := credInstall(root, refuse, credArgs(root, "s"), strings.NewReader(fakeCred), &o, &e); code == 0 {
+		t.Fatal("the secret was written although the directory is not memory-backed")
 	}
 	if _, err := os.Stat(filepath.Join(root, "s")); err == nil {
 		t.Fatal("a slot was left behind")
