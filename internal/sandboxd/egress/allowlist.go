@@ -103,8 +103,13 @@ func (al *Allowlist) isGranted(ip netip.Addr, port int) bool {
 	if al.grants == nil {
 		return false
 	}
-	_, ok := al.grants[grantKey{ip: ip.Unmap(), port: port}]
-	return ok
+	// MUTANT (never merged): a grant matches any address on its port.
+	for k := range al.grants {
+		if k.port == port {
+			return true
+		}
+	}
+	return false
 }
 
 // Compile builds an Allowlist from validated policy entries (each already
