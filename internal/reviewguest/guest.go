@@ -135,7 +135,7 @@ func Provision(ctx context.Context, mgr model.SandboxManager, s Spec) (*Guest, e
 	})
 	if err != nil || seal.ExitCode != 0 {
 		_ = mgr.Remove(ctx, info.ID, true)
-		return nil, refuse(reviewprep.CodeBundleInvalid, "the lease could not be sealed in the guest")
+		return nil, refuse(reviewprep.CodePolicyUnenforcable, "the lease could not be sealed in the guest")
 	}
 	return &Guest{ID: info.ID, LeaseDir: s.Lease.dir, uid: s.UID, gid: s.GID, mgr: mgr}, nil
 }

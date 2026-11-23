@@ -27,7 +27,7 @@
    reviewer's group, the directory 0750 and the files 0440, then looks at what is on disk and fails unless every
    entry is root-owned with that group. A directory holding anything but regular files is refused. The reviewer reads
    through its group and can change no mode or owner, so this holds even when its uid equals the uid the daemon
-   delivered the files as. A seal that fails removes the guest and refuses with BUNDLE_INVALID. This needs the seal
+   delivered the files as. A seal that fails removes the guest and refuses with POLICY_UNENFORCEABLE before any reviewer runs. This needs the seal
    step to run as root in the guest, which a guest launched by the daemon does.
 10. Not here: the review-run verb and leases (the next slice), the binding-map installer, egress and credentials. The
    box guest proof, with a marker-file control, is recorded in the pull request.
