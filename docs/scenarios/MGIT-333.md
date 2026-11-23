@@ -17,7 +17,8 @@
    requested identity that differs, or an enforced block weaker than the profile.
 5. Before: nothing checked a review request or attested a launch.
 6. After: both directions are table-tested, every signed field is covered by a tamper case. The capability policy
-   text, and so its digest, states writes as not denied until the launcher denies them.
+   text, and so its digest, states writes as denied, because the launcher this build ships denies them. A build
+   whose launcher does not would say not denied, and a client that requires the profile would refuse it.
 7. `mgit sandbox review prepare --profile reviewer-ro/v1 --image <name>@sha256:<digest> --mapping <id>
    --binding-digest <sha256> --bundle <dir> --bundle-digest <sha256> --nonce <random> --format json` asks the
    daemon for this. Success prints only the attestation on standard output. A refusal prints the error envelope
