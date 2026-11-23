@@ -33,6 +33,7 @@ func StaticSource(ref string, r io.Reader) (CredentialSource, error) {
 			return nil, errors.New("no credential is provided for that ref")
 		}
 		s := NewSlot(ref)
-		return s, s.Fill(bytes.NewReader(master))
+		err := s.Fill(bytes.NewReader(master))
+		return s, err
 	}, nil
 }
