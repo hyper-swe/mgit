@@ -1,6 +1,7 @@
 package reviewsvc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -366,6 +367,49 @@ func TestRunReview_TooMuchOutputIsRefusedAndNoneOfItIsReturned(t *testing.T) {
 	}
 	if _, err := r2.run(t); err != nil {
 		t.Fatalf("output at the cap refused: %v", err)
+	}
+}
+
+// The output cap is exact and the result at the cap is deliverable: through
+// the run service's own encoder and the daemon's response encoder, output one
+// byte under and exactly at the cap (default and maximum, split across stdout
+// and stderr) is sent; one byte over is refused OUTPUT_LIMIT with the reviewer
+// started, and that refusal is sendable too. Refs: MGIT-333, FEAT-3.347.1.6
+func TestRunReview_OutputAtTheCapIsDeliveredAndOneByteOverIsRefused(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		arg  int64 // MaxOutputBytes as asked; 0 = the default
+		cap  int64
+	}{
+		{"default", 0, controlproto.DefaultReviewOutputBytes},
+		{"maximum", controlproto.MaxReviewOutputBytes, controlproto.MaxReviewOutputBytes},
+	} {
+		for _, total := range []int64{c.cap - 1, c.cap, c.cap + 1} {
+			r := prepared(t)
+			r.args.MaxOutputBytes = c.arg
+			out, errb := total/2, total-total/2
+			r.mgr.runRes = func(model.ExecRequest) (*model.ExecResult, error) {
+				return &model.ExecResult{Stdout: bytes.Repeat([]byte{'o'}, int(out)), Stderr: bytes.Repeat([]byte{'e'}, int(errb))}, nil
+			}
+			raw, err := r.svc.RunReview(context.Background(), r.args)
+			var resp controlproto.Response
+			if total > c.cap {
+				e := envelopeOf(t, err)
+				if e.Code != reviewprep.CodeOutputLimit || !e.ReviewerStarted || raw != nil {
+					t.Fatalf("%s cap+1: envelope %+v", c.name, e)
+				}
+				env, _ := json.Marshal(e)
+				resp = controlproto.Response{ReviewRun: &controlproto.ReviewRunResult{Refusal: env}}
+			} else {
+				if err != nil {
+					t.Fatalf("%s at %d of %d: %v", c.name, total, c.cap, err)
+				}
+				resp = controlproto.Response{ReviewRun: &controlproto.ReviewRunResult{Result: raw}}
+			}
+			if err := controlproto.WriteResponse(&bytes.Buffer{}, &resp); err != nil {
+				t.Fatalf("%s at %d of %d: the daemon could not send the answer: %v", c.name, total, c.cap, err)
+			}
+		}
 	}
 }
 

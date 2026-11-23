@@ -1,7 +1,9 @@
 package sandboxd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -99,4 +101,31 @@ func TestReviewReadBudget_IsTheRunLimitPlusAGrace(t *testing.T) {
 	assert.Equal(t, 7*time.Second+reviewBudgetGrace, reviewReadBudget(7))
 	assert.Equal(t, time.Duration(controlproto.MaxReviewSeconds)*time.Second+reviewBudgetGrace, reviewReadBudget(controlproto.MaxReviewSeconds))
 	assert.GreaterOrEqual(t, reviewBudgetGrace, 30*time.Second)
+}
+
+// A completed review's output up to the documented limits crosses the socket
+// intact, both ends included: the daemon sends it and the client reads it back
+// byte for byte, at the default and at the maximum, split or on one stream.
+// Refs: MGIT-333, FEAT-3.347.1.6
+func TestClient_ReviewRun_TheDocumentedOutputCrossesTheSocketIntact(t *testing.T) {
+	def, maxOut := int(controlproto.DefaultReviewOutputBytes), int(controlproto.MaxReviewOutputBytes)
+	for _, c := range []struct {
+		name           string
+		stdout, stderr int
+	}{
+		{"1 MiB stdout", 1 << 20, 0},
+		{"default split", def - (1 << 20), 1 << 20},
+		{"maximum split", maxOut / 2, maxOut / 2},
+		{"maximum on stdout", maxOut, 0},
+	} {
+		want, err := json.Marshal(controlproto.ReviewResult{
+			Schema: controlproto.ReviewResultSchema, Lease: strings.Repeat("a", 32),
+			Stdout: bytes.Repeat([]byte{'o'}, c.stdout), Stderr: bytes.Repeat([]byte{'e'}, c.stderr),
+		})
+		require.NoError(t, err)
+		client := clientFor(t, func(cfg *Config) { cfg.ReviewRunner = &fakeReviewRunner{res: want} })
+		got, err := client.ReviewRun(context.Background(), runArgs())
+		require.NoError(t, err, c.name)
+		require.True(t, bytes.Equal(want, got), "%s: the result came back changed (%d bytes sent, %d read)", c.name, len(want), len(got))
+	}
 }
