@@ -25,7 +25,7 @@
 9. The lease is handed to the reviewer without the reviewer owning any of it. After launch, as root in the guest,
    `mgit-guest review-seal --gid <reviewer gid> <lease>` makes the directory and its files root-owned with the
    reviewer's group, the directory 0750 and the files 0440, then looks at what is on disk and fails unless every
-   entry is root-owned with that group. A directory holding anything but regular files is refused, except the `lost+found` directory every filesystem image carries, which is left root-owned 0700. The reviewer reads
+   entry is root-owned with that group. A directory holding anything but regular files is refused, except the `lost+found` directory every filesystem image carries, which is left root-owned 0700. The exemption is exact: a real directory with that name at the lease root, empty and mode 0700; a file, a link, a non-empty one or one anywhere else is refused. The reviewer reads
    through its group and can change no mode or owner, so this holds even when its uid equals the uid the daemon
    delivered the files as. A seal that fails removes the guest and refuses with POLICY_UNENFORCEABLE before any reviewer runs. This needs the seal
    step to run as root in the guest, which a guest launched by the daemon does.

@@ -58,7 +58,7 @@ func sealLease(dir string, gid int, chown func(path string, uid, gid int) error)
 	}
 	var files []string
 	for _, e := range ents {
-		if isLostAndFound(e) {
+		if isLostAndFound(dir, e) {
 			continue
 		}
 		p := filepath.Join(dir, e.Name())
@@ -92,7 +92,7 @@ func verifySealed(dir string, gid int, owned func(path string, gid int) error) e
 		return err
 	}
 	for _, e := range ents {
-		if isLostAndFound(e) {
+		if isLostAndFound(dir, e) {
 			continue
 		}
 		if err := owned(filepath.Join(dir, e.Name()), gid); err != nil {
@@ -103,6 +103,18 @@ func verifySealed(dir string, gid int, owned func(path string, gid int) error) e
 }
 
 // isLostAndFound reports whether e is the directory a filesystem keeps at its
-// root. A volume delivered as an image has one; it is the filesystem's, root-
-// owned 0700, and stays that way. A file of that name is not it.
-func isLostAndFound(e os.DirEntry) bool { return e.Name() == "lost+found" && e.IsDir() }
+// root: named exactly lost+found, a real directory (not a link), empty, and
+// mode 0700. A volume delivered as an image has one; it is the filesystem's and
+// stays root-owned 0700. Anything else by that name is not it.
+func isLostAndFound(dir string, e os.DirEntry) bool {
+	if e.Name() != "lost+found" {
+		return false
+	}
+	p := filepath.Join(dir, e.Name())
+	fi, err := os.Lstat(p)
+	if err != nil || fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() || fi.Mode().Perm() != 0o700 {
+		return false
+	}
+	inside, err := os.ReadDir(p)
+	return err == nil && len(inside) == 0
+}
