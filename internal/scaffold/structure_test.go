@@ -109,6 +109,7 @@ func TestProjectStructure_NoExtraDirectories(t *testing.T) {
 		"reviewprep":    true, // review prepare: request checks and signed attestation (MGIT-333)
 		"reviewlaunch":  true, // review launcher: fd-exec filter and supervisor (MGIT-332)
 		"reviewguest":   true, // review guest provisioning and launcher caller (MGIT-333)
+		"reviewbind":    true, // review binding map, egress policy and credential slot (FEAT-3.347.1.5)
 		"landwire":      true, // host<->guest land object-frame wire protocol (FR-17.5, MGIT-11.10.10)
 		"guestboot":     true, // host->guest worktree-mount boot contract (FR-17.3, MGIT-11.6.5)
 		"guestnet":      true, // guest NIC/resolver configuration at boot (FR-17.7, MGIT-68)
