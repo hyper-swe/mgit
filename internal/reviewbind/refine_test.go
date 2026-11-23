@@ -42,7 +42,7 @@ func TestLoadMap_BytesAfterThePinnedRecordAreRefused(t *testing.T) {
 	root := t.TempDir()
 	install(t, root, goodMap("m3"))
 	p := filepath.Join(root, "review", "maps", "m3.json")
-	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0) //nolint:gosec // p is the test's own temp file
 	if err != nil {
 		t.Fatal(err)
 	}
