@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -449,4 +450,34 @@ func TestCloseInherited_StartsAtExactlyFive(t *testing.T) {
 func stubFDHooks() func() {
 	a, b, c := closeRangeCall, listFDs, setCloexec
 	return func() { closeRangeCall, listFDs, setCloexec = a, b, c }
+}
+
+// On an older kernel closing the notification descriptor does not wake a
+// supervisor blocked reading it, so the launcher hung after the program had
+// already exited (seen on a 5.10 guest). The supervisor must stop on its own
+// once told the stage is gone, with nothing ever arriving on the descriptor.
+func TestSupervise_StopsWhenToldTheStageIsGone(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		supervise(int(r.Fd()), NewExecDecider(5, HostArch()), done)
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("the supervisor stopped before it was told to")
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(done)
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the supervisor did not stop after the stage was gone")
+	}
 }
