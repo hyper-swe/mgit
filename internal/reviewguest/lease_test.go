@@ -143,7 +143,7 @@ func TestOpenLease_RefusesAnythingThatIsNotThatSealedLease(t *testing.T) {
 			return OpenLease(f.root, strings.Repeat("a", 32), f.req, f.pub, fixedNow)
 		}, reviewprep.CodeBundleInvalid},
 		{"directory is group readable", func(t *testing.T, f *fixture) (*Lease, error) {
-			mustDo(t, os.Chmod(f.dir(), 0o750))
+			mustDo(t, os.Chmod(f.dir(), 0o750)) //nolint:gosec // the test makes the directory too open on purpose
 			return f.openAt(fixedNow)
 		}, reviewprep.CodeBundleInvalid},
 		{"lease is a link", func(t *testing.T, f *fixture) (*Lease, error) {
@@ -177,9 +177,9 @@ func TestOpenLease_RefusesAnythingThatIsNotThatSealedLease(t *testing.T) {
 		{"attestation is a link", func(t *testing.T, f *fixture) (*Lease, error) {
 			p := filepath.Join(f.dir(), "attestation.json")
 			keep := filepath.Join(t.TempDir(), "a.json")
-			raw, err := os.ReadFile(p)
+			raw, err := os.ReadFile(p) //nolint:gosec // test path
 			mustDo(t, err)
-			mustDo(t, os.WriteFile(keep, raw, 0o400))
+			mustDo(t, os.WriteFile(keep, raw, 0o400)) //nolint:gosec // test path
 			mustDo(t, os.Remove(p))
 			mustDo(t, os.Symlink(keep, p))
 			return f.openAt(fixedNow)
@@ -215,9 +215,9 @@ func TestOpenLease_RefusesAnythingThatIsNotThatSealedLease(t *testing.T) {
 			dst := filepath.Join(f.root, "review", "leases", other)
 			mustDo(t, os.Mkdir(dst, 0o700))
 			for _, n := range []string{"evidence.json", "attestation.json"} {
-				raw, err := os.ReadFile(filepath.Join(f.dir(), n))
+				raw, err := os.ReadFile(filepath.Join(f.dir(), n)) //nolint:gosec // test path
 				mustDo(t, err)
-				mustDo(t, os.WriteFile(filepath.Join(dst, n), raw, 0o400))
+				mustDo(t, os.WriteFile(filepath.Join(dst, n), raw, 0o400)) //nolint:gosec // test path
 			}
 			return OpenLease(f.root, other, f.req, f.pub, fixedNow)
 		}, reviewprep.CodeAttestationInvalid},

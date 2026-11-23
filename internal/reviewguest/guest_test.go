@@ -18,6 +18,7 @@ const sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 type fakeMgr struct {
 	launched []model.SandboxLaunchOptions
 	execs    []model.ExecRequest
+	bounded  []bool // whether each Exec was given a deadline
 	removed  []string
 	backend  string
 	res      *model.ExecResult
@@ -33,8 +34,10 @@ func (f *fakeMgr) Launch(_ context.Context, o model.SandboxLaunchOptions) (*mode
 	return &model.SandboxInfo{ID: "sb1", Backend: f.backend, WorktreePath: o.WorktreePath, NetworkMode: o.Network.Mode}, nil
 }
 func (f *fakeMgr) List(context.Context) ([]model.SandboxInfo, error) { return nil, nil }
-func (f *fakeMgr) Exec(_ context.Context, _ string, r model.ExecRequest) (*model.ExecResult, error) {
+func (f *fakeMgr) Exec(ctx context.Context, _ string, r model.ExecRequest) (*model.ExecResult, error) {
 	f.execs = append(f.execs, r)
+	_, has := ctx.Deadline()
+	f.bounded = append(f.bounded, has)
 	if f.resFn != nil {
 		return f.resFn(r), nil
 	}
@@ -183,6 +186,9 @@ func TestRun_AlwaysBoundsTheRunAndHonoursAShorterLimit(t *testing.T) {
 	}
 	if m.execs[0].Timeout <= 0 || m.execs[0].Timeout > MaxRun || m.execs[1].Timeout != 7*time.Second {
 		t.Fatalf("timeouts %v %v", m.execs[0].Timeout, m.execs[1].Timeout)
+	}
+	if len(m.bounded) != 2 || !m.bounded[0] || !m.bounded[1] {
+		t.Fatalf("a run reached the guest without a host-side deadline: %v", m.bounded)
 	}
 	if _, err := g.Run(context.Background(), Entry{SHA256: sha, Path: "/a", Timeout: MaxRun + time.Second}); err == nil {
 		t.Fatal("a limit above the maximum was accepted")
