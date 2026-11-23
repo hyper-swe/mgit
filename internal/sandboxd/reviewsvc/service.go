@@ -92,7 +92,9 @@ func (s *Service) PrepareReview(_ context.Context, a controlproto.ReviewPrepareA
 }
 
 // MapLoader reads the operator-installed mapping with the given id under
-// hostRoot, or returns a refusal envelope. It is how another package takes over
+// hostRoot, or returns a refusal envelope. The id it receives has already been
+// checked: letters, digits, dot, dash and underscore, starting with a letter or
+// digit, at most 64 characters. It is how another package takes over
 // map loading (checks on where the map came from, say) without editing this one.
 type MapLoader func(hostRoot, id string) (*reviewprep.Mapping, error)
 
@@ -103,6 +105,11 @@ func (s *Service) WithMapLoader(l MapLoader) *Service {
 }
 
 func (s *Service) loadMap(id string) (*reviewprep.Mapping, error) {
+	// The id is checked here, ahead of any loader, so a replacement loader can
+	// never be handed one that names a path.
+	if !idPattern.MatchString(id) {
+		return nil, reviewprep.Refuse(reviewprep.CodeMappingMismatch, "mapping is not installed")
+	}
 	if s.mapLoader != nil {
 		return s.mapLoader(s.root, id)
 	}
