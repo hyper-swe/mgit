@@ -39,6 +39,7 @@ type Service struct {
 	root      string
 	signer    *reviewprep.Signer
 	now       func() time.Time
+	syncFile  func(*os.File) error // flushes a file or directory to stable storage; a seam for tests
 }
 
 // New loads the host signing key. A daemon without one cannot attest and
@@ -55,7 +56,7 @@ func New(hostRoot string, now func() time.Time) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{root: hostRoot, signer: sg, now: now}, nil
+	return &Service{root: hostRoot, signer: sg, now: now, syncFile: (*os.File).Sync}, nil
 }
 
 // PrepareReview checks the request and returns the signed attestation JSON.

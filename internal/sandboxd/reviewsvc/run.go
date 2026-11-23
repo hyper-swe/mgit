@@ -191,8 +191,33 @@ func (s *Service) consume(lease, nonce string) error {
 	}
 	nsum := sha256.Sum256([]byte(nonce))
 	_, werr := f.WriteString(hex.EncodeToString(nsum[:]) + "\n")
-	if cerr := f.Close(); werr != nil || cerr != nil {
+	var serr error
+	if werr == nil {
+		serr = s.syncFile(f)
+	}
+	if cerr := f.Close(); werr != nil || serr != nil || cerr != nil {
 		return reviewprep.Refuse(reviewprep.CodePolicyUnenforcable, "the run could not be recorded")
 	}
+	// The record is durable only once its directory entry is, and so is every
+	// directory MkdirAll may just have created: flush each one up to the root.
+	// A failure here leaves the lease spent and launches nothing (fail closed).
+	for _, d := range []string{dir, filepath.Dir(dir), s.root} {
+		if err := s.syncDir(d); err != nil {
+			return reviewprep.Refuse(reviewprep.CodePolicyUnenforcable, "the run could not be recorded")
+		}
+	}
 	return nil
+}
+
+// syncDir flushes a directory, making the entries in it durable.
+func (s *Service) syncDir(path string) error {
+	d, err := os.Open(path) //nolint:gosec // host-owned directory under the review root
+	if err != nil {
+		return err
+	}
+	serr := s.syncFile(d)
+	if cerr := d.Close(); serr == nil {
+		serr = cerr
+	}
+	return serr
 }

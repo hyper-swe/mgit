@@ -15,7 +15,8 @@ implements it must match it, and a difference is a change to this page.
    for the request, is unexpired and names this lease; the evidence still hashes to what was signed; and the seal in
    the guest took (root-owned, the reviewer's group, checked on disk). Any failure refuses before the reviewer exists.
 4. The nonce is single use, and its scope is the lease: the first run of a lease consumes it, before the guest is
-   launched, by creating a durable record that only one of any number of concurrent requests can create. The rest, and
+   launched, by creating a durable record that only one of any number of concurrent requests can create (the record,
+   and each directory on its path, are flushed to stable storage before the launch; a flush that fails launches nothing). The rest, and
    any later run of that lease, are refused with NONCE_REPLAYED and start nothing. A refusal that happens before the
    consumption (an unknown or expired lease, a request that does not match, changed evidence, a changed mapping) does not
    consume it, so a corrected request may follow. Everything after the consumption leaves the lease spent, even when
