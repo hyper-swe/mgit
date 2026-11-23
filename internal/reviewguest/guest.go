@@ -41,6 +41,9 @@ const launcherRefusalExit = 70
 // MaxRun is the longest a review may run, and the limit when none is given.
 const MaxRun = 30 * time.Minute
 
+// hostGrace is how long past the run limit the host waits for the guest to report.
+const hostGrace = 15 * time.Second
+
 // NonceEnv is the variable that carries the per-run refusal nonce to the launcher.
 const NonceEnv = reviewlaunch.RefusalNonceEnv
 
@@ -142,6 +145,10 @@ func (g *Guest) Run(ctx context.Context, e Entry) (*model.ExecResult, error) {
 	if limit < 0 || limit > MaxRun {
 		return nil, refuse(reviewprep.CodeMappingMismatch, "the run limit is outside the allowed range")
 	}
+	// The guest enforces the limit itself; this deadline is the host's backstop
+	// for a guest that never answers, which would otherwise hold the caller.
+	ctx, cancel := context.WithTimeout(ctx, limit+hostGrace)
+	defer cancel()
 	nonce, err := newNonce()
 	if err != nil {
 		return nil, fmt.Errorf("review guest nonce: %w", err)
@@ -153,8 +160,8 @@ func (g *Guest) Run(ctx context.Context, e Entry) (*model.ExecResult, error) {
 		return nil, fmt.Errorf("review guest exec: %w", err)
 	}
 	if res.ExitCode == launcherRefusalExit {
-		if env := launcherRefusal(res.Stderr, nonce); env != nil {
-			return res, env
+		if env, ok := launcherRefusal(res.Stderr, nonce); ok {
+			return res, &env
 		}
 	}
 	return res, nil
@@ -171,19 +178,18 @@ func newNonce() (string, error) {
 // launcherRefusal returns the refusal the launcher printed, or nil. The
 // reviewed program shares the launcher's stderr, so an envelope counts only if
 // it carries this run's nonce, which only the launcher is given.
-func launcherRefusal(stderr []byte, nonce string) *reviewprep.Error {
+func launcherRefusal(stderr []byte, nonce string) (reviewprep.Error, bool) {
 	var env struct {
 		reviewprep.Error
 		Nonce string `json:"nonce"`
 	}
-	if json.Unmarshal(bytes.TrimSpace(stderr), &env) != nil {
-		return nil
+	if err := json.Unmarshal(bytes.TrimSpace(stderr), &env); err != nil {
+		return reviewprep.Error{}, false
 	}
 	if env.Schema != reviewprep.ErrorSchema || env.Code == "" || env.Nonce != nonce {
-		return nil
+		return reviewprep.Error{}, false
 	}
-	e := env.Error
-	return &e
+	return env.Error, true
 }
 
 // Close removes the guest.
