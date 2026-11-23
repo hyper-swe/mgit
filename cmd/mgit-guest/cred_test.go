@@ -1,8 +1,8 @@
 package main
 
 import (
-	"errors"
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"

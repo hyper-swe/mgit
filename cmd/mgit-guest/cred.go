@@ -131,14 +131,32 @@ func credRemove(root string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "cred-remove: the slot cannot be opened")
 		return 1
 	}
-	if fi, serr := f.Stat(); serr == nil {
-		_, _ = f.Write(make([]byte, fi.Size()))
-		_ = f.Sync()
+	scrubErr := scrub(f)
+	if cerr := f.Close(); scrubErr == nil {
+		scrubErr = cerr
 	}
-	_ = f.Close()
+	// The slot is unlinked even if the overwrite failed: a credential file must
+	// not stay behind because the zeroing did not work. The failure is reported.
 	if err := os.Remove(*dest); err != nil && !os.IsNotExist(err) {
 		fmt.Fprintln(stderr, "cred-remove: the slot cannot be removed")
 		return 1
 	}
+	if scrubErr != nil {
+		fmt.Fprintln(stderr, "cred-remove: the slot was removed but could not be overwritten first")
+		return 1
+	}
 	return 0
+}
+
+// scrub zeroes the slot's bytes and flushes them. It is a variable so a test
+// can force a failure.
+var scrub = func(f *os.File) error {
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(make([]byte, fi.Size())); err != nil {
+		return err
+	}
+	return f.Sync()
 }
