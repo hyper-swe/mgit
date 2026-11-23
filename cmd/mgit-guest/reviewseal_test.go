@@ -333,3 +333,44 @@ func TestVerifySealed_ChecksTheModesToo(t *testing.T) {
 		}
 	}
 }
+
+// The seal is not trusted because it ran: the verb looks at what is on disk and
+// fails if anything did not take, whatever the changes reported.
+func TestReviewSeal_FailsWhenTheOnDiskCheckFails(t *testing.T) {
+	d := lease(t)
+	chown := func(string, int, int) error { return nil }
+	var e bytes.Buffer
+	notRoot := func(string, int) error { return errors.New("still the reviewer's") }
+	if code := reviewSealWith([]string{"--gid", "5", d}, &e, chown, notRoot); code != 1 {
+		t.Fatalf("exit %d with a seal that did not take: %s", code, e.String())
+	}
+	d2 := lease(t)
+	var e2 bytes.Buffer
+	if code := reviewSealWith([]string{"--gid", "5", d2}, &e2, chown, func(string, int) error { return nil }); code != 0 {
+		t.Fatalf("exit %d for a seal that took: %s", code, e2.String())
+	}
+}
+
+// A lease holds the evidence and the attestation, with room for the filesystem's
+// own lost+found; ten entries are not that.
+func TestSealLease_TakesNineEntriesAndRefusesTen(t *testing.T) {
+	noop := func(string, int, int) error { return nil }
+	mk := func(n int) string {
+		d := filepath.Join(t.TempDir(), "lease")
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < n; i++ {
+			if err := os.WriteFile(filepath.Join(d, "f"+string(rune('a'+i))), []byte("x"), 0o400); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return d
+	}
+	if err := sealLease(mk(9), 5, noop); err != nil {
+		t.Fatalf("nine entries refused: %v", err)
+	}
+	if err := sealLease(mk(10), 5, noop); err == nil {
+		t.Fatal("ten entries accepted")
+	}
+}
