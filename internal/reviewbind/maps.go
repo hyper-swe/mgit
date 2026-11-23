@@ -58,7 +58,7 @@ func readPlain(p string, max int64) ([]byte, error) {
 	if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0o022 != 0 || fi.Size() > max {
 		return nil, bad("mapping is not installed as a plain owner-writable file")
 	}
-	return os.ReadFile(p)
+	return os.ReadFile(p) //nolint:gosec // p is built from a checked id under the operator's directory and was just inspected
 }
 
 // LoadMap reads the operator-installed map id under hostRoot/review/maps. The

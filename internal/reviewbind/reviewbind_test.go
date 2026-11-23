@@ -29,21 +29,21 @@ func goodMap(id string) reviewprep.Mapping {
 func install(t *testing.T, root string, m reviewprep.Mapping) {
 	t.Helper()
 	dir := filepath.Join(root, "review", "maps")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, m.ID+".json"), raw, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, m.ID+".json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	h, err := CanonicalHash(m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, m.ID+".sha256"), []byte(h+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, m.ID+".sha256"), []byte(h+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -71,7 +71,7 @@ func TestLoadMapRefusesARecordEditedAfterItWasPinned(t *testing.T) {
 	install(t, root, m)
 	m.Argv = []string{"--json", "--extra"}
 	raw, _ := json.Marshal(m)
-	if err := os.WriteFile(filepath.Join(root, "review", "maps", "pi.json"), raw, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "review", "maps", "pi.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := LoadMap(root, "pi")
@@ -106,12 +106,12 @@ func TestLoadMapRefusesASymlinkedOrGroupWritableRecord(t *testing.T) {
 	root := t.TempDir()
 	install(t, root, goodMap("pi"))
 	p := filepath.Join(root, "review", "maps", "pi.json")
-	if err := os.Chmod(p, 0o666); err != nil {
+	if err := os.Chmod(p, 0o666); err != nil { //nolint:gosec // group- and world-writable on purpose: the record must be refused
 		t.Fatal(err)
 	}
 	_, err := LoadMap(root, "pi")
 	wantMismatch(t, err)
-	if err := os.Chmod(p, 0o644); err != nil {
+	if err := os.Chmod(p, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	real := filepath.Join(root, "elsewhere.json")
@@ -261,7 +261,7 @@ func TestSlotFillsFromAnInheritedFdAndNotFromArgvOrEnv(t *testing.T) {
 	if _, err := w.WriteString(fake); err != nil {
 		t.Fatal(err)
 	}
-	w.Close()
+	_ = w.Close()
 	s := NewSlot("slot1")
 	if err := s.FillFromFile(r); err != nil {
 		t.Fatal(err)
