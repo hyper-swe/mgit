@@ -136,7 +136,7 @@ func TestOpenLease_RefusesAnythingThatIsNotThatSealedLease(t *testing.T) {
 			return f.openAt(fixedNow)
 		}, reviewprep.CodeBundleInvalid},
 		{"lease is a link", func(t *testing.T, f *fixture) (*Lease, error) {
-			other := strings.Repeat("c", 32)
+			other := strings.Repeat("e", 32)
 			mustDo(t, os.Symlink(f.dir(), filepath.Join(f.root, "review", "leases", other)))
 			return OpenLease(f.root, other, f.req, f.pub, fixedNow)
 		}, reviewprep.CodeBundleInvalid},
