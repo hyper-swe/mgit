@@ -398,7 +398,7 @@ func TestRunReview_ADisconnectBeforeTheNonceIsConsumedLeavesTheLeaseUnspent(t *t
 	_, err := r.svc.RunReview(ctx, r.args)
 	var e *reviewprep.Error
 	if err == nil || errors.As(err, &e) {
-		t.Fatalf("a cancelled request must fail as an ordinary error, got %v", err)
+		t.Fatalf("a canceled request must fail as an ordinary error, got %v", err)
 	}
 	if usedRecords(t, r.root) != 0 || len(r.mgr.launched) != 0 {
 		t.Fatalf("consumed=%d launched=%d", usedRecords(t, r.root), len(r.mgr.launched))
