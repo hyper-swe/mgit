@@ -122,3 +122,28 @@ func TestService_NoLoaderIsEverHandedAnIdThatCouldNameAPath(t *testing.T) {
 		t.Fatal("a valid id never reached the loader")
 	}
 }
+
+// The caller always calls the release function, including after an error, and
+// does not check it first: every return path of Attach hands back one that is
+// safe to call.
+func TestNoBindings_ReleaseIsNeverNilAndSafeToCallOnEveryPath(t *testing.T) {
+	cases := map[string]reviewprep.Mapping{
+		"nothing asked":   {},
+		"credential":      {CredentialRef: "cred-1"},
+		"network policy":  {EgressPolicyID: "allow-docs"},
+		"both":            {CredentialRef: "cred-1", EgressPolicyID: "allow-docs"},
+		"none is allowed": {EgressPolicyID: "none"},
+	}
+	for name, m := range cases {
+		release, _ := attach(t, NoBindings{}, m)
+		if release == nil {
+			t.Fatalf("%s: release is nil", name)
+		}
+		if err := release(context.Background()); err != nil {
+			t.Fatalf("%s: release: %v", name, err)
+		}
+		if err := release(context.Background()); err != nil { // twice is fine
+			t.Fatalf("%s: second release: %v", name, err)
+		}
+	}
+}
