@@ -76,6 +76,9 @@ func asRefusal(err error, detail string) *reviewprep.Error {
 // nonce, provisions and seals the guest, installs the bindings, runs the mapped
 // program under the limits, and removes the guest whatever happened.
 func (s *Service) RunReview(ctx context.Context, a controlproto.ReviewRunArgs) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err // the caller is already gone: nothing is consumed or started
+	}
 	if a.Profile != reviewprep.Profile {
 		return nil, reviewprep.Refuse(reviewprep.CodeProfileUnavailable, "profile is not available")
 	}
@@ -106,6 +109,10 @@ func (s *Service) RunReview(ctx context.Context, a controlproto.ReviewRunArgs) (
 	}
 	if maxBytes == 0 {
 		maxBytes = controlproto.DefaultReviewOutputBytes
+	}
+	// The last point at which the caller can go away without spending the lease.
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if err := s.consume(a.Lease, a.Nonce); err != nil {
 		return nil, err
