@@ -22,7 +22,7 @@ var antiStubStep = regexp.MustCompile(`(?m)^\s*if grep -rn '([^']+)' \\\s*$\s*--
 
 func antiStubPhrases(t *testing.T, root string) []string {
 	t.Helper()
-	wf, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	wf, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml")) //nolint:gosec // G304: test-only; a fixed repository path joined onto the discovered module root
 	if err != nil {
 		t.Fatalf("read release workflow: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestReleasePreflightAntiStubScanIsClean(t *testing.T) {
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			return nil
 		}
-		src, err := os.ReadFile(path)
+		src, err := os.ReadFile(path) //nolint:gosec // G304: test-only; path comes from walking the module's own tree
 		if err != nil {
 			return err
 		}
