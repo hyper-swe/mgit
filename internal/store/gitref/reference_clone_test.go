@@ -20,6 +20,9 @@ func referenceClone(t *testing.T, source, reference string) string {
 	// A file:// URL forces the transport path: a plain path would hardlink
 	// the objects into the clone and the reference would not be needed.
 	alternatesGit(t, source, "clone", "--reference", reference, "file://"+source, clone)
+	counts := alternatesGit(t, clone, "count-objects", "-v")
+	require.Contains(t, counts, "count: 0\n", "the clone must hold no loose object of its own")
+	require.Contains(t, counts, "in-pack: 0\n", "the clone must hold no packed object of its own")
 	return clone
 }
 
@@ -34,9 +37,6 @@ func TestCommittedContent_ReferenceClone(t *testing.T) {
 	require.NoError(t, err, "the clone must borrow from the reference")
 	head := strings.TrimSpace(alternatesGit(t, clone, "rev-parse", "HEAD"))
 	require.Error(t, statLoose(clone, head), "the HEAD commit must live only in the reference store")
-	counts := alternatesGit(t, clone, "count-objects", "-v")
-	require.Contains(t, counts, "count: 0\n", "the clone must hold no loose object of its own")
-	require.Contains(t, counts, "in-pack: 0\n", "the clone must hold no packed object of its own")
 
 	blobs, err := CommittedBlobs(clone)
 	require.NoError(t, err)
@@ -60,6 +60,13 @@ func TestCommittedContent_ReferenceCloneOfAReferenceClone(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 	assert.Equal(t, "chained\n", string(files[0].Content))
+
+	// The second clone must reach the content through the first, not directly:
+	// with the first clone's link to the base hidden, a fresh read must fail.
+	link := filepath.Join(first, ".git", "objects", "info", "alternates")
+	require.NoError(t, os.Rename(link, link+".hidden"))
+	_, _, err = CommittedFiles(second)
+	require.Error(t, err, "the second clone must depend on the first clone's link to the base")
 }
 
 // A reference store that has been deleted is named in the refusal. Refs: HSWE-47.6
