@@ -10,6 +10,7 @@ import (
 
 	"github.com/hyper-swe/mgit/internal/model"
 	"github.com/hyper-swe/mgit/internal/reviewprep"
+	"github.com/hyper-swe/mgit/internal/sandboxd/egress"
 	"github.com/hyper-swe/mgit/internal/sandboxd/reviewsvc"
 )
 
@@ -58,6 +59,19 @@ func (b *binding) grant(ctx context.Context, pol Policy, allow func(context.Cont
 	addrs, err := lookup(ctx, pol.Host)
 	if err != nil || len(addrs) == 0 {
 		return unenforceable("the policy's host did not resolve to an address")
+	}
+	// The daemon never admits an address in a denied range, so a name that
+	// resolves only to such addresses would attach and reach nothing, with no
+	// word of why. It is refused here instead, naming the cause and no address.
+	reachable := false
+	for _, a := range addrs {
+		if _, denied := egress.IsUnconditionallyDenied(a); !denied {
+			reachable = true
+			break
+		}
+	}
+	if !reachable {
+		return unenforceable("the policy's host resolves only to addresses a review guest may never reach")
 	}
 	for _, a := range addrs {
 		if gerr := allow(ctx, net.JoinHostPort(a.Unmap().String(), egressPort)); gerr != nil {

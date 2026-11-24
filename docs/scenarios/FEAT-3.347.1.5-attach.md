@@ -21,7 +21,9 @@ Host egress: a map whose egress policy is `host:<fqdn>` is granted through the d
 The host is resolved on the host side; every resolved address is admitted on port 443 and no other port, and nothing else is
 reachable (an address off the grant, or a port off it, is not reachable). The addresses are fixed at grant time, so the grant does not
 follow later DNS changes. Every grant is revoked when the guest is removed. A `host:` map for a guest with no egress stack (a daemon without one)
-is refused before anything is installed; a policy of `none` grants nothing and the guest has no network.
+is refused before anything is installed, and so is one whose name resolves only to addresses no review guest may ever reach
+(loopback, private, link-local, the metadata endpoint, reserved ranges): the error says so and names no address. A name with at least one reachable
+address attaches. A policy of `none` grants nothing and the guest has no network.
 
 The credential source is optional (`--review-credential-fd`). The attach tests run against fakes; the live off-grant address and
 port cases are covered by the egress seam's own firecracker e2e.
