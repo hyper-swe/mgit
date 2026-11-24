@@ -34,6 +34,9 @@ func TestCommittedContent_ReferenceClone(t *testing.T) {
 	require.NoError(t, err, "the clone must borrow from the reference")
 	head := strings.TrimSpace(alternatesGit(t, clone, "rev-parse", "HEAD"))
 	require.Error(t, statLoose(clone, head), "the HEAD commit must live only in the reference store")
+	counts := alternatesGit(t, clone, "count-objects", "-v")
+	require.Contains(t, counts, "count: 0\n", "the clone must hold no loose object of its own")
+	require.Contains(t, counts, "in-pack: 0\n", "the clone must hold no packed object of its own")
 
 	blobs, err := CommittedBlobs(clone)
 	require.NoError(t, err)
