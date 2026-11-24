@@ -17,7 +17,9 @@ import (
 func referenceClone(t *testing.T, source, reference string) string {
 	t.Helper()
 	clone := filepath.Join(t.TempDir(), "clone")
-	alternatesGit(t, source, "clone", "--reference", reference, source, clone)
+	// A file:// URL forces the transport path: a plain path would hardlink
+	// the objects into the clone and the reference would not be needed.
+	alternatesGit(t, source, "clone", "--reference", reference, "file://"+source, clone)
 	return clone
 }
 
