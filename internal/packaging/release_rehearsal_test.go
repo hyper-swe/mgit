@@ -1,6 +1,8 @@
 package packaging
 
 import (
+	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -53,8 +55,11 @@ func TestReleaseRehearsal_PreflightRunsOnATagPushAndOnARehearsal(t *testing.T) {
 func TestReleaseRehearsal_GoreleaserRunsInSnapshotModeAndNothingPublishes(t *testing.T) {
 	rel := jobBlock(t, releaseWorkflow(t), "release")
 	gr := stepBlock(t, rel, "- name: Run GoReleaser")
-	assert.Contains(t, gr, "--snapshot", "a rehearsal must build in snapshot mode, which publishes nothing")
-	assert.Contains(t, gr, "inputs.rehearse_as", "the snapshot flag is chosen by the rehearsal input")
+	// The direction matters, not only the two strings: a rehearsal gets the
+	// snapshot flag and a tag push gets the plain release. Reversing the two
+	// would publish from a rehearsal, so the whole expression is pinned.
+	assert.Contains(t, gr, "args: ${{ inputs.rehearse_as != '' && 'release --clean --snapshot' || 'release --clean' }}",
+		"a rehearsal must build in snapshot mode, which publishes nothing, and a tag push must not")
 	for _, name := range []string{"- name: Sign checksums", "- name: Upload signature", "- name: Upload build environment"} {
 		assert.Contains(t, stepBlock(t, rel, name), rehearsalOff, "%s writes outside the run and must not run in a rehearsal", name)
 	}
@@ -77,9 +82,54 @@ func TestReleaseRehearsal_TheTapIsUpdatedOnlyByAPushOfAStableTag(t *testing.T) {
 	assert.Contains(t, hb, "!contains(github.ref_name, '-')", "a pre-release tag (one with a hyphen) must not update the public tap")
 }
 
-func TestReleaseRehearsal_TheWorkflowNeverMakesOrPushesATag(t *testing.T) {
-	wf := releaseWorkflow(t)
-	for _, banned := range []string{"git tag", "git push", "--tags", "gh release create", "git/refs"} {
-		assert.NotContains(t, wf, banned, "the release workflow must not create or push refs")
+// THE GUARANTEE IS "NO TAG IS PUSHED OR PUBLISHED", NOT "NO TAG EXISTS". The
+// e2e gate the rehearsal calls makes a runner-local tag in its own throwaway
+// checkout when it is not on a tag (its Linux user-path job), and never
+// pushes it. So neither workflow may push a ref or create a release; the local
+// tag is allowed only in e2e.yml.
+func TestReleaseRehearsal_NeitherWorkflowPushesARefOrCreatesAReleaseAndOnlyE2eMakesALocalTag(t *testing.T) {
+	rel, e2e := releaseWorkflow(t), readRepoFile(t, ".github/workflows/e2e.yml")
+	for name, wf := range map[string]string{"release.yml": rel, "e2e.yml": e2e} {
+		for _, banned := range []string{"git push", "--tags", "gh release create", "git/refs", "git tag -f", "push origin"} {
+			assert.NotContains(t, wf, banned, "%s must not push a ref or create a release", name)
+		}
+	}
+	assert.NotContains(t, rel, "git tag", "release.yml makes no tag, not even a local one")
+}
+
+// The label is validated as a WHOLE: a valid first line followed by a line
+// break and anything else must be refused. The step's own script is run, not
+// a copy of it.
+func TestReleaseRehearsal_TheValidationStepRefusesAMultilineLabel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the step is a bash script")
+	}
+	pre := jobBlock(t, releaseWorkflow(t), "preflight")
+	step := stepBlock(t, pre, "- name: Validate the rehearsal label")
+	_, after, ok := strings.Cut(step, "run: |\n")
+	require.True(t, ok, "the step has no run block")
+	lines := strings.Split(after, "\n")
+	script := make([]string, 0, len(lines))
+	for _, l := range lines {
+		script = append(script, strings.TrimPrefix(l, "          "))
+	}
+	for name, tc := range map[string]struct {
+		label string
+		ok    bool
+	}{
+		"empty is not a rehearsal":      {"", true},
+		"a stable tag":                  {"v0.8.1", true},
+		"a pre-release tag":             {"v0.8.1-dev1", true},
+		"not a tag":                     {"main", false},
+		"a trailing line break":         {"v0.8.1\n", false},
+		"a valid line then another":     {"v0.8.1\nrm -rf x", false},
+		"a valid line after an invalid": {"x\nv0.8.1", false},
+		"a carriage return":             {"v0.8.1\r", false},
+		"a space":                       {"v0.8.1 ", false},
+	} {
+		cmd := exec.Command("bash", "-c", strings.Join(script, "\n")) //nolint:gosec // G204: the script is the step text of this repository's own workflow, run to test it
+		cmd.Env = append(cmd.Environ(), "REHEARSE_AS="+tc.label)
+		err := cmd.Run()
+		assert.Equal(t, tc.ok, err == nil, "%s (%q)", name, tc.label)
 	}
 }
