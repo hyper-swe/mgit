@@ -11,7 +11,19 @@ on:
     inputs:
       tag:
         description: "published tag to smoke (e.g. v0.4.4); skips build+publish"
-        required: true
+        required: false
+        type: string
+      # A rehearsal of the release that publishes nothing: the same Preflight,
+      # e2e gate and GoReleaser, the last in snapshot mode, and no release
+      # upload, no signature upload, no tap update, and no tag pushed or published.
+      # (The e2e gate it calls makes a runner-local tag in its own checkout when
+      # it is not on a tag, as it always has, and never pushes it.) The value names
+      # the tag being rehearsed and is only a label: the archives carry
+      # GoReleaser's snapshot version. Dispatch it on the branch to rehearse.
+      # Refs: HSWE-17.157
+      rehearse_as:
+        description: "rehearse the release as this tag (e.g. v0.8.1) without publishing anything"
+        required: false
         type: string
 
 permissions:
@@ -31,7 +43,7 @@ env:
 jobs:
   preflight:
     name: Preflight Checks
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || inputs.rehearse_as != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,6 +56,26 @@ jobs:
 
       - name: Assert installed Go version
         run: bash scripts/ci/assert-go-version.sh
+
+      # The label reaches this script through the environment, never pasted
+      # into it, and is checked before any other step uses it.
+      - name: Validate the rehearsal label
+        env:
+          REHEARSE_AS: ${{ inputs.rehearse_as }}
+        run: |
+          if [ -n "$REHEARSE_AS" ]; then
+            case "$REHEARSE_AS" in
+              *$'\n'* | *$'\r'*)
+                echo "::error::rehearse_as must be a single line"
+                exit 1
+                ;;
+            esac
+            tag_re='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+            if ! [[ "$REHEARSE_AS" =~ $tag_re ]]; then
+              echo "::error::rehearse_as must look like a tag, for example v0.8.1"
+              exit 1
+            fi
+          fi
 
       - name: Verify Go modules
         run: go mod verify
@@ -177,7 +209,9 @@ jobs:
           # (R-H298). An unpinned build tool on the release path is a version
           # nobody chose deciding whether a release exists. Refs: MGIT-179
           version: v2.17.1
-          args: release --clean
+          # A rehearsal builds in snapshot mode: GoReleaser then publishes,
+          # signs and announces nothing. Refs: HSWE-17.157
+          args: ${{ inputs.rehearse_as != '' && 'release --clean --snapshot' || 'release --clean' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MGIT_LINUX_PREBUILT: ${{ github.workspace }}/dist-prebuilt
@@ -190,11 +224,13 @@ jobs:
           cosign-release: v2.4.1
 
       - name: Sign checksums
+        if: inputs.rehearse_as == ''
         run: cosign sign-blob --yes --bundle checksums.txt.bundle dist/checksums.txt
         env:
           COSIGN_EXPERIMENTAL: 1
 
       - name: Upload signature
+        if: inputs.rehearse_as == ''
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: checksums.txt.bundle
@@ -213,6 +249,7 @@ jobs:
           ENVEOF
 
       - name: Upload build environment
+        if: inputs.rehearse_as == ''
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: dist/BUILD-ENVIRONMENT.json
@@ -221,7 +258,7 @@ jobs:
     name: Post-publish smoke (published archive)
     # `always()` so a manual dispatch runs it with the build jobs skipped, while
     # a tag push still waits for the release it is meant to verify.
-    if: always() && (github.event_name == 'workflow_dispatch' || needs.release.result == 'success')
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.release.result == 'success') && inputs.rehearse_as == ''
     needs: release
     # A FRESH macOS runner: this job must not be the machine that built the
     # release, because the whole point is exercising what a user who downloads
@@ -229,6 +266,14 @@ jobs:
     # us exactly that. Refs: MGIT-84, MGIT-64, MGIT-65
     runs-on: macos-26
     steps:
+      # A dispatch with neither input has nothing to smoke and nothing to
+      # rehearse: fail here, not on a branch name taken for a tag.
+      - name: Require a tag to smoke
+        if: github.event_name == 'workflow_dispatch' && inputs.tag == ''
+        run: |
+          echo "::error::give either tag (smoke a published release) or rehearse_as (rehearse one)"
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Install Homebrew's libkrun and libkrunfw, as a user does: the daemon
       # must still resolve the archive's own libkrun (MGIT-259), and libkrunfw
@@ -286,7 +331,7 @@ jobs:
   # Refs: MGIT-230.6, MGIT-229
   release-smoke-linux:
     name: Post-publish smoke (published Linux archive)
-    if: always() && (github.event_name == 'workflow_dispatch' || needs.release.result == 'success')
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.release.result == 'success') && inputs.rehearse_as == ''
     needs: release
     runs-on: ubuntu-latest
     # Read only. This job runs binaries and scripts it downloaded; it must not
@@ -296,6 +341,14 @@ jobs:
     permissions:
       contents: read
     steps:
+      # A dispatch with neither input has nothing to smoke and nothing to
+      # rehearse: fail here, not on a branch name taken for a tag.
+      - name: Require a tag to smoke
+        if: github.event_name == 'workflow_dispatch' && inputs.tag == ''
+        run: |
+          echo "::error::give either tag (smoke a published release) or rehearse_as (rehearse one)"
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -374,6 +427,9 @@ jobs:
   homebrew:
     name: Update Homebrew Tap
     needs: release
+    # Only a pushed stable tag updates the public tap: not a rehearsal, and not
+    # a pre-release tag (one with a hyphen). Refs: HSWE-17.157
+    if: github.event_name == 'push' && !contains(github.ref_name, '-')
     runs-on: ubuntu-latest
     steps:
       - name: Trigger homebrew-tap update
