@@ -5,7 +5,7 @@ package reviewlaunch
 const OpenWriteMask uint32 = 0x1 | 0x2 | 0x40 | 0x200 | 0x400 | 0x400000
 
 // FirstUnknownSyscall is the lowest syscall number the table does not know
-// (the one after fchmodat2). Numbers from here up answer "not implemented".
+// (the one after fchmodat2). Numbers from here up answer ENOSYS (function not available).
 const FirstUnknownSyscall uint32 = 453
 
 // IoctlAllowed is every ioctl request the profile lets through: the terminal
@@ -14,7 +14,7 @@ const FirstUnknownSyscall uint32 = 453
 var IoctlAllowed = []uint32{0x5401, 0x5402, 0x5403, 0x5404, 0x5413, 0x541b, 0x5421, 0x5450, 0x5451}
 
 // NamedSyscall is one syscall the profile refuses outright. Enosys marks the
-// ones answered "not implemented", so a library falls back to the plain call
+// ones answered with ENOSYS, so a library falls back to the plain call
 // the filter already judges.
 type NamedSyscall struct {
 	Name   string

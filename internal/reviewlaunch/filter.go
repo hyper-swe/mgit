@@ -126,7 +126,7 @@ func BuildFilter(a Arch) ([]Insn, error) {
 	}
 	// Fail closed: the kernel adds syscalls every release and a table cannot
 	// name the ones that do not exist yet. Everything above the highest
-	// number this table knows answers "not implemented", so a library falls
+	// number this table knows answers ENOSYS, so a library falls
 	// back to a call that is judged, and a new file-changing call is not
 	// allowed by omission.
 	f = append(f, ins(opJge, 0, 1, FirstUnknownSyscall), ins(opRet, 0, 0, RetErrno|errnoNosys))
