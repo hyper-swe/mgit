@@ -65,6 +65,19 @@ func src(secret string) CredentialSource {
 	}
 }
 
+// countingSrc is a credential source that counts how often the binding asks
+// it for the credential: a refusal before the credential is read must leave it
+// at zero.
+type countingSrc struct{ reads int }
+
+func (c *countingSrc) source(secret string) CredentialSource {
+	inner := src(secret)
+	return func(ctx context.Context, ref string) (*Slot, error) {
+		c.reads++
+		return inner(ctx, ref)
+	}
+}
+
 // attach runs Attach; eg nil means the daemon gave the guest no egress stack.
 func attach(t *testing.T, b reviewsvc.Bindings, m reviewprep.Mapping, e *execRec, eg *fakeEgress) (func(context.Context) error, error) {
 	t.Helper()
@@ -96,7 +109,7 @@ func TestAttach_NothingAskedInstallsNothing(t *testing.T) {
 
 func TestAttach_CredentialIsInstalledOverStdinNeverArgv(t *testing.T) {
 	e, eg := &execRec{}, &fakeEgress{}
-	b := New(Config{ReviewerGID: 4242, Source: src("s3cr3t-value"), Lookup: lookupOf("203.0.113.7")})
+	b := New(Config{ReviewerGID: 4242, Source: src("s3cr3t-value"), Lookup: lookupOf("93.184.216.34")})
 	rel, err := attach(t, b, hostMap(), e, eg)
 	if err != nil || len(e.reqs) != 1 {
 		t.Fatalf("err=%v execs=%d", err, len(e.reqs))
@@ -124,11 +137,11 @@ func TestAttach_CredentialIsInstalledOverStdinNeverArgv(t *testing.T) {
 
 func TestAttach_GrantsEveryResolvedAddressOnPort443Only(t *testing.T) {
 	e, eg := &execRec{}, &fakeEgress{}
-	b := New(Config{Source: src("x"), Lookup: lookupOf("203.0.113.7", "203.0.113.8", "2001:db8::1")})
+	b := New(Config{Source: src("x"), Lookup: lookupOf("93.184.216.34", "93.184.216.35", "2606:2800:220:1::1")})
 	if _, err := attach(t, b, hostMap(), e, eg); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"203.0.113.7:443", "203.0.113.8:443", "[2001:db8::1]:443"}
+	want := []string{"93.184.216.34:443", "93.184.216.35:443", "[2606:2800:220:1::1]:443"}
 	if strings.Join(eg.entries, ",") != strings.Join(want, ",") {
 		t.Fatalf("grants %v, want %v", eg.entries, want)
 	}
@@ -141,7 +154,7 @@ func TestAttach_GrantsEveryResolvedAddressOnPort443Only(t *testing.T) {
 
 func TestAttach_HostEgressWithNoStackIsRefusedBeforeAnythingRuns(t *testing.T) {
 	e := &execRec{}
-	_, err := attach(t, New(Config{Source: src("x"), Lookup: lookupOf("203.0.113.7")}), hostMap(), e, nil)
+	_, err := attach(t, New(Config{Source: src("x"), Lookup: lookupOf("93.184.216.34")}), hostMap(), e, nil)
 	assertRefused(t, err)
 	if len(e.reqs) != 0 {
 		t.Fatal("nothing may be installed before a refusal")
@@ -150,7 +163,7 @@ func TestAttach_HostEgressWithNoStackIsRefusedBeforeAnythingRuns(t *testing.T) {
 
 func TestAttach_CredentialWithoutSourceIsRefused(t *testing.T) {
 	e, eg := &execRec{}, &fakeEgress{}
-	_, err := attach(t, New(Config{Lookup: lookupOf("203.0.113.7")}), hostMap(), e, eg)
+	_, err := attach(t, New(Config{Lookup: lookupOf("93.184.216.34")}), hostMap(), e, eg)
 	assertRefused(t, err)
 }
 
@@ -169,22 +182,70 @@ func TestAttach_ALookupFailureIsRefused(t *testing.T) {
 	assertRefused(t, err)
 }
 
+// A name whose every address is in a range no review guest may ever reach
+// would attach and admit nothing, and the guest would reach nothing with no
+// word of why. It is refused instead, before any grant or credential, and the
+// error names the cause and no address.
+func TestAttach_AHostThatResolvesOnlyToDeniedRangesIsRefusedWithItsCause(t *testing.T) {
+	for name, addrs := range map[string][]string{
+		"loopback":         {"127.0.0.1"},
+		"private":          {"10.0.0.5", "192.168.1.9"},
+		"metadata":         {"169.254.169.254"},
+		"link-local v6":    {"fe80::1"},
+		"v4-mapped denied": {"::ffff:10.0.0.5"},
+		"documentation":    {"203.0.113.7"},
+		"every kind":       {"127.0.0.1", "::1", "10.0.0.5"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e, eg, cs := &execRec{}, &fakeEgress{}, &countingSrc{}
+			b := New(Config{Source: cs.source("s3cr3t-value"), Lookup: lookupOf(addrs...)})
+			_, err := attach(t, b, hostMap(), e, eg)
+			assertRefused(t, err)
+			if len(eg.entries) != 0 || len(e.reqs) != 0 {
+				t.Fatal("something was granted or installed for a host with no reachable address")
+			}
+			if cs.reads != 0 {
+				t.Fatalf("the credential was read %d time(s) before the refusal", cs.reads)
+			}
+			if !strings.Contains(err.Error(), "only to addresses a review guest may never reach") {
+				t.Fatalf("the refusal does not say why: %v", err)
+			}
+			for _, a := range addrs {
+				if strings.Contains(err.Error(), a) {
+					t.Fatalf("the refusal names an address: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestAttach_AHostWithOneReachableAddressStillAttaches(t *testing.T) {
+	e, eg := &execRec{}, &fakeEgress{}
+	b := New(Config{Source: src("x"), Lookup: lookupOf("10.0.0.5", "93.184.216.34")})
+	if _, err := attach(t, b, hostMap(), e, eg); err != nil {
+		t.Fatal(err)
+	}
+	if len(eg.entries) == 0 {
+		t.Fatal("the reachable address was not granted")
+	}
+}
+
 func TestAttach_AGrantFailureIsRefusedBeforeTheCredentialIsInstalled(t *testing.T) {
-	e, eg := &execRec{}, &fakeEgress{failOn: 2}
-	b := New(Config{Source: src("s3cr3t-value"), Lookup: lookupOf("203.0.113.7", "203.0.113.8")})
+	e, eg, cs := &execRec{}, &fakeEgress{failOn: 2}, &countingSrc{}
+	b := New(Config{Source: cs.source("s3cr3t-value"), Lookup: lookupOf("93.184.216.34", "93.184.216.35")})
 	_, err := attach(t, b, hostMap(), e, eg)
 	assertRefused(t, err)
-	if len(e.reqs) != 0 {
-		t.Fatal("the credential was installed although a grant failed")
+	if len(e.reqs) != 0 || cs.reads != 0 {
+		t.Fatalf("the credential was read (%d) or installed (%d) although a grant failed", cs.reads, len(e.reqs))
 	}
-	if strings.Contains(err.Error(), "203.0.113") {
+	if strings.Contains(err.Error(), "93.184.216") {
 		t.Fatal("the refusal names an address")
 	}
 }
 
 func TestAttach_InstallFailureIsRefusedAndNoSecretIsInTheError(t *testing.T) {
 	e, eg := &execRec{fail: 1}, &fakeEgress{}
-	b := New(Config{Source: src("s3cr3t-value"), Lookup: lookupOf("203.0.113.7")})
+	b := New(Config{Source: src("s3cr3t-value"), Lookup: lookupOf("93.184.216.34")})
 	rel, err := attach(t, b, hostMap(), e, eg)
 	assertRefused(t, err)
 	if strings.Contains(err.Error(), "s3cr3t-value") {
@@ -196,7 +257,7 @@ func TestAttach_InstallFailureIsRefusedAndNoSecretIsInTheError(t *testing.T) {
 
 func installed(t *testing.T, e *execRec) func(context.Context) error {
 	t.Helper()
-	b := New(Config{Source: src("s3cr3t-value"), Lookup: lookupOf("203.0.113.7")})
+	b := New(Config{Source: src("s3cr3t-value"), Lookup: lookupOf("93.184.216.34")})
 	rel, err := attach(t, b, hostMap(), e, &fakeEgress{})
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +283,7 @@ func TestRelease_ANilCleanupResultIsAnError(t *testing.T) {
 
 func TestAttach_ANonzeroCredInstallExitIsRefused(t *testing.T) {
 	e := &execRec{code: map[int]int{1: 3}}
-	b := New(Config{Source: src("s3cr3t-value"), Lookup: lookupOf("203.0.113.7")})
+	b := New(Config{Source: src("s3cr3t-value"), Lookup: lookupOf("93.184.216.34")})
 	eg := &fakeEgress{}
 	rel, err := attach(t, b, hostMap(), e, eg)
 	assertRefused(t, err)
@@ -239,7 +300,7 @@ func TestAttach_ANonzeroCredInstallExitIsRefused(t *testing.T) {
 
 func TestAttach_ACredentialWithoutAHostIsRefusedBeforeAnythingRuns(t *testing.T) {
 	e, eg := &execRec{}, &fakeEgress{}
-	b := New(Config{Source: src("s3cr3t-value"), Lookup: lookupOf("203.0.113.7")})
+	b := New(Config{Source: src("s3cr3t-value"), Lookup: lookupOf("93.184.216.34")})
 	_, err := attach(t, b, reviewprep.Mapping{CredentialRef: "k", EgressPolicyID: "none"}, e, eg)
 	assertRefused(t, err)
 	if len(e.reqs) != 0 || len(eg.entries) != 0 {
