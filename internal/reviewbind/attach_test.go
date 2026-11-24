@@ -65,6 +65,19 @@ func src(secret string) CredentialSource {
 	}
 }
 
+// countingSrc is a credential source that counts how often the binding asks
+// it for the credential: a refusal before the credential is read must leave it
+// at zero.
+type countingSrc struct{ reads int }
+
+func (c *countingSrc) source(secret string) CredentialSource {
+	inner := src(secret)
+	return func(ctx context.Context, ref string) (*Slot, error) {
+		c.reads++
+		return inner(ctx, ref)
+	}
+}
+
 // attach runs Attach; eg nil means the daemon gave the guest no egress stack.
 func attach(t *testing.T, b reviewsvc.Bindings, m reviewprep.Mapping, e *execRec, eg *fakeEgress) (func(context.Context) error, error) {
 	t.Helper()
@@ -184,12 +197,15 @@ func TestAttach_AHostThatResolvesOnlyToDeniedRangesIsRefusedWithItsCause(t *test
 		"every kind":       {"127.0.0.1", "::1", "10.0.0.5"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			e, eg := &execRec{}, &fakeEgress{}
-			b := New(Config{Source: src("s3cr3t-value"), Lookup: lookupOf(addrs...)})
+			e, eg, cs := &execRec{}, &fakeEgress{}, &countingSrc{}
+			b := New(Config{Source: cs.source("s3cr3t-value"), Lookup: lookupOf(addrs...)})
 			_, err := attach(t, b, hostMap(), e, eg)
 			assertRefused(t, err)
 			if len(eg.entries) != 0 || len(e.reqs) != 0 {
 				t.Fatal("something was granted or installed for a host with no reachable address")
+			}
+			if cs.reads != 0 {
+				t.Fatalf("the credential was read %d time(s) before the refusal", cs.reads)
 			}
 			if !strings.Contains(err.Error(), "only to addresses a review guest may never reach") {
 				t.Fatalf("the refusal does not say why: %v", err)
@@ -215,12 +231,12 @@ func TestAttach_AHostWithOneReachableAddressStillAttaches(t *testing.T) {
 }
 
 func TestAttach_AGrantFailureIsRefusedBeforeTheCredentialIsInstalled(t *testing.T) {
-	e, eg := &execRec{}, &fakeEgress{failOn: 2}
-	b := New(Config{Source: src("s3cr3t-value"), Lookup: lookupOf("93.184.216.34", "93.184.216.35")})
+	e, eg, cs := &execRec{}, &fakeEgress{failOn: 2}, &countingSrc{}
+	b := New(Config{Source: cs.source("s3cr3t-value"), Lookup: lookupOf("93.184.216.34", "93.184.216.35")})
 	_, err := attach(t, b, hostMap(), e, eg)
 	assertRefused(t, err)
-	if len(e.reqs) != 0 {
-		t.Fatal("the credential was installed although a grant failed")
+	if len(e.reqs) != 0 || cs.reads != 0 {
+		t.Fatalf("the credential was read (%d) or installed (%d) although a grant failed", cs.reads, len(e.reqs))
 	}
 	if strings.Contains(err.Error(), "93.184.216") {
 		t.Fatal("the refusal names an address")
