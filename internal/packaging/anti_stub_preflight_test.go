@@ -59,6 +59,9 @@ const breSpecial = `.[]*^$\`
 // the phrases this test compares as literal text, refusing any phrase whose
 // meaning in grep could differ from its literal text.
 func stubPatternPhrases(pattern string) ([]string, error) {
+	if strings.ContainsAny(pattern, "\n\r") {
+		return nil, fmt.Errorf("anti-stub pattern %q holds a newline; grep takes each line as a pattern of its own, so keep the pattern on one line", pattern)
+	}
 	var phrases []string
 	for _, p := range strings.Split(pattern, `\|`) {
 		if p == "" {
