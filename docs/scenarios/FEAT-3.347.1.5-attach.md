@@ -19,8 +19,8 @@ reviewer starts, to install what the operator's map names.
 Host egress: a map whose egress policy is `host:<fqdn>` is granted through the daemon's egress stack for that review guest only.
 The host is resolved on the host side; every resolved address is admitted on port 443 and no other port, and nothing else is
 reachable (an address off the grant, or a port off it, is not reachable). The addresses are fixed at grant time, so the grant does not
-follow later DNS changes. Every grant is revoked when the guest is removed. A guest with no egress stack (a daemon without one,
-or a policy of `none`) refuses a `host:` map before anything is installed.
+follow later DNS changes. Every grant is revoked when the guest is removed. A `host:` map for a guest with no egress stack (a daemon without one)
+is refused before anything is installed; a policy of `none` grants nothing and the guest has no network.
 
 The credential source is optional (`--review-credential-fd`). The attach tests run against fakes; the live off-grant address and
 port cases are covered by the egress seam's own firecracker e2e.
