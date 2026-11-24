@@ -89,3 +89,32 @@ func TestReleasePreflightAntiStubScanIsClean(t *testing.T) {
 		t.Errorf("the release preflight would fail on %d line(s) (phrases %q):\n%s", len(hits), phrases, strings.Join(hits, "\n"))
 	}
 }
+
+// grep reads the step's pattern as a basic regular expression, and this test
+// compares phrases as literal text. Those agree only while no phrase holds a
+// character grep treats as special, so such a phrase is refused with a reason
+// instead of being checked by a rule that differs from the workflow's.
+func TestStubPatternPhrasesRefusesRegexSyntax(t *testing.T) {
+	got, err := stubPatternPhrases(`"not yet implemented"\|"not implemented"\|"integration pending"`)
+	if err != nil || len(got) != 3 || got[1] != `"not implemented"` {
+		t.Fatalf("the workflow's current pattern: got %q, %v; want its three phrases", got, err)
+	}
+	for _, bad := range []string{
+		`"not implemented"\|"work pending."`, // grep matches "work pending!" here
+		`"stub"\|"to[dD]o"`,
+		`"stub"\|"later*"`,
+		`^"stub"`,
+		`"stub"$`,
+		`"stub"\|"a\.b"`,
+		`"stub"\|"a]b"`,
+	} {
+		if p, err := stubPatternPhrases(bad); err == nil {
+			t.Errorf("pattern %q: accepted as literal phrases %q, but grep reads it as a regular expression", bad, p)
+		} else if !strings.Contains(err.Error(), "regular expression") {
+			t.Errorf("pattern %q: error %q does not say why it was refused", bad, err)
+		}
+	}
+	if _, err := stubPatternPhrases(`"a"\|\|"b"`); err == nil {
+		t.Error(`an empty alternative was accepted`)
+	}
+}
