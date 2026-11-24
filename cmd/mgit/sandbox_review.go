@@ -27,6 +27,7 @@ func sandboxReviewCmd(connect connectFunc) *cobra.Command {
 	}
 	cmd.AddCommand(sandboxReviewPrepareCmd(connect))
 	cmd.AddCommand(sandboxReviewRunCmd(connect))
+	cmd.AddCommand(sandboxReviewMapCmd())
 	return cmd
 }
 
