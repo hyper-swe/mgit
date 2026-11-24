@@ -15,7 +15,9 @@ on:
         type: string
       # A rehearsal of the release that publishes nothing: the same Preflight,
       # e2e gate and GoReleaser, the last in snapshot mode, and no release
-      # upload, no signature upload, no tap update and no tag. The value names
+      # upload, no signature upload, no tap update, and no tag pushed or published.
+      # (The e2e gate it calls makes a runner-local tag in its own checkout when
+      # it is not on a tag, as it always has, and never pushes it.) The value names
       # the tag being rehearsed and is only a label: the archives carry
       # GoReleaser's snapshot version. Dispatch it on the branch to rehearse.
       # Refs: HSWE-17.157
@@ -61,9 +63,18 @@ jobs:
         env:
           REHEARSE_AS: ${{ inputs.rehearse_as }}
         run: |
-          if [ -n "$REHEARSE_AS" ] && ! printf '%s' "$REHEARSE_AS" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
-            echo "::error::rehearse_as must look like a tag, for example v0.8.1 (got: $REHEARSE_AS)"
-            exit 1
+          if [ -n "$REHEARSE_AS" ]; then
+            case "$REHEARSE_AS" in
+              *$'\n'* | *$'\r'*)
+                echo "::error::rehearse_as must be a single line"
+                exit 1
+                ;;
+            esac
+            tag_re='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+            if ! [[ "$REHEARSE_AS" =~ $tag_re ]]; then
+              echo "::error::rehearse_as must look like a tag, for example v0.8.1"
+              exit 1
+            fi
           fi
 
       - name: Verify Go modules
