@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/hyper-swe/mgit/internal/reviewguest"
 	"github.com/hyper-swe/mgit/internal/service"
 )
 
@@ -14,6 +15,10 @@ import (
 type egressWiring struct {
 	Grants *service.CapabilityService
 	Policy service.EgressPolicyController
+	// Review is the host egress stack a review guest's network goes through;
+	// nil where this build has none, so no review guest gets a network.
+	// Refs: MGIT-344
+	Review reviewguest.EgressControl
 }
 
 // selectPolicyController picks the enforcer the LIVE policy verbs act on.
