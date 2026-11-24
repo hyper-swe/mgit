@@ -3,6 +3,8 @@ package reviewbind
 import (
 	"context"
 	"errors"
+	"net"
+	"net/netip"
 	"strconv"
 	"sync"
 
@@ -20,18 +22,18 @@ const (
 // descriptor the operator provides. It never returns the bytes in an error.
 type CredentialSource func(ctx context.Context, ref string) (*Slot, error)
 
-// EgressApplier enforces a host-allowlist policy for one guest and returns the
-// function that lifts it. Without one, a policy naming a host is refused.
-type EgressApplier interface {
-	Apply(ctx context.Context, guestID string, p Policy) (lift func(context.Context) error, err error)
-}
-
 // Config is what the daemon gives the binding. Zero values grant nothing.
 type Config struct {
 	ReviewerGID int // group that may read the credential file; must match the run's
 	Source      CredentialSource
-	Egress      EgressApplier
+	// Lookup resolves a policy's host to addresses on the host side. Nil means
+	// the system resolver. The addresses are fixed at grant time: a later change
+	// in DNS does not move the grant.
+	Lookup func(ctx context.Context, host string) ([]netip.Addr, error)
 }
+
+// egressPort is the one port a host policy opens. The policy names no port.
+const egressPort = "443"
 
 type binding struct{ cfg Config }
 
@@ -42,6 +44,27 @@ func New(cfg Config) reviewsvc.Bindings {
 		cfg.ReviewerGID = 65534
 	}
 	return &binding{cfg: cfg}
+}
+
+// grant resolves the policy's host and admits each address on port 443 only.
+// The daemon revokes every grant when the guest is removed.
+func (b *binding) grant(ctx context.Context, pol Policy, allow func(context.Context, string) error) error {
+	lookup := b.cfg.Lookup
+	if lookup == nil {
+		lookup = func(c context.Context, h string) ([]netip.Addr, error) {
+			return net.DefaultResolver.LookupNetIP(c, "ip", h)
+		}
+	}
+	addrs, err := lookup(ctx, pol.Host)
+	if err != nil || len(addrs) == 0 {
+		return unenforceable("the policy's host did not resolve to an address")
+	}
+	for _, a := range addrs {
+		if gerr := allow(ctx, net.JoinHostPort(a.Unmap().String(), egressPort)); gerr != nil {
+			return unenforceable("the egress policy could not be applied")
+		}
+	}
+	return nil
 }
 
 func unenforceable(detail string) error {
@@ -81,19 +104,17 @@ func (b *binding) Attach(ctx context.Context, in reviewsvc.AttachInput) (func(co
 	if ref != "" && pol.Kind != EgressHost {
 		return release, unenforceable("a credential needs a named host to reach")
 	}
-	if pol.Kind == EgressHost && b.cfg.Egress == nil {
-		return release, unenforceable("this build cannot enforce a host allowlist, and the mapping asks for one")
+	if pol.Kind == EgressHost && in.AllowEgress == nil {
+		return release, unenforceable("this guest has no egress stack, and the mapping asks for a host allowlist")
 	}
 	if ref != "" && (b.cfg.Source == nil || in.Exec == nil) {
 		return release, unenforceable("this build has no credential source, and the mapping asks for one")
 	}
 
 	if pol.Kind == EgressHost {
-		lift, aerr := b.cfg.Egress.Apply(ctx, in.GuestID, pol)
-		if aerr != nil {
-			return release, unenforceable("the egress policy could not be applied")
+		if gerr := b.grant(ctx, pol, in.AllowEgress); gerr != nil {
+			return release, gerr
 		}
-		fresh(lift)
 	}
 	if ref == "" {
 		return release, nil

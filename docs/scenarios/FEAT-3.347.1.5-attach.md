@@ -10,11 +10,19 @@ reviewer starts, to install what the operator's map names.
 2. A map with a credential and a named host: the egress policy is applied, the
    credential is read once from the operator's source and handed to the guest
    verb on standard input. It never appears in a command line or environment.
-   Release removes the file and lifts the policy, once.
+   Release removes the credential file, once. The grants are the guest's: the daemon revokes them when the guest is removed,
+   which a review does on every path, a refused attach included.
 3. A host policy with no enforcer, or a credential with no source, is refused
    as POLICY_UNENFORCEABLE before anything is installed.
-4. A failed install lifts the egress policy and still returns a usable release;
-   no error carries the credential.
+4. A failed install still returns a usable release and no error carries the credential. The release does not touch the grants:
+   they were made through the guest's own egress stack and end when the guest is removed.
 
-The daemon wires the map store and the binding. The credential source is optional (`--review-credential-fd`); what is absent is a host egress enforcer for a review guest. A credential must name a host, so with no enforcer a map that asks for a credential or a host allowlist is refused. Scenarios 2 and 4 run against fakes only.
-5. A release whose cleanup exits nonzero, or returns no result, reports an error that carries no credential bytes, and still lifts the egress policy.
+Host egress: a map whose egress policy is `host:<fqdn>` is granted through the daemon's egress stack for that review guest only.
+The host is resolved on the host side; every resolved address is admitted on port 443 and no other port, and nothing else is
+reachable (an address off the grant, or a port off it, is not reachable). The addresses are fixed at grant time, so the grant does not
+follow later DNS changes. Every grant is revoked when the guest is removed. A `host:` map for a guest with no egress stack (a daemon without one)
+is refused before anything is installed; a policy of `none` grants nothing and the guest has no network.
+
+The credential source is optional (`--review-credential-fd`). The attach tests run against fakes; the live off-grant address and
+port cases are covered by the egress seam's own firecracker e2e.
+5. A release whose cleanup exits nonzero, or returns no result, reports an error that carries no credential bytes.
