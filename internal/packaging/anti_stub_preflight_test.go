@@ -2,6 +2,7 @@ package packaging
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,17 +30,27 @@ func antiStubPhrases(t *testing.T, root string) []string {
 	if m == nil {
 		t.Fatal("release.yml: the anti-stub grep step was not found in its expected shape; update this test with the step")
 	}
-	var phrases []string
-	for _, p := range strings.Split(string(m[1]), `\|`) {
-		if p == "" {
-			t.Fatalf("release.yml: empty phrase in the anti-stub pattern %q", m[1])
-		}
-		phrases = append(phrases, p)
+	phrases, err := stubPatternPhrases(string(m[1]))
+	if err != nil {
+		t.Fatalf("release.yml: %v", err)
 	}
 	if len(phrases) < 3 {
 		t.Fatalf("release.yml: anti-stub pattern %q gave %d phrases, want at least 3", m[1], len(phrases))
 	}
 	return phrases
+}
+
+// stubPatternPhrases splits the step's grep pattern on its alternation into
+// the phrases this test compares as literal text.
+func stubPatternPhrases(pattern string) ([]string, error) {
+	var phrases []string
+	for _, p := range strings.Split(pattern, `\|`) {
+		if p == "" {
+			return nil, fmt.Errorf("empty phrase in the anti-stub pattern %q", pattern)
+		}
+		phrases = append(phrases, p)
+	}
+	return phrases, nil
 }
 
 func TestReleasePreflightAntiStubScanIsClean(t *testing.T) {
