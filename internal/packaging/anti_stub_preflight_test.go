@@ -40,13 +40,22 @@ func antiStubPhrases(t *testing.T, root string) []string {
 	return phrases
 }
 
+// breSpecial is every character a basic regular expression (grep's default)
+// can give a meaning other than itself: any character, bracket expressions,
+// repetition, anchors and escapes.
+const breSpecial = `.[]*^$\`
+
 // stubPatternPhrases splits the step's grep pattern on its alternation into
-// the phrases this test compares as literal text.
+// the phrases this test compares as literal text, refusing any phrase whose
+// meaning in grep could differ from its literal text.
 func stubPatternPhrases(pattern string) ([]string, error) {
 	var phrases []string
 	for _, p := range strings.Split(pattern, `\|`) {
 		if p == "" {
 			return nil, fmt.Errorf("empty phrase in the anti-stub pattern %q", pattern)
+		}
+		if i := strings.IndexAny(p, breSpecial); i >= 0 {
+			return nil, fmt.Errorf("anti-stub phrase %q holds %q, which grep reads as basic regular expression syntax; this check compares literal text, so extend it before using that syntax in the step", p, p[i])
 		}
 		phrases = append(phrases, p)
 	}
