@@ -26,18 +26,28 @@ func antiStubPhrases(t *testing.T, root string) []string {
 	if err != nil {
 		t.Fatalf("read release workflow: %v", err)
 	}
-	m := antiStubStep.FindSubmatch(wf)
-	if m == nil {
-		t.Fatal("release.yml: the anti-stub grep step was not found in its expected shape; update this test with the step")
-	}
-	phrases, err := stubPatternPhrases(string(m[1]))
+	phrases, err := workflowStubPhrases(wf)
 	if err != nil {
 		t.Fatalf("release.yml: %v", err)
 	}
-	if len(phrases) < 3 {
-		t.Fatalf("release.yml: anti-stub pattern %q gave %d phrases, want at least 3", m[1], len(phrases))
-	}
 	return phrases
+}
+
+// workflowStubPhrases finds the anti-stub grep step in a workflow's text and
+// returns the phrases of its pattern.
+func workflowStubPhrases(wf []byte) ([]string, error) {
+	m := antiStubStep.FindSubmatch(wf)
+	if m == nil {
+		return nil, fmt.Errorf("the anti-stub grep step was not found in its expected shape; update this test with the step")
+	}
+	phrases, err := stubPatternPhrases(string(m[1]))
+	if err != nil {
+		return nil, err
+	}
+	if len(phrases) < 3 {
+		return nil, fmt.Errorf("anti-stub pattern %q gave %d phrases, want at least 3", m[1], len(phrases))
+	}
+	return phrases, nil
 }
 
 // breSpecial is every character a basic regular expression (grep's default)
@@ -125,5 +135,23 @@ func TestStubPatternPhrasesRefusesRegexSyntax(t *testing.T) {
 	}
 	if _, err := stubPatternPhrases(`"a"\|\|"b"`); err == nil {
 		t.Error(`an empty alternative was accepted`)
+	}
+}
+
+// grep takes each line of a pattern argument as a pattern of its own, so a
+// phrase put on the next line of the quoted argument is one more phrase there,
+// while this test would keep it inside a literal and scan one line at a time.
+func TestWorkflowStubPhrasesRefusesAMultilinePattern(t *testing.T) {
+	one := "      - name: Anti-stub check\n        run: |\n          if grep -rn '\"a\"\\|\"b\"\\|\"c\"' \\\n            --include='*.go' --exclude='*_test.go' .; then\n"
+	if got, err := workflowStubPhrases([]byte(one)); err != nil || len(got) != 3 {
+		t.Fatalf("single-line fixture: got %q, %v; want three phrases", got, err)
+	}
+	two := "      - name: Anti-stub check\n        run: |\n          if grep -rn '\"a\"\\|\"b\"\\|\"c\"\n          \"d\"' \\\n            --include='*.go' --exclude='*_test.go' .; then\n"
+	got, err := workflowStubPhrases([]byte(two))
+	if err == nil {
+		t.Fatalf("two-line fixture: accepted as phrases %q, but grep reads its second line as another pattern", got)
+	}
+	if !strings.Contains(err.Error(), "newline") {
+		t.Errorf("two-line fixture: error %q does not say why it was refused", err)
 	}
 }
