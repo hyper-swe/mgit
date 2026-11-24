@@ -223,11 +223,17 @@ func TestRelease_ANilCleanupResultIsAnError(t *testing.T) {
 func TestAttach_ANonzeroCredInstallExitIsRefused(t *testing.T) {
 	e := &execRec{code: map[int]int{1: 3}}
 	b := New(Config{Source: src("s3cr3t-value"), Lookup: lookupOf("203.0.113.7")})
-	rel, err := attach(t, b, hostMap(), e, &fakeEgress{})
+	eg := &fakeEgress{}
+	rel, err := attach(t, b, hostMap(), e, eg)
 	assertRefused(t, err)
 	_ = rel(context.Background())
 	if len(e.reqs) != 1 {
 		t.Fatalf("execs %d, want only the failed install", len(e.reqs))
+	}
+	// The grants belong to the guest and end at its removal: the release
+	// neither adds nor changes one.
+	if len(eg.entries) != 1 {
+		t.Fatalf("grants %v after a refused attach and its release, want the one made before the refusal", eg.entries)
 	}
 }
 
