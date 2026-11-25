@@ -134,6 +134,9 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash scripts/ci/release-preflight-selftest.sh
 
+      - name: Check release artifact handoff
+        run: ruby scripts/ci/rehearsal-artifacts-test.rb
+
       # Every target the release ships compiles on every PR, so a platform
       # break cannot reach a tag: a syscall.Kill in an untagged file broke the
       # Windows targets of mgit on main and nothing here noticed, because the

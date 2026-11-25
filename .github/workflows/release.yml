@@ -122,6 +122,8 @@ jobs:
     name: e2e gate
     needs: preflight
     uses: ./.github/workflows/e2e.yml
+    with:
+      release_artifacts: true
 
   release:
     name: Release

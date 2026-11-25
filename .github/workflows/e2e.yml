@@ -39,7 +39,12 @@ on:
       - ".mtix/**"
       - "LICENSE"
       - ".gitignore"
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      release_artifacts:
+        description: Stage source and library archives for the calling release workflow.
+        type: boolean
+        default: false
   # On-demand: re-run the live containment gate against a branch without
   # waiting for a release tag. Refs: MGIT-78
   workflow_dispatch: {}
@@ -294,7 +299,7 @@ jobs:
       # tag (the patches, configuration and build scripts applied to it), and
       # libkrun's. Architecture-independent, so taken from one leg.
       - name: The corresponding source (a release run only)
-        if: matrix.arch == 'amd64' && github.ref_type == 'tag'
+        if: matrix.arch == 'amd64' && (github.ref_type == 'tag' || inputs.release_artifacts)
         run: |
           . scripts/sandbox-image/pins.env
           src="$RUNNER_TEMP/dist-sources"; mkdir -p "$src"
@@ -327,7 +332,7 @@ jobs:
           if-no-files-found: error
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: matrix.arch == 'amd64' && github.ref_type == 'tag'
+        if: matrix.arch == 'amd64' && (github.ref_type == 'tag' || inputs.release_artifacts)
         with:
           name: linux-sources
           path: ${{ runner.temp }}/dist-sources/
@@ -396,7 +401,7 @@ jobs:
           grep -q "linux-$LIBKRUNFW_KERNEL_VERSION" "$x/SOURCE-OFFER.txt"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || inputs.release_artifacts
         with:
           name: darwin-libkrunfw
           path: ${{ runner.temp }}/dist-libkrunfw/
