@@ -39,6 +39,17 @@ func BuildForGuest(worktreePath, privateStorePath, stagingDir string, guestRepo 
 // not change from one launch to the next.
 var guestBaseCommitTime = time.Unix(0, 0).UTC()
 
+// omittedRoots keeps the entire subtree out when its top-level entry is
+// skipped. A matching basename further down is not a top-level entry.
+type omittedRoots map[string]bool
+
+func (r omittedRoots) Match(path []string, _ bool) gitignore.MatchResult {
+	if len(path) > 0 && r[path[0]] {
+		return gitignore.Exclude
+	}
+	return gitignore.NoMatch
+}
+
 func initGuestRepo(dir string) error {
 	repo, err := git.PlainInitWithOptions(dir, &git.PlainInitOptions{
 		InitOptions: git.InitOptions{DefaultBranch: plumbing.NewBranchReferenceName("main")},
@@ -58,9 +69,7 @@ func initGuestRepo(dir string) error {
 	if err != nil {
 		return err
 	}
-	// go-git does not read .git/info/exclude when it adds, so the private
-	// store is left out by naming what to add: every top-level entry but the
-	// repository itself and the store.
+	// Decide which top-level entries to omit before the single bulk add.
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
@@ -74,16 +83,18 @@ func initGuestRepo(dir string) error {
 		return fmt.Errorf("read ignore rules: %w", err)
 	}
 	ignored := gitignore.NewMatcher(patterns)
+	omit := omittedRoots{".git": true, GuestStoreName: true}
 	for _, e := range entries {
-		if e.Name() == ".git" || e.Name() == GuestStoreName {
-			continue
-		}
 		if ignored.Match([]string{e.Name()}, e.IsDir()) {
-			continue
+			omit[e.Name()] = true
 		}
-		if err := wt.AddWithOptions(&git.AddOptions{Path: e.Name()}); err != nil {
-			return fmt.Errorf("add %s: %w", e.Name(), err)
-		}
+	}
+	// A separate Add for each entry computes whole-tree status and writes
+	// the index repeatedly. All computes status once and still applies
+	// the project's nested ignore rules as well as the exclusions above.
+	wt.Excludes = append(wt.Excludes, omit)
+	if err := wt.AddWithOptions(&git.AddOptions{All: true}); err != nil {
+		return fmt.Errorf("add staged files: %w", err)
 	}
 	sig := &object.Signature{Name: "mgit", Email: "mgit@localhost", When: guestBaseCommitTime}
 	if _, err := wt.Commit("base: the files this sandbox was given", &git.CommitOptions{
