@@ -15,12 +15,12 @@ func BenchmarkGuestRepo20K(b *testing.B) {
 		root := b.TempDir()
 		for d := 0; d < 100; d++ {
 			dir := filepath.Join(root, fmt.Sprintf("pkg%03d", d))
-			if err := os.Mkdir(dir, 0755); err != nil {
+			if err := os.Mkdir(dir, 0o750); err != nil {
 				b.Fatal(err)
 			}
 			for f := 0; f < 200; f++ {
 				name := fmt.Sprintf("source%03d", f)
-				if err := os.WriteFile(filepath.Join(dir, name), []byte(fmt.Sprintf("%d:%d\n", d, f)), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(fmt.Sprintf("%d:%d\n", d, f)), 0o600); err != nil {
 					b.Fatal(err)
 				}
 			}
