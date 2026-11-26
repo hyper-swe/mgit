@@ -399,14 +399,14 @@ func TestSyncStateDestinationIsDirectory(t *testing.T) {
 	after, err := os.ReadDir(repo.MgitDir())
 	require.NoError(t, err)
 	names := func(entries []os.DirEntry) []string {
-		var out []string
+		out := make([]string, 0, len(entries))
 		for _, entry := range entries {
 			out = append(out, entry.Name())
 		}
 		return out
 	}
 	assert.Equal(t, names(before), names(after), "a failed replacement leaves no temporary state")
-	content, err := os.ReadFile(marker)
+	content, err := os.ReadFile(filepath.Clean(marker))
 	require.NoError(t, err)
 	assert.Equal(t, "existing contents", string(content))
 }
