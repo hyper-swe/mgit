@@ -54,10 +54,6 @@ jobs:
       - name: Assert installed Go version
         run: bash scripts/ci/assert-go-version.sh
 
-      - name: Measure guest repository staging
-        if: github.head_ref == 'perf/guest-repo-staging'
-        run: go test -p 2 ./internal/sandboxd/staging -run '^$' -bench '^BenchmarkGuestRepo20K$' -benchtime=1x -count=1
-
       - name: Run tests with race detector
         run: go test ./... -race -count=1
 
