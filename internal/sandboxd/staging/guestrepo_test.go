@@ -242,8 +242,9 @@ func baseFiles(t *testing.T, dir string) []string {
 func TestIgnoredFilesAreDeliveredButNotInTheBaseCommit(t *testing.T) {
 	wt := t.TempDir()
 	files := map[string]string{
-		".gitignore":      "*.log\nbuild/\n!keep.log\n",
+		".gitignore":      "*.log\nbuild/\nonlydir/\n!keep.log\n",
 		"keep.txt":        "k\n",
+		"onlydir":         "regular file, not a directory\n",
 		"keep.log":        "negated, so tracked\n",
 		"debug.log":       "top-level ignored file\n",
 		"build/out.bin":   "ignored directory\n",
@@ -262,7 +263,7 @@ func TestIgnoredFilesAreDeliveredButNotInTheBaseCommit(t *testing.T) {
 	require.NoError(t, BuildForGuest(wt, privateStoreWith(t), stage, true))
 
 	assert.ElementsMatch(t,
-		[]string{".gitignore", "keep.txt", "keep.log", "sub/code.go", "sub/.gitignore", "sub/tracked.txt"},
+		[]string{".gitignore", "keep.txt", "onlydir", "keep.log", "sub/code.go", "sub/.gitignore", "sub/tracked.txt"},
 		baseFiles(t, stage), "the base holds what a host repository would track")
 	for _, rel := range []string{"debug.log", "build/out.bin", "sub/app.log", "sub/local.txt"} {
 		_, err := os.Stat(filepath.Join(stage, rel))
