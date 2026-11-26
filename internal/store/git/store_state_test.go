@@ -380,3 +380,33 @@ func TestStoreState_IsReadableJSONOnDisk(t *testing.T) {
 		require.NoError(t, json.Unmarshal(data, &any), "%s is not readable JSON", path)
 	}
 }
+
+func TestSyncStateDestinationIsDirectory(t *testing.T) {
+	repo := initTestRepo(t)
+	path := repo.syncStatePath()
+	require.NoError(t, os.Mkdir(path, 0o750))
+	marker := filepath.Join(path, "keep")
+	require.NoError(t, os.WriteFile(marker, []byte("existing contents"), 0o600))
+
+	got, found, err := repo.ReadSyncState()
+	require.Error(t, err, "an unreadable state is not a never-synced store")
+	assert.False(t, found)
+	assert.Zero(t, got)
+
+	before, err := os.ReadDir(repo.MgitDir())
+	require.NoError(t, err)
+	require.Error(t, repo.WriteSyncState(SyncState{GitHead: "next"}))
+	after, err := os.ReadDir(repo.MgitDir())
+	require.NoError(t, err)
+	names := func(entries []os.DirEntry) []string {
+		var out []string
+		for _, entry := range entries {
+			out = append(out, entry.Name())
+		}
+		return out
+	}
+	assert.Equal(t, names(before), names(after), "a failed replacement leaves no temporary state")
+	content, err := os.ReadFile(marker)
+	require.NoError(t, err)
+	assert.Equal(t, "existing contents", string(content))
+}
