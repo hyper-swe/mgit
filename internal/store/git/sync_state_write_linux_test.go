@@ -20,9 +20,14 @@ func TestWriteSyncStatePreservesPublishedStateAfterShortWrite(t *testing.T) {
 		var lim unix.Rlimit
 		require.NoError(t, unix.Getrlimit(unix.RLIMIT_FSIZE, &lim))
 		require.GreaterOrEqual(t, lim.Cur, uint64(128))
+		original := lim
 		lim.Cur = 128
 		signal.Ignore(unix.SIGXFSZ)
 		require.NoError(t, unix.Setrlimit(unix.RLIMIT_FSIZE, &lim))
+		t.Cleanup(func() {
+			require.NoError(t, unix.Setrlimit(unix.RLIMIT_FSIZE, &original))
+			signal.Reset(unix.SIGXFSZ)
+		})
 		err := repo.WriteSyncState(SyncState{WorkTreeHash: strings.Repeat("x", 512)})
 		require.ErrorContains(t, err, "write temp sync state")
 		require.ErrorIs(t, err, unix.EFBIG)
