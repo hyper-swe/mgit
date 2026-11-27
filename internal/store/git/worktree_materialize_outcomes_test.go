@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,7 +34,7 @@ func TestMaterializeBranchTo_ErrorOutcomes(t *testing.T) {
 				err := materialize(context.Background(), branch, dest)
 				require.ErrorContains(t, err, branch)
 				require.ErrorContains(t, err, "tracked.txt")
-				data, err := os.ReadFile(keep)
+				data, err := fs.ReadFile(os.DirFS(dest), "tracked.txt/keep")
 				require.NoError(t, err)
 				require.Equal(t, "existing", string(data))
 			case "unreadable include list":
@@ -41,7 +42,7 @@ func TestMaterializeBranchTo_ErrorOutcomes(t *testing.T) {
 				err := materialize(context.Background(), branch, dest)
 				require.ErrorContains(t, err, branch)
 				require.ErrorContains(t, err, "seed-include")
-				data, err := os.ReadFile(entry)
+				data, err := fs.ReadFile(os.DirFS(dest), "tracked.txt")
 				require.NoError(t, err)
 				require.Equal(t, "source", string(data))
 			}
