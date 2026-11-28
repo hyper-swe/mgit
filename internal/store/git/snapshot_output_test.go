@@ -50,7 +50,7 @@ func TestWriteSnapshotFilePreservesDestinationOnFailure(t *testing.T) {
 			if !errors.As(err, &pathErr) {
 				t.Fatalf("want filesystem error, got %v", err)
 			}
-			if got, err := os.ReadFile(marker); err != nil || string(got) != "keep" {
+			if got, err := fs.ReadFile(os.DirFS(dest), tc.obstacle); err != nil || string(got) != "keep" {
 				t.Fatalf("existing content = %q, err = %v", got, err)
 			}
 		})
@@ -69,7 +69,7 @@ func TestWriteSnapshotFilePreservesDestinationOnFailure(t *testing.T) {
 		if err := writeSnapshotFile(dest, object.NewFile("existing", filemode.Regular, &bad)); !errors.Is(err, cause) {
 			t.Fatalf("want blob error, got %v", err)
 		}
-		if got, err := os.ReadFile(path); err != nil || string(got) != "keep" {
+		if got, err := fs.ReadFile(os.DirFS(dest), "existing"); err != nil || string(got) != "keep" {
 			t.Fatalf("existing content = %q, err = %v", got, err)
 		}
 	})
@@ -89,7 +89,7 @@ func TestWriteSnapshotFilePreservesDestinationOnFailure(t *testing.T) {
 		if perm := info.Mode().Perm(); perm != 0700 {
 			t.Errorf("permissions = %o, want 700", perm)
 		}
-		if got, err := os.ReadFile(path); err != nil || string(got) != "restored" {
+		if got, err := fs.ReadFile(os.DirFS(dest), "bin/tool"); err != nil || string(got) != "restored" {
 			t.Fatalf("restored content = %q, err = %v", got, err)
 		}
 	})
